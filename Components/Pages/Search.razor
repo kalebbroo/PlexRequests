@@ -1,0 +1,89 @@
+@page "/search"
+@attribute [Authorize]
+@inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
+@inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+
+<PageTitle>Search</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-6">
+    <MudGrid>
+        <MudItem xs="12">
+            <MudText Typo="Typo.h4" Class="mb-2">Search</MudText>
+        </MudItem>
+        <MudItem xs="12" md="8">
+            <MudTextField @bind-Value="_query" Placeholder="Search for movies or TV shows..." Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" DebounceInterval="300" OnKeyDown="OnKeyDown" FullWidth="true" />
+        </MudItem>
+        <MudItem xs="6" md="2">
+            <MudSelect T="PlexRequestsHosted.Shared.Enums.MediaType?" @bind-Value="_mediaType" Clearable="true" Label="Type" Variant="Variant.Outlined" FullWidth="true">
+                <MudSelectItem T="PlexRequestsHosted.Shared.Enums.MediaType?" Value="@( (PlexRequestsHosted.Shared.Enums.MediaType?)null )">All</MudSelectItem>
+                <MudSelectItem T="PlexRequestsHosted.Shared.Enums.MediaType?" Value="PlexRequestsHosted.Shared.Enums.MediaType.Movie">Movies</MudSelectItem>
+                <MudSelectItem T="PlexRequestsHosted.Shared.Enums.MediaType?" Value="PlexRequestsHosted.Shared.Enums.MediaType.TvShow">TV Shows</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" md="2">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ExecuteSearch" FullWidth="true">Search</MudButton>
+        </MudItem>
+    </MudGrid>
+
+    @if (_isSearching)
+    {
+        <div class="d-flex align-center mt-6">
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            <MudText Class="ml-3">Searching...</MudText>
+        </div>
+    }
+
+    @if (!_isSearching && _results != null)
+    {
+        @if (_results.Count == 0)
+        {
+            <MudText Typo="Typo.body1" Class="mt-6">No results found.</MudText>
+        }
+        else
+        {
+            <MudGrid Class="mt-4">
+                @foreach (var item in _results)
+                {
+                    <MudItem xs="6" sm="4" md="3" lg="2">
+                        <MediaCard Media="item" />
+                    </MudItem>
+                }
+            </MudGrid>
+        }
+    }
+</MudContainer>
+
+@code {
+    private string _query = string.Empty;
+    private PlexRequestsHosted.Shared.Enums.MediaType? _mediaType = null;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _results;
+    private bool _isSearching;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ExecuteSearch();
+    }
+
+    private async Task ExecuteSearch()
+    {
+        _isSearching = true; StateHasChanged();
+        try
+        {
+            _results = await PlexApiService.SearchMediaAsync(_query, _mediaType);
+        }
+        catch
+        {
+            await ToastService.ShowErrorAsync("Search failed");
+        }
+        finally
+        {
+            _isSearching = false; StateHasChanged();
+        }
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+            await ExecuteSearch();
+    }
+}

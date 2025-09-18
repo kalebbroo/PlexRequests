@@ -1,0 +1,108 @@
+@page "/media/{type}/{id:int}"
+@attribute [Authorize]
+@inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
+@inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
+@inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject NavigationManager Navigation
+
+<PageTitle>@(_media?.Title ?? "Media")</PageTitle>
+
+@if (_loading)
+{
+    <div class="p-4"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /> Loading...</div>
+}
+else if (_media == null)
+{
+    <MudContainer Class="mt-6">
+        <MudText Typo="Typo.h5">Not found.</MudText>
+    </MudContainer>
+}
+else
+{
+    <div class="details-hero" style="background-image:url('@_media.BackdropUrl')">
+        <div class="details-overlay"></div>
+        <MudContainer MaxWidth="MaxWidth.Large" Class="details-content">
+            <MudGrid>
+                <MudItem xs="12" md="3">
+                    @if (!string.IsNullOrEmpty(_media.PosterUrl))
+                    {
+                        <img src="@_media.PosterUrl" alt="@_media.Title" class="poster" />
+                    }
+                </MudItem>
+                <MudItem xs="12" md="9">
+                    <MudText Typo="Typo.h3" Class="mb-2">@_media.Title</MudText>
+                    @if (!string.IsNullOrEmpty(_media.Tagline))
+                    {
+                        <MudText Typo="Typo.h6" Class="mb-2" Color="Color.Tertiary">@_media.Tagline</MudText>
+                    }
+                    <MudText Typo="Typo.body1" Class="mb-4">@_media.Overview</MudText>
+                    <div class="actions">
+                        @if (_media.IsAvailable)
+                        {
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayCircle" OnClick="Watch">Watch</MudButton>
+                        }
+                        else if (_media.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.Pending)
+                        {
+                            <MudButton Variant="Variant.Outlined" Color="Color.Warning" Disabled="true" StartIcon="@Icons.Material.Filled.HourglassEmpty">Pending</MudButton>
+                        }
+                        else
+                        {
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="Request">Request</MudButton>
+                        }
+                        <MudButton Variant="Variant.Text" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.ArrowBack" Href="/">Back</MudButton>
+                    </div>
+                </MudItem>
+            </MudGrid>
+        </MudContainer>
+    </div>
+}
+
+@code {
+    [Parameter] public string? type { get; set; }
+    [Parameter] public int id { get; set; }
+
+    private PlexRequestsHosted.Shared.DTOs.MediaDetailDto? _media;
+    private bool _loading = true;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        var mediaType = ParseType(type);
+        _media = await PlexApiService.GetMediaDetailsAsync(id, mediaType);
+        _loading = false;
+    }
+
+    private PlexRequestsHosted.Shared.Enums.MediaType ParseType(string? t)
+        => string.Equals(t, "tvshow", StringComparison.OrdinalIgnoreCase) ? PlexRequestsHosted.Shared.Enums.MediaType.TvShow
+         : string.Equals(t, "movie", StringComparison.OrdinalIgnoreCase) ? PlexRequestsHosted.Shared.Enums.MediaType.Movie
+         : PlexRequestsHosted.Shared.Enums.MediaType.Movie;
+
+    private async Task Request()
+    {
+        if (_media == null) return;
+        var result = await MediaRequestService.RequestMediaAsync(_media.Id, _media.MediaType);
+        if (result.Success)
+        {
+            _media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
+            await ToastService.ShowSuccessAsync("Request submitted");
+        }
+        else
+        {
+            await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request");
+        }
+    }
+
+    private void Watch()
+    {
+        if (!string.IsNullOrEmpty(_media?.PlexUrl))
+            Navigation.NavigateTo(_media.PlexUrl, true);
+    }
+}
+
+<style>
+.details-hero{position:relative; background-size:cover; background-position:center; padding:4rem 0;}
+.details-overlay{position:absolute; inset:0; background:linear-gradient(to right, rgba(0,0,0,.8), rgba(0,0,0,.4));}
+.details-content{position:relative; color:white;}
+.poster{max-width:100%; border-radius:6px; box-shadow:0 4px 18px rgba(0,0,0,.5);}
+actions{display:flex; gap:1rem;}
+</style>

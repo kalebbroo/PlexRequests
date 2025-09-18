@@ -1,0 +1,66 @@
+@page "/requests"
+@attribute [Authorize]
+@inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
+
+<PageTitle>My Requests</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6">
+    <MudText Typo="Typo.h4" Class="mb-4">My Requests</MudText>
+
+    <MudPaper Class="p-4">
+        <MudTable Items="_requests" Hover="true" Dense="true" Bordered="false" Striped="true">
+            <HeaderContent>
+                <MudTh>Id</MudTh>
+                <MudTh>Title</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Requested</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Id">@context.Id</MudTd>
+                <MudTd DataLabel="Title">@context.Title</MudTd>
+                <MudTd DataLabel="Status">
+                    <MudChip T="string" Variant="Variant.Outlined" Color="@GetStatusColor(context.Status)">@context.Status.ToString()</MudChip>
+                </MudTd>
+                <MudTd DataLabel="Requested">@context.RequestedAt.ToLocalTime().ToString("g")</MudTd>
+                <MudTd DataLabel="Actions">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" Disabled="@(!_canCancel(context))" OnClick="@((MouseEventArgs _) => Cancel(context))">Cancel</MudButton>
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body1">No requests yet.</MudText>
+            </NoRecordsContent>
+        </MudTable>
+    </MudPaper>
+</MudContainer>
+
+@code {
+    private List<PlexRequestsHosted.Shared.DTOs.MediaRequestDto> _requests = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var page = await MediaRequestService.GetRequestsAsync(new() { PageNumber = 1, PageSize = 50 });
+        _requests = page.Items;
+    }
+
+    private async Task Cancel(PlexRequestsHosted.Shared.DTOs.MediaRequestDto request)
+    {
+        if (await MediaRequestService.CancelRequestAsync(request.Id))
+        {
+            request.Status = PlexRequestsHosted.Shared.Enums.RequestStatus.Cancelled;
+            StateHasChanged();
+        }
+    }
+
+    private bool _canCancel(PlexRequestsHosted.Shared.DTOs.MediaRequestDto r)
+        => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
+
+    private Color GetStatusColor(PlexRequestsHosted.Shared.Enums.RequestStatus status) => status switch
+    {
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Pending => Color.Warning,
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Approved => Color.Success,
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Available => Color.Info,
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Cancelled => Color.Error,
+        _ => Color.Default
+    };
+}

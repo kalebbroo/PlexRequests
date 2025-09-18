@@ -1,0 +1,22 @@
+<Router AppAssembly="typeof(Program).Assembly">
+    <Found Context="routeData">
+        <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
+            <Authorizing>
+                <div class="p-4"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /> Authorizing...</div>
+            </Authorizing>
+            <NotAuthorized>
+                <LayoutView Layout="typeof(Layout.MainLayout)">
+                    <MudPaper Class="m-4 p-4">
+                        <MudText>You are not authorized. Please <MudLink Href="/login">sign in</MudLink>.</MudText>
+                    </MudPaper>
+                </LayoutView>
+            </NotAuthorized>
+        </AuthorizeRouteView>
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+    </Found>
+    <NotFound>
+        <LayoutView Layout="typeof(Layout.MainLayout)">
+            <MudText Typo="Typo.h5" Class="m-4">Sorry, there's nothing at this address.</MudText>
+        </LayoutView>
+    </NotFound>
+</Router>

@@ -1,0 +1,239 @@
+@page "/login"
+@page "/auth/callback"
+@inject PlexRequestsHosted.Services.Abstractions.IPlexAuthService PlexAuthService
+@inject PlexRequestsHosted.Services.Auth.CustomAuthStateProvider AuthStateProvider
+@inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject NavigationManager Navigation
+
+<PageTitle>Sign In - Plex Request</PageTitle>
+
+<div class="login-container">
+    <div class="background-wrapper">
+        <div class="background-image"></div>
+        <div class="gradient-overlay"></div>
+    </div>
+    <div class="login-content">
+        <MudContainer MaxWidth="MaxWidth.Small">
+            <MudPaper Class="login-card" Elevation="24">
+                <div class="login-header">
+                    <MudText Typo="Typo.h3" Class="brand-title">PLEX REQUEST</MudText>
+                    <MudText Typo="Typo.h5" Class="login-title">Sign In</MudText>
+                </div>
+
+                @if (_isProcessing)
+                {
+                    <div class="auth-processing">
+                        <MudProgressCircular Color="Color.Primary" Size="Size.Large" Indeterminate="true" />
+                        <MudText Typo="Typo.body1" Class="mt-4">@_processingMessage</MudText>
+                        @if (_showCancelButton)
+                        {
+                            <MudButton Variant="Variant.Text" Color="Color.Secondary" @onclick="CancelAuthentication" Class="mt-3">Cancel</MudButton>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="login-options">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large" FullWidth="true" StartIcon="@Icons.Material.Filled.Login" @onclick="SignInWithPlex" Class="plex-button">
+                            <MudText Typo="Typo.button">Sign in with Plex</MudText>
+                        </MudButton>
+
+                        <MudDivider Class="my-4">
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Text">OR</MudChip>
+                        </MudDivider>
+
+                        <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Medium" FullWidth="true" StartIcon="@Icons.Material.Filled.Person" @onclick="DemoSignIn">
+                            Use Demo Account
+                        </MudButton>
+
+                        <MudExpansionPanels Elevation="0" Class="manual-entry">
+                            <MudExpansionPanel Text="Advanced: Enter Plex Token Manually">
+                                <MudTextField @bind-Value="_manualToken" Label="Plex Token" Variant="Variant.Outlined" InputType="@(_showToken ? InputType.Text : InputType.Password)" Adornment="Adornment.End" AdornmentIcon="@(_showToken ? Icons.Material.Filled.Visibility : Icons.Material.Filled.VisibilityOff)" OnAdornmentClick="ToggleTokenVisibility" HelperText="Your Plex authentication token" FullWidth="true" />
+                                <MudButton Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true" @onclick="SignInWithToken" Disabled="@string.IsNullOrWhiteSpace(_manualToken)" Class="mt-3">Sign in with Token</MudButton>
+                                <MudAlert Severity="Severity.Info" Class="mt-3" Dense="true">
+                                    <MudLink Href="https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/" Target="_blank" Color="Color.Info">How to find your Plex token</MudLink>
+                                </MudAlert>
+                            </MudExpansionPanel>
+                        </MudExpansionPanels>
+                    </div>
+
+                    <div class="login-info">
+                        <MudText Typo="Typo.body2" Class="text-center" Color="Color.Tertiary">Sign in with your Plex account to request movies and TV shows</MudText>
+                        <MudDivider Class="my-3" />
+                        <div class="benefits-list">
+                            <div class="benefit-item"><MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" /><MudText Typo="Typo.caption">Request unlimited movies and shows</MudText></div>
+                            <div class="benefit-item"><MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" /><MudText Typo="Typo.caption">Track request status in real-time</MudText></div>
+                            <div class="benefit-item"><MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" /><MudText Typo="Typo.caption">Get notified when content is available</MudText></div>
+                        </div>
+                    </div>
+                }
+            </MudPaper>
+
+            <div class="login-footer">
+                <MudLink Href="/about" Color="Color.Inherit">About</MudLink>
+                <MudLink Href="/privacy" Color="Color.Inherit">Privacy</MudLink>
+                <MudLink Href="/terms" Color="Color.Inherit">Terms</MudLink>
+            </div>
+        </MudContainer>
+    </div>
+</div>
+
+@code {
+    private bool _isProcessing;
+    private string _processingMessage = "Connecting to Plex...";
+    private bool _showCancelButton;
+    private string _manualToken = string.Empty;
+    private bool _showToken;
+    private bool _isDevelopment;
+    private CancellationTokenSource? _cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (authState.User.Identity?.IsAuthenticated == true)
+        {
+            Navigation.NavigateTo("/");
+            return;
+        }
+
+        var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        if (uri.LocalPath.EndsWith("/auth/callback", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleOAuthCallback();
+        }
+
+        #if DEBUG
+        _isDevelopment = true;
+        #endif
+    }
+
+    private async Task SignInWithPlex()
+    {
+        _isProcessing = true;
+        _processingMessage = "Connecting to Plex...";
+        StateHasChanged();
+        try
+        {
+            var flow = await PlexAuthService.BeginAuthenticationAsync();
+            if (!flow.Success)
+            {
+                await ToastService.ShowErrorAsync(flow.ErrorMessage ?? "Failed to start authentication");
+                _isProcessing = false; return;
+            }
+
+            _processingMessage = "Opening Plex sign-in window..."; StateHasChanged();
+            var opened = await PlexAuthService.OpenAuthenticationWindowAsync(flow.AuthenticationUrl);
+            if (!opened)
+            {
+                Navigation.NavigateTo(flow.AuthenticationUrl, true);
+                return;
+            }
+
+            _processingMessage = "Waiting for authentication..."; _showCancelButton = true; StateHasChanged();
+            _cts = new CancellationTokenSource();
+            var result = await PlexAuthService.PollForAuthenticationAsync(flow.PinId, _cts.Token);
+            if (result.Success)
+            {
+                await CompleteAuthentication(result.AuthToken, result.User?.Username ?? "");
+            }
+            else
+            {
+                await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Authentication failed");
+                _isProcessing = false;
+            }
+        }
+        catch
+        {
+            await ToastService.ShowErrorAsync("An error occurred during authentication");
+            _isProcessing = false;
+        }
+        finally
+        {
+            _cts?.Dispose(); _cts = null; _showCancelButton = false;
+        }
+    }
+
+    private async Task SignInWithToken()
+    {
+        if (string.IsNullOrWhiteSpace(_manualToken)) return;
+        _isProcessing = true; _processingMessage = "Validating token..."; StateHasChanged();
+        try
+        {
+            var user = await PlexAuthService.GetPlexUserAsync(_manualToken);
+            if (user == null)
+            { await ToastService.ShowErrorAsync("Invalid Plex token"); _isProcessing = false; return; }
+            await CompleteAuthentication(_manualToken, user.Username);
+        }
+        catch
+        {
+            await ToastService.ShowErrorAsync("Failed to validate token"); _isProcessing = false;
+        }
+    }
+
+    private async Task CompleteAuthentication(string plexToken, string plexUsername)
+    {
+        _processingMessage = "Completing sign-in..."; StateHasChanged();
+        var result = await AuthStateProvider.AuthenticateWithPlexAsync(plexToken, plexUsername);
+        if (result.Success)
+        {
+            await ToastService.ShowSuccessAsync($"Welcome back, {result.User?.DisplayName ?? plexUsername}!");
+            Navigation.NavigateTo("/");
+        }
+        else
+        {
+            await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Authentication failed");
+            _isProcessing = false;
+        }
+    }
+
+    private async Task HandleOAuthCallback()
+    {
+        _isProcessing = true; _processingMessage = "Processing authentication..."; StateHasChanged();
+        await Task.Delay(500);
+        _isProcessing = false;
+    }
+
+    private void CancelAuthentication()
+    {
+        _cts?.Cancel(); _isProcessing = false; _showCancelButton = false; StateHasChanged();
+    }
+
+    private void ToggleTokenVisibility() => _showToken = !_showToken;
+
+    private async Task DemoSignIn()
+    {
+        _isProcessing = true; _processingMessage = "Signing in as demo..."; StateHasChanged();
+        await Task.Delay(300);
+        var result = await AuthStateProvider.AuthenticateWithPlexAsync("demo-token", "demo-user");
+        if (result.Success)
+        {
+            await ToastService.ShowSuccessAsync("Signed in as demo user");
+            Navigation.NavigateTo("/");
+        }
+        else
+        {
+            await ToastService.ShowErrorAsync("Demo sign-in failed");
+            _isProcessing = false;
+        }
+    }
+}
+
+<style>
+    .login-container { position: relative; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .background-wrapper { position: absolute; inset: 0; overflow: hidden; }
+    .background-image { position: absolute; inset: 0; background-size: cover; background-position: center; filter: brightness(0.3); }
+    .gradient-overlay { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(0,0,0,.8) 0%, rgba(20,20,20,.95) 100%); }
+    .login-content { position: relative; z-index: 1; width: 100%; padding: 2rem; }
+    .login-card { background: rgba(0,0,0,.85) !important; backdrop-filter: blur(10px); padding: 3rem 2rem; border-radius: 8px; }
+    .login-header { text-align: center; margin-bottom: 2rem; }
+    .brand-title { color: #E50914; font-weight: 900; letter-spacing: -2px; margin-bottom: 1rem; }
+    .login-title { color: #fff; font-weight: 500; }
+    .auth-processing { text-align: center; padding: 3rem 0; }
+    .plex-button { background: linear-gradient(45deg, #E5A00D 30%, #F9BE03 90%) !important; color: #000 !important; font-weight: 600; padding: 12px 24px !important; }
+    .manual-entry { background: transparent !important; }
+    .login-info { margin-top: 2rem; padding-top: 1rem; }
+    .benefits-list { display: flex; flex-direction: column; gap: .75rem; margin-top: 1rem; }
+    .benefit-item { display: flex; align-items: center; gap: .75rem; }
+    .login-footer { display: flex; justify-content: center; gap: 2rem; margin-top: 2rem; opacity: .7; }
+    @@media (max-width: 600px) { .login-card { padding: 2rem 1.5rem; } .brand-title { font-size: 2rem; } }
+</style>

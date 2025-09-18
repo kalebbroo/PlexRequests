@@ -1,0 +1,165 @@
+@page "/"
+@page "/dashboard"
+@attribute [Authorize]
+@inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
+@inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
+@inject PlexRequestsHosted.Services.Abstractions.IUserProfileService UserProfileService
+@inject NavigationManager Navigation
+
+<PageTitle>Dashboard - Plex Requests</PageTitle>
+
+<div class="dashboard-container">
+    @if (_featured != null)
+    {
+        <div class="hero-section" style="background-image: url('@_featured.BackdropUrl')">
+            <div class="hero-overlay"></div>
+            <div class="hero-content">
+                <MudContainer MaxWidth="MaxWidth.Large">
+                    <div class="hero-info">
+                        <MudText Typo="Typo.h1" Class="hero-title">@_featured.Title</MudText>
+                        @if (!string.IsNullOrEmpty(_featured.Tagline))
+                        {
+                            <MudText Typo="Typo.h5" Class="hero-tagline">@_featured.Tagline</MudText>
+                        }
+                        <MudText Typo="Typo.body1" Class="hero-overview">@_featured.Overview</MudText>
+                        <div class="hero-actions">
+                            @if (_featured.IsAvailable)
+                            {
+                                <MudButton Variant="Variant.Filled" Color="Color.Surface" Size="Size.Large" StartIcon="@Icons.Material.Filled.PlayArrow" @onclick="() => WatchMedia(_featured)">Play</MudButton>
+                            }
+                            else
+                            {
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large" StartIcon="@Icons.Material.Filled.Add" @onclick="() => RequestMedia(_featured)">Request</MudButton>
+                            }
+                            <MudButton Variant="Variant.Outlined" Color="Color.Surface" Size="Size.Large" StartIcon="@Icons.Material.Filled.Info" @onclick="() => ShowDetails(_featured)">More Info</MudButton>
+                        </div>
+                    </div>
+                </MudContainer>
+            </div>
+        </div>
+    }
+
+    <div class="dashboard-content">
+        <MudContainer MaxWidth="MaxWidth.Large">
+            @if (_userStats != null)
+            {
+                <div class="stats-section">
+                    <MudGrid>
+                        <MudItem xs="6" sm="3"><MudPaper Class="stat-card" Elevation="0"><MudIcon Icon="@Icons.Material.Filled.HourglassEmpty" Color="Color.Warning" /><MudText Typo="Typo.h4">@_userStats.PendingRequests</MudText><MudText Typo="Typo.caption">Pending</MudText></MudPaper></MudItem>
+                        <MudItem xs="6" sm="3"><MudPaper Class="stat-card" Elevation="0"><MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" /><MudText Typo="Typo.h4">@_userStats.ApprovedRequests</MudText><MudText Typo="Typo.caption">Approved</MudText></MudPaper></MudItem>
+                        <MudItem xs="6" sm="3"><MudPaper Class="stat-card" Elevation="0"><MudIcon Icon="@Icons.Material.Filled.PlayCircle" Color="Color.Info" /><MudText Typo="Typo.h4">@_userStats.AvailableRequests</MudText><MudText Typo="Typo.caption">Available</MudText></MudPaper></MudItem>
+                        <MudItem xs="6" sm="3"><MudPaper Class="stat-card" Elevation="0"><MudIcon Icon="@Icons.Material.Filled.Movie" Color="Color.Primary" /><MudText Typo="Typo.h4">@_userStats.TotalRequests</MudText><MudText Typo="Typo.caption">Total</MudText></MudPaper></MudItem>
+                    </MudGrid>
+                </div>
+            }
+
+            @if (_recentlyAdded?.Any() == true)
+            {
+                <MudText Typo="Typo.h5" Class="mb-2">Recently Added</MudText>
+                <MudGrid Class="mb-6">
+                    @foreach (var item in _recentlyAdded)
+                    {
+                        <MudItem xs="6" sm="4" md="3" lg="2">
+                            <MediaCard Media="item" />
+                        </MudItem>
+                    }
+                </MudGrid>
+            }
+
+            @if (_trending?.Any() == true)
+            {
+                <MudText Typo="Typo.h5" Class="mb-2">Trending Now</MudText>
+                <MudGrid Class="mb-6">
+                    @foreach (var item in _trending)
+                    {
+                        <MudItem xs="6" sm="4" md="3" lg="2">
+                            <MediaCard Media="item" />
+                        </MudItem>
+                    }
+                </MudGrid>
+            }
+
+            @if (_watchlist?.Any() == true)
+            {
+                <MudText Typo="Typo.h5" Class="mb-2">My Watchlist</MudText>
+                <MudGrid Class="mb-6">
+                    @foreach (var item in _watchlist)
+                    {
+                        <MudItem xs="6" sm="4" md="3" lg="2">
+                            <MediaCard Media="item" />
+                        </MudItem>
+                    }
+                </MudGrid>
+            }
+        </MudContainer>
+    </div>
+</div>
+
+@code {
+    private PlexRequestsHosted.Shared.DTOs.MediaDetailDto? _featured;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _recentlyAdded;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _trending;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _watchlist;
+    private PlexRequestsHosted.Shared.DTOs.UserStatsDto? _userStats;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load dashboard data (mocked by services for now)
+        var recentlyTask = PlexApiService.GetRecentlyAddedAsync(10);
+        var trendingTask = PlexApiService.SearchMediaAsync("", null);
+        var statsTask = MediaRequestService.GetMyStatsAsync();
+        var watchTask = MediaRequestService.GetWatchlistAsync();
+
+        await Task.WhenAll(recentlyTask, trendingTask, statsTask, watchTask);
+
+        _recentlyAdded = recentlyTask.Result;
+        _trending = trendingTask.Result;
+        _userStats = statsTask.Result;
+        _watchlist = watchTask.Result;
+
+        if (_trending?.Any() == true)
+        {
+            var first = _trending.First();
+            _featured = await PlexApiService.GetMediaDetailsAsync(first.Id, first.MediaType) ?? new()
+            {
+                Id = first.Id,
+                Title = first.Title,
+                Overview = first.Overview,
+                BackdropUrl = first.BackdropUrl,
+                IsAvailable = first.IsAvailable,
+                MediaType = first.MediaType
+            };
+        }
+    }
+
+    private void ShowDetails(PlexRequestsHosted.Shared.DTOs.MediaDetailDto media)
+        => Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLower()}/{media.Id}");
+
+    private async Task RequestMedia(PlexRequestsHosted.Shared.DTOs.MediaDetailDto media)
+    {
+        var result = await MediaRequestService.RequestMediaAsync(media.Id, media.MediaType);
+        if (result.Success) { /* optionally notify */ }
+    }
+
+    private void WatchMedia(PlexRequestsHosted.Shared.DTOs.MediaDetailDto media)
+    {
+        if (!string.IsNullOrEmpty(media.PlexUrl)) Navigation.NavigateTo(media.PlexUrl, true);
+    }
+}
+
+<style>
+.dashboard-container { min-height: 100vh; background: #141414; }
+.hero-section { position: relative; height: 70vh; min-height: 500px; background-size: cover; background-position: center; margin-top: -56px; }
+.hero-overlay { position: absolute; inset: 0; background: linear-gradient(to right, rgba(0,0,0,.8) 0%, rgba(0,0,0,.4) 50%, rgba(0,0,0,.8) 100%); }
+.hero-content { position: relative; height: 100%; display: flex; align-items: center; }
+.hero-info { max-width: 600px; color: white; }
+.hero-title { font-size: 4rem !important; font-weight: 900; margin-bottom: 1rem; text-shadow: 2px 2px 4px rgba(0,0,0,.8); }
+.hero-tagline { font-size: 1.5rem !important; margin-bottom: 1rem; opacity: .9; }
+.hero-overview { font-size: 1.125rem; line-height: 1.6; margin-bottom: 2rem; opacity: .95; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.hero-actions { display: flex; gap: 1rem; }
+.dashboard-content { padding: 2rem 0 4rem; }
+.stats-section { margin-bottom: 3rem; }
+.stat-card { background: rgba(255,255,255,.05) !important; padding: 1.5rem; text-align: center; transition: transform .2s ease; }
+.stat-card:hover { transform: translateY(-4px); background: rgba(255,255,255,.08) !important; }
+.mb-6 { margin-bottom: 3rem; }
+</style>

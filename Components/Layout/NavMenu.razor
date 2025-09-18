@@ -1,0 +1,52 @@
+@inject PlexRequestsHosted.Services.Abstractions.IAuthService AuthService
+@inject NavigationManager Navigation
+
+<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="/">Plex Requests</a>
+        <div class="d-flex align-items-center gap-3">
+            <AuthorizeView>
+                <Authorized>
+                    <a class="nav-link" href="/requests">My Requests</a>
+                    <a class="nav-link" href="/search">Search</a>
+                    <button class="btn btn-sm btn-outline-light" @onclick="Logout">Logout</button>
+                </Authorized>
+                <NotAuthorized>
+                    <a class="btn btn-sm btn-warning" href="/login">Login</a>
+                </NotAuthorized>
+            </AuthorizeView>
+        </div>
+    </div>
+</div>
+
+<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+
+<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    <nav class="nav flex-column">
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="/" Match="NavLinkMatch.All">Home</NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="/search">Search</NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <AuthorizeView>
+                <Authorized>
+                    <NavLink class="nav-link" href="/requests">My Requests</NavLink>
+                </Authorized>
+                <NotAuthorized>
+                    <NavLink class="nav-link" href="/login">Login</NavLink>
+                </NotAuthorized>
+            </AuthorizeView>
+        </div>
+    </nav>
+</div>
+
+@code {
+    private async Task Logout()
+    {
+        await AuthService.SignOutAsync();
+        Navigation.NavigateTo("/login", forceLoad: false);
+    }
+}
+
