@@ -27,11 +27,27 @@ public class CustomAuthStateProvider(ISessionStorageService sessionStorage, Http
             if (string.IsNullOrEmpty(token))
                 return new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
 
-            // Very naive token handling just for scaffolding
-            var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.Name, "User") }, "jwt");
+            // Load stored user info (if available) so we can set a meaningful identity name
+            string displayName = "User";
+            try
+            {
+                var plexUser = await _sessionStorage.GetItemAsync<UserDto>(USER_DATA_KEY);
+                if (plexUser is not null && !string.IsNullOrWhiteSpace(plexUser.Username))
+                    displayName = plexUser.Username;
+            }
+            catch { /* ignore deserialization issues and stick with default */ }
+
+            var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.Name, displayName) }, "jwt");
             var user = new ClaimsPrincipal(identity);
             _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
             return new AuthenticationState(user);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("JavaScript interop calls cannot be issued", StringComparison.OrdinalIgnoreCase))
+        {
+            // During prerender/static rendering, JS interop (session storage) is unavailable.
+            // Return unauthenticated without logging an error to avoid noisy startup failures.
+            _logger.LogDebug(ex, "GetAuthenticationState deferred due to prerender (JS interop unavailable)");
+            return new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
         }
         catch (Exception ex)
         {

@@ -1,4 +1,4 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
 
 <div class="page">
     <div class="sidebar">
@@ -11,7 +11,17 @@
         </div>
 
         <article class="content px-4">
-            @Body
+            <div style="padding:.5rem 0; color:#444">[Diag] MainLayout loaded — if you see this but no page content, the page component may be failing to render.</div>
+            <ErrorBoundary>
+                <ChildContent>
+                    @Body
+                </ChildContent>
+                <ErrorContent>
+                    <MudAlert Severity="Severity.Error" Class="mt-3">
+                        A rendering error occurred in the page component. Please check the browser console for details.
+                    </MudAlert>
+                </ErrorContent>
+            </ErrorBoundary>
         </article>
     </main>
 </div>

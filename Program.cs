@@ -20,6 +20,8 @@ builder.Services.AddRazorComponents()
 builder.Services.AddMudServices();
 builder.Services.AddBlazoredLocalStorage();
 builder.Services.AddBlazoredSessionStorage();
+// HTTP client for services that depend on HttpClient
+builder.Services.AddHttpClient();
 
 // AuthN/AuthZ
 builder.Services.AddAuthorization();

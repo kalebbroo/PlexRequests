@@ -1,5 +1,6 @@
 @page "/requests"
-@attribute [Authorize]
+@* TODO(auth): Re-enable route protection with [Authorize] when server-side authentication is configured.
+   Previously: @attribute [Authorize] *@
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 
 <PageTitle>My Requests</PageTitle>

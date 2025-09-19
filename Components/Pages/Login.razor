@@ -204,7 +204,7 @@
     {
         _isProcessing = true; _processingMessage = "Signing in as demo..."; StateHasChanged();
         await Task.Delay(300);
-        var result = await AuthStateProvider.AuthenticateWithPlexAsync("demo-token", "demo-user");
+        var result = await AuthStateProvider.AuthenticateWithPlexAsync("demo-token", "demo");
         if (result.Success)
         {
             await ToastService.ShowSuccessAsync("Signed in as demo user");
