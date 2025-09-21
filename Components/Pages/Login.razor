@@ -1,7 +1,8 @@
 @page "/login"
 @page "/auth/callback"
+@using PlexRequestsHosted.Services.Auth
 @inject PlexRequestsHosted.Services.Abstractions.IPlexAuthService PlexAuthService
-@inject PlexRequestsHosted.Services.Auth.CustomAuthStateProvider AuthStateProvider
+@inject AuthenticationStateProvider AuthStateProvider
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject NavigationManager Navigation
 
@@ -89,7 +90,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var authState = await ((CustomAuthStateProvider)AuthStateProvider).GetAuthenticationStateAsync();
         if (authState.User.Identity?.IsAuthenticated == true)
         {
             Navigation.NavigateTo("/");
@@ -173,7 +174,7 @@
     private async Task CompleteAuthentication(string plexToken, string plexUsername)
     {
         _processingMessage = "Completing sign-in..."; StateHasChanged();
-        var result = await AuthStateProvider.AuthenticateWithPlexAsync(plexToken, plexUsername);
+        var result = await ((CustomAuthStateProvider)AuthStateProvider).AuthenticateWithPlexAsync(plexToken, plexUsername);
         if (result.Success)
         {
             await ToastService.ShowSuccessAsync($"Welcome back, {result.User?.DisplayName ?? plexUsername}!");
@@ -204,7 +205,7 @@
     {
         _isProcessing = true; _processingMessage = "Signing in as demo..."; StateHasChanged();
         await Task.Delay(300);
-        var result = await AuthStateProvider.AuthenticateWithPlexAsync("demo-token", "demo");
+        var result = await ((CustomAuthStateProvider)AuthStateProvider).AuthenticateWithPlexAsync("demo-token", "demo");
         if (result.Success)
         {
             await ToastService.ShowSuccessAsync("Signed in as demo user");
@@ -226,7 +227,7 @@
     .login-content { position: relative; z-index: 1; width: 100%; padding: 2rem; }
     .login-card { background: rgba(0,0,0,.85) !important; backdrop-filter: blur(10px); padding: 3rem 2rem; border-radius: 8px; }
     .login-header { text-align: center; margin-bottom: 2rem; }
-    .brand-title { color: #E50914; font-weight: 900; letter-spacing: -2px; margin-bottom: 1rem; }
+    .brand-title { color: #E5A00D; font-weight: 900; letter-spacing: -2px; margin-bottom: 1rem; }
     .login-title { color: #fff; font-weight: 500; }
     .auth-processing { text-align: center; padding: 3rem 0; }
     .plex-button { background: linear-gradient(45deg, #E5A00D 30%, #F9BE03 90%) !important; color: #000 !important; font-weight: 600; padding: 12px 24px !important; }

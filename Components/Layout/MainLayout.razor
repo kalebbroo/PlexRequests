@@ -6,14 +6,13 @@
 
 <CascadingAuthenticationState>
     <div class="app-container">
-    <header class="app-header @(_scrolled ? "scrolled" : "")" @onscroll="HandleScroll">
+    <header class="app-header @(_isHomepage && !_scrolled ? "transparent" : "") @(_scrolled ? "scrolled" : "")" @onscroll="HandleScroll">
         <div class="header-content">
             <div class="header-left">
                 <a href="/" class="brand-logo">
                     <MudText Typo="Typo.h5" Class="brand-text">PLEX REQUEST</MudText>
                 </a>
                 <nav class="main-nav desktop-only">
-                    <NavLink href="/" Match="NavLinkMatch.All" class="nav-item">Home</NavLink>
                     <NavLink href="/browse/movie" class="nav-item">Movies</NavLink>
                     <NavLink href="/browse/tvshow" class="nav-item">TV Shows</NavLink>
                     <NavLink href="/requests" class="nav-item">My Requests</NavLink>
@@ -22,15 +21,45 @@
             </div>
             
             <div class="header-right">
-                <div class="search-container desktop-only">
+                <div class="search-container desktop-only @(_searchOpen ? "open" : "")">
                     <MudIconButton Icon="@Icons.Material.Filled.Search" Color="Color.Inherit" OnClick="ToggleSearch" />
                     @if (_searchOpen)
                     {
-                        <input type="text" class="search-input" placeholder="Titles, genres, people" @onblur="CloseSearch" />
+                        <input type="text" class="search-input" placeholder="Titles, genres, people" @onblur="CloseSearch" @onkeydown="HandleSearchKeyDown" @bind-value="_searchQuery" />
                     }
                 </div>
                 
-                <MudIconButton Icon="@Icons.Material.Filled.Notifications" Color="Color.Inherit" Class="desktop-only" />
+                <MudIconButton Icon="@Icons.Material.Filled.Notifications"
+                               Color="Color.Inherit"
+                               Class="desktop-only notification-btn"
+                               BadgeColor="Color.Error"
+                               BadgeText="@(_notificationCount > 0 ? _notificationCount.ToString() : null)">
+                    <MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft">
+                        <ActivatorContent>
+                            <MudIconButton Icon="@Icons.Material.Filled.Notifications" Color="Color.Inherit" />
+                        </ActivatorContent>
+                        <ChildContent>
+                            @if (_notifications.Any())
+                            {
+                                @foreach (var notification in _notifications)
+                                {
+                                    <MudMenuItem>
+                                        <div class="notification-item">
+                                            <MudText Typo="Typo.body2">@notification.Message</MudText>
+                                            <MudText Typo="Typo.caption" Class="text-secondary">@notification.Time.ToString("HH:mm")</MudText>
+                                        </div>
+                                    </MudMenuItem>
+                                }
+                                <MudDivider />
+                                <MudMenuItem OnClick="ClearNotifications">Clear All</MudMenuItem>
+                            }
+                            else
+                            {
+                                <MudMenuItem Disabled="true">No new notifications</MudMenuItem>
+                            }
+                        </ChildContent>
+                    </MudMenu>
+                </MudIconButton>
                 
                 <AuthorizeView>
                     <Authorized>
@@ -62,7 +91,6 @@
     {
         <div class="mobile-menu">
             <nav class="mobile-nav">
-                <NavLink href="/" Match="NavLinkMatch.All" class="mobile-nav-item" @onclick="CloseMobileMenu">Home</NavLink>
                 <NavLink href="/browse/movie" class="mobile-nav-item" @onclick="CloseMobileMenu">Movies</NavLink>
                 <NavLink href="/browse/tvshow" class="mobile-nav-item" @onclick="CloseMobileMenu">TV Shows</NavLink>
                 <NavLink href="/requests" class="mobile-nav-item" @onclick="CloseMobileMenu">My Requests</NavLink>
@@ -113,14 +141,51 @@
     private bool _scrolled = false;
     private bool _searchOpen = false;
     private bool _mobileMenuOpen = false;
+    private bool _isHomepage = false;
     private System.Timers.Timer? _scrollTimer;
     private string? _userAvatar;
+    private string _searchQuery = string.Empty;
+    private int _notificationCount = 0;
+    private List<NotificationItem> _notifications = new();
+
+    private class NotificationItem
+    {
+        public string Message { get; set; } = string.Empty;
+        public DateTime Time { get; set; }
+        public NotificationType Type { get; set; }
+    }
+
+    private enum NotificationType
+    {
+        Info,
+        Success,
+        Warning,
+        Error
+    }
 
     protected override void OnInitialized()
     {
         _scrollTimer = new System.Timers.Timer(100);
         _scrollTimer.Elapsed += CheckScroll;
         _scrollTimer.Start();
+
+        // Check if we're on the homepage
+        _isHomepage = Navigation.Uri.EndsWith("/") || Navigation.Uri.EndsWith("/index");
+
+        // Add some demo notifications
+        _notifications.Add(new NotificationItem
+        {
+            Message = "Your request for 'The Dark Knight' has been approved!",
+            Time = DateTime.Now.AddMinutes(-30),
+            Type = NotificationType.Success
+        });
+        _notifications.Add(new NotificationItem
+        {
+            Message = "New movies available in your watchlist",
+            Time = DateTime.Now.AddHours(-2),
+            Type = NotificationType.Info
+        });
+        _notificationCount = _notifications.Count;
     }
 
     private void CheckScroll(object? sender, System.Timers.ElapsedEventArgs e)
@@ -143,6 +208,20 @@
     private void CloseSearch()
     {
         _searchOpen = false;
+        _searchQuery = string.Empty;
+    }
+
+    private void HandleSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_searchQuery))
+        {
+            Navigation.NavigateTo($"/search?q={Uri.EscapeDataString(_searchQuery)}");
+            CloseSearch();
+        }
+        else if (e.Key == "Escape")
+        {
+            CloseSearch();
+        }
     }
 
     private void ToggleMobileMenu()
@@ -159,6 +238,13 @@
     {
         await AuthService.SignOutAsync();
         Navigation.NavigateTo("/", true);
+    }
+
+    private void ClearNotifications()
+    {
+        _notifications.Clear();
+        _notificationCount = 0;
+        StateHasChanged();
     }
 
     public void Dispose()

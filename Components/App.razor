@@ -7,6 +7,7 @@
     <base href="/" />
     <link rel="stylesheet" href="@Assets["lib/bootstrap/dist/css/bootstrap.min.css"]" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["css/site.css"]" />
     <link rel="stylesheet" href="@Assets["PlexRequestsHosted.styles.css"]" />
     <link rel="stylesheet" href="_content/MudBlazor/MudBlazor.min.css" />
     <ImportMap />
@@ -34,18 +35,23 @@
     {
         PaletteDark = new PaletteDark()
         {
-            Primary = "#E50914",
-            Secondary = "#564d4d",
-            Background = "#141414",
-            Surface = "#181818",
+            Primary = "#E5A00D",          // Plex Orange
+            PrimaryContrastText = "#000000", // Black text on orange
+            Secondary = "#CC8A0B",        // Plex Dark Orange
+            Background = "#141414",      // bg-primary
+            Surface = "#181818",         // bg-secondary
             AppbarBackground = "rgba(20, 20, 20, 0)",
             AppbarText = "#FFFFFF",
             TextPrimary = "#FFFFFF",
             TextSecondary = "#B3B3B3",
             ActionDefault = "#B3B3B3",
             ActionDisabled = "#4B4B4B",
-            Divider = "#404040",
-            DividerLight = "#2A2A2A"
+            Divider = "rgba(255,255,255,0.1)",
+            DividerLight = "#2A2A2A",
+            Success = "#46d369",
+            Warning = "#ffa500",
+            Error = "#f44336",
+            Info = "#2196f3"
         },
         Typography = new Typography()
         {

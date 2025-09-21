@@ -1,26 +1,26 @@
 .media-tile {
     position: relative;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     overflow: visible;
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all var(--transition-normal);
 }
 
 .media-tile:hover {
-    z-index: 50;
+    z-index: var(--z-tooltip);
 }
 
 .media-tile.expanded {
     transform: scale(1.4);
-    z-index: 100;
+    z-index: var(--z-modal);
 }
 
 .tile-poster {
     position: relative;
     aspect-ratio: 2/3;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
-    background-color: var(--surface-bg);
+    background-color: var(--bg-tertiary);
 }
 
 .tile-poster img {
@@ -35,17 +35,17 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+    background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
     color: var(--text-secondary);
 }
 
 .status-badge {
     position: absolute;
-    top: 0.5rem;
-    right: 0.5rem;
+    top: var(--spacing-sm);
+    right: var(--spacing-sm);
     width: 28px;
     height: 28px;
-    border-radius: 50%;
+    border-radius: var(--radius-full);
     background-color: rgba(0,0,0,0.8);
     display: flex;
     align-items: center;

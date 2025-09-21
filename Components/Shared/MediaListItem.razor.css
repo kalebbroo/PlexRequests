@@ -1,16 +1,16 @@
 .list-item {
     display: flex;
-    gap: 1.5rem;
-    padding: 1rem;
-    background-color: var(--surface-bg);
-    border-radius: 8px;
+    gap: var(--spacing-2xl);
+    padding: var(--spacing-lg);
+    background-color: var(--bg-tertiary);
+    border-radius: var(--radius-md);
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: all var(--transition-normal);
     position: relative;
 }
 
 .list-item:hover {
-    background-color: var(--surface-hover);
+    background-color: var(--bg-hover);
     transform: translateX(4px);
 }
 
@@ -18,7 +18,7 @@
     flex-shrink: 0;
     width: 120px;
     aspect-ratio: 2/3;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
 }
 
@@ -34,7 +34,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+    background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
     color: var(--text-secondary);
 }
 
@@ -42,7 +42,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: var(--spacing-md);
     min-width: 0; /* Allow text truncation */
 }
 

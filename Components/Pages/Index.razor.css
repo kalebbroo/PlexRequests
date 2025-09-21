@@ -1,7 +1,8 @@
+/* Homepage Styles */
 .homepage {
-    background-color: var(--dark-bg);
     min-height: 100vh;
-    margin-top: -68px;
+    background-color: var(--bg-primary);
+    margin-top: -68px; /* Offset header height */
 }
 
 /* Hero Billboard Section */
@@ -11,6 +12,8 @@
     min-height: 500px;
     max-height: 800px;
     overflow: hidden;
+    display: flex;
+    align-items: center;
 }
 
 .billboard-background {
@@ -19,6 +22,7 @@
     left: 0;
     right: 0;
     bottom: 0;
+    overflow: hidden;
 }
 
 .billboard-image {
@@ -34,11 +38,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: linear-gradient(90deg, 
-        rgba(20,20,20,0.95) 0%, 
-        rgba(20,20,20,0.7) 30%, 
-        rgba(20,20,20,0.3) 50%, 
-        rgba(20,20,20,0.4) 100%);
+    background: linear-gradient(90deg, rgba(20,20,20,0.95) 0%, rgba(20,20,20,0.7) 30%, rgba(20,20,20,0.3) 50%, rgba(20,20,20,0.4) 100%);
 }
 
 .billboard-fade {
@@ -47,49 +47,45 @@
     left: 0;
     right: 0;
     height: 200px;
-    background: linear-gradient(to top, var(--dark-bg) 0%, transparent 100%);
+    background: linear-gradient(to top, var(--bg-primary) 0%, transparent 100%);
 }
 
 .billboard-content {
     position: relative;
+    z-index: 2;
+    width: 100%;
     height: 100%;
     display: flex;
     align-items: center;
-    padding: 0 4%;
-    max-width: 1920px;
-    margin: 0 auto;
 }
 
 .billboard-info {
     max-width: 600px;
-    z-index: 1;
-    animation: fadeInUp 1s ease;
-}
-
-.billboard-logo {
-    width: 100%;
-    max-width: 400px;
-    height: auto;
-    margin-bottom: 1.5rem;
+    color: var(--text-primary);
+    text-align: left; /* Fix: Ensure left alignment */
+    animation: slideInUp 1s ease;
 }
 
 .billboard-title {
     font-size: clamp(2.5rem, 6vw, 4.5rem);
     font-weight: 900;
-    margin-bottom: 1rem;
+    margin: 0 0 var(--spacing-md);
+    line-height: 1.1;
     text-shadow: 2px 2px 8px rgba(0,0,0,0.8);
 }
 
 .billboard-tagline {
     font-size: 1.25rem;
     color: var(--text-secondary);
-    margin-bottom: 1rem;
+    margin: 0 0 var(--spacing-lg);
+    opacity: 0.9;
 }
 
 .billboard-description {
     font-size: 1.125rem;
     line-height: 1.6;
-    margin-bottom: 1.5rem;
+    margin: 0 0 var(--spacing-lg);
+    color: var(--text-secondary);
     display: -webkit-box;
     -webkit-line-clamp: 4;
     -webkit-box-orient: vertical;
@@ -100,73 +96,78 @@
 .billboard-metadata {
     display: flex;
     align-items: center;
-    gap: 1rem;
-    margin-bottom: 2rem;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-xl);
+    flex-wrap: wrap;
 }
 
 .metadata-item {
     display: flex;
     align-items: center;
-    gap: 0.25rem;
+    gap: var(--spacing-xs);
     color: var(--text-secondary);
+    font-size: 0.875rem;
 }
 
 .metadata-badge {
-    padding: 0.25rem 0.5rem;
+    padding: var(--spacing-xs) var(--spacing-sm);
     border: 1px solid var(--text-secondary);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: 0.875rem;
+    color: var(--text-secondary);
 }
 
 .billboard-actions {
     display: flex;
-    gap: 1rem;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
 }
 
-.btn-primary, .btn-secondary {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 2rem;
-    font-size: 1.125rem;
-    font-weight: 600;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
+    .billboard-actions .btn-primary {
+        background-color: var(--plex-orange) !important;
+        color: var(--plex-black) !important;
+        font-weight: 600;
+        padding: var(--spacing-sm) var(--spacing-xl);
+        border-radius: var(--radius-sm);
+        transition: all var(--transition-normal);
+    }
 
-.btn-primary {
-    background-color: white;
-    color: black;
-}
+        .billboard-actions .btn-primary:hover {
+            background-color: var(--plex-dark-orange) !important;
+            transform: translateY(-1px);
+        }
 
-.btn-primary:hover {
-    background-color: rgba(255,255,255,0.75);
-}
+    .billboard-actions .btn-secondary {
+        background-color: rgba(109,109,110,0.7) !important;
+        color: var(--plex-white) !important;
+        font-weight: 600;
+        padding: var(--spacing-sm) var(--spacing-xl);
+        border-radius: var(--radius-sm);
+        transition: all var(--transition-normal);
+        border: 1px solid rgba(255,255,255,0.3) !important;
+    }
 
-.btn-secondary {
-    background-color: rgba(109,109,110,0.7);
-    color: white;
-}
+        .billboard-actions .btn-secondary:hover {
+            background-color: rgba(109,109,110,0.4) !important;
+            transform: translateY(-1px);
+        }
 
-.btn-secondary:hover {
-    background-color: rgba(109,109,110,0.4);
-}
-
-/* Content Rows */
-.content-rows {
-    padding: 0 0 4rem;
-    margin-top: -100px;
+/* Content Sections */
+.content-sections {
     position: relative;
     z-index: 1;
+    padding: var(--spacing-3xl) 0 var(--spacing-3xl);
+    margin-top: 0; /* Fix: Remove margin to prevent overlap */
+    background: var(--bg-primary);
 }
 
-@keyframes fadeInUp {
+/* Animation for billboard info */
+@keyframes slideInUp {
     from {
         opacity: 0;
         transform: translateY(30px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -174,7 +175,21 @@
 }
 
 /* Responsive Design */
+@media (max-width: 1200px) {
+    .billboard-info {
+        max-width: 500px;
+    }
+
+    .billboard-title {
+        font-size: clamp(2rem, 5vw, 3.5rem);
+    }
+}
+
 @media (max-width: 768px) {
+    .homepage {
+        margin-top: -60px; /* Adjust for mobile header */
+    }
+
     .hero-billboard {
         height: 60vh;
         min-height: 400px;
@@ -182,27 +197,210 @@
 
     .billboard-info {
         max-width: 90%;
+        padding: var(--spacing-md);
     }
 
     .billboard-title {
         font-size: 2rem;
+        margin-bottom: var(--spacing-sm);
+    }
+
+    .billboard-tagline {
+        font-size: 1.125rem;
+        margin-bottom: var(--spacing-md);
     }
 
     .billboard-description {
         font-size: 1rem;
         -webkit-line-clamp: 3;
+        margin-bottom: var(--spacing-md);
     }
 
-    .btn-primary, .btn-secondary {
-        padding: 0.5rem 1.5rem;
-        font-size: 1rem;
+    .billboard-metadata {
+        margin-bottom: var(--spacing-lg);
+        gap: var(--spacing-sm);
     }
 
     .billboard-actions {
-        flex-wrap: wrap;
+        flex-direction: column;
+        gap: var(--spacing-sm);
+        width: 100%;
     }
 
-    .content-rows {
-        margin-top: -50px;
+        .billboard-actions .btn-primary,
+        .billboard-actions .btn-secondary {
+            width: 100%;
+            justify-content: center;
+            padding: var(--spacing-md) var(--spacing-lg);
+            font-size: 1rem;
+        }
+
+    .content-sections {
+        padding: var(--spacing-xl) 0;
+    }
+}
+
+@media (max-width: 480px) {
+    .billboard-title {
+        font-size: 1.75rem;
+    }
+
+    .billboard-tagline {
+        font-size: 1rem;
+    }
+
+    .billboard-description {
+        font-size: 0.9rem;
+    }
+
+    .billboard-metadata {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--spacing-xs);
+    }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    .billboard-gradient {
+        background: linear-gradient(90deg, rgba(0,0,0,0.98) 0%, rgba(0,0,0,0.85) 30%, rgba(0,0,0,0.6) 50%, rgba(0,0,0,0.7) 100%);
+    }
+
+    .billboard-title,
+    .billboard-tagline,
+    .billboard-description {
+        text-shadow: 2px 2px 4px rgba(0,0,0,1);
+    }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    .billboard-info {
+        animation: none;
+    }
+
+    .billboard-actions .btn-primary:hover,
+    .billboard-actions .btn-secondary:hover {
+        transform: none;
+    }
+}
+
+/* Landing Page Styles */
+.landing-hero {
+    position: relative;
+    height: 70vh;
+    min-height: 500px;
+    display: flex;
+    align-items: center;
+    background: linear-gradient(135deg, var(--plex-orange) 0%, var(--plex-dark-orange) 100%);
+}
+
+.landing-background {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow: hidden;
+    opacity: 0.1;
+}
+
+.landing-gradient {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(45deg, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.1) 100%);
+}
+
+.landing-content {
+    position: relative;
+    z-index: 2;
+    color: var(--plex-white);
+    text-align: center;
+}
+
+.landing-text {
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.landing-title {
+    font-size: clamp(2.5rem, 5vw, 4rem);
+    font-weight: 900;
+    margin-bottom: var(--spacing-lg);
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+}
+
+.landing-subtitle {
+    font-size: 1.25rem;
+    line-height: 1.6;
+    margin-bottom: var(--spacing-3xl);
+    opacity: 0.9;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+}
+
+.landing-actions {
+    display: flex;
+    gap: var(--spacing-lg);
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.landing-btn,
+.landing-btn-secondary {
+    min-width: 200px;
+}
+
+.demo-content {
+    padding: var(--spacing-3xl) 0;
+    background-color: var(--bg-primary);
+}
+
+.demo-notice {
+    margin-top: var(--spacing-3xl);
+    text-align: center;
+}
+
+.demo-alert {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+/* Mobile landing page adjustments */
+@media (max-width: 768px) {
+    .landing-hero {
+        height: 60vh;
+        min-height: 400px;
+        text-align: left;
+    }
+
+    .landing-content {
+        text-align: left;
+    }
+
+    .landing-text {
+        max-width: none;
+    }
+
+    .landing-title {
+        font-size: 2.5rem;
+    }
+
+    .landing-subtitle {
+        font-size: 1.125rem;
+        margin-bottom: var(--spacing-2xl);
+    }
+
+    .landing-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .landing-btn,
+    .landing-btn-secondary {
+        width: 100%;
+        min-width: unset;
     }
 }

@@ -10,157 +10,267 @@
 <PageTitle>Home - Plex Requests</PageTitle>
 
 <div class="homepage">
-    @if (_heroMedia != null)
-    {
-        <section class="hero-billboard">
-            <div class="billboard-background">
-                @if (!string.IsNullOrEmpty(_heroMedia.BackdropUrl))
-                {
-                    <img src="@_heroMedia.BackdropUrl" alt="" class="billboard-image" />
-                }
-                <div class="billboard-gradient"></div>
-                <div class="billboard-fade"></div>
-            </div>
-            
-            <div class="billboard-content">
-                <div class="billboard-info">
-                    <h1 class="billboard-title">@_heroMedia.Title</h1>
-                    
-                    @if (!string.IsNullOrEmpty(_heroMedia.Tagline))
-                    {
-                        <p class="billboard-tagline">@_heroMedia.Tagline</p>
-                    }
-                    
-                    <p class="billboard-description">@_heroMedia.Overview</p>
-                    
-                    <div class="billboard-metadata">
-                        @if (_heroMedia.Rating.HasValue)
-                        {
-                            <span class="metadata-item">
-                                <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" />
-                                @_heroMedia.Rating.Value.ToString("0.0")
-                            </span>
-                        }
-                        @if (_heroMedia.Year.HasValue)
-                        {
-                            <span class="metadata-item">@_heroMedia.Year</span>
-                        }
-                        @if (_heroMedia.ContentRating != null)
-                        {
-                            <span class="metadata-badge">@_heroMedia.ContentRating</span>
-                        }
-                        @if (_heroMedia.Runtime.HasValue)
-                        {
-                            <span class="metadata-item">@FormatRuntime(_heroMedia.Runtime.Value)</span>
-                        }
-                    </div>
-                    
-                    <div class="billboard-actions">
-                        @if (_heroMedia.IsAvailable)
-                        {
-                            <button class="btn-primary" @onclick="() => PlayMedia(_heroMedia)">
-                                <MudIcon Icon="@Icons.Material.Filled.PlayArrow" />
-                                <span>Play</span>
-                            </button>
-                        }
-                        else
-                        {
-                            <button class="btn-primary" @onclick="() => RequestMedia(_heroMedia)">
-                                <MudIcon Icon="@Icons.Material.Filled.Add" />
-                                <span>Request</span>
-                            </button>
-                        }
-                        <button class="btn-secondary" @onclick="() => ShowDetails(_heroMedia)">
-                            <MudIcon Icon="@Icons.Material.Filled.Info" />
-                            <span>More Info</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </section>
-    }
-
-    <div class="content-rows">
-        @if (_continueWatching?.Any() == true)
-        {
-            <MediaCarousel Title="Continue Watching" 
-                          Items="_continueWatching" 
-                          ShowProgress="true"
-                          OnItemClick="ShowDetails"
-                          OnPlayClick="PlayMedia"
-                          OnRequestClick="RequestMedia" />
-        }
-
-        @if (_trending?.Any() == true)
-        {
-            <MediaCarousel Title="Trending Now" 
-                          Items="_trending"
-                          Subtitle="Most requested this week"
-                          OnItemClick="ShowDetails"
-                          OnPlayClick="PlayMedia"
-                          OnRequestClick="RequestMedia" />
-        }
-
-        @if (_newReleases?.Any() == true)
-        {
-            <MediaCarousel Title="New Releases" 
-                          Items="_newReleases"
-                          OnItemClick="ShowDetails"
-                          OnPlayClick="PlayMedia"
-                          OnRequestClick="RequestMedia" />
-        }
-
-        @if (_topRatedMovies?.Any() == true)
-        {
-            <MediaCarousel Title="Top Rated Movies" 
-                          Items="_topRatedMovies"
-                          ShowRating="true"
-                          OnItemClick="ShowDetails"
-                          OnPlayClick="PlayMedia"
-                          OnRequestClick="RequestMedia" />
-        }
-
-        @if (_popularTvShows?.Any() == true)
-        {
-            <MediaCarousel Title="Popular TV Shows" 
-                          Items="_popularTvShows"
-                          OnItemClick="ShowDetails"
-                          OnPlayClick="PlayMedia"
-                          OnRequestClick="RequestMedia" />
-        }
-
-        @if (_myList?.Any() == true)
-        {
-            <MediaCarousel Title="My List" 
-                          Items="_myList"
-                          OnItemClick="ShowDetails"
-                          OnPlayClick="PlayMedia"
-                          OnRequestClick="RequestMedia" />
-        }
-
-        @foreach (String genre in _genreRows.Keys)
-        {
-            @if (_genreRows[genre]?.Any() == true)
+    <AuthorizeView>
+        <Authorized>
+            @* Full homepage for logged-in users *@
+            @if (_heroMedia != null)
             {
-                <MediaCarousel Title="@($"Because You Like {genre}")" 
-                              Items="_genreRows[genre]"
-                              OnItemClick="ShowDetails"
-                              OnPlayClick="PlayMedia"
-                              OnRequestClick="RequestMedia" />
-            }
-        }
+                <section class="hero-billboard">
+                    <div class="billboard-background">
+                        @if (!string.IsNullOrEmpty(_heroMedia.BackdropUrl))
+                        {
+                            <img src="@_heroMedia.BackdropUrl" alt="" class="billboard-image" />
+                        }
+                        <div class="billboard-gradient"></div>
+                        <div class="billboard-fade"></div>
+                    </div>
 
-        @if (_recentlyAdded?.Any() == true)
-        {
-            <MediaCarousel Title="Recently Added to Plex" 
-                          Items="_recentlyAdded"
-                          ShowBadge="true"
-                          BadgeText="NEW"
-                          OnItemClick="ShowDetails"
-                          OnPlayClick="PlayMedia"
-                          OnRequestClick="RequestMedia" />
-        }
-    </div>
+                    <div class="billboard-content">
+                        <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="container-padding">
+                            <div class="billboard-info">
+                                <h1 class="billboard-title">@_heroMedia.Title</h1>
+
+                                @if (!string.IsNullOrEmpty(_heroMedia.Tagline))
+                                {
+                                    <p class="billboard-tagline">@_heroMedia.Tagline</p>
+                                }
+
+                                <p class="billboard-description">@_heroMedia.Overview</p>
+
+                                <div class="billboard-metadata">
+                                    @if (_heroMedia.Rating.HasValue)
+                                    {
+                                        <span class="metadata-item">
+                                            <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" />
+                                            @_heroMedia.Rating.Value.ToString("0.0")
+                                        </span>
+                                    }
+                                    @if (_heroMedia.Year.HasValue)
+                                    {
+                                        <span class="metadata-item">@_heroMedia.Year</span>
+                                    }
+                                    @if (_heroMedia.ContentRating != null)
+                                    {
+                                        <span class="metadata-badge">@_heroMedia.ContentRating</span>
+                                    }
+                                    @if (_heroMedia.Runtime.HasValue)
+                                    {
+                                        <span class="metadata-item">@FormatRuntime(_heroMedia.Runtime.Value)</span>
+                                    }
+                                </div>
+
+                                <div class="billboard-actions">
+                                    @if (_heroMedia.IsAvailable)
+                                    {
+                                        <MudButton Variant="Variant.Filled"
+                                                   Color="Color.Surface"
+                                                   Size="Size.Large"
+                                                   StartIcon="@Icons.Material.Filled.PlayArrow"
+                                                   Class="btn-primary"
+                                                   OnClick="() => PlayMedia(_heroMedia)">
+                                            Play
+                                        </MudButton>
+                                    }
+                                    else
+                                    {
+                                        <MudButton Variant="Variant.Filled"
+                                                   Color="Color.Primary"
+                                                   Size="Size.Large"
+                                                   StartIcon="@Icons.Material.Filled.Add"
+                                                   Class="btn-primary"
+                                                   OnClick="() => RequestMedia(_heroMedia)">
+                                            Request
+                                        </MudButton>
+                                    }
+                                    <MudButton Variant="Variant.Outlined"
+                                               Color="Color.Surface"
+                                               Size="Size.Large"
+                                               StartIcon="@Icons.Material.Filled.Info"
+                                               Class="btn-secondary"
+                                               OnClick="() => ShowDetails(_heroMedia)">
+                                        More Info
+                                    </MudButton>
+                                </div>
+                            </div>
+                        </MudContainer>
+                    </div>
+                </section>
+            }
+
+            <div class="content-sections">
+                <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="container-padding">
+                    @if (_continueWatching?.Any() == true)
+                    {
+                        <div class="section-spacing">
+                            <MediaCarousel Title="Continue Watching"
+                                           Items="_continueWatching"
+                                           ShowProgress="true"
+                                           OnItemClick="ShowDetails"
+                                           OnPlayClick="PlayMedia"
+                                           OnRequestClick="RequestMedia" />
+                        </div>
+                    }
+
+                    @if (_trending?.Any() == true)
+                    {
+                        <div class="section-spacing">
+                            <MediaCarousel Title="Trending Now"
+                                           Items="_trending"
+                                           Subtitle="Most requested this week"
+                                           OnItemClick="ShowDetails"
+                                           OnPlayClick="PlayMedia"
+                                           OnRequestClick="RequestMedia" />
+                        </div>
+                    }
+
+                    @if (_newReleases?.Any() == true)
+                    {
+                        <div class="section-spacing">
+                            <MediaCarousel Title="New Releases"
+                                           Items="_newReleases"
+                                           OnItemClick="ShowDetails"
+                                           OnPlayClick="PlayMedia"
+                                           OnRequestClick="RequestMedia" />
+                        </div>
+                    }
+
+                    @if (_topRatedMovies?.Any() == true)
+                    {
+                        <div class="section-spacing">
+                            <MediaCarousel Title="Top Rated Movies"
+                                           Items="_topRatedMovies"
+                                           ShowRating="true"
+                                           OnItemClick="ShowDetails"
+                                           OnPlayClick="PlayMedia"
+                                           OnRequestClick="RequestMedia" />
+                        </div>
+                    }
+
+                    @if (_popularTvShows?.Any() == true)
+                    {
+                        <div class="section-spacing">
+                            <MediaCarousel Title="Popular TV Shows"
+                                           Items="_popularTvShows"
+                                           OnItemClick="ShowDetails"
+                                           OnPlayClick="PlayMedia"
+                                           OnRequestClick="RequestMedia" />
+                        </div>
+                    }
+
+                    @if (_myList?.Any() == true)
+                    {
+                        <div class="section-spacing">
+                            <MediaCarousel Title="My List"
+                                           Items="_myList"
+                                           OnItemClick="ShowDetails"
+                                           OnPlayClick="PlayMedia"
+                                           OnRequestClick="RequestMedia" />
+                        </div>
+                    }
+
+                    @foreach (String genre in _genreRows.Keys)
+                    {
+                        @if (_genreRows[genre]?.Any() == true)
+                        {
+                            <div class="section-spacing">
+                                <MediaCarousel Title="@($"Because You Like {genre}")"
+                                               Items="_genreRows[genre]"
+                                               OnItemClick="ShowDetails"
+                                               OnPlayClick="PlayMedia"
+                                               OnRequestClick="RequestMedia" />
+                            </div>
+                        }
+                    }
+
+                    @if (_recentlyAdded?.Any() == true)
+                    {
+                        <div class="section-spacing">
+                            <MediaCarousel Title="Recently Added to Plex"
+                                           Items="_recentlyAdded"
+                                           ShowBadge="true"
+                                           BadgeText="NEW"
+                                           OnItemClick="ShowDetails"
+                                           OnPlayClick="PlayMedia"
+                                           OnRequestClick="RequestMedia" />
+                        </div>
+                    }
+                </MudContainer>
+            </div>
+        </Authorized>
+        <NotAuthorized>
+            @* Landing page for non-logged-in users *@
+            <section class="landing-hero">
+                <div class="landing-background">
+                    <div class="landing-gradient"></div>
+                </div>
+                <div class="landing-content">
+                    <MudContainer MaxWidth="MaxWidth.Large" Class="container-padding">
+                        <div class="landing-text">
+                            <h1 class="landing-title">Discover Your Next Favorite</h1>
+                            <p class="landing-subtitle">
+                                Request movies and TV shows from your Plex server. Browse trending content,
+                                create your personal watchlist, and get notified when your requests are available.
+                            </p>
+                            <div class="landing-actions">
+                                <MudButton Variant="Variant.Filled"
+                                           Color="Color.Primary"
+                                           Size="Size.Large"
+                                           StartIcon="@Icons.Material.Filled.PlayArrow"
+                                           Href="/login"
+                                           Class="landing-btn">
+                                    Sign In with Plex
+                                </MudButton>
+                                <MudButton Variant="Variant.Outlined"
+                                           Color="Color.Surface"
+                                           Size="Size.Large"
+                                           Href="/browse/movie"
+                                           Class="landing-btn-secondary">
+                                    Browse Content
+                                </MudButton>
+                            </div>
+                        </div>
+                    </MudContainer>
+                </div>
+            </section>
+
+            @* Demo content section for non-logged-in users *@
+            <div class="demo-content">
+                <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="container-padding">
+                    @if (_trending?.Any() == true)
+                    {
+                        <div class="section-spacing">
+                            <MediaCarousel Title="Trending Now"
+                                           Items="_trending.Take(10).ToList()"
+                                           Subtitle="Popular content this week"
+                                           OnItemClick="ShowDetails"
+                                           OnPlayClick="() => {}"
+                                           OnRequestClick="() => {}" />
+                        </div>
+                    }
+
+                    @if (_topRatedMovies?.Any() == true)
+                    {
+                        <div class="section-spacing">
+                            <MediaCarousel Title="Top Rated Movies"
+                                           Items="_topRatedMovies.Take(10).ToList()"
+                                           ShowRating="true"
+                                           OnItemClick="ShowDetails"
+                                           OnPlayClick="() => {}"
+                                           OnRequestClick="() => {}" />
+                        </div>
+                    }
+
+                    <div class="demo-notice">
+                        <MudAlert Severity="Severity.Info" Class="demo-alert">
+                            <MudText Typo="Typo.body1">
+                                <strong>Sign in with Plex</strong> to request content, create watchlists, and access your personal recommendations.
+                            </MudText>
+                        </MudAlert>
+                    </div>
+                </MudContainer>
+            </div>
+        </NotAuthorized>
+    </AuthorizeView>
 </div>
 
 @code {
@@ -196,17 +306,17 @@
         };
 
         List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>[] results = await Task.WhenAll(tasks);
-        
+
         _recentlyAdded = results[0];
         _trending = results[1]?.Take(20).ToList();
         _myList = results[2];
         _topRatedMovies = results[3]?.Where(m => m.Rating > 8).OrderByDescending(m => m.Rating).Take(20).ToList();
         _popularTvShows = results[4]?.Take(20).ToList();
-        
+
         // Simulate other categories
         _newReleases = _trending?.Where(m => m.Year >= DateTime.Now.Year - 1).Take(20).ToList();
         _continueWatching = _recentlyAdded?.Where(m => m.IsAvailable).Take(10).ToList();
-        
+
         // Group by genre for personalized rows
         if (_trending != null)
         {
@@ -215,10 +325,10 @@
                 .SelectMany(m => m.Genres.Select(g => new { Genre = g, Media = m }))
                 .GroupBy(x => x.Genre)
                 .ToDictionary(g => g.Key, g => g.Select(x => x.Media).Distinct().Take(20).ToList());
-            
+
             _genreRows = genreGroups.Take(3).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
         }
-        
+
         // Set hero media
         if (_trending?.Any() == true)
         {
@@ -244,7 +354,6 @@
 
     private void ShowDetails(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
     {
-        // In a real implementation, this would open a modal overlay
         Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLower()}/{media.Id}");
     }
 
@@ -277,176 +386,3 @@
         return mins > 0 ? $"{hours}h {mins}m" : $"{hours}h";
     }
 }
-
-<style>
-.homepage {
-    min-height: 100vh;
-}
-
-.hero-billboard {
-    position: relative;
-    height: 70vh;
-    min-height: 500px;
-    margin-top: -56px;
-    display: flex;
-    align-items: center;
-}
-
-.billboard-background {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    overflow: hidden;
-}
-
-.billboard-background img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-}
-
-.billboard-gradient {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: linear-gradient(to right, rgba(0,0,0,.8) 0%, rgba(0,0,0,.4) 50%, rgba(0,0,0,.8) 100%);
-}
-
-.billboard-fade {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 200px;
-    background: linear-gradient(to top, rgba(20,20,20,1) 0%, rgba(20,20,20,0) 100%);
-}
-
-.billboard-content {
-    position: relative;
-    z-index: 2;
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 4%;
-}
-
-.billboard-info {
-    max-width: 600px;
-    color: white;
-}
-
-.billboard-title {
-    font-size: 4rem;
-    font-weight: 900;
-    margin-bottom: 1rem;
-    text-shadow: 2px 2px 4px rgba(0,0,0,.8);
-}
-
-.billboard-tagline {
-    font-size: 1.5rem;
-    margin-bottom: 1rem;
-    opacity: .9;
-}
-
-.billboard-description {
-    font-size: 1.125rem;
-    line-height: 1.6;
-    margin-bottom: 2rem;
-    opacity: .95;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-}
-
-.billboard-metadata {
-    display: flex;
-    gap: 1rem;
-    margin-bottom: 2rem;
-}
-
-.metadata-item, .metadata-badge {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.875rem;
-}
-
-.metadata-badge {
-    background: rgba(255,255,255,0.1);
-    padding: 0.25rem 0.75rem;
-    border-radius: 4px;
-}
-
-.billboard-actions {
-    display: flex;
-    gap: 1rem;
-}
-
-.btn-primary, .btn-secondary {
-    padding: 0.75rem 2rem;
-    border: none;
-    border-radius: 4px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.btn-primary {
-    background: white;
-    color: black;
-}
-
-.btn-primary:hover {
-    background: rgba(255,255,255,0.9);
-}
-
-.btn-secondary {
-    background: rgba(255,255,255,0.1);
-    color: white;
-    border: 1px solid rgba(255,255,255,0.3);
-}
-
-.btn-secondary:hover {
-    background: rgba(255,255,255,0.2);
-}
-
-.content-rows {
-    margin-top: 4rem; /* Push content below the hero */
-    padding: 0 4%;
-}
-
-@@media (max-width: 768px) {
-    .billboard-title {
-        font-size: 2.5rem;
-    }
-    
-    .billboard-tagline {
-        font-size: 1.25rem;
-    }
-    
-    .billboard-description {
-        font-size: 1rem;
-    }
-    
-    .billboard-actions {
-        flex-direction: column;
-        gap: 0.5rem;
-    }
-    
-    .btn-primary, .btn-secondary {
-        padding: 0.5rem 1rem;
-        font-size: 0.875rem;
-    }
-    
-    .content-rows {
-        margin-top: 2rem;
-    }
-}
-</style>

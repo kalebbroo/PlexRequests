@@ -1,14 +1,14 @@
 .carousel-container {
-    margin-bottom: 3rem;
-    padding: 0 4%;
+    margin-bottom: var(--spacing-3xl);
+    padding: 0 var(--spacing-xl);
     position: relative;
 }
 
 .carousel-header {
     display: flex;
     align-items: baseline;
-    gap: 1rem;
-    margin-bottom: 1rem;
+    gap: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
 }
 
 .carousel-title {
@@ -26,21 +26,21 @@
 .carousel-controls {
     margin-left: auto;
     display: flex;
-    gap: 0.5rem;
+    gap: var(--spacing-sm);
 }
 
 .carousel-btn {
     width: 32px;
     height: 32px;
-    border-radius: 50%;
+    border-radius: var(--radius-full);
     background-color: rgba(255,255,255,0.1);
     border: 1px solid rgba(255,255,255,0.2);
-    color: white;
+    color: var(--plex-white);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
+    transition: all var(--transition-fast);
 }
 
 .carousel-btn:hover:not(:disabled) {
@@ -118,18 +118,18 @@
 
 .progress-fill {
     height: 100%;
-    background-color: var(--primary-red);
-    transition: width 0.3s ease;
+    background-color: var(--plex-orange);
+    transition: width var(--transition-normal);
 }
 
 .tile-badge {
     position: absolute;
-    top: 0.5rem;
-    left: 0.5rem;
-    background-color: var(--primary-red);
-    color: white;
-    padding: 0.125rem 0.5rem;
-    border-radius: 2px;
+    top: var(--spacing-sm);
+    left: var(--spacing-sm);
+    background-color: var(--plex-orange);
+    color: var(--plex-white);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--radius-sm);
     font-size: 0.75rem;
     font-weight: 600;
 }
