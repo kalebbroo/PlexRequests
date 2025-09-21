@@ -1,91 +1,362 @@
 @page "/media/{type}/{id:int}"
-@* TODO(auth): Re-enable route protection with [Authorize] when server-side authentication is configured.
-   Previously: @attribute [Authorize] *@
 @inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
 
-<PageTitle>@(_media?.Title ?? "Media")</PageTitle>
+<PageTitle>@(_media?.Title ?? "Loading...") - Plex Requests</PageTitle>
 
 @if (_loading)
 {
-    <div class="p-4"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /> Loading...</div>
+    <div class="loading-skeleton">
+        <div class="skeleton-hero"></div>
+        <div class="skeleton-content">
+            <MudContainer MaxWidth="MaxWidth.Large">
+                <MudSkeleton SkeletonType="SkeletonType.Text" Width="300px" Height="60px" />
+                <MudSkeleton SkeletonType="SkeletonType.Text" Width="500px" Height="30px" />
+                <MudSkeleton SkeletonType="SkeletonType.Rectangle" Width="100%" Height="100px" />
+            </MudContainer>
+        </div>
+    </div>
 }
 else if (_media == null)
 {
-    <MudContainer Class="mt-6">
-        <MudText Typo="Typo.h5">Not found.</MudText>
+    <MudContainer MaxWidth="MaxWidth.Medium" Class="py-8">
+        <div style="text-align: center; padding: 4rem 0;">
+            <MudIcon Icon="@Icons.Material.Filled.ErrorOutline" Style="font-size: 4rem;" />
+            <MudText Typo="Typo.h4" Class="mt-4">Content Not Found</MudText>
+            <MudText Typo="Typo.body1" Color="Color.Tertiary">
+                This title isn't available right now.
+            </MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/" Class="mt-4">
+                Browse Home
+            </MudButton>
+        </div>
     </MudContainer>
 }
 else
 {
-    <div class="details-hero" style="background-image:url('@_media.BackdropUrl')">
-        <div class="details-overlay"></div>
-        <MudContainer MaxWidth="MaxWidth.Large" Class="details-content">
-            <MudGrid>
-                <MudItem xs="12" md="3">
-                    @if (!string.IsNullOrEmpty(_media.PosterUrl))
-                    {
-                        <img src="@_media.PosterUrl" alt="@_media.Title" class="poster" />
-                    }
-                </MudItem>
-                <MudItem xs="12" md="9">
-                    <MudText Typo="Typo.h3" Class="mb-2">@_media.Title</MudText>
-                    @if (!string.IsNullOrEmpty(_media.Tagline))
-                    {
-                        <MudText Typo="Typo.h6" Class="mb-2" Color="Color.Tertiary">@_media.Tagline</MudText>
-                    }
-                    <MudText Typo="Typo.body1" Class="mb-4">@_media.Overview</MudText>
-                    <div class="actions">
-                        @if (_media.IsAvailable)
-                        {
-                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayCircle" OnClick="Watch">Watch</MudButton>
-                        }
-                        else if (_media.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.Pending)
-                        {
-                            <MudButton Variant="Variant.Outlined" Color="Color.Warning" Disabled="true" StartIcon="@Icons.Material.Filled.HourglassEmpty">Pending</MudButton>
-                        }
-                        else
-                        {
-                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="Request">Request</MudButton>
-                        }
-                        <MudButton Variant="Variant.Text" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.ArrowBack" Href="/">Back</MudButton>
+    <div class="details-container">
+        <!-- Hero Section -->
+        <section class="details-hero">
+            <div class="hero-background">
+                @if (!string.IsNullOrEmpty(_media.BackdropUrl))
+                {
+                    <img src="@_media.BackdropUrl" alt="" class="backdrop-image" />
+                }
+                <div class="hero-gradient"></div>
+            </div>
+            
+            <div class="hero-content">
+                <MudContainer MaxWidth="MaxWidth.Large">
+                    <div class="hero-grid">
+                        <div class="poster-section">
+                            @if (!string.IsNullOrEmpty(_media.PosterUrl))
+                            {
+                                <img src="@_media.PosterUrl" alt="@_media.Title" class="poster" />
+                            }
+                            <div class="poster-actions mobile-only">
+                                @if (_media.IsAvailable)
+                                {
+                                    <button class="action-btn primary full" @onclick="PlayNow">
+                                        <MudIcon Icon="@Icons.Material.Filled.PlayArrow" />
+                                        <span>Play</span>
+                                    </button>
+                                }
+                                else if (_media.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.None)
+                                {
+                                    <button class="action-btn primary full" @onclick="RequestMedia">
+                                        <MudIcon Icon="@Icons.Material.Filled.Add" />
+                                        <span>Request</span>
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button class="action-btn secondary full" disabled>
+                                        <MudIcon Icon="@Icons.Material.Filled.Schedule" />
+                                        <span>@GetRequestStatusText()</span>
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                        
+                        <div class="info-section">
+                            <h1 class="title">@_media.Title</h1>
+                            
+                            @if (!string.IsNullOrEmpty(_media.Tagline))
+                            {
+                                <p class="tagline">@_media.Tagline</p>
+                            }
+                            
+                            <div class="metadata">
+                                @if (_media.Rating.HasValue)
+                                {
+                                    <div class="meta-item rating">
+                                        <MudIcon Icon="@Icons.Material.Filled.Star" />
+                                        <span>@_media.Rating.Value.ToString("0.0")</span>
+                                    </div>
+                                }
+                                @if (_media.Year.HasValue)
+                                {
+                                    <span class="meta-item">@_media.Year</span>
+                                }
+                                @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow && _media.TotalSeasons > 0)
+                                {
+                                    <span class="meta-item">@_media.TotalSeasons Seasons</span>
+                                }
+                                @if (_media.Runtime.HasValue)
+                                {
+                                    <span class="meta-item">@FormatRuntime(_media.Runtime.Value)</span>
+                                }
+                                @if (!string.IsNullOrEmpty(_media.ContentRating))
+                                {
+                                    <span class="meta-badge">@_media.ContentRating</span>
+                                }
+                                @if (!string.IsNullOrEmpty(_media.Quality))
+                                {
+                                    <span class="quality-badge @GetQualityClass()">@_media.Quality</span>
+                                }
+                            </div>
+                            
+                            <div class="actions desktop-only">
+                                @if (_media.IsAvailable)
+                                {
+                                    <button class="action-btn primary large" @onclick="PlayNow">
+                                        <MudIcon Icon="@Icons.Material.Filled.PlayArrow" />
+                                        <span>Play</span>
+                                    </button>
+                                }
+                                else if (_media.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.None)
+                                {
+                                    <button class="action-btn primary large" @onclick="RequestMedia">
+                                        <MudIcon Icon="@Icons.Material.Filled.Add" />
+                                        <span>Request</span>
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button class="action-btn secondary large" disabled>
+                                        <MudIcon Icon="@Icons.Material.Filled.Schedule" />
+                                        <span>@GetRequestStatusText()</span>
+                                    </button>
+                                }
+                                
+                                <button class="action-btn secondary large" @onclick="ToggleWatchlist">
+                                    <MudIcon Icon="@(_inWatchlist ? Icons.Material.Filled.Check : Icons.Material.Filled.Add)" />
+                                    <span>@(_inWatchlist ? "In My List" : "My List")</span>
+                                </button>
+                                
+                                @if (!string.IsNullOrEmpty(_media.TrailerUrl))
+                                {
+                                    <button class="action-btn secondary" @onclick="PlayTrailer">
+                                        <MudIcon Icon="@Icons.Material.Filled.PlayCircleOutline" />
+                                        <span>Trailer</span>
+                                    </button>
+                                }
+                            </div>
+                            
+                            @if (!string.IsNullOrEmpty(_media.Overview))
+                            {
+                                <div class="overview">
+                                    <p>@_media.Overview</p>
+                                </div>
+                            }
+                            
+                            @if (_media.Genres?.Any() == true)
+                            {
+                                <div class="genres">
+                                    <span class="label">Genres:</span>
+                                    @foreach (String genre in _media.Genres)
+                                    {
+                                        <a href="/browse?genre=@genre" class="genre-link">@genre</a>
+                                    }
+                                </div>
+                            }
+                        </div>
                     </div>
-                </MudItem>
-            </MudGrid>
-        </MudContainer>
+                </MudContainer>
+            </div>
+        </section>
+
+        <!-- Details Tabs -->
+        <section class="details-tabs">
+            <MudContainer MaxWidth="MaxWidth.Large">
+                <MudTabs Elevation="0" Rounded="false" Centered="false" Color="Color.Primary" Class="custom-tabs">
+                    @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
+                    {
+                        <MudTabPanel Text="Episodes">
+                            <div class="episodes-section">
+                                @if (_media.Seasons?.Any() == true)
+                                {
+                                    <MudSelect T="PlexRequestsHosted.Shared.DTOs.SeasonDto" 
+                                               @bind-Value="_selectedSeason" 
+                                               Label="Season" 
+                                               Variant="Variant.Outlined"
+                                               Class="season-select">
+                                        @foreach (PlexRequestsHosted.Shared.DTOs.SeasonDto season in _media.Seasons)
+                                        {
+                                            <MudSelectItem Value="season">
+                                                Season @season.SeasonNumber
+                                                @if (season.IsAvailable)
+                                                {
+                                                    <MudChip T="string" Size="Size.Small" Color="Color.Success">Available</MudChip>
+                                                }
+                                            </MudSelectItem>
+                                        }
+                                    </MudSelect>
+                                    
+                                    @if (_selectedSeason != null)
+                                    {
+                                        <div class="season-info">
+                                            <MudText Typo="Typo.h6">Season @_selectedSeason.SeasonNumber</MudText>
+                                            <MudText Typo="Typo.body2">
+                                                @_selectedSeason.EpisodeCount Episodes
+                                                @if (_selectedSeason.IsAvailable)
+                                                {
+                                                    <span> • @_selectedSeason.AvailableEpisodes Available</span>
+                                                }
+                                            </MudText>
+                                        </div>
+                                    }
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.body1">Episode information not available</MudText>
+                                }
+                            </div>
+                        </MudTabPanel>
+                    }
+                    
+                    <MudTabPanel Text="More Details">
+                        <div class="more-details-grid">
+                            @if (_media.Cast?.Any() == true)
+                            {
+                                <div class="detail-group">
+                                    <h3>Cast</h3>
+                                    <p>@string.Join(", ", _media.Cast.Take(10))</p>
+                                </div>
+                            }
+                            @if (_media.Directors?.Any() == true)
+                            {
+                                <div class="detail-group">
+                                    <h3>Directors</h3>
+                                    <p>@string.Join(", ", _media.Directors)</p>
+                                </div>
+                            }
+                            @if (_media.Writers?.Any() == true)
+                            {
+                                <div class="detail-group">
+                                    <h3>Writers</h3>
+                                    <p>@string.Join(", ", _media.Writers)</p>
+                                </div>
+                            }
+                            @if (!string.IsNullOrEmpty(_media.Studio) || !string.IsNullOrEmpty(_media.Network))
+                            {
+                                <div class="detail-group">
+                                    <h3>Studio</h3>
+                                    <p>@(_media.Studio ?? _media.Network)</p>
+                                </div>
+                            }
+                            @if (_media.ReleaseDate.HasValue || _media.FirstAired.HasValue)
+                            {
+                                <div class="detail-group">
+                                    <h3>Release Date</h3>
+                                    <p>@((_media.ReleaseDate ?? _media.FirstAired)?.ToString("MMMM d, yyyy"))</p>
+                                </div>
+                            }
+                            @if (_media.Languages?.Any() == true)
+                            {
+                                <div class="detail-group">
+                                    <h3>Languages</h3>
+                                    <p>@string.Join(", ", _media.Languages)</p>
+                                </div>
+                            }
+                        </div>
+                    </MudTabPanel>
+                    
+                    <MudTabPanel Text="Similar">
+                        <div class="similar-section">
+                            @if (_similarMedia?.Any() == true)
+                            {
+                                <div class="similar-grid">
+                                    @foreach (PlexRequestsHosted.Shared.DTOs.MediaCardDto similar in _similarMedia)
+                                    {
+                                        <div class="similar-item" @onclick="() => NavigateToMedia(similar)">
+                                            <MediaTile Media="similar" />
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.body1">No similar titles available</MudText>
+                            }
+                        </div>
+                    </MudTabPanel>
+                </MudTabs>
+            </MudContainer>
+        </section>
     </div>
 }
 
 @code {
-    [Parameter] public string? type { get; set; }
-    [Parameter] public int id { get; set; }
+    [Parameter] public String? Type { get; set; }
+    [Parameter] public Int32 Id { get; set; }
 
     private PlexRequestsHosted.Shared.DTOs.MediaDetailDto? _media;
-    private bool _loading = true;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _similarMedia;
+    private PlexRequestsHosted.Shared.DTOs.SeasonDto? _selectedSeason;
+    private Boolean _loading = true;
+    private Boolean _inWatchlist = false;
 
     protected override async Task OnParametersSetAsync()
     {
         _loading = true;
-        var mediaType = ParseType(type);
-        _media = await PlexApiService.GetMediaDetailsAsync(id, mediaType);
-        _loading = false;
+        StateHasChanged();
+
+        try
+        {
+            PlexRequestsHosted.Shared.Enums.MediaType mediaType = ParseType(Type);
+            _media = await PlexApiService.GetMediaDetailsAsync(Id, mediaType);
+            
+            if (_media != null)
+            {
+                _inWatchlist = await MediaRequestService.IsInWatchlistAsync(_media.Id);
+                
+                // Load similar content
+                _similarMedia = await PlexApiService.SearchMediaAsync("", mediaType);
+                _similarMedia = _similarMedia?.Where(m => m.Id != _media.Id).Take(12).ToList();
+                
+                // Set default selected season
+                if (_media.Seasons?.Any() == true)
+                {
+                    _selectedSeason = _media.Seasons.First();
+                }
+            }
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
     }
 
-    private PlexRequestsHosted.Shared.Enums.MediaType ParseType(string? t)
+    private PlexRequestsHosted.Shared.Enums.MediaType ParseType(String? t)
         => string.Equals(t, "tvshow", StringComparison.OrdinalIgnoreCase) ? PlexRequestsHosted.Shared.Enums.MediaType.TvShow
          : string.Equals(t, "movie", StringComparison.OrdinalIgnoreCase) ? PlexRequestsHosted.Shared.Enums.MediaType.Movie
          : PlexRequestsHosted.Shared.Enums.MediaType.Movie;
 
-    private async Task Request()
+    private async Task RequestMedia()
     {
         if (_media == null) return;
-        var result = await MediaRequestService.RequestMediaAsync(_media.Id, _media.MediaType);
+        
+        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(_media.Id, _media.MediaType);
         if (result.Success)
         {
             _media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
-            await ToastService.ShowSuccessAsync("Request submitted");
+            await ToastService.ShowSuccessAsync($"{_media.Title} has been requested!");
+            StateHasChanged();
         }
         else
         {
@@ -93,17 +364,58 @@ else
         }
     }
 
-    private void Watch()
+    private void PlayNow()
     {
         if (!string.IsNullOrEmpty(_media?.PlexUrl))
             Navigation.NavigateTo(_media.PlexUrl, true);
     }
-}
 
-<style>
-.details-hero{position:relative; background-size:cover; background-position:center; padding:4rem 0;}
-.details-overlay{position:absolute; inset:0; background:linear-gradient(to right, rgba(0,0,0,.8), rgba(0,0,0,.4));}
-.details-content{position:relative; color:white;}
-.poster{max-width:100%; border-radius:6px; box-shadow:0 4px 18px rgba(0,0,0,.5);}
-actions{display:flex; gap:1rem;}
-</style>
+    private void PlayTrailer()
+    {
+        if (!string.IsNullOrEmpty(_media?.TrailerUrl))
+            Navigation.NavigateTo(_media.TrailerUrl, true);
+    }
+
+    private async Task ToggleWatchlist()
+    {
+        if (_media == null) return;
+        
+        Boolean success = _inWatchlist
+            ? await MediaRequestService.RemoveFromWatchlistAsync(_media.Id)
+            : await MediaRequestService.AddToWatchlistAsync(_media.Id);
+            
+        if (success)
+        {
+            _inWatchlist = !_inWatchlist;
+            String message = _inWatchlist ? "Added to My List" : "Removed from My List";
+            await ToastService.ShowInfoAsync(message);
+        }
+    }
+
+    private void NavigateToMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLower()}/{media.Id}");
+    }
+
+    private String GetRequestStatusText() => _media?.RequestStatus switch
+    {
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Pending => "Pending",
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Approved => "Approved",
+        _ => "Requested"
+    };
+
+    private String GetQualityClass() => _media?.Quality?.ToUpper() switch
+    {
+        "4K" or "UHD" => "quality-4k",
+        "1080P" or "FHD" => "quality-hd",
+        _ => ""
+    };
+
+    private String FormatRuntime(Int32 minutes)
+    {
+        if (minutes < 60) return $"{minutes}m";
+        Int32 hours = minutes / 60;
+        Int32 mins = minutes % 60;
+        return mins > 0 ? $"{hours}h {mins}m" : $"{hours}h";
+    }
+}

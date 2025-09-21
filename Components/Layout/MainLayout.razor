@@ -1,33 +1,196 @@
 @inherits LayoutComponentBase
+@inject PlexRequestsHosted.Services.Abstractions.IThemeService ThemeService
+@inject NavigationManager Navigation
+@inject PlexRequestsHosted.Services.Abstractions.IAuthService AuthService
+@implements IDisposable
 
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
-    </div>
+<MudThemeProvider Theme="_theme" IsDarkMode="true" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
 
-    <main>
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
+<div class="app-container">
+    <header class="app-header @(_scrolled ? "scrolled" : "")" @onscroll="HandleScroll">
+        <div class="header-content">
+            <div class="header-left">
+                <a href="/" class="brand-logo">
+                    <MudText Typo="Typo.h5" Class="brand-text">PLEX REQUEST</MudText>
+                </a>
+                <nav class="main-nav desktop-only">
+                    <NavLink href="/" Match="NavLinkMatch.All" class="nav-item">Home</NavLink>
+                    <NavLink href="/browse/movie" class="nav-item">Movies</NavLink>
+                    <NavLink href="/browse/tvshow" class="nav-item">TV Shows</NavLink>
+                    <NavLink href="/requests" class="nav-item">My Requests</NavLink>
+                    <NavLink href="/watchlist" class="nav-item">My List</NavLink>
+                </nav>
+            </div>
+            
+            <div class="header-right">
+                <div class="search-container desktop-only">
+                    <MudIconButton Icon="@Icons.Material.Filled.Search" Color="Color.Inherit" OnClick="ToggleSearch" />
+                    @if (_searchOpen)
+                    {
+                        <input type="text" class="search-input" placeholder="Titles, genres, people" @onblur="CloseSearch" />
+                    }
+                </div>
+                
+                <MudIconButton Icon="@Icons.Material.Filled.Notifications" Color="Color.Inherit" Class="desktop-only" />
+                
+                <AuthorizeView>
+                    <Authorized>
+                        <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                            <ActivatorContent>
+                                <MudAvatar Size="Size.Small" Class="user-avatar">
+                                    <MudImage Src="@(_userAvatar ?? "/default-avatar.png")" />
+                                </MudAvatar>
+                            </ActivatorContent>
+                            <ChildContent>
+                                <MudMenuItem Href="/profile">Profile</MudMenuItem>
+                                <MudMenuItem Href="/settings">Settings</MudMenuItem>
+                                <MudDivider />
+                                <MudMenuItem OnClick="SignOut">Sign Out</MudMenuItem>
+                            </ChildContent>
+                        </MudMenu>
+                    </Authorized>
+                    <NotAuthorized>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/login" Size="Size.Small">Sign In</MudButton>
+                    </NotAuthorized>
+                </AuthorizeView>
+                
+                <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Class="mobile-only" OnClick="ToggleMobileMenu" />
+            </div>
         </div>
+    </header>
 
-        <article class="content px-4">
-            <div style="padding:.5rem 0; color:#444">[Diag] MainLayout loaded — if you see this but no page content, the page component may be failing to render.</div>
-            <ErrorBoundary>
-                <ChildContent>
-                    @Body
-                </ChildContent>
-                <ErrorContent>
-                    <MudAlert Severity="Severity.Error" Class="mt-3">
-                        A rendering error occurred in the page component. Please check the browser console for details.
+    @if (_mobileMenuOpen)
+    {
+        <div class="mobile-menu">
+            <nav class="mobile-nav">
+                <NavLink href="/" Match="NavLinkMatch.All" class="mobile-nav-item" @onclick="CloseMobileMenu">Home</NavLink>
+                <NavLink href="/browse/movie" class="mobile-nav-item" @onclick="CloseMobileMenu">Movies</NavLink>
+                <NavLink href="/browse/tvshow" class="mobile-nav-item" @onclick="CloseMobileMenu">TV Shows</NavLink>
+                <NavLink href="/requests" class="mobile-nav-item" @onclick="CloseMobileMenu">My Requests</NavLink>
+                <NavLink href="/watchlist" class="mobile-nav-item" @onclick="CloseMobileMenu">My List</NavLink>
+                <NavLink href="/search" class="mobile-nav-item" @onclick="CloseMobileMenu">Search</NavLink>
+                <MudDivider Class="my-3" />
+                <NavLink href="/profile" class="mobile-nav-item" @onclick="CloseMobileMenu">Profile</NavLink>
+                <NavLink href="/settings" class="mobile-nav-item" @onclick="CloseMobileMenu">Settings</NavLink>
+            </nav>
+        </div>
+    }
+
+    <main class="main-content">
+        <ErrorBoundary>
+            <ChildContent>
+                @Body
+            </ChildContent>
+            <ErrorContent>
+                <MudContainer MaxWidth="MaxWidth.Large" Class="py-8">
+                    <MudAlert Severity="Severity.Error">
+                        Something went wrong. Please refresh the page or try again later.
                     </MudAlert>
-                </ErrorContent>
-            </ErrorBoundary>
-        </article>
+                </MudContainer>
+            </ErrorContent>
+        </ErrorBoundary>
     </main>
+
+    <footer class="app-footer">
+        <MudContainer MaxWidth="MaxWidth.Large">
+            <div class="footer-content">
+                <div class="footer-links">
+                    <a href="/about">About</a>
+                    <a href="/help">Help Center</a>
+                    <a href="/terms">Terms of Service</a>
+                    <a href="/privacy">Privacy</a>
+                </div>
+                <MudText Typo="Typo.caption" Class="footer-copyright">
+                    @DateTime.Now.Year Plex Request. All rights reserved.
+                </MudText>
+            </div>
+        </MudContainer>
+    </footer>
 </div>
 
-<div id="blazor-error-ui" data-nosnippet>
-    An unhandled error has occurred.
-    <a href="." class="reload">Reload</a>
-    <span class="dismiss">🗙</span>
-</div>
+@code {
+    private MudTheme _theme = new()
+    {
+        PaletteDark = new PaletteDark()
+        {
+            Primary = "#E50914",
+            Secondary = "#564d4d",
+            Background = "#141414",
+            Surface = "#181818",
+            AppbarBackground = "rgba(20, 20, 20, 0)",
+            AppbarText = "#FFFFFF",
+            TextPrimary = "#FFFFFF",
+            TextSecondary = "#B3B3B3",
+            ActionDefault = "#B3B3B3",
+            ActionDisabled = "#4B4B4B",
+            Divider = "#404040",
+            DividerLight = "#2A2A2A"
+        },
+        Typography = new Typography()
+        {
+            Default = new DefaultTypography()
+            {
+                FontFamily = new[] { "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "sans-serif" }
+            }
+        }
+    };
+
+    private bool _scrolled = false;
+    private bool _searchOpen = false;
+    private bool _mobileMenuOpen = false;
+    private System.Timers.Timer? _scrollTimer;
+    private string? _userAvatar;
+
+    protected override void OnInitialized()
+    {
+        _scrollTimer = new System.Timers.Timer(100);
+        _scrollTimer.Elapsed += CheckScroll;
+        _scrollTimer.Start();
+    }
+
+    private void CheckScroll(object? sender, System.Timers.ElapsedEventArgs e)
+    {
+        // This would need JS interop to get actual scroll position
+        // For now, we'll simulate scroll behavior
+    }
+
+    private void HandleScroll()
+    {
+        // Handle scroll to add background to header
+        _scrolled = true;
+    }
+
+    private void ToggleSearch()
+    {
+        _searchOpen = !_searchOpen;
+    }
+
+    private void CloseSearch()
+    {
+        _searchOpen = false;
+    }
+
+    private void ToggleMobileMenu()
+    {
+        _mobileMenuOpen = !_mobileMenuOpen;
+    }
+
+    private void CloseMobileMenu()
+    {
+        _mobileMenuOpen = false;
+    }
+
+    private async Task SignOut()
+    {
+        await AuthService.SignOutAsync();
+        Navigation.NavigateTo("/", true);
+    }
+
+    public void Dispose()
+    {
+        _scrollTimer?.Dispose();
+    }
+}

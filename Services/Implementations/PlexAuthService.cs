@@ -6,6 +6,7 @@ namespace PlexRequestsHosted.Services.Implementations;
 
 public class PlexAuthService(HttpClient httpClient, IJSRuntime jsRuntime, ILogger<PlexAuthService> logger) : IPlexAuthService
 {
+    private readonly HttpClient _httpClient = httpClient;
     public Task<PlexAuthenticationFlow> BeginAuthenticationAsync()
     {
         logger.LogInformation("Starting Plex auth flow");

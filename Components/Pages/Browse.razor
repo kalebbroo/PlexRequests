@@ -1,0 +1,332 @@
+@page "/browse"
+@page "/browse/{type}"
+@inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
+@inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
+@inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject NavigationManager Navigation
+
+<PageTitle>Browse - Plex Requests</PageTitle>
+
+<div class="browse-page">
+    <div class="browse-header">
+        <MudContainer MaxWidth="MaxWidth.ExtraLarge">
+            <div class="header-content">
+                <h1 class="page-title">@GetPageTitle()</h1>
+                
+                <div class="filter-controls">
+                    <MudSelect T="PlexRequestsHosted.Shared.Enums.MediaType?" 
+                               @bind-Value="_filterMediaType" 
+                               Label="Type" 
+                               Variant="Variant.Outlined" 
+                               Dense="true"
+                               Class="filter-select">
+                        <MudSelectItem T="PlexRequestsHosted.Shared.Enums.MediaType?" Value="null">All</MudSelectItem>
+                        <MudSelectItem T="PlexRequestsHosted.Shared.Enums.MediaType?" Value="PlexRequestsHosted.Shared.Enums.MediaType.Movie">Movies</MudSelectItem>
+                        <MudSelectItem T="PlexRequestsHosted.Shared.Enums.MediaType?" Value="PlexRequestsHosted.Shared.Enums.MediaType.TvShow">TV Shows</MudSelectItem>
+                    </MudSelect>
+
+                    <MudSelect T="String" 
+                               @bind-Value="_selectedGenre" 
+                               Label="Genre" 
+                               Variant="Variant.Outlined" 
+                               Dense="true"
+                               Class="filter-select">
+                        <MudSelectItem T="String" Value='""'>All Genres</MudSelectItem>
+                        @foreach (String genre in _availableGenres)
+                        {
+                            <MudSelectItem T="String" Value="@genre">@genre</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    <MudSelect T="Int32?" 
+                               @bind-Value="_yearFilter" 
+                               Label="Year" 
+                               Variant="Variant.Outlined" 
+                               Dense="true"
+                               Class="filter-select">
+                        <MudSelectItem T="Int32?" Value="null">All Years</MudSelectItem>
+                        @for (Int32 year = DateTime.Now.Year; year >= 1970; year -= 10)
+                        {
+                            <MudSelectItem T="Int32?" Value="year">@year's</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    <MudSelect T="PlexRequestsHosted.Shared.Enums.SortOrder" 
+                               @bind-Value="_sortOrder" 
+                               Label="Sort By" 
+                               Variant="Variant.Outlined" 
+                               Dense="true"
+                               Class="filter-select">
+                        <MudSelectItem Value="PlexRequestsHosted.Shared.Enums.SortOrder.PopularityDescending">Most Popular</MudSelectItem>
+                        <MudSelectItem Value="PlexRequestsHosted.Shared.Enums.SortOrder.DateDescending">Recently Added</MudSelectItem>
+                        <MudSelectItem Value="PlexRequestsHosted.Shared.Enums.SortOrder.RatingDescending">Highest Rated</MudSelectItem>
+                        <MudSelectItem Value="PlexRequestsHosted.Shared.Enums.SortOrder.TitleAscending">Title A-Z</MudSelectItem>
+                        <MudSelectItem Value="PlexRequestsHosted.Shared.Enums.SortOrder.TitleDescending">Title Z-A</MudSelectItem>
+                    </MudSelect>
+
+                    <div class="view-toggles">
+                        <MudToggleIconButton @bind-Toggled="_showOnlyAvailable"
+                                           Icon="@Icons.Material.Outlined.PlayCircleOutline"
+                                           ToggledIcon="@Icons.Material.Filled.PlayCircle"
+                                           Title="Show only available" />
+                        <MudToggleIconButton @bind-Toggled="_gridView"
+                                           Icon="@Icons.Material.Outlined.ViewModule"
+                                           ToggledIcon="@Icons.Material.Filled.ViewModule"
+                                           Title="Toggle view" />
+                    </div>
+                </div>
+            </div>
+        </MudContainer>
+    </div>
+
+    <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="browse-content">
+        @if (_isLoading)
+        {
+            <div class="loading-container">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Large" />
+            </div>
+        }
+        else if (_filteredResults?.Any() == true)
+        {
+            @if (_gridView)
+            {
+                <div class="media-grid">
+                    @foreach (PlexRequestsHosted.Shared.DTOs.MediaCardDto item in _filteredResults)
+                    {
+                        <div class="grid-item" @onclick="() => ShowDetails(item)">
+                            <MediaTile Media="item" 
+                                      OnRequest="RequestMedia" 
+                                      OnPlay="PlayMedia" />
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="media-list">
+                    @foreach (PlexRequestsHosted.Shared.DTOs.MediaCardDto item in _filteredResults)
+                    {
+                        <MediaListItem Media="item" 
+                                      OnClick="ShowDetails"
+                                      OnRequest="RequestMedia"
+                                      OnPlay="PlayMedia" />
+                    }
+                </div>
+            }
+            
+            @if (_hasMore)
+            {
+                <div class="load-more">
+                    <MudButton Variant="Variant.Outlined" 
+                              Color="Color.Primary" 
+                              Size="Size.Large"
+                              OnClick="LoadMore"
+                              Disabled="_isLoadingMore">
+                        @if (_isLoadingMore)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                            <span>Loading...</span>
+                        }
+                        else
+                        {
+                            <span>Load More</span>
+                        }
+                    </MudButton>
+                </div>
+            }
+        }
+        else
+        {
+            <div class="empty-state">
+                <MudIcon Icon="@Icons.Material.Filled.MovieFilter" Style="font-size: 4rem;" />
+                <MudText Typo="Typo.h5">No results found</MudText>
+                <MudText Typo="Typo.body1" Color="Color.Tertiary">
+                    Try adjusting your filters or search for something else
+                </MudText>
+            </div>
+        }
+    </MudContainer>
+</div>
+
+@code {
+    [Parameter] public String? Type { get; set; }
+
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _allResults;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _filteredResults;
+    private List<String> _availableGenres = new() { "Action", "Comedy", "Drama", "Horror", "Sci-Fi", "Thriller", "Romance", "Documentary" };
+    
+    private PlexRequestsHosted.Shared.Enums.MediaType? _filterMediaType;
+    private String _selectedGenre = "";
+    private Int32? _yearFilter;
+    private PlexRequestsHosted.Shared.Enums.SortOrder _sortOrder = PlexRequestsHosted.Shared.Enums.SortOrder.PopularityDescending;
+    private Boolean _showOnlyAvailable = false;
+    private Boolean _gridView = true;
+    private Boolean _isLoading = true;
+    private Boolean _isLoadingMore = false;
+    private Boolean _hasMore = false;
+    private Int32 _currentPage = 1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Set media type from route parameter
+        if (!string.IsNullOrEmpty(Type))
+        {
+            _filterMediaType = Type.ToLower() switch
+            {
+                "movie" or "movies" => PlexRequestsHosted.Shared.Enums.MediaType.Movie,
+                "tvshow" or "tv" => PlexRequestsHosted.Shared.Enums.MediaType.TvShow,
+                _ => null
+            };
+        }
+
+        await LoadData();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!string.IsNullOrEmpty(Type))
+        {
+            PlexRequestsHosted.Shared.Enums.MediaType? newType = Type.ToLower() switch
+            {
+                "movie" or "movies" => PlexRequestsHosted.Shared.Enums.MediaType.Movie,
+                "tvshow" or "tv" => PlexRequestsHosted.Shared.Enums.MediaType.TvShow,
+                _ => null
+            };
+
+            if (newType != _filterMediaType)
+            {
+                _filterMediaType = newType;
+                await LoadData();
+            }
+        }
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            // Load initial data
+            _allResults = _filterMediaType.HasValue
+                ? await PlexApiService.GetLibraryContentAsync(_filterMediaType.Value, _currentPage, 50)
+                : await PlexApiService.SearchMediaAsync("", null);
+
+            ApplyFilters();
+            _hasMore = _allResults?.Count == 50;
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadMore()
+    {
+        _isLoadingMore = true;
+        _currentPage++;
+        
+        try
+        {
+            List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? moreResults = _filterMediaType.HasValue
+                ? await PlexApiService.GetLibraryContentAsync(_filterMediaType.Value, _currentPage, 50)
+                : await PlexApiService.SearchMediaAsync("", null);
+
+            if (moreResults?.Any() == true)
+            {
+                _allResults ??= new List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>();
+                _allResults.AddRange(moreResults);
+                ApplyFilters();
+                _hasMore = moreResults.Count == 50;
+            }
+            else
+            {
+                _hasMore = false;
+            }
+        }
+        finally
+        {
+            _isLoadingMore = false;
+        }
+    }
+
+    private void ApplyFilters()
+    {
+        if (_allResults == null)
+        {
+            _filteredResults = null;
+            return;
+        }
+
+        IEnumerable<PlexRequestsHosted.Shared.DTOs.MediaCardDto> filtered = _allResults;
+
+        // Apply genre filter
+        if (!string.IsNullOrEmpty(_selectedGenre))
+        {
+            filtered = filtered.Where(m => m.Genres?.Contains(_selectedGenre) == true);
+        }
+
+        // Apply year filter
+        if (_yearFilter.HasValue)
+        {
+            Int32 startYear = _yearFilter.Value;
+            Int32 endYear = startYear + 9;
+            filtered = filtered.Where(m => m.Year >= startYear && m.Year <= endYear);
+        }
+
+        // Apply availability filter
+        if (_showOnlyAvailable)
+        {
+            filtered = filtered.Where(m => m.IsAvailable);
+        }
+
+        // Apply sorting
+        filtered = _sortOrder switch
+        {
+            PlexRequestsHosted.Shared.Enums.SortOrder.PopularityDescending => filtered.OrderByDescending(m => m.Rating ?? 0),
+            PlexRequestsHosted.Shared.Enums.SortOrder.DateDescending => filtered.OrderByDescending(m => m.Year ?? 0),
+            PlexRequestsHosted.Shared.Enums.SortOrder.RatingDescending => filtered.OrderByDescending(m => m.Rating ?? 0),
+            PlexRequestsHosted.Shared.Enums.SortOrder.TitleAscending => filtered.OrderBy(m => m.Title),
+            PlexRequestsHosted.Shared.Enums.SortOrder.TitleDescending => filtered.OrderByDescending(m => m.Title),
+            _ => filtered
+        };
+
+        _filteredResults = filtered.ToList();
+    }
+
+    private String GetPageTitle()
+    {
+        if (_filterMediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
+            return "Movies";
+        if (_filterMediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
+            return "TV Shows";
+        return "Browse All";
+    }
+
+    private void ShowDetails(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLower()}/{media.Id}");
+    }
+
+    private async Task RequestMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(media.Id, media.MediaType);
+        if (result.Success)
+        {
+            media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
+            await ToastService.ShowSuccessAsync($"{media.Title} has been requested!");
+        }
+        else
+        {
+            await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request");
+        }
+    }
+
+    private void PlayMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        if (!string.IsNullOrEmpty(media.PlexUrl))
+            Navigation.NavigateTo(media.PlexUrl, true);
+    }
+}

@@ -1,0 +1,199 @@
+@page "/watchlist"
+@page "/mylist"
+@inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
+@inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject NavigationManager Navigation
+
+<PageTitle>My List - Plex Requests</PageTitle>
+
+<div class="watchlist-page">
+    <MudContainer MaxWidth="MaxWidth.ExtraLarge">
+        <div class="page-header">
+            <h1>My List</h1>
+            @if (_watchlist?.Any() == true)
+            {
+                <MudText Typo="Typo.body1" Color="Color.Tertiary">
+                    @_watchlist.Count @(_watchlist.Count == 1 ? "title" : "titles")
+                </MudText>
+            }
+        </div>
+
+        @if (_isLoading)
+        {
+            <div class="loading-container">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Large" />
+            </div>
+        }
+        else if (_watchlist?.Any() == true)
+        {
+            <div class="watchlist-controls">
+                <div class="view-options">
+                    <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
+                        <MudButton StartIcon="@Icons.Material.Outlined.GridView" 
+                                   Variant="@(_gridView ? Variant.Filled : Variant.Outlined)"
+                                   OnClick="() => _gridView = true">
+                            Grid
+                        </MudButton>
+                        <MudButton StartIcon="@Icons.Material.Outlined.ViewList" 
+                                   Variant="@(!_gridView ? Variant.Filled : Variant.Outlined)"
+                                   OnClick="() => _gridView = false">
+                            List
+                        </MudButton>
+                    </MudButtonGroup>
+                </div>
+
+                <div class="sort-options">
+                    <MudSelect T="SortOption" 
+                               @bind-Value="_sortBy" 
+                               Label="Sort by" 
+                               Variant="Variant.Outlined" 
+                               Dense="true"
+                               Class="sort-select">
+                        <MudSelectItem Value="SortOption.DateAdded">Date Added</MudSelectItem>
+                        <MudSelectItem Value="SortOption.Title">Title A-Z</MudSelectItem>
+                        <MudSelectItem Value="SortOption.TitleDesc">Title Z-A</MudSelectItem>
+                        <MudSelectItem Value="SortOption.Type">Type</MudSelectItem>
+                    </MudSelect>
+                </div>
+            </div>
+
+            @if (_gridView)
+            {
+                <div class="watchlist-grid">
+                    @foreach (PlexRequestsHosted.Shared.DTOs.MediaCardDto item in GetSortedList())
+                    {
+                        <div class="grid-item">
+                            <div class="item-wrapper">
+                                <MediaTile Media="item"
+                                          OnRequest="RequestMedia"
+                                          OnPlay="PlayMedia" />
+                                <button class="remove-button" 
+                                        @onclick:stopPropagation="true"
+                                        @onclick="() => RemoveFromList(item)">
+                                    <MudIcon Icon="@Icons.Material.Filled.Close" Size="Size.Small" />
+                                </button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="watchlist-list">
+                    @foreach (PlexRequestsHosted.Shared.DTOs.MediaCardDto item in GetSortedList())
+                    {
+                        <div class="list-item-wrapper">
+                            <MediaListItem Media="item"
+                                          OnClick="ShowDetails"
+                                          OnRequest="RequestMedia"
+                                          OnPlay="PlayMedia" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Remove" 
+                                          Color="Color.Error" 
+                                          ToolTip="Remove from list"
+                                          Class="list-remove-button"
+                                          @onclick="() => RemoveFromList(item)" />
+                        </div>
+                    }
+                </div>
+            }
+        }
+        else
+        {
+            <div class="empty-state">
+                <MudIcon Icon="@Icons.Material.Outlined.BookmarkBorder" Style="font-size: 6rem;" />
+                <h2>Your list is empty</h2>
+                <MudText Typo="Typo.body1" Color="Color.Tertiary">
+                    Add movies and shows to keep track of what you want to watch
+                </MudText>
+                <MudButton Variant="Variant.Filled" 
+                          Color="Color.Primary" 
+                          Size="Size.Large"
+                          Href="/"
+                          Class="mt-4">
+                    Browse Content
+                </MudButton>
+            </div>
+        }
+    </MudContainer>
+</div>
+
+@code {
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _watchlist;
+    private Boolean _isLoading = true;
+    private Boolean _gridView = true;
+    private SortOption _sortBy = SortOption.DateAdded;
+
+    private enum SortOption
+    {
+        DateAdded,
+        Title,
+        TitleDesc,
+        Type
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadWatchlist();
+    }
+
+    private async Task LoadWatchlist()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            _watchlist = await MediaRequestService.GetWatchlistAsync();
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto> GetSortedList()
+    {
+        if (_watchlist == null) return new List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>();
+
+        return _sortBy switch
+        {
+            SortOption.Title => _watchlist.OrderBy(m => m.Title).ToList(),
+            SortOption.TitleDesc => _watchlist.OrderByDescending(m => m.Title).ToList(),
+            SortOption.Type => _watchlist.OrderBy(m => m.MediaType).ThenBy(m => m.Title).ToList(),
+            _ => _watchlist // DateAdded default
+        };
+    }
+
+    private async Task RemoveFromList(PlexRequestsHosted.Shared.DTOs.MediaCardDto item)
+    {
+        Boolean success = await MediaRequestService.RemoveFromWatchlistAsync(item.Id);
+        if (success)
+        {
+            _watchlist?.Remove(item);
+            await ToastService.ShowInfoAsync($"{item.Title} removed from your list");
+            StateHasChanged();
+        }
+    }
+
+    private void ShowDetails(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLower()}/{media.Id}");
+    }
+
+    private async Task RequestMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(media.Id, media.MediaType);
+        if (result.Success)
+        {
+            media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
+            await ToastService.ShowSuccessAsync($"{media.Title} has been requested!");
+        }
+    }
+
+    private void PlayMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        if (!string.IsNullOrEmpty(media.PlexUrl))
+            Navigation.NavigateTo(media.PlexUrl, true);
+    }
+}

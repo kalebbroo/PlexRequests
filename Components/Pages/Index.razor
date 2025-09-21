@@ -1,0 +1,270 @@
+@page "/"
+@inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
+@inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
+@inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject NavigationManager Navigation
+
+<PageTitle>Home - Plex Requests</PageTitle>
+
+<div class="homepage">
+    @if (_heroMedia != null)
+    {
+        <section class="hero-billboard">
+            <div class="billboard-background">
+                @if (!string.IsNullOrEmpty(_heroMedia.BackdropUrl))
+                {
+                    <img src="@_heroMedia.BackdropUrl" alt="" class="billboard-image" />
+                }
+                <div class="billboard-gradient"></div>
+                <div class="billboard-fade"></div>
+            </div>
+            
+            <div class="billboard-content">
+                <div class="billboard-info">
+                    <h1 class="billboard-title">@_heroMedia.Title</h1>
+                    
+                    @if (!string.IsNullOrEmpty(_heroMedia.Tagline))
+                    {
+                        <p class="billboard-tagline">@_heroMedia.Tagline</p>
+                    }
+                    
+                    <p class="billboard-description">@_heroMedia.Overview</p>
+                    
+                    <div class="billboard-metadata">
+                        @if (_heroMedia.Rating.HasValue)
+                        {
+                            <span class="metadata-item">
+                                <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" />
+                                @_heroMedia.Rating.Value.ToString("0.0")
+                            </span>
+                        }
+                        @if (_heroMedia.Year.HasValue)
+                        {
+                            <span class="metadata-item">@_heroMedia.Year</span>
+                        }
+                        @if (_heroMedia.ContentRating != null)
+                        {
+                            <span class="metadata-badge">@_heroMedia.ContentRating</span>
+                        }
+                        @if (_heroMedia.Runtime.HasValue)
+                        {
+                            <span class="metadata-item">@FormatRuntime(_heroMedia.Runtime.Value)</span>
+                        }
+                    </div>
+                    
+                    <div class="billboard-actions">
+                        @if (_heroMedia.IsAvailable)
+                        {
+                            <button class="btn-primary" @onclick="() => PlayMedia(_heroMedia)">
+                                <MudIcon Icon="@Icons.Material.Filled.PlayArrow" />
+                                <span>Play</span>
+                            </button>
+                        }
+                        else
+                        {
+                            <button class="btn-primary" @onclick="() => RequestMedia(_heroMedia)">
+                                <MudIcon Icon="@Icons.Material.Filled.Add" />
+                                <span>Request</span>
+                            </button>
+                        }
+                        <button class="btn-secondary" @onclick="() => ShowDetails(_heroMedia)">
+                            <MudIcon Icon="@Icons.Material.Filled.Info" />
+                            <span>More Info</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+    }
+
+    <div class="content-rows">
+        @if (_continueWatching?.Any() == true)
+        {
+            <MediaCarousel Title="Continue Watching" 
+                          Items="_continueWatching" 
+                          ShowProgress="true"
+                          OnItemClick="ShowDetails"
+                          OnPlayClick="PlayMedia"
+                          OnRequestClick="RequestMedia" />
+        }
+
+        @if (_trending?.Any() == true)
+        {
+            <MediaCarousel Title="Trending Now" 
+                          Items="_trending"
+                          Subtitle="Most requested this week"
+                          OnItemClick="ShowDetails"
+                          OnPlayClick="PlayMedia"
+                          OnRequestClick="RequestMedia" />
+        }
+
+        @if (_newReleases?.Any() == true)
+        {
+            <MediaCarousel Title="New Releases" 
+                          Items="_newReleases"
+                          OnItemClick="ShowDetails"
+                          OnPlayClick="PlayMedia"
+                          OnRequestClick="RequestMedia" />
+        }
+
+        @if (_topRatedMovies?.Any() == true)
+        {
+            <MediaCarousel Title="Top Rated Movies" 
+                          Items="_topRatedMovies"
+                          ShowRating="true"
+                          OnItemClick="ShowDetails"
+                          OnPlayClick="PlayMedia"
+                          OnRequestClick="RequestMedia" />
+        }
+
+        @if (_popularTvShows?.Any() == true)
+        {
+            <MediaCarousel Title="Popular TV Shows" 
+                          Items="_popularTvShows"
+                          OnItemClick="ShowDetails"
+                          OnPlayClick="PlayMedia"
+                          OnRequestClick="RequestMedia" />
+        }
+
+        @if (_myList?.Any() == true)
+        {
+            <MediaCarousel Title="My List" 
+                          Items="_myList"
+                          OnItemClick="ShowDetails"
+                          OnPlayClick="PlayMedia"
+                          OnRequestClick="RequestMedia" />
+        }
+
+        @foreach (String genre in _genreRows.Keys)
+        {
+            @if (_genreRows[genre]?.Any() == true)
+            {
+                <MediaCarousel Title="@($"Because You Like {genre}")" 
+                              Items="_genreRows[genre]"
+                              OnItemClick="ShowDetails"
+                              OnPlayClick="PlayMedia"
+                              OnRequestClick="RequestMedia" />
+            }
+        }
+
+        @if (_recentlyAdded?.Any() == true)
+        {
+            <MediaCarousel Title="Recently Added to Plex" 
+                          Items="_recentlyAdded"
+                          ShowBadge="true"
+                          BadgeText="NEW"
+                          OnItemClick="ShowDetails"
+                          OnPlayClick="PlayMedia"
+                          OnRequestClick="RequestMedia" />
+        }
+    </div>
+</div>
+
+@code {
+    private PlexRequestsHosted.Shared.DTOs.MediaDetailDto? _heroMedia;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _continueWatching;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _trending;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _newReleases;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _topRatedMovies;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _popularTvShows;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _myList;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _recentlyAdded;
+    private Dictionary<String, List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>> _genreRows = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDashboardData();
+    }
+
+    private async Task LoadDashboardData()
+    {
+        // Parallel load all sections for better performance
+        Task<List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>>[] tasks = new[]
+        {
+            PlexApiService.GetRecentlyAddedAsync(20),
+            PlexApiService.SearchMediaAsync("", null),
+            MediaRequestService.GetWatchlistAsync(),
+            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.Movie, 1, 20),
+            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.TvShow, 1, 20)
+        };
+
+        List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>[] results = await Task.WhenAll(tasks);
+        
+        _recentlyAdded = results[0];
+        _trending = results[1]?.Take(20).ToList();
+        _myList = results[2];
+        _topRatedMovies = results[3]?.Where(m => m.Rating > 8).OrderByDescending(m => m.Rating).Take(20).ToList();
+        _popularTvShows = results[4]?.Take(20).ToList();
+        
+        // Simulate other categories
+        _newReleases = _trending?.Where(m => m.Year >= DateTime.Now.Year - 1).Take(20).ToList();
+        _continueWatching = _recentlyAdded?.Where(m => m.IsAvailable).Take(10).ToList();
+        
+        // Group by genre for personalized rows
+        if (_trending != null)
+        {
+            Dictionary<String, List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>> genreGroups = _trending
+                .Where(m => m.Genres?.Any() == true)
+                .SelectMany(m => m.Genres.Select(g => new { Genre = g, Media = m }))
+                .GroupBy(x => x.Genre)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.Media).Distinct().Take(20).ToList());
+            
+            _genreRows = genreGroups.Take(3).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        }
+        
+        // Set hero media
+        if (_trending?.Any() == true)
+        {
+            PlexRequestsHosted.Shared.DTOs.MediaCardDto firstItem = _trending.First();
+            _heroMedia = await PlexApiService.GetMediaDetailsAsync(firstItem.Id, firstItem.MediaType);
+            _heroMedia ??= new PlexRequestsHosted.Shared.DTOs.MediaDetailDto
+            {
+                Id = firstItem.Id,
+                Title = firstItem.Title,
+                Overview = firstItem.Overview,
+                BackdropUrl = firstItem.BackdropUrl,
+                IsAvailable = firstItem.IsAvailable,
+                MediaType = firstItem.MediaType,
+                Rating = firstItem.Rating,
+                Year = firstItem.Year,
+                Runtime = firstItem.Runtime,
+                Genres = firstItem.Genres
+            };
+        }
+    }
+
+    private void ShowDetails(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        // In a real implementation, this would open a modal overlay
+        Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLower()}/{media.Id}");
+    }
+
+    private async Task RequestMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(media.Id, media.MediaType);
+        if (result.Success)
+        {
+            await ToastService.ShowSuccessAsync($"{media.Title} has been requested!");
+            media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
+        }
+        else
+        {
+            await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request media");
+        }
+    }
+
+    private void PlayMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        if (!string.IsNullOrEmpty(media.PlexUrl))
+            Navigation.NavigateTo(media.PlexUrl, true);
+    }
+
+    private String FormatRuntime(Int32 minutes)
+    {
+        if (minutes < 60)
+            return $"{minutes}m";
+        Int32 hours = minutes / 60;
+        Int32 mins = minutes % 60;
+        return mins > 0 ? $"{hours}h {mins}m" : $"{hours}h";
+    }
+}

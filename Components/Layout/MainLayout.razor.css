@@ -96,3 +96,233 @@ main {
         right: 0.75rem;
         top: 0.5rem;
     }
+
+:root {
+    --primary-red: #E50914;
+    --dark-bg: #141414;
+    --surface-bg: #181818;
+    --surface-hover: #2F2F2F;
+    --text-primary: #FFFFFF;
+    --text-secondary: #B3B3B3;
+    --divider: #404040;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background-color: var(--dark-bg);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    overflow-x: hidden;
+}
+
+.app-container {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--dark-bg);
+}
+
+.app-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.7) 10%, rgba(0,0,0,0));
+    transition: background-color 0.4s ease;
+    padding: 1rem 0;
+}
+
+.app-header.scrolled {
+    background-color: var(--dark-bg);
+    background-image: none;
+}
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 4%;
+    max-width: 1920px;
+    margin: 0 auto;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+}
+
+.brand-logo {
+    text-decoration: none;
+    color: var(--primary-red);
+}
+
+.brand-text {
+    font-weight: 900 !important;
+    letter-spacing: -1px;
+    font-size: 1.5rem !important;
+}
+
+.main-nav {
+    display: flex;
+    gap: 1.25rem;
+}
+
+.nav-item {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.875rem;
+    transition: color 0.3s ease;
+    padding: 0.25rem 0;
+}
+
+.nav-item:hover, .nav-item.active {
+    color: var(--text-primary);
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.search-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.search-input {
+    position: absolute;
+    right: 40px;
+    background-color: var(--surface-bg);
+    border: 1px solid var(--text-primary);
+    color: var(--text-primary);
+    padding: 0.5rem 1rem;
+    width: 250px;
+    outline: none;
+    animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+    from { width: 0; opacity: 0; }
+    to { width: 250px; opacity: 1; }
+}
+
+.user-avatar {
+    cursor: pointer;
+    transition: transform 0.2s ease;
+}
+
+.user-avatar:hover {
+    transform: scale(1.1);
+}
+
+.mobile-menu {
+    position: fixed;
+    top: 68px;
+    left: 0;
+    right: 0;
+    background-color: var(--dark-bg);
+    border-top: 2px solid var(--surface-bg);
+    z-index: 999;
+    animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+    from { transform: translateY(-100%); }
+    to { transform: translateY(0); }
+}
+
+.mobile-nav {
+    padding: 1rem;
+}
+
+.mobile-nav-item {
+    display: block;
+    color: var(--text-secondary);
+    text-decoration: none;
+    padding: 0.75rem 1rem;
+    transition: background-color 0.2s ease;
+}
+
+.mobile-nav-item:hover, .mobile-nav-item.active {
+    background-color: var(--surface-bg);
+    color: var(--text-primary);
+}
+
+.main-content {
+    flex: 1;
+    padding-top: 68px;
+    min-height: calc(100vh - 200px);
+}
+
+.app-footer {
+    background-color: var(--dark-bg);
+    border-top: 1px solid var(--divider);
+    padding: 2rem 0;
+    margin-top: 4rem;
+}
+
+.footer-content {
+    text-align: center;
+}
+
+.footer-links {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    margin-bottom: 1rem;
+}
+
+.footer-links a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.875rem;
+    transition: color 0.2s ease;
+}
+
+.footer-links a:hover {
+    color: var(--text-primary);
+}
+
+.footer-copyright {
+    color: var(--text-secondary);
+}
+
+.desktop-only {
+    display: flex;
+}
+
+.mobile-only {
+    display: none !important;
+}
+
+@media (max-width: 768px) {
+    .desktop-only {
+        display: none !important;
+    }
+    
+    .mobile-only {
+        display: flex !important;
+    }
+
+    .header-content {
+        padding: 0 1rem;
+    }
+
+    .main-content {
+        padding-top: 60px;
+    }
+
+    .footer-links {
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+}

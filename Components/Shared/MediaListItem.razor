@@ -1,0 +1,176 @@
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+
+<div class="list-item" @onclick="HandleClick">
+    <div class="list-item-poster">
+        @if (!string.IsNullOrEmpty(Media.PosterUrl))
+        {
+            <img src="@Media.PosterUrl" alt="@Media.Title" loading="lazy" />
+        }
+        else
+        {
+            <div class="poster-placeholder">
+                <MudIcon Icon="@GetMediaIcon()" Size="Size.Medium" />
+            </div>
+        }
+    </div>
+    
+    <div class="list-item-content">
+        <div class="content-header">
+            <h3 class="item-title">@Media.Title</h3>
+            @if (Media.IsAvailable)
+            {
+                <MudChip T="String" Size="Size.Small" Color="Color.Success">Available</MudChip>
+            }
+            else if (Media.RequestStatus == RequestStatus.Pending)
+            {
+                <MudChip T="String" Size="Size.Small" Color="Color.Warning">Pending</MudChip>
+            }
+            else if (Media.RequestStatus == RequestStatus.Approved)
+            {
+                <MudChip T="String" Size="Size.Small" Color="Color.Info">Approved</MudChip>
+            }
+        </div>
+        
+        <div class="item-metadata">
+            @if (Media.Year.HasValue)
+            {
+                <span>@Media.Year</span>
+            }
+            @if (Media.MediaType == MediaType.TvShow && Media.TotalSeasons > 0)
+            {
+                <span>@Media.TotalSeasons Seasons</span>
+            }
+            @if (Media.Rating.HasValue)
+            {
+                <span class="rating">
+                    <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" />
+                    @Media.Rating.Value.ToString("0.0")
+                </span>
+            }
+            @if (Media.Runtime.HasValue)
+            {
+                <span>@FormatRuntime(Media.Runtime.Value)</span>
+            }
+            @if (!string.IsNullOrEmpty(Media.Quality))
+            {
+                <MudChip T="String" Size="Size.Small" Variant="Variant.Outlined" Color="GetQualityColor()">
+                    @Media.Quality
+                </MudChip>
+            }
+        </div>
+        
+        @if (!string.IsNullOrEmpty(Media.Overview))
+        {
+            <p class="item-overview">@TruncateText(Media.Overview, 200)</p>
+        }
+        
+        @if (Media.Genres?.Any() == true)
+        {
+            <div class="item-genres">
+                @foreach (String genre in Media.Genres.Take(4))
+                {
+                    <span class="genre-tag">@genre</span>
+                }
+            </div>
+        }
+    </div>
+    
+    <div class="list-item-actions">
+        @if (Media.IsAvailable)
+        {
+            <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" 
+                          Color="Color.Primary" 
+                          ToolTip="Play"
+                          @onclick="HandlePlay" />
+        }
+        else if (Media.RequestStatus == RequestStatus.None)
+        {
+            <MudIconButton Icon="@Icons.Material.Filled.Add" 
+                          Color="Color.Primary" 
+                          ToolTip="Request"
+                          @onclick="HandleRequest" />
+        }
+        
+        <MudIconButton Icon="@(_inWatchlist ? Icons.Material.Filled.Bookmark : Icons.Material.Outlined.BookmarkBorder)" 
+                      Color="Color.Default" 
+                      ToolTip="@(_inWatchlist ? "Remove from list" : "Add to list")"
+                      @onclick="ToggleWatchlist" />
+        
+        <MudIconButton Icon="@Icons.Material.Filled.MoreVert" 
+                      Color="Color.Default" 
+                      Title="More options"
+                      @onclick="ShowMoreOptions" />
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public MediaCardDto Media { get; set; } = default!;
+    [Parameter] public EventCallback<MediaCardDto> OnClick { get; set; }
+    [Parameter] public EventCallback<MediaCardDto> OnRequest { get; set; }
+    [Parameter] public EventCallback<MediaCardDto> OnPlay { get; set; }
+    
+    private Boolean _inWatchlist = false;
+
+    private async Task HandleClick()
+    {
+        if (OnClick.HasDelegate)
+            await OnClick.InvokeAsync(Media);
+    }
+
+    private async Task HandleRequest()
+    {
+        if (OnRequest.HasDelegate)
+            await OnRequest.InvokeAsync(Media);
+    }
+
+    private async Task HandlePlay()
+    {
+        if (OnPlay.HasDelegate)
+            await OnPlay.InvokeAsync(Media);
+    }
+
+    private void ToggleWatchlist()
+    {
+        _inWatchlist = !_inWatchlist;
+    }
+
+    private void ShowMoreOptions()
+    {
+        // This would open a context menu with more options
+    }
+
+    private String GetMediaIcon() => Media.MediaType switch
+    {
+        MediaType.Movie => Icons.Material.Filled.Movie,
+        MediaType.TvShow => Icons.Material.Filled.Tv,
+        _ => Icons.Material.Filled.VideoLibrary
+    };
+
+    private Color GetQualityColor() => Media.Quality?.ToUpper() switch
+    {
+        "4K" or "UHD" => Color.Success,
+        "1080P" or "FHD" => Color.Info,
+        "720P" or "HD" => Color.Warning,
+        _ => Color.Default
+    };
+
+    private String FormatRuntime(Int32 minutes)
+    {
+        if (minutes < 60) return $"{minutes}m";
+        Int32 hours = minutes / 60;
+        Int32 mins = minutes % 60;
+        return mins > 0 ? $"{hours}h {mins}m" : $"{hours}h";
+    }
+
+    private String TruncateText(String text, Int32 maxLength)
+    {
+        if (text.Length <= maxLength) return text;
+        return text.Substring(0, maxLength) + "...";
+    }
+
+    public void Dispose()
+    {
+        // No-op
+    }
+}

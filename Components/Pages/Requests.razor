@@ -1,67 +1,375 @@
 @page "/requests"
-@* TODO(auth): Re-enable route protection with [Authorize] when server-side authentication is configured.
-   Previously: @attribute [Authorize] *@
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
+@inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject NavigationManager Navigation
 
-<PageTitle>My Requests</PageTitle>
+<PageTitle>My Requests - Plex Requests</PageTitle>
 
-<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6">
-    <MudText Typo="Typo.h4" Class="mb-4">My Requests</MudText>
+<div class="requests-page">
+    <MudContainer MaxWidth="MaxWidth.ExtraLarge">
+        <div class="page-header">
+            <div>
+                <h1>My Requests</h1>
+                @if (_stats != null)
+                {
+                    <MudText Typo="Typo.body1" Color="Color.Tertiary">
+                        Track and manage your media requests
+                    </MudText>
+                }
+            </div>
+            
+            @if (_stats != null)
+            {
+                <div class="stats-cards">
+                    <div class="stat-card">
+                        <MudIcon Icon="@Icons.Material.Filled.Schedule" Color="Color.Warning" />
+                        <div class="stat-value">@_stats.PendingRequests</div>
+                        <div class="stat-label">Pending</div>
+                    </div>
+                    <div class="stat-card">
+                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" />
+                        <div class="stat-value">@_stats.ApprovedRequests</div>
+                        <div class="stat-label">Approved</div>
+                    </div>
+                    <div class="stat-card">
+                        <MudIcon Icon="@Icons.Material.Filled.PlayCircle" Color="Color.Info" />
+                        <div class="stat-value">@_stats.AvailableRequests</div>
+                        <div class="stat-label">Available</div>
+                    </div>
+                    <div class="stat-card">
+                        <MudIcon Icon="@Icons.Material.Filled.Folder" Color="Color.Primary" />
+                        <div class="stat-value">@_stats.TotalRequests</div>
+                        <div class="stat-label">Total</div>
+                    </div>
+                </div>
+            }
+        </div>
 
-    <MudPaper Class="p-4">
-        <MudTable Items="_requests" Hover="true" Dense="true" Bordered="false" Striped="true">
-            <HeaderContent>
-                <MudTh>Id</MudTh>
-                <MudTh>Title</MudTh>
-                <MudTh>Status</MudTh>
-                <MudTh>Requested</MudTh>
-                <MudTh></MudTh>
-            </HeaderContent>
-            <RowTemplate>
-                <MudTd DataLabel="Id">@context.Id</MudTd>
-                <MudTd DataLabel="Title">@context.Title</MudTd>
-                <MudTd DataLabel="Status">
-                    <MudChip T="string" Variant="Variant.Outlined" Color="@GetStatusColor(context.Status)">@context.Status.ToString()</MudChip>
-                </MudTd>
-                <MudTd DataLabel="Requested">@context.RequestedAt.ToLocalTime().ToString("g")</MudTd>
-                <MudTd DataLabel="Actions">
-                    <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" Disabled="@(!_canCancel(context))" OnClick="@((MouseEventArgs _) => Cancel(context))">Cancel</MudButton>
-                </MudTd>
-            </RowTemplate>
-            <NoRecordsContent>
-                <MudText Typo="Typo.body1">No requests yet.</MudText>
-            </NoRecordsContent>
-        </MudTable>
-    </MudPaper>
-</MudContainer>
+        <div class="requests-filters">
+            <MudChip T="String" 
+                     Variant="@(_statusFilter == "all" ? Variant.Filled : Variant.Outlined)"
+                     OnClick="SetAllFilter">
+                All (@GetTotalCount())
+            </MudChip>
+            <MudChip T="String" 
+                     Variant="@(_statusFilter == "pending" ? Variant.Filled : Variant.Outlined)"
+                     Color="Color.Warning"
+                     OnClick="SetPendingFilter">
+                Pending (@GetPendingCount())
+            </MudChip>
+            <MudChip T="String" 
+                     Variant="@(_statusFilter == "approved" ? Variant.Filled : Variant.Outlined)"
+                     Color="Color.Success"
+                     OnClick="SetApprovedFilter">
+                Approved (@GetApprovedCount())
+            </MudChip>
+            <MudChip T="String" 
+                     Variant="@(_statusFilter == "available" ? Variant.Filled : Variant.Outlined)"
+                     Color="Color.Info"
+                     OnClick="SetAvailableFilter">
+                Available (@GetAvailableCount())
+            </MudChip>
+        </div>
+
+        @if (_isLoading)
+        {
+            <div class="loading-container">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Large" />
+            </div>
+        }
+        else if (_filteredRequests?.Any() == true)
+        {
+            <div class="requests-list">
+                @foreach (PlexRequestsHosted.Shared.DTOs.MediaRequestDto request in _filteredRequests)
+                {
+                    <div class="request-card">
+                        <div class="request-poster">
+                            @if (!string.IsNullOrEmpty(request.PosterUrl))
+                            {
+                                <img src="@request.PosterUrl" alt="@request.Title" />
+                            }
+                            else
+                            {
+                                <div class="poster-placeholder">
+                                    <MudIcon Icon="@GetMediaIcon(request.MediaType)" Size="Size.Large" />
+                                </div>
+                            }
+                        </div>
+                        
+                        <div class="request-content">
+                            <div class="request-header">
+                                <h3 class="request-title">@request.Title</h3>
+                                <MudChip T="String" 
+                                         Size="Size.Small" 
+                                         Color="@GetStatusColor(request.Status)"
+                                         Variant="Variant.Filled">
+                                    @GetStatusText(request.Status)
+                                </MudChip>
+                            </div>
+                            
+                            <div class="request-meta">
+                                <span class="meta-item">
+                                    <MudIcon Icon="@Icons.Material.Filled.CalendarToday" Size="Size.Small" />
+                                    Requested @request.RequestedAt.ToLocalTime().ToString("MMM d, yyyy")
+                                </span>
+                                @if (request.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow && request.RequestedSeasons?.Any() == true)
+                                {
+                                    <span class="meta-item">
+                                        <MudIcon Icon="@Icons.Material.Filled.Tv" Size="Size.Small" />
+                                        @(request.RequestAllSeasons ? "All Seasons" : $"Season {string.Join(", ", request.RequestedSeasons)}")
+                                    </span>
+                                }
+                                @if (!string.IsNullOrEmpty(request.RequestNote))
+                                {
+                                    <span class="meta-item">
+                                        <MudIcon Icon="@Icons.Material.Filled.Note" Size="Size.Small" />
+                                        Note: @request.RequestNote
+                                    </span>
+                                }
+                            </div>
+                            
+                            @if (request.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Approved && request.ApprovedAt.HasValue)
+                            {
+                                <div class="request-timeline">
+                                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                                    <span>Approved @request.ApprovedAt.Value.ToLocalTime().ToString("MMM d")</span>
+                                </div>
+                            }
+                            @if (request.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Available && request.AvailableAt.HasValue)
+                            {
+                                <div class="request-timeline">
+                                    <MudIcon Icon="@Icons.Material.Filled.PlayCircle" Color="Color.Info" Size="Size.Small" />
+                                    <span>Available since @request.AvailableAt.Value.ToLocalTime().ToString("MMM d")</span>
+                                </div>
+                            }
+                            @if (!string.IsNullOrEmpty(request.DenialReason))
+                            {
+                                <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2">
+                                    @request.DenialReason
+                                </MudAlert>
+                            }
+                        </div>
+                        
+                        <div class="request-actions">
+                            @if (request.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Available)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" 
+                                               Color="Color.Primary" 
+                                               ToolTip="Watch Now"
+                                               OnClick="() => WatchNow(request)" />
+                            }
+                            
+                            <MudIconButton Icon="@Icons.Material.Filled.Info" 
+                                           Color="Color.Default" 
+                                           ToolTip="View Details"
+                                           OnClick="() => ViewDetails(request)" />
+                            
+                            @if (request.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Pending)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.Cancel" 
+                                               Color="Color.Error" 
+                                               ToolTip="Cancel Request"
+                                               OnClick="() => CancelRequest(request)" />
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+            
+            @if (_hasMore)
+            {
+                <div class="load-more">
+                    <MudButton Variant="Variant.Outlined" 
+                              Color="Color.Primary"
+                              OnClick="LoadMore"
+                              Disabled="_isLoadingMore">
+                        @if (_isLoadingMore)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                            <span>Loading...</span>
+                        }
+                        else
+                        {
+                            <span>Load More</span>
+                        }
+                    </MudButton>
+                </div>
+            }
+        }
+        else
+        {
+            <div class="empty-state">
+                <MudIcon Icon="@Icons.Material.Outlined.Inbox" Style="font-size: 6rem;" />
+                <h2>No requests found</h2>
+                <MudText Typo="Typo.body1" Color="Color.Tertiary">
+                    @(_statusFilter == "all" ? "You haven't requested any content yet" : $"No {_statusFilter} requests")
+                </MudText>
+                <MudButton Variant="Variant.Filled" 
+                          Color="Color.Primary" 
+                          Size="Size.Large"
+                          Href="/search"
+                          Class="mt-4">
+                    Browse Content
+                </MudButton>
+            </div>
+        }
+    </MudContainer>
+</div>
 
 @code {
-    private List<PlexRequestsHosted.Shared.DTOs.MediaRequestDto> _requests = new();
+    private List<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>? _allRequests;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>? _filteredRequests;
+    private PlexRequestsHosted.Shared.DTOs.UserStatsDto? _stats;
+    private String _statusFilter = "all";
+    private Boolean _isLoading = true;
+    private Boolean _isLoadingMore = false;
+    private Boolean _hasMore = false;
+    private Int32 _currentPage = 1;
 
     protected override async Task OnInitializedAsync()
     {
-        var page = await MediaRequestService.GetRequestsAsync(new() { PageNumber = 1, PageSize = 50 });
-        _requests = page.Items;
+        await LoadData();
     }
 
-    private async Task Cancel(PlexRequestsHosted.Shared.DTOs.MediaRequestDto request)
+    private async Task LoadData()
     {
-        if (await MediaRequestService.CancelRequestAsync(request.Id))
+        _isLoading = true;
+        StateHasChanged();
+
+        try
         {
-            request.Status = PlexRequestsHosted.Shared.Enums.RequestStatus.Cancelled;
+            // Load stats
+            _stats = await MediaRequestService.GetMyStatsAsync();
+            
+            // Load requests
+            PlexRequestsHosted.Shared.DTOs.PagedResult<PlexRequestsHosted.Shared.DTOs.MediaRequestDto> page = 
+                await MediaRequestService.GetRequestsAsync(new PlexRequestsHosted.Shared.DTOs.MediaFilterDto 
+                { 
+                    PageNumber = _currentPage, 
+                    PageSize = 20 
+                });
+            
+            _allRequests = page.Items;
+            _hasMore = page.HasNext;
+            ApplyFilter();
+        }
+        finally
+        {
+            _isLoading = false;
             StateHasChanged();
         }
     }
 
-    private bool _canCancel(PlexRequestsHosted.Shared.DTOs.MediaRequestDto r)
-        => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
+    private async Task LoadMore()
+    {
+        _isLoadingMore = true;
+        _currentPage++;
+        
+        PlexRequestsHosted.Shared.DTOs.PagedResult<PlexRequestsHosted.Shared.DTOs.MediaRequestDto> page = 
+            await MediaRequestService.GetRequestsAsync(new PlexRequestsHosted.Shared.DTOs.MediaFilterDto 
+            { 
+                PageNumber = _currentPage, 
+                PageSize = 20 
+            });
+        
+        if (page.Items?.Any() == true)
+        {
+            _allRequests ??= new List<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>();
+            _allRequests.AddRange(page.Items);
+            ApplyFilter();
+        }
+        
+        _hasMore = page.HasNext;
+        _isLoadingMore = false;
+    }
+
+    private void SetStatusFilter(String filter)
+    {
+        _statusFilter = filter;
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        if (_allRequests == null)
+        {
+            _filteredRequests = null;
+            return;
+        }
+
+        _filteredRequests = _statusFilter switch
+        {
+            "pending" => _allRequests.Where(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Pending).ToList(),
+            "approved" => _allRequests.Where(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Approved).ToList(),
+            "available" => _allRequests.Where(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Available).ToList(),
+            _ => _allRequests
+        };
+    }
+
+    private async Task CancelRequest(PlexRequestsHosted.Shared.DTOs.MediaRequestDto request)
+    {
+        Boolean confirmed = await ConfirmAction($"Cancel request for {request.Title}?");
+        if (!confirmed) return;
+
+        if (await MediaRequestService.CancelRequestAsync(request.Id))
+        {
+            request.Status = PlexRequestsHosted.Shared.Enums.RequestStatus.Cancelled;
+            await ToastService.ShowInfoAsync("Request cancelled");
+            await LoadData();
+        }
+    }
+
+    private void ViewDetails(PlexRequestsHosted.Shared.DTOs.MediaRequestDto request)
+    {
+        Navigation.NavigateTo($"/media/{request.MediaType.ToString().ToLower()}/{request.MediaId}");
+    }
+
+    private void WatchNow(PlexRequestsHosted.Shared.DTOs.MediaRequestDto request)
+    {
+        // This would navigate to Plex or open the media player
+        Navigation.NavigateTo($"/media/{request.MediaType.ToString().ToLower()}/{request.MediaId}");
+    }
+
+    private Task<Boolean> ConfirmAction(String message)
+    {
+        // In a real implementation, this would show a confirmation dialog
+        return Task.FromResult(true);
+    }
+
+    private String GetMediaIcon(PlexRequestsHosted.Shared.Enums.MediaType type) => type switch
+    {
+        PlexRequestsHosted.Shared.Enums.MediaType.Movie => Icons.Material.Filled.Movie,
+        PlexRequestsHosted.Shared.Enums.MediaType.TvShow => Icons.Material.Filled.Tv,
+        _ => Icons.Material.Filled.VideoLibrary
+    };
 
     private Color GetStatusColor(PlexRequestsHosted.Shared.Enums.RequestStatus status) => status switch
     {
         PlexRequestsHosted.Shared.Enums.RequestStatus.Pending => Color.Warning,
         PlexRequestsHosted.Shared.Enums.RequestStatus.Approved => Color.Success,
         PlexRequestsHosted.Shared.Enums.RequestStatus.Available => Color.Info,
-        PlexRequestsHosted.Shared.Enums.RequestStatus.Cancelled => Color.Error,
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Rejected => Color.Error,
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Cancelled => Color.Dark,
         _ => Color.Default
     };
+
+    private String GetStatusText(PlexRequestsHosted.Shared.Enums.RequestStatus status) => status switch
+    {
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Pending => "Pending",
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Approved => "Approved",
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Available => "Available",
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Rejected => "Rejected",
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Cancelled => "Cancelled",
+        _ => "Unknown"
+    };
+
+    private Int32 GetTotalCount() => _allRequests?.Count ?? 0;
+    private Int32 GetPendingCount() => _allRequests?.Count(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Pending) ?? 0;
+    private Int32 GetApprovedCount() => _allRequests?.Count(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Approved) ?? 0;
+    private Int32 GetAvailableCount() => _allRequests?.Count(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Available) ?? 0;
+
+    private void SetAllFilter() => SetStatusFilter("all");
+    private void SetPendingFilter() => SetStatusFilter("pending");
+    private void SetApprovedFilter() => SetStatusFilter("approved");
+    private void SetAvailableFilter() => SetStatusFilter("available");
 }

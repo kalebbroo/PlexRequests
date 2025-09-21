@@ -1,0 +1,146 @@
+.watchlist-page {
+    min-height: 100vh;
+    background-color: var(--dark-bg);
+    padding: 2rem 0;
+}
+
+.page-header {
+    margin-bottom: 2rem;
+}
+
+.page-header h1 {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+}
+
+.loading-container {
+    display: flex;
+    justify-content: center;
+    padding: 4rem 0;
+}
+
+.watchlist-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--divider);
+}
+
+.view-options {
+    display: flex;
+    gap: 1rem;
+}
+
+.sort-select {
+    min-width: 150px;
+}
+
+/* Grid View */
+.watchlist-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.grid-item {
+    position: relative;
+}
+
+.item-wrapper {
+    position: relative;
+}
+
+.remove-button {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background-color: rgba(0,0,0,0.8);
+    border: none;
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: all 0.3s ease;
+    z-index: 10;
+}
+
+.item-wrapper:hover .remove-button {
+    opacity: 1;
+}
+
+.remove-button:hover {
+    background-color: var(--primary-red);
+    transform: scale(1.1);
+}
+
+/* List View */
+.watchlist-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.list-item-wrapper {
+    position: relative;
+}
+
+.list-remove-button {
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 6rem 0;
+    color: var(--text-secondary);
+}
+
+.empty-state h2 {
+    font-size: 1.5rem;
+    color: var(--text-primary);
+    margin: 1rem 0;
+}
+
+/* Responsive Design */
+@media (max-width: 1200px) {
+    .watchlist-grid {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    }
+}
+
+@media (max-width: 768px) {
+    .watchlist-controls {
+        flex-direction: column;
+        gap: 1rem;
+        align-items: stretch;
+    }
+
+    .view-options {
+        justify-content: center;
+    }
+
+    .sort-select {
+        width: 100%;
+    }
+
+    .watchlist-grid {
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    }
+}
+
+@media (max-width: 480px) {
+    .watchlist-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}

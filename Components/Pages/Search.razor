@@ -1,88 +1,267 @@
 @page "/search"
 @inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
+@inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject NavigationManager Navigation
+@implements IDisposable
 
-<PageTitle>Search</PageTitle>
+<PageTitle>Search - Plex Requests</PageTitle>
 
-<MudContainer MaxWidth="MaxWidth.Large" Class="mt-6">
-    <MudGrid>
-        <MudItem xs="12">
-            <MudText Typo="Typo.h4" Class="mb-2">Search</MudText>
-        </MudItem>
-        <MudItem xs="12" md="8">
-            <MudTextField @bind-Value="_query" Placeholder="Search for movies or TV shows..." Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" DebounceInterval="300" OnKeyDown="OnKeyDown" FullWidth="true" />
-        </MudItem>
-        <MudItem xs="6" md="2">
-            <MudSelect T="PlexRequestsHosted.Shared.Enums.MediaType?" @bind-Value="_mediaType" Clearable="true" Label="Type" Variant="Variant.Outlined" FullWidth="true">
-                <MudSelectItem T="PlexRequestsHosted.Shared.Enums.MediaType?" Value="@( (PlexRequestsHosted.Shared.Enums.MediaType?)null )">All</MudSelectItem>
-                <MudSelectItem T="PlexRequestsHosted.Shared.Enums.MediaType?" Value="PlexRequestsHosted.Shared.Enums.MediaType.Movie">Movies</MudSelectItem>
-                <MudSelectItem T="PlexRequestsHosted.Shared.Enums.MediaType?" Value="PlexRequestsHosted.Shared.Enums.MediaType.TvShow">TV Shows</MudSelectItem>
-            </MudSelect>
-        </MudItem>
-        <MudItem xs="6" md="2">
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ExecuteSearch" FullWidth="true">Search</MudButton>
-        </MudItem>
-    </MudGrid>
-
-    @if (_isSearching)
-    {
-        <div class="d-flex align-center mt-6">
-            <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
-            <MudText Class="ml-3">Searching...</MudText>
-        </div>
-    }
-
-    @if (!_isSearching && _results != null)
-    {
-        @if (_results.Count == 0)
-        {
-            <MudText Typo="Typo.body1" Class="mt-6">No results found.</MudText>
-        }
-        else
-        {
-            <MudGrid Class="mt-4">
-                @foreach (var item in _results)
+<div class="search-page">
+    <div class="search-header">
+        <MudContainer MaxWidth="MaxWidth.Large">
+            <div class="search-input-container">
+                <MudIcon Icon="@Icons.Material.Filled.Search" Class="search-icon" />
+                <input type="text" 
+                       class="search-input" 
+                       placeholder="Search for movies, TV shows, genres..."
+                       @bind="_searchQuery"
+                       @bind:event="oninput"
+                       @onkeyup="HandleKeyUp"
+                       autofocus />
+                @if (!string.IsNullOrEmpty(_searchQuery))
                 {
-                    <MudItem xs="6" sm="4" md="3" lg="2">
-                        <MediaCard Media="item" />
-                    </MudItem>
+                    <MudIconButton Icon="@Icons.Material.Filled.Clear" 
+                                   Size="Size.Small" 
+                                   Class="clear-button"
+                                   OnClick="ClearSearch" />
                 }
-            </MudGrid>
-        }
-    }
-</MudContainer>
+            </div>
+            
+            @if (_showFilters)
+            {
+                <div class="search-filters">
+                    <MudChip T="PlexRequestsHosted.Shared.Enums.MediaType?"
+                             Variant="@(_filterType == null ? Variant.Filled : Variant.Outlined)"
+                             OnClick="() => SetTypeFilter(null)">
+                        All
+                    </MudChip>
+                    <MudChip T="PlexRequestsHosted.Shared.Enums.MediaType?"
+                             Variant="@(_filterType == PlexRequestsHosted.Shared.Enums.MediaType.Movie ? Variant.Filled : Variant.Outlined)"
+                             OnClick="() => SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType.Movie)">
+                        Movies
+                    </MudChip>
+                    <MudChip T="PlexRequestsHosted.Shared.Enums.MediaType?"
+                             Variant="@(_filterType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow ? Variant.Filled : Variant.Outlined)"
+                             OnClick="() => SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType.TvShow)">
+                        TV Shows
+                    </MudChip>
+                </div>
+            }
+        </MudContainer>
+    </div>
+
+    <div class="search-content">
+        <MudContainer MaxWidth="MaxWidth.Large">
+            @if (string.IsNullOrEmpty(_searchQuery))
+            {
+                <!-- Popular Searches / Suggestions -->
+                <div class="suggestions-section">
+                    <h2>Popular Searches</h2>
+                    <div class="suggestion-grid">
+                        @foreach (String suggestion in _popularSearches)
+                        {
+                            <button class="suggestion-tile" @onclick="() => SearchFor(suggestion)">
+                                <span>@suggestion</span>
+                                <MudIcon Icon="@Icons.Material.Filled.TrendingUp" />
+                            </button>
+                        }
+                    </div>
+                    
+                    <h2>Browse by Genre</h2>
+                    <div class="genre-grid">
+                        @foreach (String genre in _genres)
+                        {
+                            <button class="genre-tile" @onclick="() => BrowseGenre(genre)">
+                                @genre
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
+            else if (_isSearching)
+            {
+                <!-- Loading State -->
+                <div class="search-loading">
+                    <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Large" />
+                    <MudText Typo="Typo.body1">Searching...</MudText>
+                </div>
+            }
+            else if (_searchResults?.Any() == true)
+            {
+                <!-- Search Results -->
+                <div class="results-header">
+                    <h2>Results for "@_searchQuery"</h2>
+                    <MudText Typo="Typo.body2" Color="Color.Tertiary">
+                        @_searchResults.Count results found
+                    </MudText>
+                </div>
+                
+                <div class="results-grid">
+                    @foreach (PlexRequestsHosted.Shared.DTOs.MediaCardDto result in _searchResults)
+                    {
+                        <div class="result-item" @onclick="() => ShowDetails(result)">
+                            <MediaTile Media="result"
+                                      OnRequest="RequestMedia"
+                                      OnPlay="PlayMedia" />
+                        </div>
+                    }
+                </div>
+            }
+            else if (!string.IsNullOrEmpty(_searchQuery))
+            {
+                <!-- No Results -->
+                <div class="no-results">
+                    <MudIcon Icon="@Icons.Material.Filled.SearchOff" Style="font-size: 4rem;" />
+                    <h2>No results found for "@_searchQuery"</h2>
+                    <MudText Typo="Typo.body1" Color="Color.Tertiary">
+                        Try different keywords or browse our categories
+                    </MudText>
+                    <div class="no-results-suggestions">
+                        <MudText Typo="Typo.h6">You might like:</MudText>
+                        <div class="suggestion-chips">
+                            @foreach (String suggestion in _alternativeSuggestions)
+                            {
+                                <MudChip T="string" OnClick="() => SearchFor(suggestion)">@suggestion</MudChip>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </MudContainer>
+    </div>
+</div>
 
 @code {
-    private string _query = string.Empty;
-    private PlexRequestsHosted.Shared.Enums.MediaType? _mediaType = null;
-    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _results;
-    private bool _isSearching;
+    private String _searchQuery = "";
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _searchResults;
+    private PlexRequestsHosted.Shared.Enums.MediaType? _filterType;
+    private Boolean _isSearching = false;
+    private Boolean _showFilters = false;
+    private System.Timers.Timer? _debounceTimer;
+
+    private List<String> _popularSearches = new()
+    {
+        "Action Movies", "Comedy Shows", "New Releases", "Top Rated",
+        "Marvel", "Star Wars", "Horror", "Documentary"
+    };
+
+    private List<String> _genres = new()
+    {
+        "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary",
+        "Drama", "Family", "Fantasy", "Horror", "Mystery", "Romance",
+        "Sci-Fi", "Thriller", "War", "Western"
+    };
+
+    private List<String> _alternativeSuggestions = new()
+    {
+        "Trending Now", "Popular Movies", "Award Winners", "Classic Films"
+    };
 
     protected override async Task OnInitializedAsync()
     {
-        await ExecuteSearch();
+        // Load initial trending/popular content
+        LoadPopularContent();
     }
 
-    private async Task ExecuteSearch()
+    private void LoadPopularContent()
     {
-        _isSearching = true; StateHasChanged();
+        // This would load popular/trending content for the empty search state
+    }
+
+    private void HandleKeyUp(KeyboardEventArgs e)
+    {
+        _debounceTimer?.Stop();
+        _debounceTimer = new System.Timers.Timer(300);
+        _debounceTimer.Elapsed += async (sender, args) =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await PerformSearch();
+            });
+            _debounceTimer?.Stop();
+        };
+        _debounceTimer.Start();
+        
+        _showFilters = !string.IsNullOrEmpty(_searchQuery);
+    }
+
+    private async Task PerformSearch()
+    {
+        if (string.IsNullOrWhiteSpace(_searchQuery))
+        {
+            _searchResults = null;
+            StateHasChanged();
+            return;
+        }
+
+        _isSearching = true;
+        StateHasChanged();
+
         try
         {
-            _results = await PlexApiService.SearchMediaAsync(_query, _mediaType);
-        }
-        catch
-        {
-            await ToastService.ShowErrorAsync("Search failed");
+            _searchResults = await PlexApiService.SearchMediaAsync(_searchQuery, _filterType);
+            
+            // Apply additional filtering if needed
+            if (_filterType.HasValue)
+            {
+                _searchResults = _searchResults?.Where(r => r.MediaType == _filterType.Value).ToList();
+            }
         }
         finally
         {
-            _isSearching = false; StateHasChanged();
+            _isSearching = false;
+            StateHasChanged();
         }
     }
 
-    private async Task OnKeyDown(KeyboardEventArgs args)
+    private void SearchFor(String query)
     {
-        if (args.Key == "Enter")
-            await ExecuteSearch();
+        _searchQuery = query;
+        _ = PerformSearch();
+    }
+
+    private void BrowseGenre(String genre)
+    {
+        Navigation.NavigateTo($"/browse?genre={genre}");
+    }
+
+    private void ClearSearch()
+    {
+        _searchQuery = "";
+        _searchResults = null;
+        _showFilters = false;
+    }
+
+    private void SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType? type)
+    {
+        _filterType = type;
+        _ = PerformSearch();
+    }
+
+    private void ShowDetails(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLower()}/{media.Id}");
+    }
+
+    private async Task RequestMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(media.Id, media.MediaType);
+        if (result.Success)
+        {
+            media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
+            await ToastService.ShowSuccessAsync($"{media.Title} has been requested!");
+        }
+    }
+
+    private void PlayMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        if (!string.IsNullOrEmpty(media.PlexUrl))
+            Navigation.NavigateTo(media.PlexUrl, true);
+    }
+
+    public void Dispose()
+    {
+        _debounceTimer?.Dispose();
     }
 }
