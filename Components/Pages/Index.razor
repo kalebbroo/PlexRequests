@@ -1,5 +1,8 @@
 @page "/"
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@using PlexRequestsHosted.Utils
 @inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject NavigationManager Navigation
@@ -178,14 +181,18 @@
 
     private async Task LoadDashboardData()
     {
+        // TODO: Implement actual Plex API integration for retrieving recently added media from Plex server
+        // Currently using mock data - needs backend service to connect to Plex API
+        Logs.Info("Loading dashboard data - Plex API integration pending");
+
         // Parallel load all sections for better performance
         Task<List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>>[] tasks = new[]
         {
-            PlexApiService.GetRecentlyAddedAsync(20),
-            PlexApiService.SearchMediaAsync("", null),
-            MediaRequestService.GetWatchlistAsync(),
-            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.Movie, 1, 20),
-            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.TvShow, 1, 20)
+            PlexApiService.GetRecentlyAddedAsync(20), // TODO: Connect to Plex API endpoint
+            PlexApiService.SearchMediaAsync("", null), // TODO: Implement TMDB API for trending media lookup
+            MediaRequestService.GetWatchlistAsync(), // TODO: Integrate with user watchlist database
+            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.Movie, 1, 20), // TODO: Plex library sync
+            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.TvShow, 1, 20) // TODO: Plex library sync
         };
 
         List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>[] results = await Task.WhenAll(tasks);
@@ -216,7 +223,7 @@
         if (_trending?.Any() == true)
         {
             PlexRequestsHosted.Shared.DTOs.MediaCardDto firstItem = _trending.First();
-            _heroMedia = await PlexApiService.GetMediaDetailsAsync(firstItem.Id, firstItem.MediaType);
+            _heroMedia = await PlexApiService.GetMediaDetailsAsync(firstItem.Id, firstItem.MediaType); // TODO: TMDB API details lookup
             _heroMedia ??= new PlexRequestsHosted.Shared.DTOs.MediaDetailDto
             {
                 Id = firstItem.Id,
@@ -231,6 +238,8 @@
                 Genres = firstItem.Genres
             };
         }
+
+        Logs.Info($"Dashboard data loaded: {_trending?.Count ?? 0} trending items, {_recentlyAdded?.Count ?? 0} recently added");
     }
 
     private void ShowDetails(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
@@ -268,3 +277,176 @@
         return mins > 0 ? $"{hours}h {mins}m" : $"{hours}h";
     }
 }
+
+<style>
+.homepage {
+    min-height: 100vh;
+}
+
+.hero-billboard {
+    position: relative;
+    height: 70vh;
+    min-height: 500px;
+    margin-top: -56px;
+    display: flex;
+    align-items: center;
+}
+
+.billboard-background {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow: hidden;
+}
+
+.billboard-background img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.billboard-gradient {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(to right, rgba(0,0,0,.8) 0%, rgba(0,0,0,.4) 50%, rgba(0,0,0,.8) 100%);
+}
+
+.billboard-fade {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 200px;
+    background: linear-gradient(to top, rgba(20,20,20,1) 0%, rgba(20,20,20,0) 100%);
+}
+
+.billboard-content {
+    position: relative;
+    z-index: 2;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 4%;
+}
+
+.billboard-info {
+    max-width: 600px;
+    color: white;
+}
+
+.billboard-title {
+    font-size: 4rem;
+    font-weight: 900;
+    margin-bottom: 1rem;
+    text-shadow: 2px 2px 4px rgba(0,0,0,.8);
+}
+
+.billboard-tagline {
+    font-size: 1.5rem;
+    margin-bottom: 1rem;
+    opacity: .9;
+}
+
+.billboard-description {
+    font-size: 1.125rem;
+    line-height: 1.6;
+    margin-bottom: 2rem;
+    opacity: .95;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.billboard-metadata {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.metadata-item, .metadata-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+}
+
+.metadata-badge {
+    background: rgba(255,255,255,0.1);
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+}
+
+.billboard-actions {
+    display: flex;
+    gap: 1rem;
+}
+
+.btn-primary, .btn-secondary {
+    padding: 0.75rem 2rem;
+    border: none;
+    border-radius: 4px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btn-primary {
+    background: white;
+    color: black;
+}
+
+.btn-primary:hover {
+    background: rgba(255,255,255,0.9);
+}
+
+.btn-secondary {
+    background: rgba(255,255,255,0.1);
+    color: white;
+    border: 1px solid rgba(255,255,255,0.3);
+}
+
+.btn-secondary:hover {
+    background: rgba(255,255,255,0.2);
+}
+
+.content-rows {
+    margin-top: 4rem; /* Push content below the hero */
+    padding: 0 4%;
+}
+
+@@media (max-width: 768px) {
+    .billboard-title {
+        font-size: 2.5rem;
+    }
+    
+    .billboard-tagline {
+        font-size: 1.25rem;
+    }
+    
+    .billboard-description {
+        font-size: 1rem;
+    }
+    
+    .billboard-actions {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    .btn-primary, .btn-secondary {
+        padding: 0.5rem 1rem;
+        font-size: 0.875rem;
+    }
+    
+    .content-rows {
+        margin-top: 2rem;
+    }
+}
+</style>

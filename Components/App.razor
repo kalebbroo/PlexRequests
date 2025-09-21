@@ -15,15 +15,44 @@
 </head>
 
 <body>
-    <div style="position:fixed;top:0;left:0;right:0;background:#fffae6;color:#333;padding:.5rem 1rem;z-index:9999;border-bottom:1px solid #e0d8a8;">
-        Dev banner: App shell rendered. If you can read this but pages are blank, router/page rendering is failing.
-    </div>
     <CascadingAuthenticationState>
-        <div style="margin-top:2.5rem; padding:.25rem .75rem; color:#555;">[Diag] Minimal render: Counter and Routes without Mud providers</div>
-        <Counter />
+        <MudThemeProvider Theme="@_theme" IsDarkMode="true" />
+        <MudPopoverProvider />
+        <MudDialogProvider />
+        <MudSnackbarProvider />
         <Routes @rendermode="InteractiveServer" />
     </CascadingAuthenticationState>
     <script src="_framework/blazor.web.js"></script>
 </body>
 
 </html>
+
+@using MudBlazor
+
+@code {
+    private MudTheme _theme = new()
+    {
+        PaletteDark = new PaletteDark()
+        {
+            Primary = "#E50914",
+            Secondary = "#564d4d",
+            Background = "#141414",
+            Surface = "#181818",
+            AppbarBackground = "rgba(20, 20, 20, 0)",
+            AppbarText = "#FFFFFF",
+            TextPrimary = "#FFFFFF",
+            TextSecondary = "#B3B3B3",
+            ActionDefault = "#B3B3B3",
+            ActionDisabled = "#4B4B4B",
+            Divider = "#404040",
+            DividerLight = "#2A2A2A"
+        },
+        Typography = new Typography()
+        {
+            Default = new DefaultTypography()
+            {
+                FontFamily = new[] { "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "sans-serif" }
+            }
+        }
+    };
+}

@@ -68,4 +68,7 @@ using (var scope = app.Services.CreateScope())
     db.Database.EnsureCreated();
 }
 
+// Start log saving
+PlexRequestsHosted.Utils.Logs.StartLogSaving();
+
 app.Run();

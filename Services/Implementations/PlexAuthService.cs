@@ -1,15 +1,15 @@
 using PlexRequestsHosted.Services.Abstractions;
+using PlexRequestsHosted.Utils;
 using Microsoft.JSInterop;
-using Microsoft.Extensions.Logging;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
-public class PlexAuthService(HttpClient httpClient, IJSRuntime jsRuntime, ILogger<PlexAuthService> logger) : IPlexAuthService
+public class PlexAuthService(HttpClient httpClient, IJSRuntime jsRuntime) : IPlexAuthService
 {
     private readonly HttpClient _httpClient = httpClient;
     public Task<PlexAuthenticationFlow> BeginAuthenticationAsync()
     {
-        logger.LogInformation("Starting Plex auth flow");
+        Logs.Info("Starting Plex auth flow");
         // In a real implementation we would call Plex PIN API here.
         return Task.FromResult(new PlexAuthenticationFlow
         {
@@ -22,7 +22,7 @@ public class PlexAuthService(HttpClient httpClient, IJSRuntime jsRuntime, ILogge
 
     public async Task<PlexAuthenticationResult> PollForAuthenticationAsync(int pinId, CancellationToken cancellationToken = default)
     {
-        logger.LogInformation("Polling for Plex auth with pin {PinId}", pinId);
+        Logs.Info($"Polling for Plex auth with pin {pinId}");
         // Simulate waiting/polling for user to complete auth. After a short delay, return a success.
         try
         {
@@ -49,14 +49,14 @@ public class PlexAuthService(HttpClient httpClient, IJSRuntime jsRuntime, ILogge
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to open auth window via JS. Will fallback to navigation.");
+            Logs.Warning($"Failed to open auth window via JS. Will fallback to navigation. {ex.Message}");
             return false;
         }
     }
 
     public Task<PlexUser?> GetPlexUserAsync(string authToken)
     {
-        logger.LogInformation("Retrieving Plex user with token length {Len}", authToken?.Length);
+        Logs.Info($"Retrieving Plex user with token length {authToken?.Length}");
         return Task.FromResult<PlexUser?>(new PlexUser { Username = "demo" });
     }
 }

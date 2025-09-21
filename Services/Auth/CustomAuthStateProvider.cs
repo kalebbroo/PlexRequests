@@ -4,15 +4,15 @@ using Blazored.SessionStorage;
 using Microsoft.AspNetCore.Components.Authorization;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Services.Abstractions;
+using PlexRequestsHosted.Utils;
 
 namespace PlexRequestsHosted.Services.Auth;
 
-public class CustomAuthStateProvider(ISessionStorageService sessionStorage, HttpClient httpClient, ILogger<CustomAuthStateProvider> logger)
+public class CustomAuthStateProvider(ISessionStorageService sessionStorage, HttpClient httpClient)
     : AuthenticationStateProvider
 {
     private readonly ISessionStorageService _sessionStorage = sessionStorage;
     private readonly HttpClient _httpClient = httpClient;
-    private readonly ILogger<CustomAuthStateProvider> _logger = logger;
 
     private const string AUTH_TOKEN_KEY = "authToken";
     private const string REFRESH_TOKEN_KEY = "refreshToken";
@@ -46,12 +46,12 @@ public class CustomAuthStateProvider(ISessionStorageService sessionStorage, Http
         {
             // During prerender/static rendering, JS interop (session storage) is unavailable.
             // Return unauthenticated without logging an error to avoid noisy startup failures.
-            _logger.LogDebug(ex, "GetAuthenticationState deferred due to prerender (JS interop unavailable)");
+            Logs.Debug($"GetAuthenticationState deferred due to prerender (JS interop unavailable): {ex.Message}");
             return new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "GetAuthenticationState failed");
+            Logs.Error($"GetAuthenticationState failed: {ex.Message}");
             return new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
         }
     }
@@ -75,7 +75,7 @@ public class CustomAuthStateProvider(ISessionStorageService sessionStorage, Http
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "AuthenticateWithPlex failed");
+            Logs.Error($"AuthenticateWithPlex failed: {ex.Message}");
             return new AuthenticationResult { Success = false, ErrorMessage = "Auth failed" };
         }
     }

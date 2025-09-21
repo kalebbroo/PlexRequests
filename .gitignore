@@ -56,3 +56,4 @@ dkms.conf
 /obj
 /.vs
 /bin
+/logs

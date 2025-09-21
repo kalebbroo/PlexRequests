@@ -14,7 +14,7 @@ public class MediaRequestService(AppDbContext db) : IMediaRequestService
     {
         _db.Watchlist.Add(new WatchlistItemEntity { MediaId = mediaId, Username = "demo" });
         return _db.SaveChangesAsync().ContinueWith(t => t.Result > 0);
-    }
+    } // TODO: Validate media exists in metadata provider before adding
 
     public Task<bool> CancelRequestAsync(int requestId)
     {
@@ -22,7 +22,7 @@ public class MediaRequestService(AppDbContext db) : IMediaRequestService
         if (req is null) return Task.FromResult(false);
         req.Status = RequestStatus.Cancelled;
         return _db.SaveChangesAsync().ContinueWith(t => t.Result > 0);
-    }
+    } // TODO: Add authorization check for request ownership
 
     public Task<UserStatsDto> GetMyStatsAsync()
     {
@@ -35,7 +35,7 @@ public class MediaRequestService(AppDbContext db) : IMediaRequestService
             LastRequestDate = _db.MediaRequests.OrderByDescending(r => r.RequestedAt).Select(r => (DateTime?)r.RequestedAt).FirstOrDefault()
         };
         return Task.FromResult(stats);
-    }
+    } // TODO: Filter by current user instead of hardcoded "demo"
 
     public Task<List<MediaCardDto>> GetWatchlistAsync()
     {
@@ -45,7 +45,7 @@ public class MediaRequestService(AppDbContext db) : IMediaRequestService
             .Select(w => new MediaCardDto { Id = w.MediaId, Title = $"Item #{w.MediaId}", RequestStatus = RequestStatus.None })
             .ToList();
         return Task.FromResult(list);
-    }
+    } // TODO: Populate MediaCardDto with real data from metadata provider
 
     public Task<MediaRequestDto?> GetRequestByIdAsync(int id)
     {
@@ -54,7 +54,7 @@ public class MediaRequestService(AppDbContext db) : IMediaRequestService
         {
             Id = r.Id, MediaId = r.MediaId, MediaType = r.MediaType, Title = r.Title, Status = r.Status, RequestedAt = r.RequestedAt
         });
-    }
+    } // TODO: Add authorization check
 
     public Task<PagedResult<MediaRequestDto>> GetRequestsAsync(MediaFilterDto filter)
     {
@@ -69,9 +69,9 @@ public class MediaRequestService(AppDbContext db) : IMediaRequestService
             })
             .ToList();
         return Task.FromResult(new PagedResult<MediaRequestDto> { Items = items, TotalCount = total, PageNumber = filter.PageNumber, PageSize = filter.PageSize });
-    }
+    } // TODO: Add user filtering and admin permissions
 
-    public Task<bool> IsInWatchlistAsync(int mediaId) => Task.FromResult(_db.Watchlist.Any(w => w.MediaId == mediaId && w.Username == "demo"));
+    public Task<bool> IsInWatchlistAsync(int mediaId) => Task.FromResult(_db.Watchlist.Any(w => w.MediaId == mediaId && w.Username == "demo")); // TODO: Filter by current user
 
     public Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType)
     {
@@ -82,14 +82,14 @@ public class MediaRequestService(AppDbContext db) : IMediaRequestService
         {
             MediaId = mediaId,
             MediaType = mediaType,
-            Title = $"Item #{mediaId}",
+            Title = $"Item #{mediaId}", // TODO: Get real title from metadata provider
             Status = RequestStatus.Pending,
             RequestedAt = DateTime.UtcNow,
-            RequestedBy = "demo"
+            RequestedBy = "demo" // TODO: Get from current user
         };
         _db.MediaRequests.Add(entity);
         return _db.SaveChangesAsync().ContinueWith(t => new MediaRequestResult { Success = t.Result > 0, RequestId = entity.Id, NewStatus = entity.Status });
-    }
+    } // TODO: Implement request limits and validation
 
     public Task<bool> RemoveFromWatchlistAsync(int mediaId)
     {
@@ -97,8 +97,8 @@ public class MediaRequestService(AppDbContext db) : IMediaRequestService
         if (item == null) return Task.FromResult(false);
         _db.Watchlist.Remove(item);
         return _db.SaveChangesAsync().ContinueWith(t => t.Result > 0);
-    }
+    } // TODO: Filter by current user
 
     public Task<bool> CheckRequestLimitsAsync(MediaType mediaType)
-        => Task.FromResult(true);
+        => Task.FromResult(true); // TODO: Implement actual request limits logic
 }

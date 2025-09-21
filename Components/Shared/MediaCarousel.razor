@@ -1,5 +1,6 @@
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
+@using MudBlazor
 
 <div class="carousel-container">
     <div class="carousel-header">
@@ -8,125 +9,88 @@
         {
             <span class="carousel-subtitle">@Subtitle</span>
         }
-        @if (Items?.Count > ItemsPerView)
-        {
-            <div class="carousel-controls">
-                <button class="carousel-btn prev" @onclick="ScrollPrev" disabled="@(_currentIndex == 0)">
-                    <MudIcon Icon="@Icons.Material.Filled.ChevronLeft" />
-                </button>
-                <button class="carousel-btn next" @onclick="ScrollNext" disabled="@(_currentIndex >= Items.Count - ItemsPerView)">
-                    <MudIcon Icon="@Icons.Material.Filled.ChevronRight" />
-                </button>
-            </div>
-        }
     </div>
     
-    <div class="carousel-viewport" @ref="_viewport">
-        <div class="carousel-track" style="transform: translateX(@(_currentIndex * -100 / ItemsPerView)%);">
-            @if (Items != null)
+    <div class="carousel-content" style="display: flex; overflow-x: auto; gap: 1rem; padding: 1rem 0;">
+        @if (Items != null)
+        {
+            @foreach (MediaCardDto item in Items)
             {
-                @foreach (MediaCardDto item in Items)
-                {
-                    <div class="carousel-item" style="flex: 0 0 @(100.0 / ItemsPerView)%;">
-                        <div class="media-tile" @onclick="() => HandleItemClick(item)"
-                             @onmouseenter="() => StartHover(item)"
-                             @onmouseleave="StopHover">
-                            
-                            <div class="tile-image-container">
-                                @if (!string.IsNullOrEmpty(item.PosterUrl))
+                <div class="media-tile" @onclick="() => HandleItemClick(item)"
+                     @onmouseenter="() => StartHover(item)"
+                     @onmouseleave="StopHover"
+                     style="flex: 0 0 200px; cursor: pointer;">
+                    
+                    <div class="tile-image-container">
+                        @if (!string.IsNullOrEmpty(item.PosterUrl))
+                        {
+                            <img src="@item.PosterUrl" alt="@item.Title" loading="lazy" style="width: 100%; height: 100%; object-fit: cover;" />
+                        }
+                        else
+                        {
+                            <div class="tile-placeholder">
+                                <MudIcon Icon="@GetMediaIcon(item.MediaType)" Size="Size.Large" />
+                            </div>
+                        }
+                        
+                        @if (ShowProgress && item.MediaType == MediaType.TvShow && item.AvailableSeasons > 0)
+                        {
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: @((item.AvailableSeasons * 100.0 / item.TotalSeasons))%"></div>
+                            </div>
+                        }
+                        
+                        <div class="availability-indicator @GetAvailabilityClass(item)">
+                            @GetAvailabilityIcon(item)
+                        </div>
+                    </div>
+                    
+                    @if (_hoveredItem == item)
+                    {
+                        <div class="tile-hover-info">
+                            <div class="hover-title">@item.Title</div>
+                            <div class="hover-metadata">
+                                <span>@item.Year</span>
+                                @if (item.Rating.HasValue)
                                 {
-                                    <img src="@item.PosterUrl" alt="@item.Title" loading="lazy" />
+                                    <span class="rating">
+                                        <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" />
+                                        @item.Rating.Value.ToString("0.0")
+                                    </span>
+                                }
+                            </div>
+                            @if (item.Genres?.Any() == true)
+                            {
+                                <div class="hover-genres">
+                                    @foreach (var genre in item.Genres.Take(3))
+                                    {
+                                        <span class="genre-tag">@genre</span>
+                                    }
+                                </div>
+                            }
+                            
+                            <div class="hover-actions">
+                                @if (item.IsAvailable)
+                                {
+                                    <button class="action-btn play" @onclick="() => HandlePlayClick(item)" @onclick:stopPropagation="true">
+                                        <MudIcon Icon="@Icons.Material.Filled.PlayArrow" />
+                                    </button>
                                 }
                                 else
                                 {
-                                    <div class="tile-placeholder">
-                                        <MudIcon Icon="@GetMediaIcon(item.MediaType)" Size="Size.Large" />
-                                    </div>
+                                    <button class="action-btn" @onclick="() => HandleRequestClick(item)" @onclick:stopPropagation="true">
+                                        <MudIcon Icon="@Icons.Material.Filled.Add" />
+                                    </button>
                                 }
-                                
-                                @if (ShowProgress && item.MediaType == MediaType.TvShow && item.AvailableSeasons > 0)
-                                {
-                                    <div class="progress-bar">
-                                        <div class="progress-fill" style="width: @((item.AvailableSeasons * 100.0 / item.TotalSeasons))%"></div>
-                                    </div>
-                                }
-                                
-                                @if (ShowBadge && !string.IsNullOrEmpty(BadgeText))
-                                {
-                                    <div class="tile-badge">@BadgeText</div>
-                                }
-                                
-                                @if (item.IsAvailable)
-                                {
-                                    <div class="availability-indicator available">
-                                        <MudIcon Icon="@Icons.Material.Filled.PlayCircle" Size="Size.Small" />
-                                    </div>
-                                }
-                                else if (item.RequestStatus == RequestStatus.Pending)
-                                {
-                                    <div class="availability-indicator pending">
-                                        <MudIcon Icon="@Icons.Material.Filled.Schedule" Size="Size.Small" />
-                                    </div>
-                                }
+                                <button class="action-btn info" @onclick:stopPropagation="true" @onclick="() => HandleItemClick(item)">
+                                    <MudIcon Icon="@Icons.Material.Filled.Info" />
+                                </button>
                             </div>
-                            
-                            @if (_hoveredItem == item)
-                            {
-                                <div class="tile-hover-info">
-                                    <h3 class="hover-title">@item.Title</h3>
-                                    
-                                    <div class="hover-metadata">
-                                        @if (ShowRating && item.Rating.HasValue)
-                                        {
-                                            <span class="rating">
-                                                <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" />
-                                                @item.Rating.Value.ToString("0.0")
-                                            </span>
-                                        }
-                                        @if (item.Year.HasValue)
-                                        {
-                                            <span>@item.Year</span>
-                                        }
-                                        @if (item.MediaType == MediaType.TvShow && item.TotalSeasons > 0)
-                                        {
-                                            <span>@item.TotalSeasons Seasons</span>
-                                        }
-                                    </div>
-                                    
-                                    @if (item.Genres?.Any() == true)
-                                    {
-                                        <div class="hover-genres">
-                                            @foreach (String genre in item.Genres.Take(3))
-                                            {
-                                                <span class="genre-tag">@genre</span>
-                                            }
-                                        </div>
-                                    }
-                                    
-                                    <div class="hover-actions">
-                                        @if (item.IsAvailable)
-                                        {
-                                            <button class="action-btn play" @onclick:stopPropagation="true" @onclick="() => HandlePlayClick(item)">
-                                                <MudIcon Icon="@Icons.Material.Filled.PlayArrow" />
-                                            </button>
-                                        }
-                                        else if (item.RequestStatus == RequestStatus.None)
-                                        {
-                                            <button class="action-btn add" @onclick:stopPropagation="true" @onclick="() => HandleRequestClick(item)">
-                                                <MudIcon Icon="@Icons.Material.Filled.Add" />
-                                            </button>
-                                        }
-                                        <button class="action-btn info" @onclick:stopPropagation="true" @onclick="() => HandleItemClick(item)">
-                                            <MudIcon Icon="@Icons.Material.Filled.Info" />
-                                        </button>
-                                    </div>
-                                </div>
-                            }
                         </div>
-                    </div>
-                }
+                    }
+                </div>
             }
-        </div>
+        }
     </div>
 </div>
 
@@ -216,6 +180,25 @@
         MediaType.Music => Icons.Material.Filled.MusicNote,
         _ => Icons.Material.Filled.VideoLibrary
     };
+
+    private String GetAvailabilityClass(MediaCardDto item)
+    {
+        if (item.IsAvailable) return "available";
+        if (item.RequestStatus == RequestStatus.Approved) return "approved";
+        if (item.RequestStatus == RequestStatus.Pending) return "pending";
+        return "";
+    }
+
+    private RenderFragment GetAvailabilityIcon(MediaCardDto item)
+    {
+        if (item.IsAvailable)
+            return @<MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" />;
+        if (item.RequestStatus == RequestStatus.Approved)
+            return @<MudIcon Icon="@Icons.Material.Filled.Schedule" Size="Size.Small" />;
+        if (item.RequestStatus == RequestStatus.Pending)
+            return @<MudIcon Icon="@Icons.Material.Filled.HourglassEmpty" Size="Size.Small" />;
+        return @<div></div>;
+    }
 
     public void Dispose()
     {
