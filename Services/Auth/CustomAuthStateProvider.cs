@@ -2,17 +2,26 @@ using System.Security.Claims;
 using System.Text.Json;
 using Blazored.SessionStorage;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Utils;
+using PlexRequestsHosted.Infrastructure.Data;
+using PlexRequestsHosted.Infrastructure.Entities;
 
 namespace PlexRequestsHosted.Services.Auth;
 
-public class CustomAuthStateProvider(ISessionStorageService sessionStorage, HttpClient httpClient)
+public class CustomAuthStateProvider(
+    ISessionStorageService sessionStorage,
+    HttpClient httpClient,
+    IPlexAuthService plexAuth,
+    AppDbContext dbContext)
     : AuthenticationStateProvider
 {
     private readonly ISessionStorageService _sessionStorage = sessionStorage;
     private readonly HttpClient _httpClient = httpClient;
+    private readonly IPlexAuthService _plexAuth = plexAuth;
+    private readonly AppDbContext _db = dbContext;
 
     private const string AUTH_TOKEN_KEY = "authToken";
     private const string REFRESH_TOKEN_KEY = "refreshToken";
@@ -27,17 +36,23 @@ public class CustomAuthStateProvider(ISessionStorageService sessionStorage, Http
             if (string.IsNullOrEmpty(token))
                 return new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
 
-            // Load stored user info (if available) so we can set a meaningful identity name
-            string displayName = "User";
+            // Load stored user info to rebuild claims (username, email, avatar, display name)
+            var claims = new List<Claim>();
             try
             {
-                var plexUser = await _sessionStorage.GetItemAsync<UserDto>(USER_DATA_KEY);
-                if (plexUser is not null && !string.IsNullOrWhiteSpace(plexUser.Username))
-                    displayName = plexUser.Username;
+                var storedUser = await _sessionStorage.GetItemAsync<UserDto>(USER_DATA_KEY);
+                if (storedUser is not null)
+                {
+                    if (!string.IsNullOrEmpty(storedUser.Username)) claims.Add(new Claim(ClaimTypes.Name, storedUser.Username));
+                    if (!string.IsNullOrEmpty(storedUser.Email)) claims.Add(new Claim(ClaimTypes.Email, storedUser.Email));
+                    if (!string.IsNullOrEmpty(storedUser.DisplayName)) claims.Add(new Claim("display_name", storedUser.DisplayName));
+                    if (!string.IsNullOrEmpty(storedUser.AvatarUrl)) claims.Add(new Claim("avatar_url", storedUser.AvatarUrl));
+                }
             }
-            catch { /* ignore deserialization issues and stick with default */ }
+            catch { /* ignore and keep minimal identity */ }
 
-            var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.Name, displayName) }, "jwt");
+            if (!claims.Any()) claims.Add(new Claim(ClaimTypes.Name, "User"));
+            var identity = new ClaimsIdentity(claims, "plex");
             var user = new ClaimsPrincipal(identity);
             _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
             return new AuthenticationState(user);
@@ -60,18 +75,58 @@ public class CustomAuthStateProvider(ISessionStorageService sessionStorage, Http
     {
         try
         {
-            // For now, trust plexToken and create a fake JWT placeholder
+            // Resolve user info from Plex to persist
+            var plexUser = await _plexAuth.GetPlexUserAsync(plexToken) ?? new PlexUser { Username = plexUsername };
+
+            // Upsert user into DB
+            var existing = await _db.Users.FirstOrDefaultAsync(u => u.Username == plexUser.Username);
+            if (existing is null)
+            {
+                existing = new UserEntity
+                {
+                    Username = plexUser.Username,
+                    DisplayName = plexUser.Title ?? plexUser.Username,
+                    Email = plexUser.Email,
+                    AvatarUrl = plexUser.Thumb
+                };
+                _db.Users.Add(existing);
+            }
+            else
+            {
+                existing.DisplayName = plexUser.Title ?? plexUser.Username;
+                existing.Email = plexUser.Email;
+                existing.AvatarUrl = plexUser.Thumb;
+            }
+            await _db.SaveChangesAsync();
+
+            // Store token and user info in session
             await _sessionStorage.SetItemAsStringAsync(AUTH_TOKEN_KEY, plexToken);
             await _sessionStorage.SetItemAsync(TOKEN_EXPIRY_KEY, DateTime.UtcNow.AddHours(8));
-            await _sessionStorage.SetItemAsync(USER_DATA_KEY, new UserDto { Username = plexUsername, DisplayName = plexUsername });
-
-            var identity = new ClaimsIdentity(new[]
+            var userDto = new UserDto
             {
-                new Claim(ClaimTypes.Name, plexUsername)
-            }, "jwt");
-            var user = new ClaimsPrincipal(identity);
-            NotifyAuthenticationStateChanged(Task.FromResult(new AuthenticationState(user)));
-            return new AuthenticationResult { Success = true, User = new UserDto { Username = plexUsername } };
+                Id = existing.Id,
+                Username = existing.Username,
+                DisplayName = existing.DisplayName,
+                Email = existing.Email ?? string.Empty,
+                AvatarUrl = existing.AvatarUrl
+            };
+            await _sessionStorage.SetItemAsync(USER_DATA_KEY, userDto);
+
+            // Build claims identity
+            var claims = new List<Claim>
+            {
+                new Claim(ClaimTypes.Name, userDto.Username)
+            };
+            if (!string.IsNullOrEmpty(userDto.Email)) claims.Add(new Claim(ClaimTypes.Email, userDto.Email));
+            if (!string.IsNullOrEmpty(userDto.DisplayName)) claims.Add(new Claim("display_name", userDto.DisplayName));
+            if (!string.IsNullOrEmpty(userDto.AvatarUrl)) claims.Add(new Claim("avatar_url", userDto.AvatarUrl));
+
+            var identity = new ClaimsIdentity(claims, "plex");
+            var principal = new ClaimsPrincipal(identity);
+            _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", plexToken);
+            NotifyAuthenticationStateChanged(Task.FromResult(new AuthenticationState(principal)));
+
+            return new AuthenticationResult { Success = true, User = userDto };
         }
         catch (Exception ex)
         {

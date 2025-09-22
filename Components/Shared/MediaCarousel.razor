@@ -1,6 +1,7 @@
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
 @using MudBlazor
+@using Microsoft.AspNetCore.Components.Web
 
 <div class="carousel-container">
     <div class="carousel-header">
@@ -11,85 +12,115 @@
         }
     </div>
     
-    <div class="carousel-content" style="display: flex; overflow-x: auto; gap: 1rem; padding: 1rem 0;">
-        @if (Items != null)
+    <div class="carousel-wrapper">
+        @if (Items != null && Items.Any())
         {
-            @foreach (MediaCardDto item in Items)
-            {
-                <div class="media-tile" @onclick="() => HandleItemClick(item)"
-                     @onmouseenter="() => StartHover(item)"
-                     @onmouseleave="StopHover"
-                     style="flex: 0 0 200px; cursor: pointer;">
-                    
-                    <div class="tile-image-container">
-                        @if (!string.IsNullOrEmpty(item.PosterUrl))
-                        {
-                            <img src="@item.PosterUrl" alt="@item.Title" loading="lazy" style="width: 100%; height: 100%; object-fit: cover;" />
-                        }
-                        else
-                        {
-                            <div class="tile-placeholder">
-                                <MudIcon Icon="@GetMediaIcon(item.MediaType)" Size="Size.Large" />
-                            </div>
-                        }
-                        
-                        @if (ShowProgress && item.MediaType == MediaType.TvShow && item.AvailableSeasons > 0)
-                        {
-                            <div class="progress-bar">
-                                <div class="progress-fill" style="width: @((item.AvailableSeasons * 100.0 / item.TotalSeasons))%"></div>
-                            </div>
-                        }
-                        
-                        <div class="availability-indicator @GetAvailabilityClass(item)">
-                            @GetAvailabilityIcon(item)
-                        </div>
-                    </div>
-                    
-                    @if (_hoveredItem == item)
+            <button class="carousel-nav carousel-nav-prev" @onclick="ScrollPrev" disabled="@(_currentIndex <= 0)">
+                <MudIcon Icon="@Icons.Material.Filled.ChevronLeft" />
+            </button>
+        }
+        
+        <div class="carousel-viewport" @ref="_viewport" @onwheel="HandleWheel" @onwheel:preventDefault @onwheel:stopPropagation>
+            <div class="carousel-content" style="transform: translateX(-@(_currentIndex * 210)px); transition: transform 0.3s ease;">
+                @if (ItemsToRender != null)
+                {
+                    @foreach (MediaCardDto item in ItemsToRender)
                     {
-                        <div class="tile-hover-info">
-                            <div class="hover-title">@item.Title</div>
-                            <div class="hover-metadata">
-                                <span>@item.Year</span>
-                                @if (item.Rating.HasValue)
-                                {
-                                    <span class="rating">
-                                        <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" />
-                                        @item.Rating.Value.ToString("0.0")
-                                    </span>
-                                }
-                            </div>
-                            @if (item.Genres?.Any() == true)
-                            {
-                                <div class="hover-genres">
-                                    @foreach (var genre in item.Genres.Take(3))
-                                    {
-                                        <span class="genre-tag">@genre</span>
-                                    }
-                                </div>
-                            }
+                        <div class="media-tile" @onclick="() => HandleItemClick(item)"
+                             @onmouseenter="() => StartHover(item)"
+                             @onmouseleave="StopHover"
+                             style="flex: 0 0 200px; cursor: pointer;">
                             
-                            <div class="hover-actions">
-                                @if (item.IsAvailable)
+                            <div class="tile-image-container">
+                                @if (!string.IsNullOrEmpty(item.PosterUrl))
                                 {
-                                    <button class="action-btn play" @onclick="() => HandlePlayClick(item)" @onclick:stopPropagation="true">
-                                        <MudIcon Icon="@Icons.Material.Filled.PlayArrow" />
-                                    </button>
+                                    <img src="@item.PosterUrl" alt="@item.Title" loading="lazy" style="width: 100%; height: 100%; object-fit: cover;" />
                                 }
                                 else
                                 {
-                                    <button class="action-btn" @onclick="() => HandleRequestClick(item)" @onclick:stopPropagation="true">
-                                        <MudIcon Icon="@Icons.Material.Filled.Add" />
-                                    </button>
+                                    <div class="tile-placeholder">
+                                        <MudIcon Icon="@GetMediaIcon(item.MediaType)" Size="Size.Large" />
+                                    </div>
                                 }
-                                <button class="action-btn info" @onclick:stopPropagation="true" @onclick="() => HandleItemClick(item)">
-                                    <MudIcon Icon="@Icons.Material.Filled.Info" />
-                                </button>
+                                
+                                @if (ShowProgress && item.MediaType == MediaType.TvShow && item.AvailableSeasons > 0)
+                                {
+                                    <div class="progress-bar">
+                                        <div class="progress-fill" style="width: @((item.AvailableSeasons * 100.0 / item.TotalSeasons))%"></div>
+                                    </div>
+                                }
+                                
+                                <div class="availability-indicator @GetAvailabilityClass(item)">
+                                    @GetAvailabilityIcon(item)
+                                </div>
+                            </div>
+                            
+                            @if (_hoveredItem == item)
+                            {
+                                <div class="tile-hover-info">
+                                    <div class="hover-title">@item.Title</div>
+                                    <div class="hover-metadata">
+                                        <span>@item.Year</span>
+                                        @if (item.Rating.HasValue)
+                                        {
+                                            <span class="rating">
+                                                <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" />
+                                                @item.Rating.Value.ToString("0.0")
+                                            </span>
+                                        }
+                                    </div>
+                                    @if (item.Genres?.Any() == true)
+                                    {
+                                        <div class="hover-genres">
+                                            @foreach (var genre in item.Genres.Take(3))
+                                            {
+                                                <span class="genre-tag">@genre</span>
+                                            }
+                                        </div>
+                                    }
+                                    
+                                    <div class="hover-actions">
+                                        @if (item.IsAvailable)
+                                        {
+                                            <button class="action-btn play" @onclick="() => HandlePlayClick(item)" @onclick:stopPropagation="true">
+                                                <MudIcon Icon="@Icons.Material.Filled.PlayArrow" />
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <button class="action-btn" @onclick="() => HandleRequestClick(item)" @onclick:stopPropagation="true">
+                                                <MudIcon Icon="@Icons.Material.Filled.Add" />
+                                            </button>
+                                        }
+                                        <button class="action-btn info" @onclick:stopPropagation="true" @onclick="() => HandleItemClick(item)">
+                                            <MudIcon Icon="@Icons.Material.Filled.Info" />
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @if (ShowLoadMore && CanShowLoadMore)
+                    {
+                        <div class="media-tile" style="flex: 0 0 200px; cursor: pointer; display:flex; align-items:center; justify-content:center; background: var(--bg-secondary);"
+                             @onclick="HandleLoadMoreClick">
+                            <div style="text-align:center; padding: 1rem;">
+                                <MudIcon Icon="@Icons.Material.Filled.ExpandMore" Size="Size.Large" />
+                                <div style="margin-top: 0.5rem; font-weight:600;">See More</div>
+                                <div class="text-secondary" style="font-size:0.8rem;">Load @LoadMoreSize more</div>
                             </div>
                         </div>
                     }
-                </div>
-            }
+                }
+            </div>
+        </div>
+        
+        @if (ItemsToRender != null && ItemsToRender.Any())
+        {
+            <button class="carousel-nav carousel-nav-next" @onclick="ScrollNext" disabled="@(_currentIndex >= (VisibleCount - ItemsPerView))">
+                <MudIcon Icon="@Icons.Material.Filled.ChevronRight" />
+            </button>
         }
     </div>
 </div>
@@ -105,13 +136,47 @@
     [Parameter] public EventCallback<MediaCardDto> OnItemClick { get; set; }
     [Parameter] public EventCallback<MediaCardDto> OnPlayClick { get; set; }
     [Parameter] public EventCallback<MediaCardDto> OnRequestClick { get; set; }
+    [Parameter] public Int32 MaxItems { get; set; } = 50;
+    [Parameter] public Int32 PageSize { get; set; } = 10;
+    [Parameter] public Boolean ShowLoadMore { get; set; } = false;
+    [Parameter] public Int32 LoadMoreSize { get; set; } = 50;
+    [Parameter] public EventCallback OnLoadMore { get; set; }
 
     private ElementReference _viewport;
     private Int32 _currentIndex = 0;
+    private Int32 _visibleCount = 0;
     private MediaCardDto? _hoveredItem;
     private System.Timers.Timer? _hoverTimer;
     
     private Int32 ItemsPerView => GetItemsPerView();
+
+    private Int32 VisibleCount
+        => Math.Min(MaxItems, Math.Min(_visibleCount, Items?.Count ?? 0));
+
+    private IEnumerable<MediaCardDto>? ItemsToRender
+        => Items?.Take(VisibleCount);
+
+    private Boolean CanShowLoadMore
+        => (Items != null && Items.Count < MaxItems) || VisibleCount < MaxItems || OnLoadMore.HasDelegate;
+
+    protected override void OnParametersSet()
+    {
+        // Initialize visible count on first render or when Items changes
+        var total = Items?.Count ?? 0;
+        if (_visibleCount == 0)
+        {
+            _visibleCount = Math.Min(PageSize, Math.Min(MaxItems, total));
+        }
+        else
+        {
+            _visibleCount = Math.Min(_visibleCount, Math.Min(MaxItems, total));
+        }
+        // Ensure current index is within bounds
+        if (_currentIndex > Math.Max(0, VisibleCount - ItemsPerView))
+        {
+            _currentIndex = Math.Max(0, VisibleCount - ItemsPerView);
+        }
+    }
 
     private Int32 GetItemsPerView()
     {
@@ -125,14 +190,53 @@
         if (_currentIndex > 0)
         {
             _currentIndex = Math.Max(0, _currentIndex - ItemsPerView);
+            StateHasChanged();
         }
     }
 
     private void ScrollNext()
     {
-        if (Items != null && _currentIndex < Items.Count - ItemsPerView)
+        // Lazy-load: if we are near the end of the currently visible window, extend it by PageSize up to MaxItems
+        var total = Items?.Count ?? 0;
+        var maxAllowed = Math.Min(MaxItems, total);
+        if (_currentIndex >= Math.Max(0, VisibleCount - (ItemsPerView * 2)) && VisibleCount < maxAllowed)
         {
-            _currentIndex = Math.Min(Items.Count - ItemsPerView, _currentIndex + ItemsPerView);
+            _visibleCount = Math.Min(maxAllowed, VisibleCount + PageSize);
+        }
+
+        if (VisibleCount > 0 && _currentIndex < Math.Max(0, VisibleCount - ItemsPerView))
+        {
+            _currentIndex = Math.Min(VisibleCount - ItemsPerView, _currentIndex + ItemsPerView);
+            StateHasChanged();
+        }
+    }
+
+    private void HandleWheel(WheelEventArgs e)
+    {
+        if (e.DeltaY > 0)
+        {
+            ScrollNext();
+        }
+        else
+        {
+            ScrollPrev();
+        }
+    }
+
+    private async Task HandleLoadMoreClick()
+    {
+        if (OnLoadMore.HasDelegate)
+        {
+            await OnLoadMore.InvokeAsync();
+        }
+
+        // Fallback: extend visible window if parent didn't add more items yet
+        var total = Items?.Count ?? 0;
+        var maxAllowed = Math.Min(MaxItems, total);
+        if (VisibleCount < maxAllowed)
+        {
+            _visibleCount = Math.Min(maxAllowed, VisibleCount + LoadMoreSize);
+            StateHasChanged();
         }
     }
 

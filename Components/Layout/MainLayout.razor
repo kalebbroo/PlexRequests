@@ -5,6 +5,7 @@
 @implements IDisposable
 
 <CascadingAuthenticationState>
+    <MudPopoverProvider />
     <div class="app-container">
     <header class="app-header @(_isHomepage && !_scrolled ? "transparent" : "") @(_scrolled ? "scrolled" : "")" @onscroll="HandleScroll">
         <div class="header-content">
@@ -12,54 +13,62 @@
                 <a href="/" class="brand-logo">
                     <MudText Typo="Typo.h5" Class="brand-text">PLEX REQUEST</MudText>
                 </a>
-                <nav class="main-nav desktop-only">
-                    <NavLink href="/browse/movie" class="nav-item">Movies</NavLink>
-                    <NavLink href="/browse/tvshow" class="nav-item">TV Shows</NavLink>
-                    <NavLink href="/requests" class="nav-item">My Requests</NavLink>
-                    <NavLink href="/watchlist" class="nav-item">My List</NavLink>
-                </nav>
+                <AuthorizeView>
+                    <Authorized>
+                        <nav class="main-nav desktop-only">
+                            <NavLink href="/browse/movie" class="nav-item">Movies</NavLink>
+                            <NavLink href="/browse/tvshow" class="nav-item">TV Shows</NavLink>
+                            <NavLink href="/requests" class="nav-item">My Requests</NavLink>
+                            <NavLink href="/watchlist" class="nav-item">My List</NavLink>
+                        </nav>
+                    </Authorized>
+                </AuthorizeView>
             </div>
             
             <div class="header-right">
-                <div class="search-container desktop-only @(_searchOpen ? "open" : "")">
-                    <MudIconButton Icon="@Icons.Material.Filled.Search" Color="Color.Inherit" OnClick="ToggleSearch" />
-                    @if (_searchOpen)
-                    {
-                        <input type="text" class="search-input" placeholder="Titles, genres, people" @onblur="CloseSearch" @onkeydown="HandleSearchKeyDown" @bind-value="_searchQuery" />
-                    }
-                </div>
-                
-                <MudIconButton Icon="@Icons.Material.Filled.Notifications"
-                               Color="Color.Inherit"
-                               Class="desktop-only notification-btn"
-                               BadgeColor="Color.Error"
-                               BadgeText="@(_notificationCount > 0 ? _notificationCount.ToString() : null)">
-                    <MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft">
-                        <ActivatorContent>
-                            <MudIconButton Icon="@Icons.Material.Filled.Notifications" Color="Color.Inherit" />
-                        </ActivatorContent>
-                        <ChildContent>
-                            @if (_notifications.Any())
+                <AuthorizeView>
+                    <Authorized>
+                        <div class="search-container desktop-only @(_searchOpen ? "open" : "")">
+                            <MudIconButton Icon="@Icons.Material.Filled.Search" Color="Color.Inherit" OnClick="ToggleSearch" />
+                            @if (_searchOpen)
                             {
-                                @foreach (var notification in _notifications)
-                                {
-                                    <MudMenuItem>
-                                        <div class="notification-item">
-                                            <MudText Typo="Typo.body2">@notification.Message</MudText>
-                                            <MudText Typo="Typo.caption" Class="text-secondary">@notification.Time.ToString("HH:mm")</MudText>
-                                        </div>
-                                    </MudMenuItem>
-                                }
-                                <MudDivider />
-                                <MudMenuItem OnClick="ClearNotifications">Clear All</MudMenuItem>
+                                <input type="text" class="search-input" placeholder="Titles, genres, people" @onblur="CloseSearch" @onkeydown="HandleSearchKeyDown" @bind-value="_searchQuery" />
                             }
-                            else
-                            {
-                                <MudMenuItem Disabled="true">No new notifications</MudMenuItem>
-                            }
-                        </ChildContent>
-                    </MudMenu>
-                </MudIconButton>
+                        </div>
+                        
+                        <MudIconButton Icon="@Icons.Material.Filled.Notifications"
+                                       Color="Color.Inherit"
+                                       Class="desktop-only notification-btn"
+                                       BadgeColor="Color.Error"
+                                       BadgeText="@(_notificationCount > 0 ? _notificationCount.ToString() : null)">
+                            <MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft">
+                                <ActivatorContent>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Notifications" Color="Color.Inherit" />
+                                </ActivatorContent>
+                                <ChildContent>
+                                    @if (_notifications.Any())
+                                    {
+                                        @foreach (var notification in _notifications)
+                                        {
+                                            <MudMenuItem>
+                                                <div class="notification-item">
+                                                    <MudText Typo="Typo.body2">@notification.Message</MudText>
+                                                    <MudText Typo="Typo.caption" Class="text-secondary">@notification.Time.ToString("HH:mm")</MudText>
+                                                </div>
+                                            </MudMenuItem>
+                                        }
+                                        <MudDivider />
+                                        <MudMenuItem OnClick="ClearNotifications">Clear All</MudMenuItem>
+                                    }
+                                    else
+                                    {
+                                        <MudMenuItem Disabled="true">No new notifications</MudMenuItem>
+                                    }
+                                </ChildContent>
+                            </MudMenu>
+                        </MudIconButton>
+                    </Authorized>
+                </AuthorizeView>
                 
                 <AuthorizeView>
                     <Authorized>
@@ -82,7 +91,11 @@
                     </NotAuthorized>
                 </AuthorizeView>
                 
-                <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Class="mobile-only" OnClick="ToggleMobileMenu" />
+                <AuthorizeView>
+                    <Authorized>
+                        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Class="mobile-only" OnClick="ToggleMobileMenu" />
+                    </Authorized>
+                </AuthorizeView>
             </div>
         </div>
     </header>
@@ -91,14 +104,21 @@
     {
         <div class="mobile-menu">
             <nav class="mobile-nav">
-                <NavLink href="/browse/movie" class="mobile-nav-item" @onclick="CloseMobileMenu">Movies</NavLink>
-                <NavLink href="/browse/tvshow" class="mobile-nav-item" @onclick="CloseMobileMenu">TV Shows</NavLink>
-                <NavLink href="/requests" class="mobile-nav-item" @onclick="CloseMobileMenu">My Requests</NavLink>
-                <NavLink href="/watchlist" class="mobile-nav-item" @onclick="CloseMobileMenu">My List</NavLink>
-                <NavLink href="/search" class="mobile-nav-item" @onclick="CloseMobileMenu">Search</NavLink>
-                <MudDivider Class="my-3" />
-                <NavLink href="/profile" class="mobile-nav-item" @onclick="CloseMobileMenu">Profile</NavLink>
-                <NavLink href="/settings" class="mobile-nav-item" @onclick="CloseMobileMenu">Settings</NavLink>
+                <AuthorizeView>
+                    <Authorized>
+                        <NavLink href="/browse/movie" class="mobile-nav-item" @onclick="CloseMobileMenu">Movies</NavLink>
+                        <NavLink href="/browse/tvshow" class="mobile-nav-item" @onclick="CloseMobileMenu">TV Shows</NavLink>
+                        <NavLink href="/requests" class="mobile-nav-item" @onclick="CloseMobileMenu">My Requests</NavLink>
+                        <NavLink href="/watchlist" class="mobile-nav-item" @onclick="CloseMobileMenu">My List</NavLink>
+                        <NavLink href="/search" class="mobile-nav-item" @onclick="CloseMobileMenu">Search</NavLink>
+                        <MudDivider Class="my-3" />
+                        <NavLink href="/profile" class="mobile-nav-item" @onclick="CloseMobileMenu">Profile</NavLink>
+                        <NavLink href="/settings" class="mobile-nav-item" @onclick="CloseMobileMenu">Settings</NavLink>
+                    </Authorized>
+                    <NotAuthorized>
+                        <MudMenuItem Disabled="true" Class="mobile-nav-item">Sign in to access content</MudMenuItem>
+                    </NotAuthorized>
+                </AuthorizeView>
             </nav>
         </div>
     }

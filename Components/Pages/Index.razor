@@ -105,6 +105,7 @@
                             <MediaCarousel Title="Continue Watching"
                                            Items="_continueWatching"
                                            ShowProgress="true"
+                                           MaxItems="50" PageSize="10"
                                            OnItemClick="ShowDetails"
                                            OnPlayClick="PlayMedia"
                                            OnRequestClick="RequestMedia" />
@@ -117,6 +118,7 @@
                             <MediaCarousel Title="Trending Now"
                                            Items="_trending"
                                            Subtitle="Most requested this week"
+                                           MaxItems="50" PageSize="10"
                                            OnItemClick="ShowDetails"
                                            OnPlayClick="PlayMedia"
                                            OnRequestClick="RequestMedia" />
@@ -128,6 +130,7 @@
                         <div class="section-spacing">
                             <MediaCarousel Title="New Releases"
                                            Items="_newReleases"
+                                           MaxItems="50" PageSize="10"
                                            OnItemClick="ShowDetails"
                                            OnPlayClick="PlayMedia"
                                            OnRequestClick="RequestMedia" />
@@ -140,6 +143,7 @@
                             <MediaCarousel Title="Top Rated Movies"
                                            Items="_topRatedMovies"
                                            ShowRating="true"
+                                           MaxItems="50" PageSize="10"
                                            OnItemClick="ShowDetails"
                                            OnPlayClick="PlayMedia"
                                            OnRequestClick="RequestMedia" />
@@ -151,6 +155,19 @@
                         <div class="section-spacing">
                             <MediaCarousel Title="Popular TV Shows"
                                            Items="_popularTvShows"
+                                           MaxItems="50" PageSize="10"
+                                           OnItemClick="ShowDetails"
+                                           OnPlayClick="PlayMedia"
+                                           OnRequestClick="RequestMedia" />
+                        </div>
+                    }
+
+                    @if (_topRatedTvShows?.Any() == true)
+                    {
+                        <div class="section-spacing">
+                            <MediaCarousel Title="Top Rated TV Shows"
+                                           Items="_topRatedTvShows"
+                                           ShowRating="true"
                                            OnItemClick="ShowDetails"
                                            OnPlayClick="PlayMedia"
                                            OnRequestClick="RequestMedia" />
@@ -162,6 +179,7 @@
                         <div class="section-spacing">
                             <MediaCarousel Title="My List"
                                            Items="_myList"
+                                           MaxItems="50" PageSize="10"
                                            OnItemClick="ShowDetails"
                                            OnPlayClick="PlayMedia"
                                            OnRequestClick="RequestMedia" />
@@ -175,6 +193,7 @@
                             <div class="section-spacing">
                                 <MediaCarousel Title="@($"Because You Like {genre}")"
                                                Items="_genreRows[genre]"
+                                               MaxItems="50" PageSize="10"
                                                OnItemClick="ShowDetails"
                                                OnPlayClick="PlayMedia"
                                                OnRequestClick="RequestMedia" />
@@ -189,6 +208,7 @@
                                            Items="_recentlyAdded"
                                            ShowBadge="true"
                                            BadgeText="NEW"
+                                           MaxItems="50" PageSize="10"
                                            OnItemClick="ShowDetails"
                                            OnPlayClick="PlayMedia"
                                            OnRequestClick="RequestMedia" />
@@ -240,8 +260,9 @@
                     {
                         <div class="section-spacing">
                             <MediaCarousel Title="Trending Now"
-                                           Items="_trending.Take(10).ToList()"
+                                           Items="_trending"
                                            Subtitle="Popular content this week"
+                                           MaxItems="50" PageSize="10"
                                            OnItemClick="ShowDetails"
                                            OnPlayClick="() => {}"
                                            OnRequestClick="() => {}" />
@@ -252,8 +273,34 @@
                     {
                         <div class="section-spacing">
                             <MediaCarousel Title="Top Rated Movies"
-                                           Items="_topRatedMovies.Take(10).ToList()"
+                                           Items="_topRatedMovies"
                                            ShowRating="true"
+                                           MaxItems="50" PageSize="10"
+                                           OnItemClick="ShowDetails"
+                                           OnPlayClick="() => {}"
+                                           OnRequestClick="() => {}" />
+                        </div>
+                    }
+
+                    @if (_popularTvShows?.Any() == true)
+                    {
+                        <div class="section-spacing">
+                            <MediaCarousel Title="Popular TV Shows"
+                                           Items="_popularTvShows"
+                                           MaxItems="50" PageSize="10"
+                                           OnItemClick="ShowDetails"
+                                           OnPlayClick="() => {}"
+                                           OnRequestClick="() => {}" />
+                        </div>
+                    }
+
+                    @if (_topRatedTvShows?.Any() == true)
+                    {
+                        <div class="section-spacing">
+                            <MediaCarousel Title="Top Rated TV Shows"
+                                           Items="_topRatedTvShows"
+                                           ShowRating="true"
+                                           MaxItems="50" PageSize="10"
                                            OnItemClick="ShowDetails"
                                            OnPlayClick="() => {}"
                                            OnRequestClick="() => {}" />
@@ -280,6 +327,7 @@
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _newReleases;
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _topRatedMovies;
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _popularTvShows;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _topRatedTvShows;
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _myList;
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _recentlyAdded;
     private Dictionary<String, List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>> _genreRows = new();
@@ -291,27 +339,27 @@
 
     private async Task LoadDashboardData()
     {
-        // TODO: Implement actual Plex API integration for retrieving recently added media from Plex server
-        // Currently using mock data - needs backend service to connect to Plex API
-        Logs.Info("Loading dashboard data - Plex API integration pending");
+        // Load dashboard data using TMDB API for metadata
+        Logs.Info("Loading dashboard data from TMDB API");
 
         // Parallel load all sections for better performance
         Task<List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>>[] tasks = new[]
         {
-            PlexApiService.GetRecentlyAddedAsync(20), // TODO: Connect to Plex API endpoint
-            PlexApiService.SearchMediaAsync("", null), // TODO: Implement TMDB API for trending media lookup
+            PlexApiService.GetRecentlyAddedAsync(50), // Get popular content from TMDB
+            PlexApiService.GetRecentlyAddedAsync(50), // Use recently added as trending for now
             MediaRequestService.GetWatchlistAsync(), // TODO: Integrate with user watchlist database
-            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.Movie, 1, 20), // TODO: Plex library sync
-            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.TvShow, 1, 20) // TODO: Plex library sync
+            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.Movie, 1, 50), // Get popular movies from TMDB
+            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.TvShow, 1, 50) // Get popular TV shows from TMDB
         };
 
         List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>[] results = await Task.WhenAll(tasks);
 
         _recentlyAdded = results[0];
-        _trending = results[1]?.Take(20).ToList();
+        _trending = results[1]?.Take(50).ToList();
         _myList = results[2];
-        _topRatedMovies = results[3]?.Where(m => m.Rating > 8).OrderByDescending(m => m.Rating).Take(20).ToList();
-        _popularTvShows = results[4]?.Take(20).ToList();
+        _topRatedMovies = results[3]?.Where(m => m.Rating >= 7.0m).OrderByDescending(m => m.Rating).Take(50).ToList();
+        _popularTvShows = results[4]?.Take(50).ToList();
+        _topRatedTvShows = results[4]?.Where(t => t.Rating >= 7.0m).OrderByDescending(t => t.Rating).Take(50).ToList();
 
         // Simulate other categories
         _newReleases = _trending?.Where(m => m.Year >= DateTime.Now.Year - 1).Take(20).ToList();
@@ -333,7 +381,7 @@
         if (_trending?.Any() == true)
         {
             PlexRequestsHosted.Shared.DTOs.MediaCardDto firstItem = _trending.First();
-            _heroMedia = await PlexApiService.GetMediaDetailsAsync(firstItem.Id, firstItem.MediaType); // TODO: TMDB API details lookup
+            _heroMedia = await PlexApiService.GetMediaDetailsAsync(firstItem.Id, firstItem.MediaType); // Get detailed info from TMDB
             _heroMedia ??= new PlexRequestsHosted.Shared.DTOs.MediaDetailDto
             {
                 Id = firstItem.Id,

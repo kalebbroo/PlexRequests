@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Components.Authorization;
 using PlexRequestsHosted.Services.Auth;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.Implementations;
+using PlexRequestsHosted.Services.MetadataProviders;
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 
@@ -23,6 +24,11 @@ builder.Services.AddBlazoredSessionStorage();
 // HTTP client for services that depend on HttpClient
 builder.Services.AddHttpClient();
 
+// Options/config
+builder.Services.Configure<PlexRequestsHosted.Services.Implementations.PlexConfiguration>(
+    builder.Configuration.GetSection("Plex"));
+builder.Services.AddMemoryCache();
+
 // AuthN/AuthZ
 builder.Services.AddAuthorization();
 builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthStateProvider>();
@@ -35,7 +41,16 @@ builder.Services.AddScoped<IUserProfileService, UserProfileService>();
 builder.Services.AddScoped<IToastService, ToastService>();
 builder.Services.AddScoped<IThemeService, ThemeService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<IMediaMetadataProvider, SeedMetadataProvider>();
+
+// Metadata providers
+builder.Services.AddScoped<TmdbMetadataProvider>();
+builder.Services.AddScoped<TraktMetadataProvider>();
+builder.Services.AddScoped<SeedMetadataProvider>();
+builder.Services.AddScoped<IMetadataProviderFactory, MetadataProviderFactory>();
+
+// Use factory to get default provider
+builder.Services.AddScoped<IMediaMetadataProvider>(sp =>
+    sp.GetRequiredService<IMetadataProviderFactory>().GetDefaultProvider());
 
 // Persistence: SQLite
 builder.Services.AddDbContext<AppDbContext>(options =>

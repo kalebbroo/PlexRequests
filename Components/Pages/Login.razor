@@ -5,6 +5,7 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject NavigationManager Navigation
+@using Microsoft.AspNetCore.WebUtilities
 
 <PageTitle>Sign In - Plex Request</PageTitle>
 
@@ -87,6 +88,7 @@
     private bool _showToken;
     private bool _isDevelopment;
     private CancellationTokenSource? _cts;
+    private string _returnUrl = "/";
 
     protected override async Task OnInitializedAsync()
     {
@@ -98,6 +100,14 @@
         }
 
         var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        // Capture returnUrl from query string if present
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("returnUrl", out var r))
+        {
+            var candidate = r.ToString();
+            if (!string.IsNullOrWhiteSpace(candidate))
+                _returnUrl = candidate;
+        }
         if (uri.LocalPath.EndsWith("/auth/callback", StringComparison.OrdinalIgnoreCase))
         {
             await HandleOAuthCallback();
@@ -178,7 +188,7 @@
         if (result.Success)
         {
             await ToastService.ShowSuccessAsync($"Welcome back, {result.User?.DisplayName ?? plexUsername}!");
-            Navigation.NavigateTo("/");
+            Navigation.NavigateTo(_returnUrl);
         }
         else
         {
