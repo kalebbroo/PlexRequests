@@ -1,0 +1,100 @@
+@page "/admin"
+@attribute [Authorize(Roles="Admin")]
+@using PlexRequestsHosted.Services.Abstractions
+@inject IPlexApiService PlexApi
+@inject NavigationManager Nav
+
+<PageTitle>Admin - Server Health</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="py-6">
+    <MudStack Spacing="3">
+        <MudText Typo="Typo.h5">Plex Server Health</MudText>
+
+        <MudPaper Class="pa-4" Elevation="2">
+            @if (_loading)
+            {
+                <MudProgressCircular Indeterminate="true" />
+            }
+            else if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error">@_error</MudAlert>
+            }
+            else if (_info is not null)
+            {
+                <MudStack Spacing="2">
+                    <MudStack Row="true" Spacing="3">
+                        <MudChip T="string" Color="@(_info.IsOnline ? Color.Success : Color.Error)" Variant="Variant.Filled">
+                            @(_info.IsOnline ? "Online" : "Offline")
+                        </MudChip>
+                        <MudText Typo="Typo.subtitle1">Name: @_info.Name</MudText>
+                        <MudText Typo="Typo.subtitle1">Version: @_info.Version</MudText>
+                    </MudStack>
+
+                    <MudDivider Class="my-2" />
+                    <MudText Typo="Typo.h6">Libraries</MudText>
+                    @if (_libraries.Count == 0)
+                    {
+                        <MudText>No libraries found.</MudText>
+                    }
+                    else
+                    {
+                        <MudTable Items="_libraries" Dense="true">
+                            <HeaderContent>
+                                <MudTh>Title</MudTh>
+                                <MudTh>Type</MudTh>
+                                <MudTh>Items</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="Title">@context.Title</MudTd>
+                                <MudTd DataLabel="Type">@context.Type</MudTd>
+                                <MudTd DataLabel="Items">@context.ItemCount</MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    }
+
+                    <MudStack Row="true" Spacing="2">
+                        <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="Refresh">Refresh</MudButton>
+                        <MudButton Color="Color.Secondary" Variant="Variant.Text" Href="/">Go Home</MudButton>
+                    </MudStack>
+                </MudStack>
+            }
+        </MudPaper>
+    </MudStack>
+</MudContainer>
+
+@code {
+    private bool _loading = true;
+    private string? _error;
+    private PlexServerInfo? _info;
+    private List<PlexLibrary> _libraries = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _error = null; _loading = true;
+        try
+        {
+            _info = await PlexApi.GetServerInfoAsync();
+            _libraries = await PlexApi.GetLibrariesAsync();
+            if (_info is null) _error = "No server configuration found. Check .env or appsettings.";
+        }
+        catch (Exception ex)
+        {
+            _error = $"Failed to query Plex server: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task Refresh()
+    {
+        await LoadAsync();
+    }
+}

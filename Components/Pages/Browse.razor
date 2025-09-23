@@ -213,6 +213,21 @@
                 ? await PlexApiService.GetLibraryContentAsync(_filterMediaType.Value, _currentPage, 50)
                 : await PlexApiService.SearchMediaAsync("", null);
 
+            // Mark availability from Plex server
+            if (_allResults is not null)
+            {
+                await PlexApiService.AnnotateAvailabilityAsync(_allResults);
+
+                // Overlay my request statuses
+                var keys = _allResults.Select(m => (m.Id, m.MediaType)).ToList();
+                var statuses = await MediaRequestService.GetMyRequestStatusesAsync(keys);
+                foreach (var m in _allResults)
+                {
+                    var k = $"{m.MediaType}:{m.Id}";
+                    if (statuses.TryGetValue(k, out var st)) m.RequestStatus = st;
+                }
+            }
+
             ApplyFilters();
             _hasMore = _allResults?.Count == 50;
         }
@@ -236,6 +251,14 @@
 
             if (moreResults?.Any() == true)
             {
+                await PlexApiService.AnnotateAvailabilityAsync(moreResults);
+                var keys = moreResults.Select(m => (m.Id, m.MediaType)).ToList();
+                var statuses = await MediaRequestService.GetMyRequestStatusesAsync(keys);
+                foreach (var m in moreResults)
+                {
+                    var k = $"{m.MediaType}:{m.Id}";
+                    if (statuses.TryGetValue(k, out var st)) m.RequestStatus = st;
+                }
                 _allResults ??= new List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>();
                 _allResults.AddRange(moreResults);
                 ApplyFilters();

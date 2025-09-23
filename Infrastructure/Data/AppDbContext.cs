@@ -8,6 +8,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<MediaRequestEntity> MediaRequests => Set<MediaRequestEntity>();
     public DbSet<WatchlistItemEntity> Watchlist => Set<WatchlistItemEntity>();
     public DbSet<UserEntity> Users => Set<UserEntity>();
+    public DbSet<UserProfileEntity> UserProfiles => Set<UserProfileEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -28,6 +29,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             b.HasKey(x => x.Id);
             b.HasIndex(x => x.Username).IsUnique();
+        });
+
+        modelBuilder.Entity<UserProfileEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.UserId).IsUnique();
+            b.HasIndex(x => x.PlexUsername);
+            b.HasOne(x => x.User)
+                .WithOne()
+                .HasForeignKey<UserProfileEntity>(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

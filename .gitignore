@@ -57,3 +57,5 @@ dkms.conf
 /.vs
 /bin
 /logs
+.env
+*.db

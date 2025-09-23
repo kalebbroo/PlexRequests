@@ -36,7 +36,7 @@ public class CustomAuthStateProvider(
             if (string.IsNullOrEmpty(token))
                 return new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
 
-            // Load stored user info to rebuild claims (username, email, avatar, display name)
+            // Load stored user info to rebuild claims (username, email, avatar, display name, roles)
             var claims = new List<Claim>();
             try
             {
@@ -47,6 +47,13 @@ public class CustomAuthStateProvider(
                     if (!string.IsNullOrEmpty(storedUser.Email)) claims.Add(new Claim(ClaimTypes.Email, storedUser.Email));
                     if (!string.IsNullOrEmpty(storedUser.DisplayName)) claims.Add(new Claim("display_name", storedUser.DisplayName));
                     if (!string.IsNullOrEmpty(storedUser.AvatarUrl)) claims.Add(new Claim("avatar_url", storedUser.AvatarUrl));
+                    if (storedUser.Roles is not null)
+                    {
+                        foreach (var r in storedUser.Roles)
+                        {
+                            if (!string.IsNullOrWhiteSpace(r)) claims.Add(new Claim(ClaimTypes.Role, r));
+                        }
+                    }
                 }
             }
             catch { /* ignore and keep minimal identity */ }
@@ -99,6 +106,28 @@ public class CustomAuthStateProvider(
             }
             await _db.SaveChangesAsync();
 
+            // Upsert profile row
+            var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == existing.Id);
+            if (profile is null)
+            {
+                profile = new Infrastructure.Entities.UserProfileEntity
+                {
+                    UserId = existing.Id,
+                    PlexId = plexUser.Id,
+                    PlexUsername = plexUser.Username,
+                    Roles = "User",
+                    LastLoginAt = DateTime.UtcNow
+                };
+                _db.UserProfiles.Add(profile);
+            }
+            else
+            {
+                profile.PlexId = plexUser.Id;
+                profile.PlexUsername = plexUser.Username;
+                profile.LastLoginAt = DateTime.UtcNow;
+            }
+            await _db.SaveChangesAsync();
+
             // Store token and user info in session
             await _sessionStorage.SetItemAsStringAsync(AUTH_TOKEN_KEY, plexToken);
             await _sessionStorage.SetItemAsync(TOKEN_EXPIRY_KEY, DateTime.UtcNow.AddHours(8));
@@ -108,7 +137,8 @@ public class CustomAuthStateProvider(
                 Username = existing.Username,
                 DisplayName = existing.DisplayName,
                 Email = existing.Email ?? string.Empty,
-                AvatarUrl = existing.AvatarUrl
+                AvatarUrl = existing.AvatarUrl,
+                Roles = (profile.Roles ?? "User").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
             };
             await _sessionStorage.SetItemAsync(USER_DATA_KEY, userDto);
 
@@ -120,6 +150,13 @@ public class CustomAuthStateProvider(
             if (!string.IsNullOrEmpty(userDto.Email)) claims.Add(new Claim(ClaimTypes.Email, userDto.Email));
             if (!string.IsNullOrEmpty(userDto.DisplayName)) claims.Add(new Claim("display_name", userDto.DisplayName));
             if (!string.IsNullOrEmpty(userDto.AvatarUrl)) claims.Add(new Claim("avatar_url", userDto.AvatarUrl));
+            if (userDto.Roles is not null)
+            {
+                foreach (var r in userDto.Roles)
+                {
+                    if (!string.IsNullOrWhiteSpace(r)) claims.Add(new Claim(ClaimTypes.Role, r));
+                }
+            }
 
             var identity = new ClaimsIdentity(claims, "plex");
             var principal = new ClaimsPrincipal(identity);

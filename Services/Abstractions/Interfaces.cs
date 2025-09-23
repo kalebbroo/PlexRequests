@@ -15,6 +15,12 @@ public interface IMediaRequestService
     Task<List<MediaCardDto>> GetWatchlistAsync();
     Task<UserStatsDto> GetMyStatsAsync();
     Task<bool> CheckRequestLimitsAsync(MediaType mediaType);
+    // Admin processing
+    Task<bool> ApproveRequestAsync(int requestId, string? note = null);
+    Task<bool> DenyRequestAsync(int requestId, string reason);
+    Task<bool> MarkAvailableAsync(int requestId);
+    // UI overlay support: return statuses for a set of media ids
+    Task<Dictionary<string, RequestStatus>> GetMyRequestStatusesAsync(IEnumerable<(int mediaId, MediaType mediaType)> items);
 }
 
 public interface IPlexAuthService
@@ -35,6 +41,7 @@ public interface IPlexApiService
     Task<List<int>> GetAvailableSeasonsAsync(int tvShowId);
     Task<PlexServerInfo?> GetServerInfoAsync();
     Task<List<PlexLibrary>> GetLibrariesAsync();
+    Task AnnotateAvailabilityAsync(List<MediaCardDto> items);
 }
 
 public interface IAuthService

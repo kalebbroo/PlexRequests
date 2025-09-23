@@ -225,4 +225,7 @@ public class PlexConfiguration
     public string Platform { get; set; } = "Web";
     public int PinPollingIntervalSeconds { get; set; } = 2;
     public int PinPollingTimeoutSeconds { get; set; } = 120;
+    // Server access
+    public string? PrimaryServerUrl { get; set; }
+    public string? ServerToken { get; set; }
 }

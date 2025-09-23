@@ -1,0 +1,233 @@
+@page "/admin/requests"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.AspNetCore.Components.Web
+@using MudBlazor
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
+@inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+
+<PageTitle>Admin Requests - Plex Requests</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Admin - Media Requests</h2>
+        <div class="d-flex gap-2">
+            <MudSelect T="RequestStatus?" @bind-Value="_statusFilter" Label="Status" Dense="true" Variant="Variant.Outlined" Class="me-2">
+                <MudSelectItem T="RequestStatus?" Value="@( (RequestStatus?)null )">All</MudSelectItem>
+                <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Pending)">Pending</MudSelectItem>
+                <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Approved)">Approved</MudSelectItem>
+                <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Available)">Available</MudSelectItem>
+                <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Rejected)">Rejected</MudSelectItem>
+                <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Cancelled)">Cancelled</MudSelectItem>
+            </MudSelect>
+            <MudTextField @bind-Value="_search" Placeholder="Search title..." Dense="true" Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" OnBlurred="_ => Refresh()"/>
+            <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="Refresh">Refresh</MudButton>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+    }
+    else if (_items.Count == 0)
+    {
+        <div class="text-center py-6 text-muted">No requests</div>
+    }
+    else
+    {
+        <MudTable Items="_paged" Dense="true" Hover="true" Class="elevation-1">
+            <HeaderContent>
+                <MudTh>Type</MudTh>
+                <MudTh>Poster</MudTh>
+                <MudTh>Title</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Requested</MudTh>
+                <MudTh>User</MudTh>
+                <MudTh>Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@(context.MediaType == MediaType.Movie ? "Movie" : context.MediaType == MediaType.TvShow ? "TV" : context.MediaType.ToString())</MudTd>
+                <MudTd>
+                    @if (!string.IsNullOrWhiteSpace(context.PosterUrl))
+                    {
+                        <img src="@context.PosterUrl" alt="poster" style="width:48px;height:72px;object-fit:cover;border-radius:4px;" />
+                    }
+                    else
+                    {
+                        <div style="width:48px;height:72px;border-radius:4px;background:#222;display:flex;align-items:center;justify-content:center;color:#888;">
+                            <MudIcon Icon="@Icons.Material.Filled.Image" />
+                        </div>
+                    }
+                </MudTd>
+                <MudTd>
+                    <div class="fw-bold">@context.Title</div>
+                    <div class="text-muted small">@context.MediaType • ID @context.MediaId</div>
+                </MudTd>
+                <MudTd>
+                    @RenderStatusChip(context.Status)
+                </MudTd>
+                <MudTd>@context.RequestedAt.ToLocalTime().ToString("g")</MudTd>
+                <MudTd>@context.RequestedByUsername</MudTd>
+                <MudTd>
+                    <div class="d-flex gap-1">
+                        <MudButton Size="Size.Small" Color="Color.Success" Variant="Variant.Text" Disabled="@(context.Status == RequestStatus.Approved || context.Status == RequestStatus.Available)" OnClick="() => Approve(context)">Approve</MudButton>
+                        <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text" Disabled="@(context.Status == RequestStatus.Rejected || context.Status == RequestStatus.Available)" OnClick="() => Deny(context)">Deny</MudButton>
+                        <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Text" Disabled="@(context.Status == RequestStatus.Available)" OnClick="() => MarkAvailable(context)">Mark Available</MudButton>
+                    </div>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+        <div class="d-flex justify-content-end py-3">
+            <MudPagination Page="@_page" PageSize="@_pageSize" Disabled="@(_filtered.Count <= _pageSize)" HideNext="false" HidePrev="false" OnPageChanged="OnPageChanged" Count="@((int)Math.Ceiling(_filtered.Count/(double)_pageSize))" />
+        </div>
+    }
+</MudContainer>
+
+@if (_denyOpen)
+{
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1050;">
+        <div style="background:#121212;border-radius:8px;min-width:360px;max-width:90vw;padding:16px;">
+            <h5 class="mb-2">Deny Request</h5>
+            <MudTextField @bind-Value="_denyReason" Label="Reason" Variant="Variant.Outlined" Lines="3" FullWidth="true" />
+            <div class="d-flex justify-content-end gap-2 mt-3">
+                <MudButton Variant="Variant.Text" OnClick="() => { _denyOpen = false; _denyReason = string.Empty; }">Cancel</MudButton>
+                <MudButton Color="Color.Primary" OnClick="ConfirmDeny">Confirm</MudButton>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _loading = true;
+    private List<MediaRequestDto> _items = new();
+    private List<MediaRequestDto> _filtered = new();
+    private List<MediaRequestDto> _paged = new();
+    private int _page = 1;
+    private int _pageSize = 25;
+    private RequestStatus? _statusFilter = RequestStatus.Pending;
+    private string _search = string.Empty;
+
+    private bool _denyOpen = false;
+    private MediaRequestDto? _denyTarget;
+    private string _denyReason = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _loading = true;
+        StateHasChanged();
+        try
+        {
+            var result = await MediaRequestService.GetRequestsAsync(new MediaFilterDto { PageNumber = 1, PageSize = 200 });
+            _items = result.Items;
+            ApplyFilters();
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ApplyFilters()
+    {
+        IEnumerable<MediaRequestDto> q = _items;
+        if (_statusFilter.HasValue)
+            q = q.Where(i => i.Status == _statusFilter.Value);
+        if (!string.IsNullOrWhiteSpace(_search))
+            q = q.Where(i => (i.Title ?? string.Empty).Contains(_search, StringComparison.OrdinalIgnoreCase));
+        _filtered = q.OrderByDescending(i => i.RequestedAt).ToList();
+        _page = 1;
+        UpdatePaged();
+    }
+
+    private void UpdatePaged()
+    {
+        _paged = _filtered.Skip((_page - 1) * _pageSize).Take(_pageSize).ToList();
+    }
+
+    private void OnPageChanged(int p)
+    {
+        _page = p;
+        UpdatePaged();
+    }
+
+    private void Refresh() => ApplyFilters();
+
+    private async Task Approve(MediaRequestDto r)
+    {
+        var ok = await MediaRequestService.ApproveRequestAsync(r.Id);
+        if (ok)
+        {
+            r.Status = RequestStatus.Approved;
+            await ToastService.ShowSuccessAsync($"Approved: {r.Title}");
+            ApplyFilters();
+        }
+        else
+        {
+            await ToastService.ShowErrorAsync("Failed to approve");
+        }
+    }
+
+    private void Deny(MediaRequestDto r)
+    {
+        _denyTarget = r;
+        _denyReason = string.Empty;
+        _denyOpen = true;
+    }
+
+    private async Task ConfirmDeny()
+    {
+        if (_denyTarget is null) return;
+        var ok = await MediaRequestService.DenyRequestAsync(_denyTarget.Id, _denyReason);
+        if (ok)
+        {
+            _denyTarget.Status = RequestStatus.Rejected;
+            await ToastService.ShowInfoAsync($"Denied: {_denyTarget.Title}");
+            _denyOpen = false;
+            ApplyFilters();
+        }
+        else
+        {
+            await ToastService.ShowErrorAsync("Failed to deny");
+        }
+    }
+
+    private async Task MarkAvailable(MediaRequestDto r)
+    {
+        var ok = await MediaRequestService.MarkAvailableAsync(r.Id);
+        if (ok)
+        {
+            r.Status = RequestStatus.Available;
+            await ToastService.ShowSuccessAsync($"Marked available: {r.Title}");
+            ApplyFilters();
+        }
+        else
+        {
+            await ToastService.ShowErrorAsync("Failed to mark available");
+        }
+    }
+
+    private RenderFragment RenderStatusChip(RequestStatus s) => __builder =>
+    {
+        var (txt, color) = s switch
+        {
+            RequestStatus.Pending => ("Pending", Color.Warning),
+            RequestStatus.Approved => ("Approved", Color.Success),
+            RequestStatus.Available => ("Available", Color.Info),
+            RequestStatus.Rejected => ("Rejected", Color.Error),
+            RequestStatus.Cancelled => ("Cancelled", Color.Secondary),
+            _ => (s.ToString(), Color.Default)
+        };
+        __builder.OpenComponent<MudChip<string>>(0);
+        __builder.AddAttribute(1, "Color", color);
+        __builder.AddAttribute(2, "Variant", Variant.Outlined);
+        __builder.AddAttribute(3, "ChildContent", (RenderFragment)((b2) => b2.AddContent(0, txt)));
+        __builder.CloseComponent();
+    };
+}

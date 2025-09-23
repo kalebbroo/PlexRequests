@@ -1,0 +1,108 @@
+@page "/profile"
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject IUserProfileService UserProfileService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject PlexRequestsHosted.Infrastructure.Data.AppDbContext Db
+
+<PageTitle>My Profile</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="py-6">
+    <MudGrid>
+        <MudItem xs="12" md="4">
+            <MudPaper Class="pa-4" Elevation="2">
+                <MudStack Row="false" Spacing="2">
+                    <MudAvatar Size="Size.Large">
+                        <MudImage Src="@(_profile?.AvatarUrl ?? "/default-avatar.png")" />
+                    </MudAvatar>
+                    <MudText Typo="Typo.h5">@(_profile?.DisplayName ?? _profile?.Username)</MudText>
+                    <MudText Typo="Typo.body2" Class="text-secondary">@_profile?.Email</MudText>
+                    <MudDivider Class="my-2" />
+                    <MudText Typo="Typo.caption">Plex: @_profile?.PlexUsername</MudText>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="8">
+            <MudPaper Class="pa-4" Elevation="2">
+                <MudText Typo="Typo.h6">Activity</MudText>
+                <MudTabs>
+                    <MudTabPanel Text="My Requests">
+                        @if (_myRequests == null)
+                        {
+                            <MudProgressCircular Indeterminate="true" />
+                        }
+                        else if (_myRequests.Count == 0)
+                        {
+                            <MudText>No requests yet.</MudText>
+                        }
+                        else
+                        {
+                            <MudTable Items="_myRequests" Dense="true">
+                                <HeaderContent>
+                                    <MudTh>Title</MudTh>
+                                    <MudTh>Type</MudTh>
+                                    <MudTh>Status</MudTh>
+                                    <MudTh>Requested</MudTh>
+                                </HeaderContent>
+                                <RowTemplate>
+                                    <MudTd DataLabel="Title">@context.Title</MudTd>
+                                    <MudTd DataLabel="Type">@context.MediaType</MudTd>
+                                    <MudTd DataLabel="Status">
+                                        <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined">@context.Status.ToString()</MudChip>
+                                    </MudTd>
+                                    <MudTd DataLabel="Requested">@context.RequestedAt.ToLocalTime().ToString("g")</MudTd>
+                                </RowTemplate>
+                            </MudTable>
+                        }
+                    </MudTabPanel>
+                    <MudTabPanel Text="Stats">
+                        <MudStack Row="true" Spacing="3">
+                            <MudPaper Class="pa-3" Elevation="1"><MudText Typo="Typo.subtitle2">Total Requests</MudText><MudText Typo="Typo.h5">@_stats.TotalRequests</MudText></MudPaper>
+                            <MudPaper Class="pa-3" Elevation="1"><MudText Typo="Typo.subtitle2">Approved</MudText><MudText Typo="Typo.h5">@_stats.ApprovedRequests</MudText></MudPaper>
+                            <MudPaper Class="pa-3" Elevation="1"><MudText Typo="Typo.subtitle2">Pending</MudText><MudText Typo="Typo.h5">@_stats.PendingRequests</MudText></MudPaper>
+                            <MudPaper Class="pa-3" Elevation="1"><MudText Typo="Typo.subtitle2">Available</MudText><MudText Typo="Typo.h5">@_stats.AvailableRequests</MudText></MudPaper>
+                        </MudStack>
+                    </MudTabPanel>
+                </MudTabs>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</MudContainer>
+
+@code {
+    private UserDto? _profile;
+    private List<PlexRequestsHosted.Infrastructure.Entities.MediaRequestEntity>? _myRequests;
+    private UserStatsDto _stats = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _profile = await UserProfileService.GetProfileAsync();
+        await LoadRequestsAndStats();
+    }
+
+    private async Task LoadRequestsAndStats()
+    {
+        try
+        {
+            if (_profile?.Username is null) return;
+            _myRequests = await Db.MediaRequests
+                .Where(r => r.RequestedBy == _profile.Username)
+                .OrderByDescending(r => r.RequestedAt)
+                .Take(25)
+                .ToListAsync();
+
+            _stats = new UserStatsDto
+            {
+                TotalRequests = _myRequests.Count,
+                ApprovedRequests = _myRequests.Count(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Approved || r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Available),
+                PendingRequests = _myRequests.Count(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Pending),
+                AvailableRequests = _myRequests.Count(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Available),
+                LastRequestDate = _myRequests.FirstOrDefault()?.RequestedAt
+            };
+        }
+        catch
+        {
+            _myRequests = new();
+        }
+    }
+}

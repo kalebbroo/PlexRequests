@@ -6,6 +6,8 @@
 
 <CascadingAuthenticationState>
     <MudPopoverProvider />
+    <MudDialogProvider />
+    <MudSnackbarProvider />
     <div class="app-container">
     <header class="app-header @(_isHomepage && !_scrolled ? "transparent" : "") @(_scrolled ? "scrolled" : "")" @onscroll="HandleScroll">
         <div class="header-content">
