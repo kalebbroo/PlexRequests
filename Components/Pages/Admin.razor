@@ -1,4 +1,5 @@
 @page "/admin"
+@attribute [Authorize(Roles = "Admin")]
 @attribute [Authorize(Roles="Admin")]
 @using PlexRequestsHosted.Services.Abstractions
 @inject IPlexApiService PlexApi

@@ -1,4 +1,4 @@
-@page "/"
+@page "/dashboard"
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
@@ -10,8 +10,6 @@
 <PageTitle>Home - Plex Requests</PageTitle>
 
 <div class="homepage">
-    <AuthorizeView>
-        <Authorized>
             @* Full homepage for logged-in users *@
             @if (_heroMedia != null)
             {
@@ -216,108 +214,7 @@
                     }
                 </MudContainer>
             </div>
-        </Authorized>
-        <NotAuthorized>
-            @* Landing page for non-logged-in users *@
-            <section class="landing-hero">
-                <div class="landing-background">
-                    <div class="landing-gradient"></div>
-                </div>
-                <div class="landing-content">
-                    <MudContainer MaxWidth="MaxWidth.Large" Class="container-padding">
-                        <div class="landing-text">
-                            <h1 class="landing-title">Discover Your Next Favorite</h1>
-                            <p class="landing-subtitle">
-                                Request movies and TV shows from your Plex server. Browse trending content,
-                                create your personal watchlist, and get notified when your requests are available.
-                            </p>
-                            <div class="landing-actions">
-                                <MudButton Variant="Variant.Filled"
-                                           Color="Color.Primary"
-                                           Size="Size.Large"
-                                           StartIcon="@Icons.Material.Filled.PlayArrow"
-                                           Href="/login"
-                                           Class="landing-btn">
-                                    Sign In with Plex
-                                </MudButton>
-                                <MudButton Variant="Variant.Outlined"
-                                           Color="Color.Surface"
-                                           Size="Size.Large"
-                                           Href="/browse/movie"
-                                           Class="landing-btn-secondary">
-                                    Browse Content
-                                </MudButton>
-                            </div>
-                        </div>
-                    </MudContainer>
-                </div>
-            </section>
-
-            @* Demo content section for non-logged-in users *@
-            <div class="demo-content">
-                <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="container-padding">
-                    @if (_trending?.Any() == true)
-                    {
-                        <div class="section-spacing">
-                            <MediaCarousel Title="Trending Now"
-                                           Items="_trending"
-                                           Subtitle="Popular content this week"
-                                           MaxItems="50" PageSize="10"
-                                           OnItemClick="ShowDetails"
-                                           OnPlayClick="() => {}"
-                                           OnRequestClick="() => {}" />
-                        </div>
-                    }
-
-                    @if (_topRatedMovies?.Any() == true)
-                    {
-                        <div class="section-spacing">
-                            <MediaCarousel Title="Top Rated Movies"
-                                           Items="_topRatedMovies"
-                                           ShowRating="true"
-                                           MaxItems="50" PageSize="10"
-                                           OnItemClick="ShowDetails"
-                                           OnPlayClick="() => {}"
-                                           OnRequestClick="() => {}" />
-                        </div>
-                    }
-
-                    @if (_popularTvShows?.Any() == true)
-                    {
-                        <div class="section-spacing">
-                            <MediaCarousel Title="Popular TV Shows"
-                                           Items="_popularTvShows"
-                                           MaxItems="50" PageSize="10"
-                                           OnItemClick="ShowDetails"
-                                           OnPlayClick="() => {}"
-                                           OnRequestClick="() => {}" />
-                        </div>
-                    }
-
-                    @if (_topRatedTvShows?.Any() == true)
-                    {
-                        <div class="section-spacing">
-                            <MediaCarousel Title="Top Rated TV Shows"
-                                           Items="_topRatedTvShows"
-                                           ShowRating="true"
-                                           MaxItems="50" PageSize="10"
-                                           OnItemClick="ShowDetails"
-                                           OnPlayClick="() => {}"
-                                           OnRequestClick="() => {}" />
-                        </div>
-                    }
-
-                    <div class="demo-notice">
-                        <MudAlert Severity="Severity.Info" Class="demo-alert">
-                            <MudText Typo="Typo.body1">
-                                <strong>Sign in with Plex</strong> to request content, create watchlists, and access your personal recommendations.
-                            </MudText>
-                        </MudAlert>
-                    </div>
-                </MudContainer>
-            </div>
-        </NotAuthorized>
-    </AuthorizeView>
+        
 </div>
 
 @code {

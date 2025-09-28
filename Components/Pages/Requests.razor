@@ -1,7 +1,9 @@
 @page "/requests"
+@attribute [Authorize]
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject NavigationManager Navigation
+@using Microsoft.AspNetCore.SignalR.Client
 
 <PageTitle>My Requests - Plex Requests</PageTitle>
 
@@ -226,9 +228,56 @@
     private Boolean _hasMore = false;
     private Int32 _currentPage = 1;
 
+    private HubConnection? _hub;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadData();
+
+        // Setup SignalR connection for real-time updates
+        _hub = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("/hubs/notifications"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestApproved", async (req) =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await ToastService.ShowInfoAsync($"Approved: {req.Title}");
+                await LoadData();
+            });
+        });
+
+        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestRejected", async (req) =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await ToastService.ShowWarningAsync($"Rejected: {req.Title}");
+                await LoadData();
+            });
+        });
+
+        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestAvailable", async (req) =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await ToastService.ShowSuccessAsync($"Available: {req.Title}");
+                await LoadData();
+            });
+        });
+
+        // Optional: handle RequestCreated if you want to reflect new requests by others visible to me
+        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestCreated", async (req) =>
+        {
+            await InvokeAsync(async () =>
+            {
+                // If the created request belongs to the current user, refresh
+                await LoadData();
+            });
+        });
+
+        try { await _hub.StartAsync(); } catch { /* ignore transient */ }
     }
 
     private async Task LoadData()

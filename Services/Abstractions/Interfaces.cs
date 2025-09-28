@@ -23,12 +23,25 @@ public interface IMediaRequestService
     Task<Dictionary<string, RequestStatus>> GetMyRequestStatusesAsync(IEnumerable<(int mediaId, MediaType mediaType)> items);
 }
 
+public interface INotificationService
+{
+    // Real-time notifications to connected clients (SignalR)
+    Task RequestCreatedAsync(MediaRequestDto request);
+    Task RequestApprovedAsync(MediaRequestDto request);
+    Task RequestRejectedAsync(MediaRequestDto request);
+    Task RequestAvailableAsync(MediaRequestDto request);
+
+    // External channels (e.g., Discord) can be triggered here as well in the implementation
+}
+
 public interface IPlexAuthService
 {
     Task<PlexAuthenticationFlow> BeginAuthenticationAsync();
     Task<bool> OpenAuthenticationWindowAsync(string authUrl);
     Task<PlexAuthenticationResult> PollForAuthenticationAsync(int pinId, CancellationToken cancellationToken = default);
     Task<PlexUser?> GetPlexUserAsync(string authToken);
+    Task<int?> GetStoredPinIdAsync();
+    Task ClearStoredPinIdAsync();
 }
 
 public interface IPlexApiService
@@ -42,6 +55,15 @@ public interface IPlexApiService
     Task<PlexServerInfo?> GetServerInfoAsync();
     Task<List<PlexLibrary>> GetLibrariesAsync();
     Task AnnotateAvailabilityAsync(List<MediaCardDto> items);
+    // Diagnostics
+    Task<object> GetIndexStatsAsync();
+    Task<object> TestMatchAsync(string? title, int? year, int? tmdbId, string? imdbId, int? tvdbId, MediaType mediaType);
+    // Low-level helpers for first-success debugging
+    Task<string> GetSectionsRawAsync();
+    Task<object> GetMetadataAsync(string ratingKey);
+    Task<List<object>> SearchServerAsync(string query, MediaType? mediaType);
+    Task<List<object>> ResolveByTitleAsync(string title, int? year, MediaType mediaType, int maxResults = 5);
+    Task<object> RebuildAvailabilityIndexAsync();
 }
 
 public interface IAuthService

@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Microsoft.JSInterop;
+using Microsoft.AspNetCore.Components;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Utils;
 
@@ -11,14 +12,16 @@ public class PlexAuthService : IPlexAuthService
 {
     private readonly HttpClient _httpClient;
     private readonly IJSRuntime _jsRuntime;
+    private readonly NavigationManager _navigation;
     private readonly PlexConfiguration _config;
 
     private const string BaseApiUrl = "https://plex.tv/api/v2";
 
-    public PlexAuthService(HttpClient httpClient, IJSRuntime jsRuntime, IOptions<PlexConfiguration> options)
+    public PlexAuthService(HttpClient httpClient, IJSRuntime jsRuntime, NavigationManager navigation, IOptions<PlexConfiguration> options)
     {
         _httpClient = httpClient;
         _jsRuntime = jsRuntime;
+        _navigation = navigation;
         _config = options.Value;
 
         // default headers shared across requests (can be overridden per-request)
@@ -48,7 +51,17 @@ public class PlexAuthService : IPlexAuthService
                 return new PlexAuthenticationFlow { Success = false, ErrorMessage = "Invalid PIN response from Plex" };
             }
 
-            string authUrl = $"https://app.plex.tv/auth#?clientID={Uri.EscapeDataString(_config.ClientIdentifier)}&code={Uri.EscapeDataString(pin.Code)}&context[device][product]={Uri.EscapeDataString(_config.Product)}";
+            // Store the PIN ID in session storage for callback retrieval
+            await _jsRuntime.InvokeVoidAsync("sessionStorage.setItem", "plex_pin_id", pin.Id.ToString());
+            
+            // Create callback URL
+            var baseUri = _navigation.BaseUri.TrimEnd('/');
+            var callbackUrl = $"{baseUri}/auth/callback";
+            
+            // Build Plex OAuth URL with callback
+            string authUrl = $"https://app.plex.tv/auth#?clientID={Uri.EscapeDataString(_config.ClientIdentifier)}&code={Uri.EscapeDataString(pin.Code)}&context[device][product]={Uri.EscapeDataString(_config.Product)}&forwardUrl={Uri.EscapeDataString(callbackUrl)}";
+
+            Logs.Info($"Created PIN {pin.Id} with callback URL: {callbackUrl}");
 
             return new PlexAuthenticationFlow
             {
@@ -70,46 +83,39 @@ public class PlexAuthService : IPlexAuthService
     {
         try
         {
-            Logs.Info($"Polling Plex PIN {pinId}");
-            var pollStart = DateTime.UtcNow;
-            var pollTimeout = TimeSpan.FromSeconds(_config.PinPollingTimeoutSeconds);
-            var pollInterval = TimeSpan.FromSeconds(_config.PinPollingIntervalSeconds);
-
-            while (!cancellationToken.IsCancellationRequested)
+            Logs.Info($"Checking Plex PIN {pinId} status");
+            
+            var url = $"{BaseApiUrl}/pins/{pinId}";
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            var res = await _httpClient.SendAsync(req, cancellationToken);
+            if (!res.IsSuccessStatusCode)
             {
-                if (DateTime.UtcNow - pollStart > pollTimeout)
-                {
-                    return new PlexAuthenticationResult { Success = false, ErrorMessage = "Authentication timeout - please try again" };
-                }
-
-                var url = $"{BaseApiUrl}/pins/{pinId}";
-                using var req = new HttpRequestMessage(HttpMethod.Get, url);
-                var res = await _httpClient.SendAsync(req, cancellationToken);
-                if (!res.IsSuccessStatusCode)
-                {
-                    await Task.Delay(pollInterval, cancellationToken);
-                    continue;
-                }
-
-                var json = await res.Content.ReadAsStringAsync(cancellationToken);
-                var pin = JsonSerializer.Deserialize<PlexPinResponse>(json, JsonOpts);
-                if (pin?.AuthToken is not null)
-                {
-                    // fetch user info for convenience
-                    var user = await GetPlexUserAsync(pin.AuthToken);
-                    return new PlexAuthenticationResult { Success = true, AuthToken = pin.AuthToken, User = user };
-                }
-
-                // expired?
-                if (pin?.ExpiresAt != null && pin.ExpiresAt <= DateTime.UtcNow)
-                {
-                    return new PlexAuthenticationResult { Success = false, ErrorMessage = "Authentication PIN has expired" };
-                }
-
-                await Task.Delay(pollInterval, cancellationToken);
+                var err = await res.Content.ReadAsStringAsync(cancellationToken);
+                Logs.Error($"Failed to check PIN status: {(int)res.StatusCode} {res.ReasonPhrase} {Trim(err)}");
+                return new PlexAuthenticationResult { Success = false, ErrorMessage = "Failed to check authentication status" };
             }
 
-            return new PlexAuthenticationResult { Success = false, ErrorMessage = "Authentication was cancelled" };
+            var json = await res.Content.ReadAsStringAsync(cancellationToken);
+            var pin = JsonSerializer.Deserialize<PlexPinResponse>(json, JsonOpts);
+            
+            if (pin?.AuthToken is not null)
+            {
+                Logs.Info($"PIN {pinId} authenticated successfully");
+                // fetch user info for convenience
+                var user = await GetPlexUserAsync(pin.AuthToken);
+                return new PlexAuthenticationResult { Success = true, AuthToken = pin.AuthToken, User = user };
+            }
+
+            // Check if expired
+            if (pin?.ExpiresAt != null && pin.ExpiresAt <= DateTime.UtcNow)
+            {
+                Logs.Warning($"PIN {pinId} has expired");
+                return new PlexAuthenticationResult { Success = false, ErrorMessage = "Authentication PIN has expired" };
+            }
+
+            // Not authenticated yet
+            Logs.Info($"PIN {pinId} not yet authenticated");
+            return new PlexAuthenticationResult { Success = false, ErrorMessage = "Authentication not completed yet" };
         }
         catch (OperationCanceledException)
         {
@@ -122,26 +128,32 @@ public class PlexAuthService : IPlexAuthService
         }
     }
 
-    public async Task<bool> OpenAuthenticationWindowAsync(string authUrl)
+    public Task<bool> OpenAuthenticationWindowAsync(string authUrl)
     {
         try
         {
-            await _jsRuntime.InvokeVoidAsync("open", authUrl, "_blank");
-            return true;
+            // Redirect the current window instead of opening a new tab
+            _navigation.NavigateTo(authUrl, forceLoad: true);
+            return Task.FromResult(true);
         }
         catch (Exception ex)
         {
-            Logs.Warning($"Failed to open auth window via JS: {ex.Message}");
-            return false;
+            Logs.Warning($"Failed to redirect to auth URL: {ex.Message}");
+            return Task.FromResult(false);
         }
     }
 
     public async Task<PlexUser?> GetPlexUserAsync(string authToken)
     {
-        if (string.IsNullOrWhiteSpace(authToken)) return null;
+        if (string.IsNullOrWhiteSpace(authToken)) 
+        {
+            Logs.Warning("GetPlexUserAsync called with empty token");
+            return null;
+        }
 
         try
         {
+            Logs.Info("Fetching Plex user info");
             var url = $"{BaseApiUrl}/user";
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             EnsureDefaultHeaders(req.Headers);
@@ -150,15 +162,20 @@ public class PlexAuthService : IPlexAuthService
             var res = await _httpClient.SendAsync(req);
             if (!res.IsSuccessStatusCode)
             {
-                Logs.Warning($"GetPlexUser failed: {(int)res.StatusCode} {res.ReasonPhrase}");
+                var err = await res.Content.ReadAsStringAsync();
+                Logs.Warning($"GetPlexUser failed: {(int)res.StatusCode} {res.ReasonPhrase} {Trim(err)}");
                 return null;
             }
 
             var json = await res.Content.ReadAsStringAsync();
             var account = JsonSerializer.Deserialize<PlexUserAccount>(json, JsonOpts);
-            if (account is null) return null;
+            if (account is null) 
+            {
+                Logs.Warning("Failed to deserialize Plex user response");
+                return null;
+            }
 
-            return new PlexUser
+            var user = new PlexUser
             {
                 Id = account.Uuid ?? string.Empty,
                 Username = account.Username ?? string.Empty,
@@ -167,6 +184,9 @@ public class PlexAuthService : IPlexAuthService
                 Title = account.Title ?? string.Empty,
                 HasPassword = account.HasPassword
             };
+            
+            Logs.Info($"Successfully fetched Plex user: {user.Username} ({user.Title})");
+            return user;
         }
         catch (Exception ex)
         {
@@ -193,6 +213,35 @@ public class PlexAuthService : IPlexAuthService
     {
         PropertyNameCaseInsensitive = true
     };
+
+    public async Task<int?> GetStoredPinIdAsync()
+    {
+        try
+        {
+            var pinIdStr = await _jsRuntime.InvokeAsync<string?>("sessionStorage.getItem", "plex_pin_id");
+            if (int.TryParse(pinIdStr, out var pinId))
+            {
+                return pinId;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logs.Warning($"Failed to get stored PIN ID: {ex.Message}");
+        }
+        return null;
+    }
+
+    public async Task ClearStoredPinIdAsync()
+    {
+        try
+        {
+            await _jsRuntime.InvokeVoidAsync("sessionStorage.removeItem", "plex_pin_id");
+        }
+        catch (Exception ex)
+        {
+            Logs.Warning($"Failed to clear stored PIN ID: {ex.Message}");
+        }
+    }
 
     private static string Trim(string? s) => string.IsNullOrEmpty(s) ? string.Empty : (s.Length > 512 ? s[..512] + "..." : s);
 

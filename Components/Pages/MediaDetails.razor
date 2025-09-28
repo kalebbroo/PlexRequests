@@ -315,6 +315,7 @@ else
         _loading = true;
         StateHasChanged();
 
+
         try
         {
             PlexRequestsHosted.Shared.Enums.MediaType mediaType = ParseType(Type);
@@ -322,11 +323,28 @@ else
             
             if (_media != null)
             {
+                // Mark availability for this item and overlay my request status
+                await PlexApiService.AnnotateAvailabilityAsync(new List<PlexRequestsHosted.Shared.DTOs.MediaCardDto> { _media });
+                var statuses = await MediaRequestService.GetMyRequestStatusesAsync(new List<(int, PlexRequestsHosted.Shared.Enums.MediaType)> { (_media.Id, _media.MediaType) });
+                var key = $"{_media.MediaType}:{_media.Id}";
+                if (statuses.TryGetValue(key, out var st)) _media.RequestStatus = st;
+
                 _inWatchlist = await MediaRequestService.IsInWatchlistAsync(_media.Id);
                 
                 // Load similar content
                 _similarMedia = await PlexApiService.SearchMediaAsync("", mediaType);
                 _similarMedia = _similarMedia?.Where(m => m.Id != _media.Id).Take(12).ToList();
+                if (_similarMedia?.Any() == true)
+                {
+                    await PlexApiService.AnnotateAvailabilityAsync(_similarMedia);
+                    var keys = _similarMedia.Select(m => (m.Id, m.MediaType)).ToList();
+                    var map = await MediaRequestService.GetMyRequestStatusesAsync(keys);
+                    foreach (var m in _similarMedia)
+                    {
+                        var k = $"{m.MediaType}:{m.Id}";
+                        if (map.TryGetValue(k, out var st2)) m.RequestStatus = st2;
+                    }
+                }
                 
                 // Set default selected season
                 if (_media.Seasons?.Any() == true)

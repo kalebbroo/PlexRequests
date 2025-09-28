@@ -8,6 +8,8 @@ using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Utils;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Http;
 
 namespace PlexRequestsHosted.Services.Auth;
 
@@ -15,26 +17,60 @@ public class CustomAuthStateProvider(
     ISessionStorageService sessionStorage,
     HttpClient httpClient,
     IPlexAuthService plexAuth,
-    AppDbContext dbContext)
+    AppDbContext dbContext,
+    IHttpContextAccessor httpContextAccessor)
     : AuthenticationStateProvider
 {
     private readonly ISessionStorageService _sessionStorage = sessionStorage;
     private readonly HttpClient _httpClient = httpClient;
     private readonly IPlexAuthService _plexAuth = plexAuth;
     private readonly AppDbContext _db = dbContext;
+    private readonly IHttpContextAccessor _http = httpContextAccessor;
 
     private const string AUTH_TOKEN_KEY = "authToken";
     private const string REFRESH_TOKEN_KEY = "refreshToken";
     private const string USER_DATA_KEY = "userData";
     private const string TOKEN_EXPIRY_KEY = "tokenExpiry";
 
+    private AuthenticationState? _cachedAuthState;
+    private DateTime _cacheExpiry = DateTime.MinValue;
+    private readonly TimeSpan _cacheTimeout = TimeSpan.FromSeconds(5);
+
     public override async Task<AuthenticationState> GetAuthenticationStateAsync()
     {
         try
         {
+            // Use cached state if still valid to prevent rapid state changes
+            if (_cachedAuthState != null && DateTime.UtcNow < _cacheExpiry)
+            {
+                Logs.Debug($"GetAuthenticationState: Using cached state (expires in {(_cacheExpiry - DateTime.UtcNow).TotalSeconds:F1}s), authenticated: {_cachedAuthState.User.Identity?.IsAuthenticated == true}");
+                return _cachedAuthState;
+            }
+
+            Logs.Debug("GetAuthenticationState: Cache expired or empty, checking session storage...");
+
             var token = await _sessionStorage.GetItemAsStringAsync(AUTH_TOKEN_KEY);
             if (string.IsNullOrEmpty(token))
-                return new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
+            {
+                Logs.Debug("GetAuthenticationState: No session token found, checking cookie authentication...");
+                // Fallback to cookie principal if present
+                var cookieUser = _http.HttpContext?.User;
+                if (cookieUser?.Identity?.IsAuthenticated == true)
+                {
+                    Logs.Info($"GetAuthenticationState: Found authenticated cookie user: {cookieUser.Identity.Name}");
+                    var cookieState = new AuthenticationState(cookieUser);
+                    _cachedAuthState = cookieState;
+                    _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
+                    return cookieState;
+                }
+                Logs.Debug("GetAuthenticationState: No authentication found, returning unauthenticated state");
+                var unauthState = new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
+                _cachedAuthState = unauthState;
+                _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
+                return unauthState;
+            }
+
+            Logs.Debug($"GetAuthenticationState: Found session token, loading user data...");
 
             // Load stored user info to rebuild claims (username, email, avatar, display name, roles)
             var claims = new List<Claim>();
@@ -62,19 +98,37 @@ public class CustomAuthStateProvider(
             var identity = new ClaimsIdentity(claims, "plex");
             var user = new ClaimsPrincipal(identity);
             _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-            return new AuthenticationState(user);
+            
+            var authState = new AuthenticationState(user);
+            _cachedAuthState = authState;
+            _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
+            return authState;
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("JavaScript interop calls cannot be issued", StringComparison.OrdinalIgnoreCase))
         {
             // During prerender/static rendering, JS interop (session storage) is unavailable.
-            // Return unauthenticated without logging an error to avoid noisy startup failures.
-            Logs.Debug($"GetAuthenticationState deferred due to prerender (JS interop unavailable): {ex.Message}");
-            return new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
+            // Fall back to the cookie principal if present to prevent redirect loops.
+            Logs.Debug($"GetAuthenticationState prerender: JS interop unavailable. Falling back to cookie principal.");
+            var cookieUser = _http.HttpContext?.User;
+            if (cookieUser?.Identity?.IsAuthenticated == true)
+            {
+                var cookieState = new AuthenticationState(cookieUser);
+                _cachedAuthState = cookieState;
+                _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
+                return cookieState;
+            }
+            var unauthState = new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
+            _cachedAuthState = unauthState;
+            _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
+            return unauthState;
         }
         catch (Exception ex)
         {
             Logs.Error($"GetAuthenticationState failed: {ex.Message}");
-            return new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
+            var errorState = new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
+            _cachedAuthState = errorState;
+            _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
+            return errorState;
         }
     }
 
@@ -161,6 +215,33 @@ public class CustomAuthStateProvider(
             var identity = new ClaimsIdentity(claims, "plex");
             var principal = new ClaimsPrincipal(identity);
             _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", plexToken);
+
+            // Try to sign in with the server-side cookie, but don't fail if headers are already sent
+            try
+            {
+                if (_http.HttpContext is not null && !_http.HttpContext.Response.HasStarted)
+                {
+                    var authProps = new AuthenticationProperties
+                    {
+                        IsPersistent = true,
+                        ExpiresUtc = DateTimeOffset.UtcNow.AddHours(8)
+                    };
+                    await _http.HttpContext.SignInAsync("Cookies", principal, authProps);
+                    Logs.Info("Cookie sign-in completed");
+                }
+                else
+                {
+                    Logs.Info("Cookie sign-in skipped - response already started or no HttpContext");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logs.Warning($"Cookie SignInAsync failed: {ex.Message}");
+            }
+
+            // Clear cache and notify of state change
+            _cachedAuthState = null;
+            _cacheExpiry = DateTime.MinValue;
             NotifyAuthenticationStateChanged(Task.FromResult(new AuthenticationState(principal)));
 
             return new AuthenticationResult { Success = true, User = userDto };
@@ -181,6 +262,18 @@ public class CustomAuthStateProvider(
             await _sessionStorage.RemoveItemAsync(USER_DATA_KEY);
             await _sessionStorage.RemoveItemAsync(TOKEN_EXPIRY_KEY);
             _httpClient.DefaultRequestHeaders.Authorization = null;
+            try
+            {
+                if (_http.HttpContext is not null)
+                {
+                    await _http.HttpContext.SignOutAsync("Cookies");
+                    Logs.Info("Cookie sign-out completed");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logs.Warning($"Cookie SignOutAsync failed: {ex.Message}");
+            }
         }
         finally
         {

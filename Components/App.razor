@@ -5,10 +5,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
+    <!-- Load base frameworks first -->
     <link rel="stylesheet" href="@Assets["lib/bootstrap/dist/css/bootstrap.min.css"]" />
-    <link rel="stylesheet" href="@Assets["app.css"]" />
-    <link rel="stylesheet" href="@Assets["PlexRequestsHosted.styles.css"]" />
     <link rel="stylesheet" href="_content/MudBlazor/MudBlazor.min.css" />
+    <!-- Generated scoped CSS from *.razor.css files -->
+    <link rel="stylesheet" href="@Assets["PlexRequestsHosted.styles.css"]" />
+    <!-- Keep app.css last so our overrides win the cascade -->
+    <link rel="stylesheet" href="@Assets["app.css"]" />
     <ImportMap />
     <link rel="icon" type="image/png" href="favicon.png" />
     <HeadOutlet />
@@ -17,7 +20,30 @@
 <body>
     <CascadingAuthenticationState>
         <MudThemeProvider Theme="@_theme" IsDarkMode="true" />
-        <Routes @rendermode="InteractiveServer" />
+        <MudPopoverProvider />
+        <MudDialogProvider />
+        <MudSnackbarProvider />
+        <Router AppAssembly="typeof(App).Assembly">
+            <Found Context="routeData">
+                <AuthorizeRouteView RouteData="@routeData" DefaultLayout="typeof(PlexRequestsHosted.Components.Layout.MainLayout)">
+                    <Authorizing>
+                        <LayoutView Layout="typeof(PlexRequestsHosted.Components.Layout.MainLayout)">
+                            <div class="m-4">
+                                <p>Signing you in...</p>
+                            </div>
+                        </LayoutView>
+                    </Authorizing>
+                    <NotAuthorized>
+                        <RedirectToLogin />
+                    </NotAuthorized>
+                </AuthorizeRouteView>
+            </Found>
+            <NotFound>
+                <LayoutView Layout="typeof(PlexRequestsHosted.Components.Layout.MainLayout)">
+                    <p class="m-4">Sorry, there's nothing at this address.</p>
+                </LayoutView>
+            </NotFound>
+        </Router>
     </CascadingAuthenticationState>
     <script src="_content/MudBlazor/MudBlazor.min.js"></script>
     <script src="_framework/blazor.web.js"></script>
@@ -26,6 +52,7 @@
 </html>
 
 @using MudBlazor
+@using PlexRequestsHosted.Components.Shared
 
 @code {
     private MudTheme _theme = new()

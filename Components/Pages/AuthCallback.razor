@@ -1,0 +1,240 @@
+@page "/auth/callback"
+@attribute [AllowAnonymous]
+@rendermode InteractiveServer
+@using PlexRequestsHosted.Services.Auth
+@using PlexRequestsHosted.Utils
+@using Microsoft.JSInterop
+@inject PlexRequestsHosted.Services.Abstractions.IPlexAuthService PlexAuthService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@using Microsoft.AspNetCore.WebUtilities
+
+<PageTitle>Completing Sign In - Plex Request</PageTitle>
+
+<div class="callback-container">
+    <div class="callback-content">
+        <MudContainer MaxWidth="MaxWidth.Small">
+            <MudPaper Class="callback-card" Elevation="8">
+                <div class="callback-header">
+                    <MudText Typo="Typo.h4" Class="brand-title">PLEX REQUEST</MudText>
+                    <MudText Typo="Typo.h6" Class="callback-title">Completing Sign In</MudText>
+                </div>
+
+                <div class="callback-processing">
+                    <MudProgressCircular Color="Color.Primary" Size="Size.Large" Indeterminate="true" />
+                    <MudText Typo="Typo.body1" Class="mt-4">@_processingMessage</MudText>
+                    
+                    @if (_showError)
+                    {
+                        <MudAlert Severity="Severity.Error" Class="mt-4">
+                            @_errorMessage
+                        </MudAlert>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" @onclick="RetryAuthentication" Class="mt-3">
+                            Try Again
+                        </MudButton>
+                        <MudButton Variant="Variant.Text" Color="Color.Secondary" @onclick="GoToLogin" Class="mt-2">
+                            Back to Login
+                        </MudButton>
+                    }
+                </div>
+            </MudPaper>
+        </MudContainer>
+    </div>
+</div>
+
+@code {
+    private string _processingMessage = "Processing authentication...";
+    private bool _showError = false;
+    private string _errorMessage = string.Empty;
+    private string _returnUrl = "/browse";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Logs.Info("OAuth callback page initialized");
+        
+        try
+        {
+            // Check if user is already authenticated
+            var authState = await ((CustomAuthStateProvider)AuthStateProvider).GetAuthenticationStateAsync();
+            if (authState.User.Identity?.IsAuthenticated == true)
+            {
+                Logs.Info("User already authenticated in callback; redirecting to browse");
+                Navigation.NavigateTo("/browse", false);
+                return;
+            }
+
+            // Get return URL from query string
+            var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+            var query = QueryHelpers.ParseQuery(uri.Query);
+            if (query.TryGetValue("returnUrl", out var r))
+            {
+                var candidate = r.ToString();
+                if (!string.IsNullOrWhiteSpace(candidate))
+                    _returnUrl = candidate;
+            }
+
+            // Process the OAuth callback
+            await ProcessOAuthCallback();
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"OAuth callback initialization failed: {ex}");
+            ShowError("Failed to initialize authentication callback");
+        }
+    }
+
+    private async Task ProcessOAuthCallback()
+    {
+        try
+        {
+            _processingMessage = "Retrieving authentication details...";
+            StateHasChanged();
+
+            // Get the stored PIN ID from session storage
+            var pinId = await PlexAuthService.GetStoredPinIdAsync();
+            if (pinId == null)
+            {
+                Logs.Warning("No PIN ID found in session storage");
+                ShowError("Authentication session not found. Please try signing in again.");
+                return;
+            }
+
+            Logs.Info($"Found stored PIN ID: {pinId}");
+            _processingMessage = "Checking authentication status...";
+            StateHasChanged();
+
+            // Check if the PIN has been authenticated
+            var result = await PlexAuthService.PollForAuthenticationAsync(pinId.Value);
+            if (!result.Success)
+            {
+                Logs.Warning($"PIN authentication check failed: {result.ErrorMessage}");
+                ShowError(result.ErrorMessage ?? "Authentication failed. Please try again.");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(result.AuthToken))
+            {
+                Logs.Warning("No auth token received from Plex");
+                ShowError("No authentication token received. Please try again.");
+                return;
+            }
+
+            Logs.Info("Authentication token received, completing sign-in");
+            _processingMessage = "Completing sign-in...";
+            StateHasChanged();
+
+            // Complete the authentication
+            var authResult = await ((CustomAuthStateProvider)AuthStateProvider)
+                .AuthenticateWithPlexAsync(result.AuthToken, result.User?.Username ?? "plex-user");
+
+            if (authResult.Success)
+            {
+                // Clear the stored PIN ID
+                await PlexAuthService.ClearStoredPinIdAsync();
+                
+                await ToastService.ShowSuccessAsync($"Welcome back, {authResult.User?.DisplayName ?? result.User?.Username ?? "User"}!");
+                
+                // Choose a safe destination
+                var target = _returnUrl;
+                if (string.IsNullOrWhiteSpace(target) || target == "/" || target.StartsWith("/login", StringComparison.OrdinalIgnoreCase))
+                    target = "/browse";
+                
+                Logs.Info($"Authentication successful, redirecting to {target}");
+                
+                // Small delay to ensure authentication state is fully set
+                await Task.Delay(500);
+                
+                // Force a complete page reload to ensure clean state
+                await JSRuntime.InvokeVoidAsync("eval", $"location.replace('{target}')");
+            }
+            else
+            {
+                Logs.Error($"Authentication completion failed: {authResult.ErrorMessage}");
+                ShowError(authResult.ErrorMessage ?? "Failed to complete authentication");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"ProcessOAuthCallback error: {ex}");
+            ShowError("An unexpected error occurred during authentication");
+        }
+    }
+
+    private void ShowError(string message)
+    {
+        _errorMessage = message;
+        _showError = true;
+        StateHasChanged();
+    }
+
+    private async Task RetryAuthentication()
+    {
+        _showError = false;
+        _processingMessage = "Retrying authentication...";
+        StateHasChanged();
+        await ProcessOAuthCallback();
+    }
+
+    private void GoToLogin()
+    {
+        Navigation.NavigateTo("/login", false);
+    }
+}
+
+<style>
+    .callback-container {
+        position: relative;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    .callback-content {
+        position: relative;
+        z-index: 1;
+        width: 100%;
+        padding: 2rem;
+    }
+
+    .callback-card {
+        background: rgba(255,255,255,0.95) !important;
+        backdrop-filter: blur(10px);
+        padding: 3rem 2rem;
+        border-radius: 12px;
+        text-align: center;
+    }
+
+    .callback-header {
+        margin-bottom: 2rem;
+    }
+
+    .brand-title {
+        color: #E5A00D;
+        font-weight: 900;
+        letter-spacing: .15rem;
+        margin-bottom: .5rem;
+    }
+
+    .callback-title {
+        color: #333;
+        font-weight: 500;
+        opacity: .9;
+    }
+
+    .callback-processing {
+        padding: 2rem 0;
+    }
+
+    @@media (max-width: 600px) {
+        .callback-card {
+            padding: 2rem 1.5rem;
+        }
+        .brand-title {
+            font-size: 1.75rem;
+        }
+    }
+</style>

@@ -1,4 +1,5 @@
 @page "/search"
+@attribute [Authorize]
 @inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
@@ -206,6 +207,19 @@
             if (_filterType.HasValue)
             {
                 _searchResults = _searchResults?.Where(r => r.MediaType == _filterType.Value).ToList();
+            }
+
+            // Mark availability and overlay my request statuses
+            if (_searchResults?.Any() == true)
+            {
+                await PlexApiService.AnnotateAvailabilityAsync(_searchResults);
+                var keys = _searchResults.Select(m => (m.Id, m.MediaType)).ToList();
+                var statuses = await MediaRequestService.GetMyRequestStatusesAsync(keys);
+                foreach (var m in _searchResults)
+                {
+                    var k = $"{m.MediaType}:{m.Id}";
+                    if (statuses.TryGetValue(k, out var st)) m.RequestStatus = st;
+                }
             }
         }
         finally

@@ -54,4 +54,11 @@ public class UserProfileEntity
     public string? PreferredServerMachineId { get; set; }
     [MaxLength(128)]
     public string? PreferredServerName { get; set; }
+
+    // Discord integration fields
+    [MaxLength(64)]
+    public string? DiscordUserId { get; set; }
+    [MaxLength(128)]
+    public string? DiscordUsername { get; set; }
+    public bool DiscordDmOptIn { get; set; }
 }

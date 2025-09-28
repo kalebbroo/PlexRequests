@@ -8,11 +8,12 @@ using PlexRequestsHosted.Infrastructure.Entities;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
-public class MediaRequestService(AppDbContext db, AuthenticationStateProvider authStateProvider, IMediaMetadataProvider metadataProvider) : IMediaRequestService
+public class MediaRequestService(AppDbContext db, AuthenticationStateProvider authStateProvider, IMediaMetadataProvider metadataProvider, INotificationService notificationService) : IMediaRequestService
 {
     private readonly AppDbContext _db = db;
     private readonly AuthenticationStateProvider _auth = authStateProvider;
     private readonly IMediaMetadataProvider _metadata = metadataProvider;
+    private readonly INotificationService _notify = notificationService;
 
     private async Task<(string username, bool isAdmin)> GetUserAsync()
     {
@@ -56,7 +57,7 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
             LastRequestDate = await q.OrderByDescending(r => r.RequestedAt).Select(r => (DateTime?)r.RequestedAt).FirstOrDefaultAsync()
         };
         return stats;
-    } // TODO: Filter by current user instead of hardcoded "demo"
+    } // TODO: Filter by current authenticated user
 
     public async Task<List<MediaCardDto>> GetWatchlistAsync()
     {
@@ -189,6 +190,27 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
         };
         _db.MediaRequests.Add(entity);
         var saved = await _db.SaveChangesAsync() > 0;
+        if (saved)
+        {
+            var dto = new MediaRequestDto
+            {
+                Id = entity.Id,
+                MediaId = entity.MediaId,
+                MediaType = entity.MediaType,
+                Title = entity.Title,
+                PosterUrl = entity.PosterUrl,
+                Status = entity.Status,
+                RequestedAt = entity.RequestedAt,
+                ApprovedAt = entity.ApprovedAt,
+                AvailableAt = entity.AvailableAt,
+                RequestedByUsername = entity.RequestedBy ?? string.Empty,
+                RequestNote = entity.RequestNote,
+                DenialReason = entity.DenialReason,
+                RequestedSeasons = string.IsNullOrWhiteSpace(entity.RequestedSeasonsCsv) ? new List<int>() : entity.RequestedSeasonsCsv.Split(',').Select(s => int.TryParse(s, out var n) ? n : (int?)null).Where(n => n.HasValue).Select(n => n!.Value).ToList(),
+                RequestAllSeasons = entity.RequestAllSeasons
+            };
+            await _notify.RequestCreatedAsync(dto);
+        }
         return new MediaRequestResult { Success = saved, RequestId = entity.Id, NewStatus = entity.Status };
     } // TODO: Implement request limits and validation
 
@@ -214,7 +236,26 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
         req.ApprovedAt = DateTime.UtcNow;
         req.DenialReason = null;
         if (!string.IsNullOrWhiteSpace(note)) req.RequestNote = note;
-        return await _db.SaveChangesAsync() > 0;
+        var ok = await _db.SaveChangesAsync() > 0;
+        if (ok)
+        {
+            var dto = new MediaRequestDto
+            {
+                Id = req.Id,
+                MediaId = req.MediaId,
+                MediaType = req.MediaType,
+                Title = req.Title,
+                PosterUrl = req.PosterUrl,
+                Status = req.Status,
+                RequestedAt = req.RequestedAt,
+                ApprovedAt = req.ApprovedAt,
+                AvailableAt = req.AvailableAt,
+                RequestedByUsername = req.RequestedBy ?? string.Empty,
+                RequestNote = req.RequestNote
+            };
+            await _notify.RequestApprovedAsync(dto);
+        }
+        return ok;
     }
 
     public async Task<bool> DenyRequestAsync(int requestId, string reason)
@@ -225,7 +266,26 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
         if (req is null) return false;
         req.Status = RequestStatus.Rejected;
         req.DenialReason = reason;
-        return await _db.SaveChangesAsync() > 0;
+        var ok = await _db.SaveChangesAsync() > 0;
+        if (ok)
+        {
+            var dto = new MediaRequestDto
+            {
+                Id = req.Id,
+                MediaId = req.MediaId,
+                MediaType = req.MediaType,
+                Title = req.Title,
+                PosterUrl = req.PosterUrl,
+                Status = req.Status,
+                RequestedAt = req.RequestedAt,
+                ApprovedAt = req.ApprovedAt,
+                AvailableAt = req.AvailableAt,
+                RequestedByUsername = req.RequestedBy ?? string.Empty,
+                DenialReason = req.DenialReason
+            };
+            await _notify.RequestRejectedAsync(dto);
+        }
+        return ok;
     }
 
     public async Task<bool> MarkAvailableAsync(int requestId)
@@ -236,7 +296,25 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
         if (req is null) return false;
         req.Status = RequestStatus.Available;
         req.AvailableAt = DateTime.UtcNow;
-        return await _db.SaveChangesAsync() > 0;
+        var ok = await _db.SaveChangesAsync() > 0;
+        if (ok)
+        {
+            var dto = new MediaRequestDto
+            {
+                Id = req.Id,
+                MediaId = req.MediaId,
+                MediaType = req.MediaType,
+                Title = req.Title,
+                PosterUrl = req.PosterUrl,
+                Status = req.Status,
+                RequestedAt = req.RequestedAt,
+                ApprovedAt = req.ApprovedAt,
+                AvailableAt = req.AvailableAt,
+                RequestedByUsername = req.RequestedBy ?? string.Empty
+            };
+            await _notify.RequestAvailableAsync(dto);
+        }
+        return ok;
     }
 
     public async Task<Dictionary<string, RequestStatus>> GetMyRequestStatusesAsync(IEnumerable<(int mediaId, MediaType mediaType)> items)

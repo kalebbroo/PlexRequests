@@ -24,12 +24,26 @@ public class MetadataProviderFactory : IMetadataProviderFactory
     private readonly IServiceProvider _serviceProvider;
     private readonly IConfiguration _configuration;
     private readonly ILogger<MetadataProviderFactory> _logger;
+    private readonly MetadataProviderType _defaultProviderType;
+    private readonly IMediaMetadataProvider _defaultProvider;
 
     public MetadataProviderFactory(IServiceProvider serviceProvider, IConfiguration configuration, ILogger<MetadataProviderFactory> logger)
     {
         _serviceProvider = serviceProvider;
         _configuration = configuration;
         _logger = logger;
+
+        // Resolve and cache default provider once at startup; log only once
+        var defaultProviderName = _configuration["MetadataProviders:DefaultProvider"] ?? "TMDb";
+        _defaultProviderType = defaultProviderName.ToLower() switch
+        {
+            "tmdb" => MetadataProviderType.TMDb,
+            "trakt" => MetadataProviderType.Trakt,
+            "seed" => MetadataProviderType.Seed,
+            _ => MetadataProviderType.Seed
+        };
+        _logger.LogInformation("Using default metadata provider: {Provider}", _defaultProviderType);
+        _defaultProvider = GetProvider(_defaultProviderType);
     }
 
     public IMediaMetadataProvider GetProvider(MetadataProviderType providerType)
@@ -43,21 +57,7 @@ public class MetadataProviderFactory : IMetadataProviderFactory
         };
     }
 
-    public IMediaMetadataProvider GetDefaultProvider()
-    {
-        var defaultProviderName = _configuration["MetadataProviders:DefaultProvider"] ?? "TMDb";
-
-        var providerType = defaultProviderName.ToLower() switch
-        {
-            "tmdb" => MetadataProviderType.TMDb,
-            "trakt" => MetadataProviderType.Trakt,
-            "seed" => MetadataProviderType.Seed,
-            _ => MetadataProviderType.Seed
-        };
-
-        _logger.LogInformation("Using default metadata provider: {Provider}", providerType);
-        return GetProvider(providerType);
-    }
+    public IMediaMetadataProvider GetDefaultProvider() => _defaultProvider;
 
     public IEnumerable<MetadataProviderType> GetAvailableProviders()
     {

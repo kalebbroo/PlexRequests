@@ -1,4 +1,5 @@
 @page "/profile"
+@attribute [Authorize]
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @inject IUserProfileService UserProfileService
@@ -13,7 +14,7 @@
             <MudPaper Class="pa-4" Elevation="2">
                 <MudStack Row="false" Spacing="2">
                     <MudAvatar Size="Size.Large">
-                        <MudImage Src="@(_profile?.AvatarUrl ?? "/default-avatar.png")" />
+                        <MudImage Src="@(_profile?.AvatarUrl ?? "/default-avatar.svg")" />
                     </MudAvatar>
                     <MudText Typo="Typo.h5">@(_profile?.DisplayName ?? _profile?.Username)</MudText>
                     <MudText Typo="Typo.body2" Class="text-secondary">@_profile?.Email</MudText>

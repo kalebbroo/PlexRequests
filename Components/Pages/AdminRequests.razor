@@ -1,4 +1,5 @@
 @page "/admin/requests"
+@attribute [Authorize(Roles = "Admin")]
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
 @using Microsoft.AspNetCore.Components.Web
 @using MudBlazor
@@ -6,6 +7,8 @@
 @using PlexRequestsHosted.Shared.Enums
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject NavigationManager Navigation
+@using Microsoft.AspNetCore.SignalR.Client
 
 <PageTitle>Admin Requests - Plex Requests</PageTitle>
 
@@ -112,9 +115,40 @@
     private MediaRequestDto? _denyTarget;
     private string _denyReason = string.Empty;
 
+    private HubConnection? _hub;
+
     protected override async Task OnInitializedAsync()
     {
         await Load();
+
+        _hub = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("/hubs/notifications"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestCreated", async (req) =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await ToastService.ShowInfoAsync($"New request: {req.Title} by {req.RequestedByUsername}");
+                await Load();
+            });
+        });
+
+        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestApproved", async (req) =>
+        {
+            await InvokeAsync(async () => { await Load(); });
+        });
+        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestRejected", async (req) =>
+        {
+            await InvokeAsync(async () => { await Load(); });
+        });
+        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestAvailable", async (req) =>
+        {
+            await InvokeAsync(async () => { await Load(); });
+        });
+
+        try { await _hub.StartAsync(); } catch { }
     }
 
     private async Task Load()
@@ -230,4 +264,14 @@
         __builder.AddAttribute(3, "ChildContent", (RenderFragment)((b2) => b2.AddContent(0, txt)));
         __builder.CloseComponent();
     };
+}
+
+@code {
+    public async ValueTask DisposeAsync()
+    {
+        if (_hub is not null)
+        {
+            try { await _hub.StopAsync(); await _hub.DisposeAsync(); } catch { }
+        }
+    }
 }

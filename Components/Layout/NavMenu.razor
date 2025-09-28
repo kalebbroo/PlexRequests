@@ -3,30 +3,17 @@
 
 <div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
-        <a class="navbar-brand" href="/">Plex Requests</a>
+        <a class="navbar-brand" href="/browse">Plex Requests</a>
         <div class="d-flex align-items-center gap-3">
-            <AuthorizeView Context="ctx">
-                <Authorized>
-                    <a class="nav-link" href="/requests">My Requests</a>
-                    <AuthorizeView Roles="Admin" Context="adminCtx">
-                        <a class="nav-link" href="/admin/requests">Admin</a>
-                    </AuthorizeView>
-                    <a class="nav-link" href="/search">Search</a>
-                    <div class="d-flex align-items-center gap-2">
-                        @if (ctx.User?.FindFirst("avatar_url")?.Value is string avatar && !string.IsNullOrEmpty(avatar))
-                        {
-                            <img src="@avatar" alt="avatar" style="width:28px;height:28px;border-radius:50%;object-fit:cover;" />
-                        }
-                        <span class="text-light small">@ctx.User?.Identity?.Name</span>
-                        <button class="btn btn-sm btn-outline-light" @onclick="Logout">Logout</button>
-                    </div>
-                </Authorized>
-                <NotAuthorized>
-                    <a class="btn btn-sm btn-warning" href="@_loginHref">Login</a>
-                </NotAuthorized>
-            </AuthorizeView>
+            <a class="nav-link" href="/requests">My Requests</a>
+            <a class="nav-link" href="/search">Search</a>
+            <div class="d-flex align-items-center gap-2">
+                <span class="text-light small">Account</span>
+                <button class="btn btn-sm btn-outline-light" @onclick="Logout">Logout</button>
+            </div>
         </div>
     </div>
+    
 </div>
 
 <input type="checkbox" title="Navigation menu" class="navbar-toggler" />
@@ -34,42 +21,23 @@
 <div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
     <nav class="nav flex-column">
         <div class="nav-item px-3">
-            <NavLink class="nav-link" href="/" Match="NavLinkMatch.All">Home</NavLink>
+            <NavLink class="nav-link" href="/browse" Match="NavLinkMatch.All">Home</NavLink>
         </div>
         <div class="nav-item px-3">
             <NavLink class="nav-link" href="/search">Search</NavLink>
         </div>
         <div class="nav-item px-3">
-            <AuthorizeView>
-                <Authorized>
-                    <NavLink class="nav-link" href="/requests">My Requests</NavLink>
-                    <AuthorizeView Roles="Admin" Context="adminCtx">
-                        <NavLink class="nav-link" href="/admin/requests">Admin</NavLink>
-                    </AuthorizeView>
-                </Authorized>
-                <NotAuthorized>
-                    <NavLink class="nav-link" href="@_loginHref">Login</NavLink>
-                </NotAuthorized>
-            </AuthorizeView>
+            <NavLink class="nav-link" href="/requests">My Requests</NavLink>
         </div>
     </nav>
+    
 </div>
 
 @code {
-    private string _loginHref = "/login";
-
-    protected override void OnParametersSet()
-    {
-        // Build login link with returnUrl of current page
-        var current = Navigation.ToBaseRelativePath(Navigation.Uri);
-        if (string.IsNullOrWhiteSpace(current)) current = "/";
-        var encoded = Uri.EscapeDataString("/" + current.TrimStart('/'));
-        _loginHref = $"/login?returnUrl={encoded}";
-    }
     private async Task Logout()
     {
         await AuthService.SignOutAsync();
-        Navigation.NavigateTo(_loginHref, forceLoad: false);
+        Navigation.NavigateTo("/", forceLoad: true);
     }
 }
 

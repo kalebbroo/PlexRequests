@@ -12,9 +12,8 @@ public class UserProfileService(AppDbContext db) : IUserProfileService
 
     public async Task<UserDto?> GetProfileAsync()
     {
-        // For now, get current user by the first stored session user in DB would require context.
-        // This method is intended to be called in context of authenticated user; we will infer
-        // from the most recently logged-in profile as a temporary measure for demo.
+        // Get the most recently logged-in user profile.
+        // TODO: This should be updated to get the current authenticated user from context.
         var profile = await _db.UserProfiles
             .OrderByDescending(p => p.LastLoginAt)
             .Include(p => p.User)

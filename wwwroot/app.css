@@ -65,6 +65,36 @@
     --container-max-width: 1920px;
 }
 
+/* Base reset and dark theme foundations */
+html, body {
+    height: 100%;
+}
+
+* { box-sizing: border-box; }
+*::before, *::after { box-sizing: inherit; }
+
+body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Override Bootstrap default link styling to match our theme */
+a { color: var(--text-primary); text-decoration: none; transition: color var(--transition-fast); }
+a:hover { color: var(--plex-orange); text-decoration: none; }
+
+/* Ensure Mud typography links inherit correctly */
+.mud-typography a { color: inherit; text-decoration: none; }
+.mud-typography a:hover { color: var(--plex-orange); }
+
+/* Buttons alignment with our theme (subtle) */
+.btn, button { border-radius: var(--radius-md); }
+
+/* Utility: muted text consistent with theme */
+.text-secondary { color: var(--text-secondary) !important; }
+
+
 /* Global Utility Classes */
 .text-gradient {
     background: linear-gradient(45deg, var(--plex-orange), var(--plex-dark-orange));

@@ -9,6 +9,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<WatchlistItemEntity> Watchlist => Set<WatchlistItemEntity>();
     public DbSet<UserEntity> Users => Set<UserEntity>();
     public DbSet<UserProfileEntity> UserProfiles => Set<UserProfileEntity>();
+    public DbSet<PlexMappingEntity> PlexMappings => Set<PlexMappingEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -40,6 +41,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithOne()
                 .HasForeignKey<UserProfileEntity>(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PlexMappingEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.ExternalKey).IsUnique();
+            b.HasIndex(x => x.RatingKey);
         });
     }
 }

@@ -1,22 +1,29 @@
+@page "/"
 @page "/login"
-@page "/auth/callback"
+@attribute [AllowAnonymous]
+@rendermode InteractiveServer
 @using PlexRequestsHosted.Services.Auth
+@implements IDisposable
+@using System.Linq
+@using PlexRequestsHosted.Utils
 @inject PlexRequestsHosted.Services.Abstractions.IPlexAuthService PlexAuthService
 @inject AuthenticationStateProvider AuthStateProvider
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject NavigationManager Navigation
+@inject PlexRequestsHosted.Services.Abstractions.IMediaMetadataProvider MetadataProvider
 @using Microsoft.AspNetCore.WebUtilities
 
 <PageTitle>Sign In - Plex Request</PageTitle>
 
 <div class="login-container">
     <div class="background-wrapper">
-        <div class="background-image"></div>
+        <div class="background-image bgA @( _showA ? "visible" : string.Empty)" style="background-image: url('@(_bgA ?? _currentBackdrop ?? "/favicon.png")')"></div>
+        <div class="background-image bgB @( !_showA ? "visible" : string.Empty)" style="background-image: url('@(_bgB ?? "/favicon.png")')"></div>
         <div class="gradient-overlay"></div>
     </div>
     <div class="login-content">
         <MudContainer MaxWidth="MaxWidth.Small">
-            <MudPaper Class="login-card" Elevation="24">
+            <MudPaper Class="login-card animate-slide-up" Elevation="24">
                 <div class="login-header">
                     <MudText Typo="Typo.h3" Class="brand-title">PLEX REQUEST</MudText>
                     <MudText Typo="Typo.h5" Class="login-title">Sign In</MudText>
@@ -27,31 +34,22 @@
                     <div class="auth-processing">
                         <MudProgressCircular Color="Color.Primary" Size="Size.Large" Indeterminate="true" />
                         <MudText Typo="Typo.body1" Class="mt-4">@_processingMessage</MudText>
-                        @if (_showCancelButton)
-                        {
-                            <MudButton Variant="Variant.Text" Color="Color.Secondary" @onclick="CancelAuthentication" Class="mt-3">Cancel</MudButton>
-                        }
                     </div>
                 }
                 else
                 {
                     <div class="login-options">
-                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large" FullWidth="true" StartIcon="@Icons.Material.Filled.Login" @onclick="SignInWithPlex" Class="plex-button">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large" FullWidth="true" StartIcon="@Icons.Material.Filled.Login" @onclick="SignInWithPlex" Class="plex-button hover-scale">
                             <MudText Typo="Typo.button">Sign in with Plex</MudText>
                         </MudButton>
 
-                        <MudDivider Class="my-4">
-                            <MudChip T="string" Size="Size.Small" Variant="Variant.Text">OR</MudChip>
-                        </MudDivider>
-
-                        <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Medium" FullWidth="true" StartIcon="@Icons.Material.Filled.Person" @onclick="DemoSignIn">
-                            Use Demo Account
-                        </MudButton>
 
                         <MudExpansionPanels Elevation="0" Class="manual-entry">
                             <MudExpansionPanel Text="Advanced: Enter Plex Token Manually">
-                                <MudTextField @bind-Value="_manualToken" Label="Plex Token" Variant="Variant.Outlined" InputType="@(_showToken ? InputType.Text : InputType.Password)" Adornment="Adornment.End" AdornmentIcon="@(_showToken ? Icons.Material.Filled.Visibility : Icons.Material.Filled.VisibilityOff)" OnAdornmentClick="ToggleTokenVisibility" HelperText="Your Plex authentication token" FullWidth="true" />
-                                <MudButton Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true" @onclick="SignInWithToken" Disabled="@string.IsNullOrWhiteSpace(_manualToken)" Class="mt-3">Sign in with Token</MudButton>
+                                <EditForm Model="@_tokenForm" OnValidSubmit="SignInWithToken">
+                                    <MudTextField @bind-Value="_manualToken" Label="Plex Token" Variant="Variant.Outlined" InputType="@(_showToken ? InputType.Text : InputType.Password)" Adornment="Adornment.End" AdornmentIcon="@(_showToken ? Icons.Material.Filled.Visibility : Icons.Material.Filled.VisibilityOff)" OnAdornmentClick="ToggleTokenVisibility" HelperText="Your Plex authentication token" FullWidth="true" />
+                                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true" Disabled="@string.IsNullOrWhiteSpace(_manualToken)" Class="mt-3">Sign in with Token</MudButton>
+                                </EditForm>
                                 <MudAlert Severity="Severity.Info" Class="mt-3" Dense="true">
                                     <MudLink Href="https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/" Target="_blank" Color="Color.Info">How to find your Plex token</MudLink>
                                 </MudAlert>
@@ -75,6 +73,7 @@
                 <MudLink Href="/about" Color="Color.Inherit">About</MudLink>
                 <MudLink Href="/privacy" Color="Color.Inherit">Privacy</MudLink>
                 <MudLink Href="/terms" Color="Color.Inherit">Terms</MudLink>
+                <span class="tmdb-attr">This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
             </div>
         </MudContainer>
     </div>
@@ -83,84 +82,124 @@
 @code {
     private bool _isProcessing;
     private string _processingMessage = "Connecting to Plex...";
-    private bool _showCancelButton;
     private string _manualToken = string.Empty;
     private bool _showToken;
     private bool _isDevelopment;
-    private CancellationTokenSource? _cts;
     private string _returnUrl = "/";
+    private List<string> _backdrops = new();
+    private string? _currentBackdrop;
+    private int _backdropIndex = 0;
+    private System.Timers.Timer? _bgTimer;
+    // Dual-layer background for smooth crossfade
+    private string? _bgA;
+    private string? _bgB;
+    private bool _showA = true;
+    private bool _redirecting = false;
+    private readonly object _tokenForm = new();
+    private int _redirectAttempts = 0;
+    private const int MAX_REDIRECT_ATTEMPTS = 3;
+    private DateTime _lastRedirectAttempt = DateTime.MinValue;
 
     protected override async Task OnInitializedAsync()
     {
-        var authState = await ((CustomAuthStateProvider)AuthStateProvider).GetAuthenticationStateAsync();
-        if (authState.User.Identity?.IsAuthenticated == true)
+        Logs.Info("Login page initialized");
+        
+        try
         {
-            Navigation.NavigateTo("/");
-            return;
-        }
+            var authState = await ((CustomAuthStateProvider)AuthStateProvider).GetAuthenticationStateAsync();
+            if (authState.User.Identity?.IsAuthenticated == true)
+            {
+                // Circuit breaker: prevent endless redirect loops
+                if (_redirectAttempts >= MAX_REDIRECT_ATTEMPTS)
+                {
+                    Logs.Error($"Too many redirect attempts ({_redirectAttempts}). Stopping to prevent infinite loop.");
+                    await ToastService.ShowErrorAsync("Authentication error: Too many redirects. Please refresh the page.");
+                    return;
+                }
 
-        var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
-        // Capture returnUrl from query string if present
-        var query = QueryHelpers.ParseQuery(uri.Query);
-        if (query.TryGetValue("returnUrl", out var r))
-        {
-            var candidate = r.ToString();
-            if (!string.IsNullOrWhiteSpace(candidate))
-                _returnUrl = candidate;
-        }
-        if (uri.LocalPath.EndsWith("/auth/callback", StringComparison.OrdinalIgnoreCase))
-        {
-            await HandleOAuthCallback();
-        }
+                // Rate limit redirects
+                if (DateTime.UtcNow - _lastRedirectAttempt < TimeSpan.FromSeconds(2))
+                {
+                    Logs.Warning("Redirect rate limited. Waiting before next attempt.");
+                    return;
+                }
 
-        #if DEBUG
-        _isDevelopment = true;
-        #endif
+                if (!_redirecting)
+                {
+                    _redirecting = true;
+                    _redirectAttempts++;
+                    _lastRedirectAttempt = DateTime.UtcNow;
+                    Logs.Info($"User authenticated as {authState.User.Identity.Name}; redirecting to /browse (attempt {_redirectAttempts})");
+                    
+                    // Use a more aggressive redirect to break out of any loops
+                    await Task.Delay(500); // Give time for state to stabilize
+                    Navigation.NavigateTo("/browse", forceLoad: true);
+                }
+                return;
+            }
+            else
+            {
+                Logs.Info("User not authenticated, showing login page");
+                _redirectAttempts = 0; // Reset counter when not authenticated
+            }
+
+            var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+            // Capture returnUrl from query string if present
+            var query = QueryHelpers.ParseQuery(uri.Query);
+            if (query.TryGetValue("returnUrl", out var r))
+            {
+                var candidate = r.ToString();
+                if (!string.IsNullOrWhiteSpace(candidate))
+                    _returnUrl = candidate;
+            }
+
+            #if DEBUG
+            _isDevelopment = true;
+            #endif
+
+            // Load some great-looking backdrops from TMDB for the background
+            await LoadBackgroundImages();
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"Login page initialization failed: {ex}");
+            await ToastService.ShowErrorAsync("Failed to initialize login page");
+        }
     }
 
     private async Task SignInWithPlex()
     {
+        Logs.Info("SignInWithPlex clicked");
         _isProcessing = true;
         _processingMessage = "Connecting to Plex...";
         StateHasChanged();
+        
         try
         {
             var flow = await PlexAuthService.BeginAuthenticationAsync();
             if (!flow.Success)
             {
                 await ToastService.ShowErrorAsync(flow.ErrorMessage ?? "Failed to start authentication");
-                _isProcessing = false; return;
-            }
-
-            _processingMessage = "Opening Plex sign-in window..."; StateHasChanged();
-            var opened = await PlexAuthService.OpenAuthenticationWindowAsync(flow.AuthenticationUrl);
-            if (!opened)
-            {
-                Navigation.NavigateTo(flow.AuthenticationUrl, true);
+                Logs.Error($"BeginAuthenticationAsync failed: {flow.ErrorMessage}");
+                _isProcessing = false;
                 return;
             }
 
-            _processingMessage = "Waiting for authentication..."; _showCancelButton = true; StateHasChanged();
-            _cts = new CancellationTokenSource();
-            var result = await PlexAuthService.PollForAuthenticationAsync(flow.PinId, _cts.Token);
-            if (result.Success)
-            {
-                await CompleteAuthentication(result.AuthToken, result.User?.Username ?? "");
-            }
-            else
-            {
-                await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Authentication failed");
-                _isProcessing = false;
-            }
+            Logs.Info($"Plex auth flow ready. pinId={flow.PinId}, redirecting to Plex OAuth");
+            _processingMessage = "Redirecting to Plex sign-in...";
+            StateHasChanged();
+            
+            // Small delay to show the message
+            await Task.Delay(500);
+            
+            // Redirect to Plex OAuth (this will navigate away from our page)
+            await PlexAuthService.OpenAuthenticationWindowAsync(flow.AuthenticationUrl);
         }
-        catch
+        catch (Exception ex)
         {
             await ToastService.ShowErrorAsync("An error occurred during authentication");
+            Logs.Error($"SignInWithPlex exception: {ex}");
             _isProcessing = false;
-        }
-        finally
-        {
-            _cts?.Dispose(); _cts = null; _showCancelButton = false;
         }
     }
 
@@ -188,7 +227,13 @@
         if (result.Success)
         {
             await ToastService.ShowSuccessAsync($"Welcome back, {result.User?.DisplayName ?? plexUsername}!");
-            Navigation.NavigateTo(_returnUrl);
+            // Choose a safe destination; avoid redirecting back to login or root
+            var target = _returnUrl;
+            if (string.IsNullOrWhiteSpace(target) || target == "/" || target.StartsWith("/login", StringComparison.OrdinalIgnoreCase))
+                target = "/browse";
+            Logs.Info($"Post-auth redirect to {target}");
+            // Use client-side navigation to avoid SSR re-prerender causing auth flicker
+            Navigation.NavigateTo(target, false);
         }
         else
         {
@@ -197,54 +242,115 @@
         }
     }
 
-    private async Task HandleOAuthCallback()
+    private async Task LoadBackgroundImages()
     {
-        _isProcessing = true; _processingMessage = "Processing authentication..."; StateHasChanged();
-        await Task.Delay(500);
-        _isProcessing = false;
+        try
+        {
+            if (_redirecting) return;
+            Logs.Info("Fetching TMDB backdrops for login background");
+            var cards = await MetadataProvider.GetRecentlyAddedAsync(20);
+            _backdrops = cards
+                .Select(c => c.BackdropUrl ?? c.PosterUrl)
+                .Where(u => !string.IsNullOrWhiteSpace(u))
+                .Distinct()
+                .Take(12)
+                .ToList()!;
+
+            if (_backdrops.Count > 0)
+            {
+                _currentBackdrop = _backdrops[0];
+                _bgA = _backdrops[0];
+                _bgB = _backdrops.Count > 1 ? _backdrops[1] : _backdrops[0];
+                _backdropIndex = 1; // we already used index 0 (and maybe 1)
+                StartBackgroundRotation();
+                Logs.Info($"Loaded {_backdrops.Count} backdrop(s) for login background");
+            }
+            else
+            {
+                Logs.Warning("No TMDB backdrops available; using fallback image");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logs.Warning($"TMDB backdrop load failed (non-fatal): {ex.Message}");
+        }
     }
 
-    private void CancelAuthentication()
-    {
-        _cts?.Cancel(); _isProcessing = false; _showCancelButton = false; StateHasChanged();
-    }
 
     private void ToggleTokenVisibility() => _showToken = !_showToken;
 
-    private async Task DemoSignIn()
+
+    private void StartBackgroundRotation()
     {
-        _isProcessing = true; _processingMessage = "Signing in as demo..."; StateHasChanged();
-        await Task.Delay(300);
-        var result = await ((CustomAuthStateProvider)AuthStateProvider).AuthenticateWithPlexAsync("demo-token", "demo");
-        if (result.Success)
+        if (_backdrops.Count <= 1) return;
+        _bgTimer = new System.Timers.Timer(9000);
+        _bgTimer.Elapsed += (_, __) =>
         {
-            await ToastService.ShowSuccessAsync("Signed in as demo user");
-            Navigation.NavigateTo("/");
-        }
-        else
-        {
-            await ToastService.ShowErrorAsync("Demo sign-in failed");
-            _isProcessing = false;
-        }
+            try
+            {
+                _backdropIndex = (_backdropIndex + 1) % _backdrops.Count;
+                var next = _backdrops[_backdropIndex];
+                if (_showA)
+                {
+                    _bgB = next;
+                    _showA = false;
+                }
+                else
+                {
+                    _bgA = next;
+                    _showA = true;
+                }
+                _currentBackdrop = next;
+                InvokeAsync(StateHasChanged);
+            }
+            catch { /* ignore */ }
+        };
+        _bgTimer.AutoReset = true;
+        _bgTimer.Start();
+    }
+
+    public void Dispose()
+    {
+        _bgTimer?.Stop();
+        _bgTimer?.Dispose();
     }
 }
 
 <style>
-    .login-container { position: relative; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    /* Full-bleed cinematic background */
+    .login-container { position: relative; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #0d0d0d; }
     .background-wrapper { position: absolute; inset: 0; overflow: hidden; }
-    .background-image { position: absolute; inset: 0; background-size: cover; background-position: center; filter: brightness(0.3); }
-    .gradient-overlay { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(0,0,0,.8) 0%, rgba(20,20,20,.95) 100%); }
+    .background-image { position: absolute; inset: 0; background-size: cover; background-position: center; filter: brightness(0.35) saturate(1.1); transform: scale(1.05); opacity: 0; transition: opacity 1.6s ease, filter .6s ease; }
+    .background-image.visible { opacity: 1; }
+    .bgA { animation: kenburns 22s ease-in-out infinite alternate; }
+    .bgB { animation: kenburns 22s ease-in-out infinite alternate-reverse; }
+    .gradient-overlay { position: absolute; inset: 0; background: radial-gradient(ellipse at center, rgba(0,0,0,.35) 0%, rgba(0,0,0,.65) 45%, rgba(0,0,0,.9) 100%), linear-gradient(to bottom, rgba(0,0,0,.7) 0%, rgba(20,20,20,.95) 100%); }
+    @@keyframes kenburns { from { transform: scale(1.05) translateY(0); } to { transform: scale(1.12) translateY(-10px); } }
+
+    /* Card */
     .login-content { position: relative; z-index: 1; width: 100%; padding: 2rem; }
-    .login-card { background: rgba(0,0,0,.85) !important; backdrop-filter: blur(10px); padding: 3rem 2rem; border-radius: 8px; }
+    .login-card { background: rgba(0,0,0,.82) !important; backdrop-filter: blur(12px); padding: 3rem 2rem; border-radius: 12px; border: 1px solid rgba(255,255,255,.05); box-shadow: var(--shadow-xl, 0 16px 32px rgba(0,0,0,.6)); }
     .login-header { text-align: center; margin-bottom: 2rem; }
-    .brand-title { color: #E5A00D; font-weight: 900; letter-spacing: -2px; margin-bottom: 1rem; }
-    .login-title { color: #fff; font-weight: 500; }
+    .brand-title { color: #E5A00D; font-weight: 900; letter-spacing: .15rem; margin-bottom: .5rem; }
+    .login-title { color: #fff; font-weight: 500; opacity: .9; }
     .auth-processing { text-align: center; padding: 3rem 0; }
-    .plex-button { background: linear-gradient(45deg, #E5A00D 30%, #F9BE03 90%) !important; color: #000 !important; font-weight: 600; padding: 12px 24px !important; }
+
+    /* Buttons */
+    .plex-button { background: linear-gradient(45deg, #E5A00D 0%, #F9BE03 100%) !important; color: #000 !important; font-weight: 700; padding: 14px 24px !important; border-radius: 10px; box-shadow: 0 10px 24px rgba(229,160,13,.25); }
+    .plex-button:hover { filter: brightness(1.02); box-shadow: 0 12px 28px rgba(229,160,13,.35); }
     .manual-entry { background: transparent !important; }
+
+    /* Info list */
     .login-info { margin-top: 2rem; padding-top: 1rem; }
     .benefits-list { display: flex; flex-direction: column; gap: .75rem; margin-top: 1rem; }
-    .benefit-item { display: flex; align-items: center; gap: .75rem; }
-    .login-footer { display: flex; justify-content: center; gap: 2rem; margin-top: 2rem; opacity: .7; }
-    @@media (max-width: 600px) { .login-card { padding: 2rem 1.5rem; } .brand-title { font-size: 2rem; } }
+    .benefit-item { display: flex; align-items: center; gap: .75rem; opacity: .9; }
+
+    /* Footer */
+    .login-footer { display: flex; justify-content: center; gap: 2rem; margin-top: 2rem; opacity: .7; flex-wrap: wrap; }
+    .tmdb-attr { font-size: .75rem; color: #9aa0a6; opacity: .8; }
+
+    /* Hide app chrome on login for immersive look */
+    .app-header, .app-footer { display: none; }
+
+    @@media (max-width: 600px) { .login-card { padding: 2rem 1.5rem; } .brand-title { font-size: 1.75rem; } }
 </style>

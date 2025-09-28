@@ -88,6 +88,7 @@
     color: var(--text-secondary);
     display: -webkit-box;
     -webkit-line-clamp: 4;
+    line-clamp: 4;
     -webkit-box-orient: vertical;
     overflow: hidden;
     text-shadow: 1px 1px 3px rgba(0,0,0,0.7);
@@ -213,6 +214,7 @@
     .billboard-description {
         font-size: 1rem;
         -webkit-line-clamp: 3;
+        line-clamp: 3;
         margin-bottom: var(--spacing-md);
     }
 
@@ -353,20 +355,6 @@
     min-width: 200px;
 }
 
-.demo-content {
-    padding: var(--spacing-3xl) 0;
-    background-color: var(--bg-primary);
-}
-
-.demo-notice {
-    margin-top: var(--spacing-3xl);
-    text-align: center;
-}
-
-.demo-alert {
-    max-width: 600px;
-    margin: 0 auto;
-}
 
 /* Mobile landing page adjustments */
 @media (max-width: 768px) {
