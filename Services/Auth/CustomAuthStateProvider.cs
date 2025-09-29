@@ -47,76 +47,35 @@ public class CustomAuthStateProvider(
                 return _cachedAuthState;
             }
 
-            Logs.Debug("GetAuthenticationState: Cache expired or empty, checking session storage...");
+            Logs.Debug("GetAuthenticationState: Cache expired or empty, checking cookie authentication...");
 
-            var token = await _sessionStorage.GetItemAsStringAsync(AUTH_TOKEN_KEY);
-            if (string.IsNullOrEmpty(token))
-            {
-                Logs.Debug("GetAuthenticationState: No session token found, checking cookie authentication...");
-                // Fallback to cookie principal if present
-                var cookieUser = _http.HttpContext?.User;
-                if (cookieUser?.Identity?.IsAuthenticated == true)
-                {
-                    Logs.Info($"GetAuthenticationState: Found authenticated cookie user: {cookieUser.Identity.Name}");
-                    var cookieState = new AuthenticationState(cookieUser);
-                    _cachedAuthState = cookieState;
-                    _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
-                    return cookieState;
-                }
-                Logs.Debug("GetAuthenticationState: No authentication found, returning unauthenticated state");
-                var unauthState = new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
-                _cachedAuthState = unauthState;
-                _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
-                return unauthState;
-            }
-
-            Logs.Debug($"GetAuthenticationState: Found session token, loading user data...");
-
-            // Load stored user info to rebuild claims (username, email, avatar, display name, roles)
-            var claims = new List<Claim>();
-            try
-            {
-                var storedUser = await _sessionStorage.GetItemAsync<UserDto>(USER_DATA_KEY);
-                if (storedUser is not null)
-                {
-                    if (!string.IsNullOrEmpty(storedUser.Username)) claims.Add(new Claim(ClaimTypes.Name, storedUser.Username));
-                    if (!string.IsNullOrEmpty(storedUser.Email)) claims.Add(new Claim(ClaimTypes.Email, storedUser.Email));
-                    if (!string.IsNullOrEmpty(storedUser.DisplayName)) claims.Add(new Claim("display_name", storedUser.DisplayName));
-                    if (!string.IsNullOrEmpty(storedUser.AvatarUrl)) claims.Add(new Claim("avatar_url", storedUser.AvatarUrl));
-                    if (storedUser.Roles is not null)
-                    {
-                        foreach (var r in storedUser.Roles)
-                        {
-                            if (!string.IsNullOrWhiteSpace(r)) claims.Add(new Claim(ClaimTypes.Role, r));
-                        }
-                    }
-                }
-            }
-            catch { /* ignore and keep minimal identity */ }
-
-            if (!claims.Any()) claims.Add(new Claim(ClaimTypes.Name, "User"));
-            var identity = new ClaimsIdentity(claims, "plex");
-            var user = new ClaimsPrincipal(identity);
-            _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-            
-            var authState = new AuthenticationState(user);
-            _cachedAuthState = authState;
-            _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
-            return authState;
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("JavaScript interop calls cannot be issued", StringComparison.OrdinalIgnoreCase))
-        {
-            // During prerender/static rendering, JS interop (session storage) is unavailable.
-            // Fall back to the cookie principal if present to prevent redirect loops.
-            Logs.Debug($"GetAuthenticationState prerender: JS interop unavailable. Falling back to cookie principal.");
+            // ONLY use cookie authentication - no more session storage confusion
             var cookieUser = _http.HttpContext?.User;
             if (cookieUser?.Identity?.IsAuthenticated == true)
             {
+                Logs.Info($"GetAuthenticationState: Found authenticated cookie user: {cookieUser.Identity.Name}");
+                
+                // Set HTTP client auth header from stored token if available
+                try
+                {
+                    var token = await _sessionStorage.GetItemAsStringAsync(AUTH_TOKEN_KEY);
+                    if (!string.IsNullOrEmpty(token))
+                    {
+                        _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    // JS interop not available during prerendering - that's fine
+                }
+                
                 var cookieState = new AuthenticationState(cookieUser);
                 _cachedAuthState = cookieState;
                 _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
                 return cookieState;
             }
+
+            Logs.Debug("GetAuthenticationState: No cookie authentication found, returning unauthenticated state");
             var unauthState = new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
             _cachedAuthState = unauthState;
             _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
@@ -182,9 +141,16 @@ public class CustomAuthStateProvider(
             }
             await _db.SaveChangesAsync();
 
-            // Store token and user info in session
-            await _sessionStorage.SetItemAsStringAsync(AUTH_TOKEN_KEY, plexToken);
-            await _sessionStorage.SetItemAsync(TOKEN_EXPIRY_KEY, DateTime.UtcNow.AddHours(8));
+            // Store token and user info in session storage (best-effort; may fail during server-only callback)
+            try
+            {
+                await _sessionStorage.SetItemAsStringAsync(AUTH_TOKEN_KEY, plexToken);
+                await _sessionStorage.SetItemAsync(TOKEN_EXPIRY_KEY, DateTime.UtcNow.AddHours(8));
+            }
+            catch (Exception ex)
+            {
+                Logs.Warning($"SessionStorage write skipped (not fatal): {ex.Message}");
+            }
             var userDto = new UserDto
             {
                 Id = existing.Id,
@@ -194,7 +160,14 @@ public class CustomAuthStateProvider(
                 AvatarUrl = existing.AvatarUrl,
                 Roles = (profile.Roles ?? "User").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
             };
-            await _sessionStorage.SetItemAsync(USER_DATA_KEY, userDto);
+            try
+            {
+                await _sessionStorage.SetItemAsync(USER_DATA_KEY, userDto);
+            }
+            catch (Exception ex)
+            {
+                Logs.Warning($"SessionStorage user write skipped (not fatal): {ex.Message}");
+            }
 
             // Build claims identity
             var claims = new List<Claim>
@@ -216,10 +189,10 @@ public class CustomAuthStateProvider(
             var principal = new ClaimsPrincipal(identity);
             _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", plexToken);
 
-            // Try to sign in with the server-side cookie, but don't fail if headers are already sent
-            try
+            // CRITICAL: Set cookie authentication FIRST, before any other operations
+            if (_http.HttpContext is not null)
             {
-                if (_http.HttpContext is not null && !_http.HttpContext.Response.HasStarted)
+                try
                 {
                     var authProps = new AuthenticationProperties
                     {
@@ -227,16 +200,18 @@ public class CustomAuthStateProvider(
                         ExpiresUtc = DateTimeOffset.UtcNow.AddHours(8)
                     };
                     await _http.HttpContext.SignInAsync("Cookies", principal, authProps);
-                    Logs.Info("Cookie sign-in completed");
+                    Logs.Info("Cookie sign-in completed successfully");
                 }
-                else
+                catch (Exception ex)
                 {
-                    Logs.Info("Cookie sign-in skipped - response already started or no HttpContext");
+                    Logs.Error($"Cookie SignInAsync failed: {ex.Message}");
+                    return new AuthenticationResult { Success = false, ErrorMessage = "Failed to set authentication cookie" };
                 }
             }
-            catch (Exception ex)
+            else
             {
-                Logs.Warning($"Cookie SignInAsync failed: {ex.Message}");
+                Logs.Error("No HttpContext available for cookie authentication");
+                return new AuthenticationResult { Success = false, ErrorMessage = "No HttpContext for authentication" };
             }
 
             // Clear cache and notify of state change

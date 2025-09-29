@@ -47,7 +47,7 @@
                         <MudExpansionPanels Elevation="0" Class="manual-entry">
                             <MudExpansionPanel Text="Advanced: Enter Plex Token Manually">
                                 <EditForm Model="@_tokenForm" OnValidSubmit="SignInWithToken">
-                                    <MudTextField @bind-Value="_manualToken" Label="Plex Token" Variant="Variant.Outlined" InputType="@(_showToken ? InputType.Text : InputType.Password)" Adornment="Adornment.End" AdornmentIcon="@(_showToken ? Icons.Material.Filled.Visibility : Icons.Material.Filled.VisibilityOff)" OnAdornmentClick="ToggleTokenVisibility" HelperText="Your Plex authentication token" FullWidth="true" />
+                                    <MudTextField @bind-Value="_manualToken" Label="Plex Token" Variant="Variant.Outlined" InputType="@(_showToken ? InputType.Text : InputType.Password)" Adornment="Adornment.End" AdornmentIcon="@(_showToken ? Icons.Material.Filled.Visibility : Icons.Material.Filled.VisibilityOff)" OnAdornmentClick="ToggleTokenVisibility" HelperText="Your Plex authentication token" FullWidth="true" autocomplete="new-password" />
                                     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true" Disabled="@string.IsNullOrWhiteSpace(_manualToken)" Class="mt-3">Sign in with Token</MudButton>
                                 </EditForm>
                                 <MudAlert Severity="Severity.Info" Class="mt-3" Dense="true">
@@ -151,6 +151,21 @@
                 var candidate = r.ToString();
                 if (!string.IsNullOrWhiteSpace(candidate))
                     _returnUrl = candidate;
+            }
+
+            // Check for authentication errors from callback
+            if (query.TryGetValue("error", out var error))
+            {
+                var errorMsg = error.ToString() switch
+                {
+                    "no_pin" => "Authentication session expired. Please try again.",
+                    "auth_failed" => "Plex authentication failed. Please try again.",
+                    "auth_completion_failed" => "Failed to complete authentication. Please try again.",
+                    "callback_error" => "An error occurred during authentication. Please try again.",
+                    _ => "Authentication failed. Please try again."
+                };
+                await ToastService.ShowErrorAsync(errorMsg);
+                Logs.Warning($"Authentication error from callback: {error}");
             }
 
             #if DEBUG
@@ -306,7 +321,6 @@
             catch { /* ignore */ }
         };
         _bgTimer.AutoReset = true;
-        _bgTimer.Start();
     }
 
     public void Dispose()

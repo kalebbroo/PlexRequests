@@ -14,7 +14,8 @@ using System.IO;
 using System.Net.Http;
 using System.Net.Security;
 using PlexRequestsHosted.Shared.Enums;
-using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.DataProtection;
 
 // Load .env if present and map PLEX_* variables to ASP.NET config keys
 static void LoadDotEnvFrom(string rootPath)
@@ -70,6 +71,20 @@ builder.Services.AddSignalR();
 builder.Services.AddHttpClient();
 // HttpContext accessor for cookie sign-in from AuthStateProvider
 builder.Services.AddHttpContextAccessor();
+// Session support for OAuth PIN storage
+// Persist Data Protection keys so session/cookie protection can be unprotected across app restarts
+var keysDir = Path.Combine(builder.Environment.ContentRootPath, "keys");
+Directory.CreateDirectory(keysDir);
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(keysDir))
+    .SetApplicationName("PlexRequestsHosted");
+builder.Services.AddDistributedMemoryCache();
+builder.Services.AddSession(options =>
+{
+    options.IdleTimeout = TimeSpan.FromMinutes(20);
+    options.Cookie.HttpOnly = true;
+    options.Cookie.IsEssential = true;
+});
 
 // Options/config
 builder.Services.Configure<PlexRequestsHosted.Services.Implementations.PlexConfiguration>(
@@ -131,6 +146,8 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
 });
 builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthStateProvider>();
+// Register the concrete type as well for endpoints that take CustomAuthStateProvider directly
+builder.Services.AddScoped<CustomAuthStateProvider>();
 
 // App service registrations (stubs for now)
 // (Removed duplicate registrations of IPlexApiService/IMediaRequestService)
@@ -170,6 +187,7 @@ app.UseHttpsRedirection();
 // Serve static files before authentication to prevent JS/CSS from being blocked
 app.UseStaticFiles();
 
+app.UseSession();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -375,6 +393,64 @@ app.MapGet("/api/plex/search", async (string query, MediaType? mediaType, IPlexA
     var results = await plex.SearchServerAsync(query, mediaType);
     return Results.Ok(results);
 }).RequireAuthorization();
+
+// OAuth callback endpoint - handle authentication BEFORE any response starts
+app.MapGet("/auth/callback", async (HttpContext context, IPlexAuthService plexAuth, [FromServices] CustomAuthStateProvider authProvider) =>
+{
+    try
+    {
+        PlexRequestsHosted.Utils.Logs.Info("OAuth callback endpoint hit");
+        
+        // Get return URL from query string
+        var returnUrl = context.Request.Query["returnUrl"].FirstOrDefault() ?? "/browse";
+        if (returnUrl == "/" || returnUrl.StartsWith("/login", StringComparison.OrdinalIgnoreCase))
+            returnUrl = "/browse";
+
+        // Prefer pinId from the query (set in forwardUrl). Fall back to server session if absent.
+        int pinId;
+        var pinIdQuery = context.Request.Query["pinId"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(pinIdQuery) && int.TryParse(pinIdQuery, out var pinFromQuery))
+        {
+            pinId = pinFromQuery;
+        }
+        else
+        {
+            var pinIdStr = context.Session.GetString("plex_pin_id");
+            if (string.IsNullOrEmpty(pinIdStr) || !int.TryParse(pinIdStr, out pinId))
+            {
+                PlexRequestsHosted.Utils.Logs.Error("No PIN ID found (neither query nor session)");
+                return Results.Redirect($"/login?error=no_pin&returnUrl={Uri.EscapeDataString(returnUrl)}");
+            }
+        }
+
+        // Check PIN status
+        var result = await plexAuth.PollForAuthenticationAsync(pinId);
+        if (!result.Success || result.AuthToken == null)
+        {
+            PlexRequestsHosted.Utils.Logs.Error($"PIN authentication failed: {result.ErrorMessage}");
+            return Results.Redirect($"/login?error=auth_failed&returnUrl={Uri.EscapeDataString(returnUrl)}");
+        }
+
+        // Authenticate with the token - this will set the cookie
+        var authResult = await authProvider.AuthenticateWithPlexAsync(result.AuthToken, result.User?.Username ?? "plex-user");
+        if (!authResult.Success)
+        {
+            PlexRequestsHosted.Utils.Logs.Error($"Authentication completion failed: {authResult.ErrorMessage}");
+            return Results.Redirect($"/login?error=auth_completion_failed&returnUrl={Uri.EscapeDataString(returnUrl)}");
+        }
+
+        // Clear the PIN ID from session if it exists
+        context.Session.Remove("plex_pin_id");
+        
+        PlexRequestsHosted.Utils.Logs.Info($"Authentication successful, redirecting to {returnUrl}");
+        return Results.Redirect(returnUrl);
+    }
+    catch (Exception ex)
+    {
+        PlexRequestsHosted.Utils.Logs.Error($"OAuth callback error: {ex}");
+        return Results.Redirect("/login?error=callback_error");
+    }
+});
 
 // Start log saving
 PlexRequestsHosted.Utils.Logs.StartLogSaving();

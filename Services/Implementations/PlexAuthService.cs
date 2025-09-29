@@ -13,15 +13,17 @@ public class PlexAuthService : IPlexAuthService
     private readonly HttpClient _httpClient;
     private readonly IJSRuntime _jsRuntime;
     private readonly NavigationManager _navigation;
+    private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly PlexConfiguration _config;
 
     private const string BaseApiUrl = "https://plex.tv/api/v2";
 
-    public PlexAuthService(HttpClient httpClient, IJSRuntime jsRuntime, NavigationManager navigation, IOptions<PlexConfiguration> options)
+    public PlexAuthService(HttpClient httpClient, IJSRuntime jsRuntime, NavigationManager navigation, IHttpContextAccessor httpContextAccessor, IOptions<PlexConfiguration> options)
     {
         _httpClient = httpClient;
         _jsRuntime = jsRuntime;
         _navigation = navigation;
+        _httpContextAccessor = httpContextAccessor;
         _config = options.Value;
 
         // default headers shared across requests (can be overridden per-request)
@@ -51,12 +53,17 @@ public class PlexAuthService : IPlexAuthService
                 return new PlexAuthenticationFlow { Success = false, ErrorMessage = "Invalid PIN response from Plex" };
             }
 
-            // Store the PIN ID in session storage for callback retrieval
-            await _jsRuntime.InvokeVoidAsync("sessionStorage.setItem", "plex_pin_id", pin.Id.ToString());
-            
-            // Create callback URL
+            // Do NOT write to server session from a Blazor circuit event. Instead, pass pinId via callback URL
+            // and optionally mirror it to browser sessionStorage for diagnostics.
+            try
+            {
+                await _jsRuntime.InvokeVoidAsync("sessionStorage.setItem", "plex_pin_id", pin.Id.ToString());
+            }
+            catch { /* non-fatal */ }
+
+            // Create callback URL with pinId so the server can complete auth without relying on session state
             var baseUri = _navigation.BaseUri.TrimEnd('/');
-            var callbackUrl = $"{baseUri}/auth/callback";
+            var callbackUrl = $"{baseUri}/auth/callback?pinId={Uri.EscapeDataString(pin.Id.ToString())}";
             
             // Build Plex OAuth URL with callback
             string authUrl = $"https://app.plex.tv/auth#?clientID={Uri.EscapeDataString(_config.ClientIdentifier)}&code={Uri.EscapeDataString(pin.Code)}&context[device][product]={Uri.EscapeDataString(_config.Product)}&forwardUrl={Uri.EscapeDataString(callbackUrl)}";
