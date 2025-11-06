@@ -99,11 +99,13 @@
     private int _redirectAttempts = 0;
     private const int MAX_REDIRECT_ATTEMPTS = 3;
     private DateTime _lastRedirectAttempt = DateTime.MinValue;
+    private bool _firstRenderComplete = false;
+    private bool _shouldRedirect = false;
 
     protected override async Task OnInitializedAsync()
     {
         Logs.Info("Login page initialized");
-        
+
         try
         {
             var authState = await ((CustomAuthStateProvider)AuthStateProvider).GetAuthenticationStateAsync();
@@ -124,17 +126,9 @@
                     return;
                 }
 
-                if (!_redirecting)
-                {
-                    _redirecting = true;
-                    _redirectAttempts++;
-                    _lastRedirectAttempt = DateTime.UtcNow;
-                    Logs.Info($"User authenticated as {authState.User.Identity.Name}; redirecting to /browse (attempt {_redirectAttempts})");
-                    
-                    // Use a more aggressive redirect to break out of any loops
-                    await Task.Delay(500); // Give time for state to stabilize
-                    Navigation.NavigateTo("/browse", forceLoad: true);
-                }
+                // Mark that we should redirect after rendering completes
+                _shouldRedirect = true;
+                Logs.Info($"User authenticated as {authState.User.Identity.Name}; will redirect after render");
                 return;
             }
             else
@@ -179,6 +173,26 @@
         {
             Logs.Error($"Login page initialization failed: {ex}");
             await ToastService.ShowErrorAsync("Failed to initialize login page");
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _firstRenderComplete = true;
+        }
+
+        // Perform redirect after first render is complete
+        if (_firstRenderComplete && _shouldRedirect && !_redirecting)
+        {
+            _redirecting = true;
+            _redirectAttempts++;
+            _lastRedirectAttempt = DateTime.UtcNow;
+            _shouldRedirect = false;
+
+            Logs.Info($"Performing post-render redirect to /browse (attempt {_redirectAttempts})");
+            Navigation.NavigateTo("/browse", forceLoad: true);
         }
     }
 
