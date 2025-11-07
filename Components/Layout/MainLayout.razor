@@ -1,8 +1,9 @@
 @inherits LayoutComponentBase
-@inject PlexRequestsHosted.Services.Abstractions.IThemeService ThemeService
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.SignalR.Client
 @inject NavigationManager Navigation
-@inject PlexRequestsHosted.Services.Abstractions.IAuthService AuthService
-@implements IDisposable
+@inject AuthenticationStateProvider AuthStateProvider
+@implements IAsyncDisposable
 
     
     <div class="app-container">
@@ -147,23 +148,18 @@
     private string _searchQuery = string.Empty;
     private int _notificationCount = 0;
     private List<NotificationItem> _notifications = new();
+    private HubConnection? _hubConnection;
+    private bool _isAuthenticated = false;
+    private string? _currentUsername;
 
     private class NotificationItem
     {
         public string Message { get; set; } = string.Empty;
         public DateTime Time { get; set; }
-        public NotificationType Type { get; set; }
+        public PlexRequestsHosted.Shared.Enums.NotificationType Type { get; set; }
     }
 
-    private enum NotificationType
-    {
-        Info,
-        Success,
-        Warning,
-        Error
-    }
-
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         _scrollTimer = new System.Timers.Timer(100);
         _scrollTimer.Elapsed += CheckScroll;
@@ -172,7 +168,89 @@
         DetermineRouteContext();
         Navigation.LocationChanged += HandleLocationChanged;
 
+        // Get authentication state
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        _isAuthenticated = authState.User.Identity?.IsAuthenticated ?? false;
+        _currentUsername = authState.User.Identity?.Name;
+
+        if (_isAuthenticated)
+        {
+            // Get avatar from claims
+            var avatarClaim = authState.User.FindFirst("avatar_url");
+            _userAvatar = avatarClaim?.Value;
+
+            // Initialize SignalR connection for notifications
+            await InitializeNotificationHub();
+        }
+
         _notificationCount = _notifications.Count;
+    }
+
+    private async Task InitializeNotificationHub()
+    {
+        try
+        {
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(Navigation.ToAbsoluteUri("/hubs/notifications"))
+                .WithAutomaticReconnect()
+                .Build();
+
+            // Subscribe to notification events
+            _hubConnection.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestCreated", async (request) =>
+            {
+                _notifications.Insert(0, new NotificationItem
+                {
+                    Message = $"New request: {request.Title}",
+                    Time = DateTime.Now,
+                    Type = PlexRequestsHosted.Shared.Enums.NotificationType.RequestCreated
+                });
+                _notificationCount = _notifications.Count(n => !string.IsNullOrEmpty(n.Message));
+                await InvokeAsync(StateHasChanged);
+            });
+
+            _hubConnection.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestApproved", async (request) =>
+            {
+                _notifications.Insert(0, new NotificationItem
+                {
+                    Message = $"Your request for '{request.Title}' was approved!",
+                    Time = DateTime.Now,
+                    Type = PlexRequestsHosted.Shared.Enums.NotificationType.RequestApproved
+                });
+                _notificationCount = _notifications.Count(n => !string.IsNullOrEmpty(n.Message));
+                await InvokeAsync(StateHasChanged);
+            });
+
+            _hubConnection.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestRejected", async (request) =>
+            {
+                _notifications.Insert(0, new NotificationItem
+                {
+                    Message = $"Your request for '{request.Title}' was denied: {request.DenialReason}",
+                    Time = DateTime.Now,
+                    Type = PlexRequestsHosted.Shared.Enums.NotificationType.RequestRejected
+                });
+                _notificationCount = _notifications.Count(n => !string.IsNullOrEmpty(n.Message));
+                await InvokeAsync(StateHasChanged);
+            });
+
+            _hubConnection.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestAvailable", async (request) =>
+            {
+                _notifications.Insert(0, new NotificationItem
+                {
+                    Message = $"'{request.Title}' is now available to watch!",
+                    Time = DateTime.Now,
+                    Type = PlexRequestsHosted.Shared.Enums.NotificationType.RequestAvailable
+                });
+                _notificationCount = _notifications.Count(n => !string.IsNullOrEmpty(n.Message));
+                await InvokeAsync(StateHasChanged);
+            });
+
+            await _hubConnection.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            // Log error but don't crash the app
+            Console.WriteLine($"Error initializing SignalR: {ex.Message}");
+        }
     }
 
     private void CheckScroll(object? sender, System.Timers.ElapsedEventArgs e)
@@ -223,7 +301,11 @@
 
     private async Task SignOut()
     {
-        await AuthService.SignOutAsync();
+        // Cast to CustomAuthStateProvider to access SignOutAsync
+        if (AuthStateProvider is PlexRequestsHosted.Services.Auth.CustomAuthStateProvider customProvider)
+        {
+            await customProvider.SignOutAsync();
+        }
         Navigation.NavigateTo("/", true);
     }
 
@@ -234,10 +316,15 @@
         StateHasChanged();
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         _scrollTimer?.Dispose();
         Navigation.LocationChanged -= HandleLocationChanged;
+
+        if (_hubConnection is not null)
+        {
+            await _hubConnection.DisposeAsync();
+        }
     }
 
     protected override void OnParametersSet()
