@@ -1,9 +1,12 @@
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
+@inject NavigationManager Navigation
 
-<div class="media-tile @(_isExpanded ? "expanded" : "")" 
-     @onmouseenter="OnMouseEnter" 
-     @onmouseleave="OnMouseLeave">
+<div class="media-tile @(_isExpanded ? "expanded" : "")"
+     @onmouseenter="OnMouseEnter"
+     @onmouseleave="OnMouseLeave"
+     @onclick="NavigateToDetails"
+     style="cursor: pointer;">
     
     <div class="tile-poster">
         @if (!string.IsNullOrEmpty(Media.PosterUrl))
@@ -176,7 +179,12 @@
 
     private void ShowMore()
     {
-        // This would open the detail modal
+        NavigateToDetails();
+    }
+
+    private void NavigateToDetails()
+    {
+        Navigation.NavigateTo($"/media/{Media.MediaType.ToString().ToLower()}/{Media.Id}");
     }
 
     private String GetMediaIcon() => Media.MediaType switch

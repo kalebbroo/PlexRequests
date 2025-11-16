@@ -12,6 +12,7 @@ public class MediaRequestEntity
     public RequestStatus Status { get; set; } = RequestStatus.Pending;
     public DateTime RequestedAt { get; set; } = DateTime.UtcNow;
     public string? RequestedBy { get; set; }
+    public int? RequestedByUserId { get; set; }  // Foreign key to UserEntity
     public DateTime? ApprovedAt { get; set; }
     public DateTime? AvailableAt { get; set; }
     public string? DenialReason { get; set; }

@@ -311,6 +311,7 @@ using (var scope = app.Services.CreateScope())
             await EnsureColumnAsync("PosterUrl", "PosterUrl TEXT NULL");
             await EnsureColumnAsync("RequestAllSeasons", "RequestAllSeasons INTEGER NOT NULL DEFAULT 0");
             await EnsureColumnAsync("RequestedSeasonsCsv", "RequestedSeasonsCsv TEXT NULL");
+            await EnsureColumnAsync("RequestedByUserId", "RequestedByUserId INTEGER NULL");
         }
     }
     catch { /* best-effort dev safeguard */ }
