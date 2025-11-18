@@ -81,6 +81,18 @@
     </div>
 
     <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="browse-content">
+        @if (_plexUnavailable)
+        {
+            <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="mb-4">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <strong>Plex Server Unavailable</strong>
+                        <div>Cannot connect to your Plex server. You can still browse and request content, but availability information may not be accurate.</div>
+                    </div>
+                </div>
+            </MudAlert>
+        }
+
         @if (_isLoading)
         {
             <div class="loading-container">
@@ -155,7 +167,7 @@
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _allResults;
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _filteredResults;
     private List<String> _availableGenres = new() { "Action", "Comedy", "Drama", "Horror", "Sci-Fi", "Thriller", "Romance", "Documentary" };
-    
+
     private PlexRequestsHosted.Shared.Enums.MediaType? _filterMediaType;
     private String _selectedGenre = "";
     private Int32? _yearFilter;
@@ -166,6 +178,7 @@
     private Boolean _isLoadingMore = false;
     private Boolean _hasMore = false;
     private Int32 _currentPage = 1;
+    private Boolean _plexUnavailable = false;
 
     protected override async Task OnInitializedAsync()
     {
@@ -209,12 +222,16 @@
 
         try
         {
+            // Check Plex server status
+            var serverInfo = await PlexApiService.GetServerInfoAsync();
+            _plexUnavailable = serverInfo == null || !serverInfo.IsOnline;
+
             // Load initial data
             _allResults = _filterMediaType.HasValue
                 ? await PlexApiService.GetLibraryContentAsync(_filterMediaType.Value, _currentPage, 50)
                 : await PlexApiService.SearchMediaAsync("", null);
 
-            // Mark availability from Plex server
+            // Mark availability from Plex server (will fail gracefully if server is unavailable)
             if (_allResults is not null)
             {
                 await PlexApiService.AnnotateAvailabilityAsync(_allResults);
@@ -231,6 +248,12 @@
 
             ApplyFilters();
             _hasMore = _allResults?.Count == 50;
+        }
+        catch (Exception ex)
+        {
+            // If anything fails, show error but don't crash
+            await ToastService.ShowErrorAsync("Failed to load content. Please try again.");
+            _plexUnavailable = true;
         }
         finally
         {

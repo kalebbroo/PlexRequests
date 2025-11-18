@@ -35,12 +35,14 @@ public enum UserRole
 
 public enum NotificationType
 {
-    RequestUpdate = 0,
-    MediaAvailable = 1,
-    NewContent = 2,
-    System = 3,
-    ApprovalNeeded = 4,
-    Comment = 5
+    Info = 0,
+    Success = 1,
+    Warning = 2,
+    Error = 3,
+    RequestCreated = 4,
+    RequestApproved = 5,
+    RequestRejected = 6,
+    RequestAvailable = 7
 }
 
 public enum Quality
