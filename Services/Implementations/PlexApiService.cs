@@ -37,20 +37,33 @@ public class PlexApiService : IPlexApiService
         if (string.IsNullOrWhiteSpace(_cfg.PrimaryServerUrl) || string.IsNullOrWhiteSpace(_cfg.ServerToken))
             return null;
 
-        var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
-        if (baseUrl is null) return null;
-        var url = baseUrl + "/";
-        using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        EnsureDefaultHeaders(req.Headers);
-        req.Headers.Add("X-Plex-Token", _cfg.ServerToken);
-        var res = await _http.SendAsync(req);
-        if (!res.IsSuccessStatusCode) return new PlexServerInfo { IsOnline = false };
+        try
+        {
+            var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
+            if (baseUrl is null) return null;
+            var url = baseUrl + "/";
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            EnsureDefaultHeaders(req.Headers);
+            req.Headers.Add("X-Plex-Token", _cfg.ServerToken);
+            var res = await _http.SendAsync(req);
+            if (!res.IsSuccessStatusCode) return new PlexServerInfo { IsOnline = false };
 
-        var text = await res.Content.ReadAsStringAsync();
-        // The root endpoint returns XML normally; keep lightweight parse by sniffing version/name if present.
-        var name = GetBetween(text, "friendlyName=\"", "\"") ?? "Plex Server";
-        var version = GetBetween(text, "version=\"", "\"") ?? string.Empty;
-        return new PlexServerInfo { Name = name, Version = version, IsOnline = true };
+            var text = await res.Content.ReadAsStringAsync();
+            // The root endpoint returns XML normally; keep lightweight parse by sniffing version/name if present.
+            var name = GetBetween(text, "friendlyName=\"", "\"") ?? "Plex Server";
+            var version = GetBetween(text, "version=\"", "\"") ?? string.Empty;
+            return new PlexServerInfo { Name = name, Version = version, IsOnline = true };
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "Plex server unreachable at {Url}", _cfg.PrimaryServerUrl);
+            return new PlexServerInfo { IsOnline = false };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting Plex server info");
+            return new PlexServerInfo { IsOnline = false };
+        }
     }
 
     public async Task<List<PlexLibrary>> GetLibrariesAsync()
@@ -58,17 +71,19 @@ public class PlexApiService : IPlexApiService
         if (string.IsNullOrWhiteSpace(_cfg.PrimaryServerUrl) || string.IsNullOrWhiteSpace(_cfg.ServerToken))
             return new();
 
-        var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
-        if (baseUrl is null) return new();
-        var url = baseUrl + "/library/sections";
-        using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        EnsureDefaultHeaders(req.Headers);
-        req.Headers.Add("X-Plex-Token", _cfg.ServerToken);
-        // Ask for JSON where supported
-        req.Headers.Accept.Clear();
-        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        try
+        {
+            var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
+            if (baseUrl is null) return new();
+            var url = baseUrl + "/library/sections";
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            EnsureDefaultHeaders(req.Headers);
+            req.Headers.Add("X-Plex-Token", _cfg.ServerToken);
+            // Ask for JSON where supported
+            req.Headers.Accept.Clear();
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-        var res = await _http.SendAsync(req);
+            var res = await _http.SendAsync(req);
         if (!res.IsSuccessStatusCode)
             return new();
 
@@ -164,8 +179,19 @@ public class PlexApiService : IPlexApiService
             }
         }
 
-        _logger.LogInformation("Fetched Plex libraries: {Count}", list.Count);
-        return list;
+            _logger.LogInformation("Fetched Plex libraries: {Count}", list.Count);
+            return list;
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "Plex server unreachable while fetching libraries from {Url}", _cfg.PrimaryServerUrl);
+            return new List<PlexLibrary>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching Plex libraries");
+            return new List<PlexLibrary>();
+        }
     }
 
     public Task<List<MediaCardDto>> GetLibraryContentAsync(MediaType mediaType, int page = 1, int pageSize = 20)
@@ -188,7 +214,10 @@ public class PlexApiService : IPlexApiService
     {
         if (items == null || items.Count == 0) return;
         if (string.IsNullOrWhiteSpace(_cfg.PrimaryServerUrl) || string.IsNullOrWhiteSpace(_cfg.ServerToken)) return;
-        var idx = await EnsureAvailabilityIndexAsync();
+
+        try
+        {
+            var idx = await EnsureAvailabilityIndexAsync();
         foreach (var it in items)
         {
             if (it.IsAvailable) continue; // already known available
@@ -222,6 +251,17 @@ public class PlexApiService : IPlexApiService
             {
                 _logger.LogInformation("Plex match MISS: {@Title} ({@Year}) tmdb={TmdbId} imdb={ImdbId} tvdb={TvdbId}", it.Title, it.Year, it.TmdbId, it.ImdbId, it.TvdbId);
             }
+        }
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "Plex server unreachable while annotating availability. Continuing without Plex availability data.");
+            // Continue without Plex data - items will simply not be marked as available
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error annotating Plex availability. Continuing without Plex availability data.");
+            // Continue without Plex data - items will simply not be marked as available
         }
     }
 
@@ -370,23 +410,37 @@ public class PlexApiService : IPlexApiService
     private async Task<string?> EnsureServerMachineIdAsync()
     {
         if (!string.IsNullOrEmpty(_serverMachineId)) return _serverMachineId;
-        var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
-        if (baseUrl is null) return null;
-        var url = baseUrl + "/?X-Plex-Token=" + Uri.EscapeDataString(_cfg.ServerToken ?? string.Empty);
-        using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        EnsureDefaultHeaders(req.Headers);
-        var res = await _http.SendAsync(req);
-        if (!res.IsSuccessStatusCode) return null;
-        var txt = await res.Content.ReadAsStringAsync();
+
         try
         {
-            var x = XDocument.Parse(txt);
-            var root = x.Root?.Element("MediaContainer") ?? x.Root;
-            var mid = (string?)root?.Attribute("machineIdentifier");
-            if (!string.IsNullOrWhiteSpace(mid)) _serverMachineId = mid;
+            var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
+            if (baseUrl is null) return null;
+            var url = baseUrl + "/?X-Plex-Token=" + Uri.EscapeDataString(_cfg.ServerToken ?? string.Empty);
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            EnsureDefaultHeaders(req.Headers);
+            var res = await _http.SendAsync(req);
+            if (!res.IsSuccessStatusCode) return null;
+            var txt = await res.Content.ReadAsStringAsync();
+            try
+            {
+                var x = XDocument.Parse(txt);
+                var root = x.Root?.Element("MediaContainer") ?? x.Root;
+                var mid = (string?)root?.Attribute("machineIdentifier");
+                if (!string.IsNullOrWhiteSpace(mid)) _serverMachineId = mid;
+            }
+            catch { /* ignore */ }
+            return _serverMachineId;
         }
-        catch { /* ignore */ }
-        return _serverMachineId;
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "Plex server unreachable while fetching machine ID");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching Plex server machine ID");
+            return null;
+        }
     }
 
     private async Task<string> BuildPlexWebUrlAsync(string ratingKey)
