@@ -87,7 +87,9 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
             DenialReason = r.DenialReason,
             RequestNote = r.RequestNote,
             RequestAllSeasons = r.RequestAllSeasons,
-            RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv) ? new List<int>() : r.RequestedSeasonsCsv.Split(',').Select(s => int.TryParse(s, out var n) ? n : (int?)null).Where(n => n.HasValue).Select(n => n!.Value).ToList()
+            RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv) ? new List<int>() : r.RequestedSeasonsCsv.Split(',').Select(s => int.TryParse(s, out var n) ? n : (int?)null).Where(n => n.HasValue).Select(n => n!.Value).ToList(),
+            RequestedByUserId = r.RequestedByUserId ?? 0,
+            RequestedByUsername = r.RequestedBy ?? string.Empty
         };
     } // TODO: Add authorization check
 
@@ -140,6 +142,7 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
                 RequestNote = r.RequestNote,
                 RequestAllSeasons = r.RequestAllSeasons,
                 RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv) ? new List<int>() : r.RequestedSeasonsCsv.Split(',').Select(s => { int n; return int.TryParse(s, out n) ? (int?)n : null; }).Where(n => n.HasValue).Select(n => n!.Value).ToList(),
+                RequestedByUserId = r.RequestedByUserId ?? 0,
                 RequestedByUsername = r.RequestedBy ?? string.Empty
             });
         }
@@ -164,6 +167,10 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
         var exists = await _db.MediaRequests.AnyAsync(r => r.MediaId == mediaId && r.MediaType == mediaType && r.Status != RequestStatus.Cancelled);
         if (exists) return new MediaRequestResult { Success = false, ErrorMessage = "Already requested" };
 
+        // Get user ID from database
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Username == username);
+        var userId = user?.Id;
+
         // Enrich with metadata for nice UI
         string title = $"Item #{mediaId}";
         string? poster = null;
@@ -186,7 +193,8 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
             PosterUrl = poster,
             Status = RequestStatus.Pending,
             RequestedAt = DateTime.UtcNow,
-            RequestedBy = username
+            RequestedBy = username,
+            RequestedByUserId = userId
         };
         _db.MediaRequests.Add(entity);
         var saved = await _db.SaveChangesAsync() > 0;
@@ -203,6 +211,7 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
                 RequestedAt = entity.RequestedAt,
                 ApprovedAt = entity.ApprovedAt,
                 AvailableAt = entity.AvailableAt,
+                RequestedByUserId = entity.RequestedByUserId ?? 0,
                 RequestedByUsername = entity.RequestedBy ?? string.Empty,
                 RequestNote = entity.RequestNote,
                 DenialReason = entity.DenialReason,
@@ -250,6 +259,7 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
                 RequestedAt = req.RequestedAt,
                 ApprovedAt = req.ApprovedAt,
                 AvailableAt = req.AvailableAt,
+                RequestedByUserId = req.RequestedByUserId ?? 0,
                 RequestedByUsername = req.RequestedBy ?? string.Empty,
                 RequestNote = req.RequestNote
             };
@@ -280,6 +290,7 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
                 RequestedAt = req.RequestedAt,
                 ApprovedAt = req.ApprovedAt,
                 AvailableAt = req.AvailableAt,
+                RequestedByUserId = req.RequestedByUserId ?? 0,
                 RequestedByUsername = req.RequestedBy ?? string.Empty,
                 DenialReason = req.DenialReason
             };
@@ -310,6 +321,7 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
                 RequestedAt = req.RequestedAt,
                 ApprovedAt = req.ApprovedAt,
                 AvailableAt = req.AvailableAt,
+                RequestedByUserId = req.RequestedByUserId ?? 0,
                 RequestedByUsername = req.RequestedBy ?? string.Empty
             };
             await _notify.RequestAvailableAsync(dto);

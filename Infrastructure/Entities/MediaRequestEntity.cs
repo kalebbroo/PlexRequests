@@ -25,7 +25,7 @@ public class MediaRequestEntity
     // Keep for backward compatibility, but should migrate to UserId
     [MaxLength(128)]
     public string? RequestedBy { get; set; }
-
+    public int? RequestedByUserId { get; set; }  // Foreign key to UserEntity
     public DateTime? ApprovedAt { get; set; }
     public DateTime? AvailableAt { get; set; }
 
