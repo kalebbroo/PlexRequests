@@ -43,7 +43,22 @@ public class MetadataProviderFactory : IMetadataProviderFactory
             _ => MetadataProviderType.Seed
         };
         _logger.LogInformation("Using default metadata provider: {Provider}", _defaultProviderType);
-        _defaultProvider = GetProvider(_defaultProviderType);
+        try
+        {
+            _defaultProvider = GetProvider(_defaultProviderType);
+        }
+        catch (Exception ex) when (_defaultProviderType != MetadataProviderType.Seed)
+        {
+            // A provider (e.g. TMDb without an API key) can throw on construction.
+            // Fall back to the built-in Seed provider so the app still boots and renders
+            // instead of 500-ing every page that touches metadata.
+            _logger.LogWarning(ex,
+                "Default metadata provider {Provider} could not be initialized; falling back to Seed. " +
+                "Configure ApiKeys:TMDb:ApiKey (or set MetadataProviders:DefaultProvider) to enable it.",
+                _defaultProviderType);
+            _defaultProviderType = MetadataProviderType.Seed;
+            _defaultProvider = GetProvider(MetadataProviderType.Seed);
+        }
     }
 
     public IMediaMetadataProvider GetProvider(MetadataProviderType providerType)

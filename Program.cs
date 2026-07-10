@@ -59,8 +59,7 @@ LoadDotEnvFrom(builder.Environment.ContentRootPath);
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
-    .AddInteractiveServerComponents()
-    .AddInteractiveWebAssemblyComponents();
+    .AddInteractiveServerComponents();
 
 // UI and storage services for client interactivity
 builder.Services.AddMudServices();
@@ -195,8 +194,7 @@ app.UseAntiforgery();
 
 app.MapStaticAssets().AllowAnonymous();
 app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode()
-    .AddInteractiveWebAssemblyRenderMode();
+    .AddInteractiveServerRenderMode();
 
 // Hubs
 app.MapHub<PlexRequestsHosted.Hubs.NotificationsHub>("/hubs/notifications").RequireAuthorization();

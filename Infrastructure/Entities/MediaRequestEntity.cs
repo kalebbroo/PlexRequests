@@ -19,13 +19,12 @@ public class MediaRequestEntity
     public RequestStatus Status { get; set; } = RequestStatus.Pending;
     public DateTime RequestedAt { get; set; } = DateTime.UtcNow;
 
-    // Foreign key to User
+    // Foreign key to UserEntity
     public int? RequestedByUserId { get; set; }
 
-    // Keep for backward compatibility, but should migrate to UserId
+    // Keep for backward compatibility, but should migrate to RequestedByUserId
     [MaxLength(128)]
     public string? RequestedBy { get; set; }
-    public int? RequestedByUserId { get; set; }  // Foreign key to UserEntity
     public DateTime? ApprovedAt { get; set; }
     public DateTime? AvailableAt { get; set; }
 

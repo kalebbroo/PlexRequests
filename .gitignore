@@ -60,3 +60,7 @@ dkms.conf
 .env
 *.db
 /keys
+
+# Visual Studio / MSBuild per-user files
+*.csproj.user
+*.user
