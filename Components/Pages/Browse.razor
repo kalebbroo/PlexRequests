@@ -52,11 +52,12 @@
                         }
                     </MudSelect>
 
-                    <MudSelect T="PlexRequestsHosted.Shared.Enums.SortOrder" 
-                               @bind-Value="_sortOrder" 
-                               Label="Sort By" 
-                               Variant="Variant.Outlined" 
+                    <MudSelect T="PlexRequestsHosted.Shared.Enums.SortOrder"
+                               @bind-Value="_sortOrder"
+                               Label="Sort By"
+                               Variant="Variant.Outlined"
                                Dense="true"
+                               ToStringFunc="@(s => SortLabel(s))"
                                Class="filter-select">
                         <MudSelectItem Value="PlexRequestsHosted.Shared.Enums.SortOrder.PopularityDescending">Most Popular</MudSelectItem>
                         <MudSelectItem Value="PlexRequestsHosted.Shared.Enums.SortOrder.DateDescending">Recently Added</MudSelectItem>
@@ -174,6 +175,18 @@
     private String _selectedGenre = "";
     private Int32? _yearFilter;
     private PlexRequestsHosted.Shared.Enums.SortOrder _sortOrder = PlexRequestsHosted.Shared.Enums.SortOrder.PopularityDescending;
+
+    // Friendly label for the closed Sort By select (MudSelect otherwise shows the enum's ToString()).
+    private static string SortLabel(PlexRequestsHosted.Shared.Enums.SortOrder s) => s switch
+    {
+        PlexRequestsHosted.Shared.Enums.SortOrder.PopularityDescending => "Most Popular",
+        PlexRequestsHosted.Shared.Enums.SortOrder.DateDescending => "Recently Added",
+        PlexRequestsHosted.Shared.Enums.SortOrder.RatingDescending => "Highest Rated",
+        PlexRequestsHosted.Shared.Enums.SortOrder.TitleAscending => "Title A-Z",
+        PlexRequestsHosted.Shared.Enums.SortOrder.TitleDescending => "Title Z-A",
+        _ => s.ToString()
+    };
+
     private Boolean _showOnlyAvailable = false;
     private Boolean _gridView = true;
     private Boolean _isLoading = true;

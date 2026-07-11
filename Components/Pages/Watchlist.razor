@@ -44,11 +44,12 @@
                 </div>
 
                 <div class="sort-options">
-                    <MudSelect T="SortOption" 
-                               @bind-Value="_sortBy" 
-                               Label="Sort by" 
-                               Variant="Variant.Outlined" 
+                    <MudSelect T="SortOption"
+                               @bind-Value="_sortBy"
+                               Label="Sort by"
+                               Variant="Variant.Outlined"
                                Dense="true"
+                               ToStringFunc="@(s => SortLabel(s))"
                                Class="sort-select">
                         <MudSelectItem Value="SortOption.DateAdded">Date Added</MudSelectItem>
                         <MudSelectItem Value="SortOption.Title">Title A-Z</MudSelectItem>
@@ -132,6 +133,16 @@
         TitleDesc,
         Type
     }
+
+    // Friendly label for the closed Sort by select.
+    private static string SortLabel(SortOption s) => s switch
+    {
+        SortOption.DateAdded => "Date Added",
+        SortOption.Title => "Title A-Z",
+        SortOption.TitleDesc => "Title Z-A",
+        SortOption.Type => "Type",
+        _ => s.ToString()
+    };
 
     protected override async Task OnInitializedAsync()
     {

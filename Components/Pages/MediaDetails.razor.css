@@ -239,6 +239,20 @@
     background: transparent !important;
 }
 
+/* Keep the tab toolbar flush with the dark theme (no solid accent bar); active tab gets an orange underline via SliderColor. */
+.custom-tabs ::deep .mud-tabs-toolbar {
+    background: transparent !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.custom-tabs ::deep .mud-tab {
+    color: #B3B3B3;
+}
+
+.custom-tabs ::deep .mud-tab.mud-tab-active {
+    color: #FFFFFF;
+}
+
 .episodes-section {
     padding: 2rem 0;
 }

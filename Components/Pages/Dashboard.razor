@@ -98,37 +98,12 @@
 
             <div class="content-sections">
                 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="container-padding">
-                    @if (_continueWatching?.Any() == true)
-                    {
-                        <div class="section-spacing">
-                            <MediaCarousel Title="Continue Watching"
-                                           Items="_continueWatching"
-                                           ShowProgress="true"
-                                           MaxItems="50" PageSize="10"
-                                           OnItemClick="ShowDetails"
-                                           OnPlayClick="PlayMedia"
-                                           OnRequestClick="RequestMedia" />
-                        </div>
-                    }
-
                     @if (_trending?.Any() == true)
                     {
                         <div class="section-spacing">
                             <MediaCarousel Title="Trending Now"
                                            Items="_trending"
-                                           Subtitle="Most requested this week"
-                                           MaxItems="50" PageSize="10"
-                                           OnItemClick="ShowDetails"
-                                           OnPlayClick="PlayMedia"
-                                           OnRequestClick="RequestMedia" />
-                        </div>
-                    }
-
-                    @if (_newReleases?.Any() == true)
-                    {
-                        <div class="section-spacing">
-                            <MediaCarousel Title="New Releases"
-                                           Items="_newReleases"
+                                           Subtitle="Popular this week"
                                            MaxItems="50" PageSize="10"
                                            OnItemClick="ShowDetails"
                                            OnPlayClick="PlayMedia"
@@ -185,34 +160,6 @@
                         </div>
                     }
 
-                    @foreach (String genre in _genreRows.Keys)
-                    {
-                        @if (_genreRows[genre]?.Any() == true)
-                        {
-                            <div class="section-spacing">
-                                <MediaCarousel Title="@($"Because You Like {genre}")"
-                                               Items="_genreRows[genre]"
-                                               MaxItems="50" PageSize="10"
-                                               OnItemClick="ShowDetails"
-                                               OnPlayClick="PlayMedia"
-                                               OnRequestClick="RequestMedia" />
-                            </div>
-                        }
-                    }
-
-                    @if (_recentlyAdded?.Any() == true)
-                    {
-                        <div class="section-spacing">
-                            <MediaCarousel Title="Recently Added to Plex"
-                                           Items="_recentlyAdded"
-                                           ShowBadge="true"
-                                           BadgeText="NEW"
-                                           MaxItems="50" PageSize="10"
-                                           OnItemClick="ShowDetails"
-                                           OnPlayClick="PlayMedia"
-                                           OnRequestClick="RequestMedia" />
-                        </div>
-                    }
                 </MudContainer>
             </div>
         
@@ -220,15 +167,12 @@
 
 @code {
     private PlexRequestsHosted.Shared.DTOs.MediaDetailDto? _heroMedia;
-    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _continueWatching;
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _trending;
-    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _newReleases;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _popularMovies;
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _topRatedMovies;
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _popularTvShows;
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _topRatedTvShows;
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _myList;
-    private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _recentlyAdded;
-    private Dictionary<String, List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>> _genreRows = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -240,40 +184,24 @@
         // Load dashboard data using TMDB API for metadata
         Logs.Info("Loading dashboard data from TMDB API");
 
-        // Parallel load all sections for better performance
+        // Parallel load distinct sections. Each row is a genuinely different query so the dashboard
+        // doesn't repeat the same titles under different headings.
         Task<List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>>[] tasks = new[]
         {
-            PlexApiService.GetRecentlyAddedAsync(50), // Get popular content from TMDB
-            PlexApiService.GetRecentlyAddedAsync(50), // Use recently added as trending for now
-            MediaRequestService.GetWatchlistAsync(), // TODO: Integrate with user watchlist database
-            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.Movie, 1, 50), // Get popular movies from TMDB
-            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.TvShow, 1, 50) // Get popular TV shows from TMDB
+            PlexApiService.GetRecentlyAddedAsync(50),                                                          // trending / popular this week
+            MediaRequestService.GetWatchlistAsync(),                                                           // the user's list
+            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.Movie, 1, 50),     // popular movies
+            PlexApiService.GetLibraryContentAsync(PlexRequestsHosted.Shared.Enums.MediaType.TvShow, 1, 50)     // popular TV shows
         };
 
         List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>[] results = await Task.WhenAll(tasks);
 
-        _recentlyAdded = results[0];
-        _trending = results[1]?.Take(50).ToList();
-        _myList = results[2];
-        _topRatedMovies = results[3]?.Where(m => m.Rating >= 7.0m).OrderByDescending(m => m.Rating).Take(50).ToList();
-        _popularTvShows = results[4]?.Take(50).ToList();
-        _topRatedTvShows = results[4]?.Where(t => t.Rating >= 7.0m).OrderByDescending(t => t.Rating).Take(50).ToList();
-
-        // Simulate other categories
-        _newReleases = _trending?.Where(m => m.Year >= DateTime.Now.Year - 1).Take(20).ToList();
-        _continueWatching = _recentlyAdded?.Where(m => m.IsAvailable).Take(10).ToList();
-
-        // Group by genre for personalized rows
-        if (_trending != null)
-        {
-            Dictionary<String, List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>> genreGroups = _trending
-                .Where(m => m.Genres?.Any() == true)
-                .SelectMany(m => m.Genres.Select(g => new { Genre = g, Media = m }))
-                .GroupBy(x => x.Genre)
-                .ToDictionary(g => g.Key, g => g.Select(x => x.Media).Distinct().Take(20).ToList());
-
-            _genreRows = genreGroups.Take(3).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-        }
+        _trending = results[0]?.Take(50).ToList();
+        _myList = results[1];
+        _popularMovies = results[2]?.Take(50).ToList();
+        _topRatedMovies = results[2]?.Where(m => m.Rating >= 7.0m).OrderByDescending(m => m.Rating).Take(50).ToList();
+        _popularTvShows = results[3]?.Take(50).ToList();
+        _topRatedTvShows = results[3]?.Where(t => t.Rating >= 7.0m).OrderByDescending(t => t.Rating).Take(50).ToList();
 
         // Set hero media
         if (_trending?.Any() == true)
@@ -295,7 +223,7 @@
             };
         }
 
-        Logs.Info($"Dashboard data loaded: {_trending?.Count ?? 0} trending items, {_recentlyAdded?.Count ?? 0} recently added");
+        Logs.Info($"Dashboard data loaded: {_trending?.Count ?? 0} trending, {_popularMovies?.Count ?? 0} movies, {_popularTvShows?.Count ?? 0} tv");
     }
 
     private void ShowDetails(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)

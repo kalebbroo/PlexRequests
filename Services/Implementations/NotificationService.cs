@@ -12,33 +12,78 @@ namespace PlexRequestsHosted.Services.Implementations;
 /// components via the in-process <see cref="INotificationBroker"/>. Registered as a singleton,
 /// so it resolves a scoped <see cref="AppDbContext"/> per operation via the scope factory.
 /// </summary>
-public class NotificationService(IServiceScopeFactory scopeFactory, INotificationBroker broker) : INotificationService
+public class NotificationService(IServiceScopeFactory scopeFactory, INotificationBroker broker, IConfiguration configuration) : INotificationService
 {
     private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
     private readonly INotificationBroker _broker = broker;
+    private readonly IConfiguration _config = configuration;
 
-    public Task RequestCreatedAsync(MediaRequestDto request) =>
-        NotifyAdminsAsync(NotificationType.RequestCreated, "New request",
+    // Each lifecycle event: (1) in-app notification/broker + (2) a Discord bridge outbox row.
+    // This is the single choke point for all transitions (web UI, fulfillment, and bridge paths).
+
+    public async Task RequestCreatedAsync(MediaRequestDto request)
+    {
+        await NotifyAdminsAsync(NotificationType.RequestCreated, "New request",
             $"{request.RequestedByUsername} requested \"{request.Title}\"", request.Id);
+        await WriteOutboxAsync(request, BridgeEventType.Created);
+    }
 
-    public Task RequestApprovedAsync(MediaRequestDto request) =>
-        NotifyUserAsync(request.RequestedByUserId, NotificationType.RequestApproved,
+    public async Task RequestApprovedAsync(MediaRequestDto request)
+    {
+        await NotifyUserAsync(request.RequestedByUserId, NotificationType.RequestApproved,
             "Request approved", $"Your request for \"{request.Title}\" was approved.", request.Id);
+        await WriteOutboxAsync(request, BridgeEventType.Approved);
+    }
 
-    public Task RequestRejectedAsync(MediaRequestDto request) =>
-        NotifyUserAsync(request.RequestedByUserId, NotificationType.RequestRejected,
+    public async Task RequestRejectedAsync(MediaRequestDto request)
+    {
+        await NotifyUserAsync(request.RequestedByUserId, NotificationType.RequestRejected,
             "Request denied",
             $"Your request for \"{request.Title}\" was denied." +
                 (string.IsNullOrWhiteSpace(request.DenialReason) ? "" : $" Reason: {request.DenialReason}"),
             request.Id);
+        await WriteOutboxAsync(request, BridgeEventType.Denied, request.DenialReason);
+    }
 
-    public Task RequestAvailableAsync(MediaRequestDto request) =>
-        NotifyUserAsync(request.RequestedByUserId, NotificationType.RequestAvailable,
+    public async Task RequestAvailableAsync(MediaRequestDto request)
+    {
+        await NotifyUserAsync(request.RequestedByUserId, NotificationType.RequestAvailable,
             "Now available", $"\"{request.Title}\" is now available to watch.", request.Id);
+        await WriteOutboxAsync(request, BridgeEventType.Available);
+    }
 
-    public Task RequestFailedAsync(MediaRequestDto request, string reason) =>
-        NotifyAdminsAsync(NotificationType.Error, "Fulfillment failed",
+    public async Task RequestFailedAsync(MediaRequestDto request, string reason)
+    {
+        await NotifyAdminsAsync(NotificationType.Error, "Fulfillment failed",
             $"Download failed for \"{request.Title}\": {reason}", request.Id);
+        await WriteOutboxAsync(request, BridgeEventType.Failed, reason);
+    }
+
+    private async Task WriteOutboxAsync(MediaRequestDto request, BridgeEventType type, string? detail = null)
+    {
+        if (!_config.GetValue<bool>("Bridge:Enabled")) return;
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.BridgeOutbox.Add(new BridgeOutboxEntity
+            {
+                EventType = type,
+                MediaRequestId = request.Id,
+                MediaId = request.MediaId,
+                MediaType = request.MediaType,
+                Title = request.Title,
+                PosterUrl = request.PosterUrl,
+                Status = request.Status,
+                RequesterUserId = request.RequestedByUserId > 0 ? request.RequestedByUserId : null,
+                RequesterName = request.RequestedByUsername,
+                Detail = detail,
+                CreatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        catch { /* outbox is best-effort; never block a notification on it */ }
+    }
 
     private async Task NotifyUserAsync(int userId, NotificationType type, string title, string message, int? relatedRequestId)
     {

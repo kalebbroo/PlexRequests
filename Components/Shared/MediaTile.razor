@@ -11,7 +11,7 @@
     <div class="tile-poster">
         @if (!string.IsNullOrEmpty(Media.PosterUrl))
         {
-            <img src="@Media.PosterUrl" alt="@Media.Title" loading="lazy" />
+            <img src="@Media.PosterUrl" alt="@Media.Title" loading="lazy" onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
         }
         else
         {
@@ -42,7 +42,7 @@
         @if (Media.MediaType == MediaType.TvShow && Media.TotalSeasons > 0)
         {
             <div class="season-info">
-                <span>S@Media.TotalSeasons</span>
+                <span>@Media.TotalSeasons @(Media.TotalSeasons == 1 ? "Season" : "Seasons")</span>
             </div>
         }
     </div>

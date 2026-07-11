@@ -5,7 +5,7 @@
     <div class="list-item-poster">
         @if (!string.IsNullOrEmpty(Media.PosterUrl))
         {
-            <img src="@Media.PosterUrl" alt="@Media.Title" loading="lazy" />
+            <img src="@Media.PosterUrl" alt="@Media.Title" loading="lazy" onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
         }
         else
         {

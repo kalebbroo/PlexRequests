@@ -55,7 +55,7 @@
                 <MudTd>
                     @if (!string.IsNullOrWhiteSpace(context.PosterUrl))
                     {
-                        <img src="@context.PosterUrl" alt="poster" style="width:48px;height:72px;object-fit:cover;border-radius:4px;" />
+                        <img src="@context.PosterUrl" alt="poster" style="width:48px;height:72px;object-fit:cover;border-radius:4px;" onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
                     }
                     else
                     {

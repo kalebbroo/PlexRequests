@@ -11,7 +11,7 @@
     <div class="poster-container" @onclick="NavigateToDetails">
         @if (!string.IsNullOrEmpty(Media.PosterUrl))
         {
-            <img src="@Media.PosterUrl" alt="@Media.Title" class="poster-image" loading="lazy" />
+            <img src="@Media.PosterUrl" alt="@Media.Title" class="poster-image" loading="lazy" onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
         }
         else
         {

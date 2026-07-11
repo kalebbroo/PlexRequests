@@ -60,6 +60,10 @@ static void LoadDotEnvFrom(string rootPath)
             Environment.SetEnvironmentVariable("Fulfillment__Enabled", val);
         else if (key.Equals("FULFILLMENT_API_KEY", StringComparison.OrdinalIgnoreCase))
             Environment.SetEnvironmentVariable("Fulfillment__ApiKey", val);
+        else if (key.Equals("BRIDGE_ENABLED", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("Bridge__Enabled", val);
+        else if (key.Equals("BRIDGE_API_KEY", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("Bridge__ApiKey", val);
     }
 }
 
@@ -114,6 +118,7 @@ builder.Services.AddHttpClient<IPlexApiService, PlexApiService>()
     });
 builder.Services.AddScoped<IMediaRequestService, MediaRequestService>();
 builder.Services.AddScoped<IFulfillmentQueue, FulfillmentQueue>();
+builder.Services.AddScoped<IDiscordLinkService, DiscordLinkService>();
 // Backstop that requeues/fails jobs stranded by a dead downloader.
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.FulfillmentReaperService>();
 
@@ -373,6 +378,190 @@ app.MapPost("/api/requests/{id:int}/failed", async (int id, FailRequest body, Ht
     await queue.MarkFailedAsync(id, reason);
     await notify.RequestFailedAsync(ToRequestDto(req), reason);
     return Results.Ok(new { req.Id, status = req.Status.ToString() });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Discord bridge API. Called by the PlexRequestsBridge extension in PlexBot (not a browser), so it
+// is gated by a shared secret in the `X-Bridge-Key` header (constant-time compare). Configure
+// Bridge:ApiKey (env BRIDGE_API_KEY) + Bridge:Enabled to turn it on.
+// ---------------------------------------------------------------------------------------------
+static bool IsAuthorizedBridge(HttpContext ctx, IConfiguration cfg)
+{
+    if (!cfg.GetValue<bool>("Bridge:Enabled")) return false;
+    var configured = cfg["Bridge:ApiKey"];
+    if (string.IsNullOrWhiteSpace(configured)) return false;
+    if (!ctx.Request.Headers.TryGetValue("X-Bridge-Key", out var provided)) return false;
+    var a = Encoding.UTF8.GetBytes(provided.ToString());
+    var b = Encoding.UTF8.GetBytes(configured);
+    return a.Length == b.Length &&
+           System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(a, b);
+}
+
+// Catalog search (optionally personalized with the caller's request status if their Discord is linked).
+app.MapGet("/api/bridge/search", async (string q, string? type, int? limit, string? discordUserId,
+    HttpContext ctx, IConfiguration cfg, IMediaMetadataProvider metadata, IPlexApiService plex,
+    IDiscordLinkService link, IMediaRequestService requests) =>
+{
+    if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(q)) return Results.Ok(Array.Empty<BridgeSearchResultDto>());
+
+    var take = Math.Clamp(limit ?? 10, 1, 25);
+    MediaType? mt = type?.ToLowerInvariant() switch
+    {
+        "movie" or "movies" => MediaType.Movie,
+        "tv" or "tvshow" or "show" or "series" => MediaType.TvShow,
+        _ => null
+    };
+
+    var results = (await metadata.SearchAsync(q, mt, 1, take)).Take(take).ToList();
+    try { await plex.AnnotateAvailabilityAsync(results); } catch { /* availability best-effort */ }
+
+    // Per-user request status if this Discord user is linked.
+    Dictionary<string, RequestStatus> statusMap = new(StringComparer.OrdinalIgnoreCase);
+    if (!string.IsNullOrWhiteSpace(discordUserId))
+    {
+        var uid = await link.ResolveUserIdAsync(discordUserId);
+        if (uid is not null)
+            foreach (var r in await requests.GetRequestsForUserAsync(uid.Value, 200))
+                statusMap[$"{r.MediaType}:{r.MediaId}"] = r.Status;
+    }
+
+    var dtos = results.Select(r => new BridgeSearchResultDto
+    {
+        MediaId = r.Id,
+        MediaType = r.MediaType,
+        Title = r.Title,
+        Year = r.Year,
+        Overview = r.Overview,
+        PosterUrl = r.PosterUrl,
+        BackdropUrl = r.BackdropUrl,
+        Rating = r.Rating,
+        TmdbId = r.TmdbId,
+        Genres = r.Genres,
+        AvailableOnPlex = r.IsAvailable,
+        RequestStatus = statusMap.TryGetValue($"{r.MediaType}:{r.Id}", out var st) ? st : null
+    }).ToList();
+    return Results.Ok(dtos);
+});
+
+// Create a request on behalf of a linked Discord user.
+app.MapPost("/api/bridge/request", async (BridgeRequestBody body, HttpContext ctx, IConfiguration cfg,
+    IDiscordLinkService link, IMediaRequestService requests) =>
+{
+    if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
+    var uid = await link.ResolveUserIdAsync(body.DiscordUserId);
+    if (uid is null)
+        return Results.Ok(new BridgeRequestResultDto { Success = false, NotLinked = true, Message = "Link your account first: run /request link with the code from your Plex Requests profile." });
+
+    var result = await requests.RequestMediaForUserAsync(uid.Value, body.MediaId, body.MediaType);
+    return Results.Ok(new BridgeRequestResultDto
+    {
+        Success = result.Success,
+        RequestId = result.RequestId,
+        Status = result.NewStatus,
+        Message = result.Success ? "Request submitted." : result.ErrorMessage
+    });
+});
+
+// A linked user's requests (for /request status).
+app.MapGet("/api/bridge/requests", async (string discordUserId, int? limit, HttpContext ctx,
+    IConfiguration cfg, IDiscordLinkService link, IMediaRequestService requests) =>
+{
+    if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
+    var uid = await link.ResolveUserIdAsync(discordUserId);
+    if (uid is null) return Results.Ok(new BridgeUserRequestsDto { Linked = false });
+
+    var take = Math.Clamp(limit ?? 15, 1, 50);
+    var list = await requests.GetRequestsForUserAsync(uid.Value, take);
+    return Results.Ok(new BridgeUserRequestsDto
+    {
+        Linked = true,
+        Items = list.Select(r => new BridgeUserRequestDto
+        {
+            RequestId = r.Id, Title = r.Title, MediaType = r.MediaType, Status = r.Status,
+            PosterUrl = r.PosterUrl, RequestedAt = r.RequestedAt, DenialReason = r.DenialReason
+        }).ToList()
+    });
+});
+
+// Complete account linking with the one-time code from the web Profile page.
+app.MapPost("/api/bridge/link", async (BridgeLinkBody body, HttpContext ctx, IConfiguration cfg, IDiscordLinkService link) =>
+{
+    if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
+    return Results.Ok(await link.CompleteLinkAsync(body.Code, body.DiscordUserId, body.DiscordUsername));
+});
+
+app.MapGet("/api/bridge/link/status", async (string discordUserId, HttpContext ctx, IConfiguration cfg, IDiscordLinkService link) =>
+{
+    if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
+    return Results.Ok(await link.GetStatusByDiscordIdAsync(discordUserId));
+});
+
+// Admin approve/deny from Discord buttons (verifies the Discord user maps to an admin).
+app.MapPost("/api/bridge/requests/{id:int}/approve", async (int id, BridgeAdminActionBody body, HttpContext ctx,
+    IConfiguration cfg, IDiscordLinkService link, IMediaRequestService requests) =>
+{
+    if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
+    if (!await link.IsAdminAsync(body.DiscordUserId)) return Results.Json(new { ok = false, message = "You are not an admin." }, statusCode: 403);
+    var ok = await requests.ApproveRequestAsAdminAsync(id, body.Reason);
+    return Results.Ok(new { ok });
+});
+
+app.MapPost("/api/bridge/requests/{id:int}/deny", async (int id, BridgeAdminActionBody body, HttpContext ctx,
+    IConfiguration cfg, IDiscordLinkService link, IMediaRequestService requests) =>
+{
+    if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
+    if (!await link.IsAdminAsync(body.DiscordUserId)) return Results.Json(new { ok = false, message = "You are not an admin." }, statusCode: 403);
+    var ok = await requests.DenyRequestAsAdminAsync(id, string.IsNullOrWhiteSpace(body.Reason) ? "Denied via Discord" : body.Reason!);
+    return Results.Ok(new { ok });
+});
+
+// Request-lifecycle event feed — the extension polls this and renders embeds/DMs. Cursor = highest Id seen.
+app.MapGet("/api/bridge/events", async (long? since, int? max, HttpContext ctx, IConfiguration cfg,
+    AppDbContext db, IMediaMetadataProvider metadata) =>
+{
+    if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
+    var take = Math.Clamp(max ?? 25, 1, 100);
+    var cursor = since ?? 0;
+
+    var rows = await db.BridgeOutbox.Where(e => e.Id > cursor).OrderBy(e => e.Id).Take(take).ToListAsync();
+    var events = new List<BridgeEventDto>(rows.Count);
+    foreach (var e in rows)
+    {
+        var dto = new BridgeEventDto
+        {
+            Cursor = e.Id, Type = e.EventType, RequestId = e.MediaRequestId, MediaId = e.MediaId,
+            MediaType = e.MediaType, Title = e.Title, PosterUrl = e.PosterUrl, Status = e.Status,
+            Detail = e.Detail, RequesterName = e.RequesterName, CreatedAt = e.CreatedAt
+        };
+        // Enrich with fresh artwork/metadata for the embed.
+        try
+        {
+            var d = await metadata.GetDetailsAsync(e.MediaId, e.MediaType);
+            if (d is not null)
+            {
+                dto.Overview = d.Overview;
+                dto.BackdropUrl = d.BackdropUrl;
+                dto.Rating = d.Rating;
+                dto.Year = d.Year;
+                dto.TmdbId = d.TmdbId;
+                dto.Genres = d.Genres;
+                if (string.IsNullOrEmpty(dto.PosterUrl)) dto.PosterUrl = d.PosterUrl;
+            }
+        }
+        catch { /* enrichment best-effort */ }
+
+        // Include the requester's Discord id ONLY if they're linked and opted in (safe to DM).
+        if (e.RequesterUserId is int ruid)
+        {
+            var prof = await db.UserProfiles.Where(p => p.UserId == ruid)
+                .Select(p => new { p.DiscordUserId, p.DiscordDmOptIn }).FirstOrDefaultAsync();
+            if (prof is { DiscordDmOptIn: true } && !string.IsNullOrWhiteSpace(prof.DiscordUserId))
+                dto.RequesterDiscordId = prof.DiscordUserId;
+        }
+        events.Add(dto);
+    }
+    return Results.Ok(events);
 });
 
 // OAuth callback endpoint - handle authentication BEFORE any response starts

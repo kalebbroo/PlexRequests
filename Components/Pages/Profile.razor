@@ -4,6 +4,7 @@
 @using Microsoft.EntityFrameworkCore
 @inject IUserProfileService UserProfileService
 @inject AuthenticationStateProvider AuthStateProvider
+@inject IDiscordLinkService DiscordLink
 @inject PlexRequestsHosted.Infrastructure.Data.AppDbContext Db
 
 <PageTitle>My Profile</PageTitle>
@@ -66,6 +67,32 @@
                     </MudTabPanel>
                 </MudTabs>
             </MudPaper>
+
+            <MudPaper Class="pa-4 mt-4" Elevation="2">
+                <MudText Typo="Typo.h6" Class="mb-2">Discord</MudText>
+                @if (_discordLinked)
+                {
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+                        <MudText>Linked as <b>@_discordUsername</b></MudText>
+                        <MudSpacer />
+                        <MudSwitch T="bool" Value="_dmOptIn" ValueChanged="ToggleDm" Color="Color.Primary" />
+                        <MudText Typo="Typo.body2">DM me on request updates</MudText>
+                        <MudButton Variant="Variant.Text" Color="Color.Error" OnClick="Unlink">Unlink</MudButton>
+                    </MudStack>
+                }
+                else if (!string.IsNullOrEmpty(_linkCode))
+                {
+                    <MudAlert Severity="Severity.Info" Class="mb-2">
+                        In Discord, run <b>/request link @_linkCode</b> within 10 minutes to connect your account.
+                    </MudAlert>
+                    <MudText Typo="Typo.h4" Style="letter-spacing:0.35em;">@_linkCode</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">Link your Discord account to search &amp; request from the bot and get DMs when your requests update.</MudText>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Link" OnClick="GenerateCode">Link Discord</MudButton>
+                }
+            </MudPaper>
         </MudItem>
     </MudGrid>
 </MudContainer>
@@ -75,10 +102,52 @@
     private List<PlexRequestsHosted.Infrastructure.Entities.MediaRequestEntity>? _myRequests;
     private UserStatsDto _stats = new();
 
+    private int _userId;
+    private bool _discordLinked;
+    private string? _discordUsername;
+    private bool _dmOptIn;
+    private string? _linkCode;
+
     protected override async Task OnInitializedAsync()
     {
         _profile = await UserProfileService.GetProfileAsync();
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        int.TryParse(auth.User.FindFirst("user_id")?.Value, out _userId);
         await LoadRequestsAndStats();
+        await LoadDiscordStatus();
+    }
+
+    private async Task LoadDiscordStatus()
+    {
+        if (_userId <= 0) return;
+        var p = await Db.UserProfiles.Where(x => x.UserId == _userId)
+            .Select(x => new { x.DiscordUserId, x.DiscordUsername, x.DiscordDmOptIn })
+            .FirstOrDefaultAsync();
+        _discordLinked = !string.IsNullOrEmpty(p?.DiscordUserId);
+        _discordUsername = p?.DiscordUsername;
+        _dmOptIn = p?.DiscordDmOptIn ?? false;
+    }
+
+    private void GenerateCode() => _linkCode = DiscordLink.GenerateLinkCode(_userId);
+
+    private async Task ToggleDm(bool v)
+    {
+        await DiscordLink.SetDmOptInAsync(_userId, v);
+        _dmOptIn = v;
+    }
+
+    private async Task Unlink()
+    {
+        var p = await Db.UserProfiles.FirstOrDefaultAsync(x => x.UserId == _userId);
+        if (p is not null)
+        {
+            p.DiscordUserId = null;
+            p.DiscordUsername = null;
+            p.DiscordDmOptIn = false;
+            await Db.SaveChangesAsync();
+        }
+        _linkCode = null;
+        await LoadDiscordStatus();
     }
 
     private async Task LoadRequestsAndStats()

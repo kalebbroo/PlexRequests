@@ -8,6 +8,9 @@ public interface IMediaRequestService
     Task<PagedResult<MediaRequestDto>> GetRequestsAsync(MediaFilterDto filter);
     Task<MediaRequestDto?> GetRequestByIdAsync(int id);
     Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType);
+    // User-scoped variants for callers without a cookie session (Discord bridge).
+    Task<MediaRequestResult> RequestMediaForUserAsync(int userId, int mediaId, MediaType mediaType);
+    Task<List<MediaRequestDto>> GetRequestsForUserAsync(int userId, int take = 25);
     Task<bool> CancelRequestAsync(int requestId);
     Task<bool> IsInWatchlistAsync(int mediaId, MediaType mediaType);
     Task<bool> AddToWatchlistAsync(int mediaId, MediaType mediaType);
@@ -19,6 +22,9 @@ public interface IMediaRequestService
     Task<bool> ApproveRequestAsync(int requestId, string? note = null);
     Task<bool> DenyRequestAsync(int requestId, string reason);
     Task<bool> MarkAvailableAsync(int requestId);
+    // Admin processing without a cookie auth check (caller pre-verified admin — Discord bridge).
+    Task<bool> ApproveRequestAsAdminAsync(int requestId, string? note = null);
+    Task<bool> DenyRequestAsAdminAsync(int requestId, string reason);
     // UI overlay support: return statuses for a set of media ids
     Task<Dictionary<string, RequestStatus>> GetMyRequestStatusesAsync(IEnumerable<(int mediaId, MediaType mediaType)> items);
 }
@@ -93,6 +99,17 @@ public interface IUserProfileService
     // Admin user management
     Task<List<UserDto>> GetAllUsersAsync();
     Task<bool> SetAdminAsync(int userId, bool isAdmin);
+}
+
+public interface IDiscordLinkService
+{
+    /// <summary>Mint a one-time code (shown on the Profile page) that the bot's /request link consumes.</summary>
+    string GenerateLinkCode(int userId);
+    Task<BridgeLinkResultDto> CompleteLinkAsync(string code, string discordUserId, string? discordUsername);
+    Task<BridgeLinkStatusDto> GetStatusByDiscordIdAsync(string discordUserId);
+    Task<int?> ResolveUserIdAsync(string discordUserId);
+    Task<bool> IsAdminAsync(string discordUserId);
+    Task<bool> SetDmOptInAsync(int userId, bool optIn);
 }
 
 public interface IToastService

@@ -45,6 +45,15 @@ public enum NotificationType
     RequestAvailable = 7
 }
 
+public enum BridgeEventType
+{
+    Created = 0,
+    Approved = 1,
+    Denied = 2,
+    Available = 3,
+    Failed = 4
+}
+
 public enum FulfillmentStatus
 {
     Queued = 0,

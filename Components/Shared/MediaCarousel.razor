@@ -34,7 +34,7 @@
                             <div class="tile-image-container">
                                 @if (!string.IsNullOrEmpty(item.PosterUrl))
                                 {
-                                    <img src="@item.PosterUrl" alt="@item.Title" loading="lazy" style="width: 100%; height: 100%; object-fit: cover;" />
+                                    <img src="@item.PosterUrl" alt="@item.Title" loading="lazy" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
                                 }
                                 else
                                 {

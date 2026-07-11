@@ -90,7 +90,7 @@
                         <div class="request-poster">
                             @if (!string.IsNullOrEmpty(request.PosterUrl))
                             {
-                                <img src="@request.PosterUrl" alt="@request.Title" />
+                                <img src="@request.PosterUrl" alt="@request.Title" onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
                             }
                             else
                             {
