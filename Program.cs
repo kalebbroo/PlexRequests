@@ -14,6 +14,7 @@ using System.IO;
 using System.Net.Http;
 using System.Net.Security;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.DTOs;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.DataProtection;
 
@@ -55,6 +56,10 @@ static void LoadDotEnvFrom(string rootPath)
             Environment.SetEnvironmentVariable("Admin__Usernames", val);
         else if (key.Equals("DB_PATH", StringComparison.OrdinalIgnoreCase))
             Environment.SetEnvironmentVariable("ConnectionStrings__AppDb", val);
+        else if (key.Equals("FULFILLMENT_ENABLED", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("Fulfillment__Enabled", val);
+        else if (key.Equals("FULFILLMENT_API_KEY", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("Fulfillment__ApiKey", val);
     }
 }
 
@@ -108,6 +113,9 @@ builder.Services.AddHttpClient<IPlexApiService, PlexApiService>()
             allowInvalidCerts ? true : errors == SslPolicyErrors.None
     });
 builder.Services.AddScoped<IMediaRequestService, MediaRequestService>();
+builder.Services.AddScoped<IFulfillmentQueue, FulfillmentQueue>();
+// Backstop that requeues/fails jobs stranded by a dead downloader.
+builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.FulfillmentReaperService>();
 
 // AuthN/AuthZ
 builder.Services
@@ -266,6 +274,106 @@ app.MapGet("/api/plex/search", async (string query, MediaType? mediaType, IPlexA
     var results = await plex.SearchServerAsync(query, mediaType);
     return Results.Ok(results);
 }).RequireAuthorization();
+
+// ---------------------------------------------------------------------------------------------
+// Fulfillment worker API. These endpoints are called by the out-of-process downloader (not a
+// browser), so they are NOT cookie-authenticated — they are gated by a shared secret in the
+// `X-Fulfillment-Key` header, compared in constant time. Configure Fulfillment:ApiKey (env
+// FULFILLMENT_API_KEY) to enable them; with no key configured every call is rejected.
+// ---------------------------------------------------------------------------------------------
+static bool IsAuthorizedWorker(HttpContext ctx, IConfiguration cfg)
+{
+    var configured = cfg["Fulfillment:ApiKey"];
+    if (string.IsNullOrWhiteSpace(configured)) return false;
+    if (!ctx.Request.Headers.TryGetValue("X-Fulfillment-Key", out var provided)) return false;
+    var a = Encoding.UTF8.GetBytes(provided.ToString());
+    var b = Encoding.UTF8.GetBytes(configured);
+    return a.Length == b.Length &&
+           System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(a, b);
+}
+
+static PlexRequestsHosted.Shared.DTOs.MediaRequestDto ToRequestDto(PlexRequestsHosted.Infrastructure.Entities.MediaRequestEntity r) => new()
+{
+    Id = r.Id,
+    MediaId = r.MediaId,
+    MediaType = r.MediaType,
+    Title = r.Title,
+    PosterUrl = r.PosterUrl,
+    Status = r.Status,
+    RequestedAt = r.RequestedAt,
+    ApprovedAt = r.ApprovedAt,
+    AvailableAt = r.AvailableAt,
+    RequestedByUserId = r.RequestedByUserId ?? 0,
+    RequestedByUsername = r.RequestedBy ?? string.Empty,
+    DenialReason = r.DenialReason
+};
+
+// Worker claims queued jobs to download.
+app.MapPost("/api/fulfillment/claim", async (ClaimRequest body, HttpContext ctx, IConfiguration cfg, IFulfillmentQueue queue) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var jobs = await queue.ClaimNextAsync(body.WorkerId ?? "worker", Math.Clamp(body.Max ?? 1, 1, 25));
+    return Results.Ok(jobs);
+});
+
+// Worker reports download progress; reflects the request as Processing for the UI.
+app.MapPost("/api/fulfillment/{jobId:int}/progress", async (int jobId, ProgressRequest body, HttpContext ctx, IConfiguration cfg, IFulfillmentQueue queue, AppDbContext db) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var ok = await queue.ReportProgressAsync(jobId, body.Progress);
+    if (!ok) return Results.NotFound();
+    var job = await db.FulfillmentJobs.FirstOrDefaultAsync(j => j.Id == jobId);
+    if (job is not null)
+    {
+        var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == job.MediaRequestId);
+        if (req is not null && req.Status == RequestStatus.Approved)
+        {
+            req.Status = RequestStatus.Processing;
+            await db.SaveChangesAsync();
+        }
+    }
+    return Results.Ok();
+});
+
+// Worker reports success -> mark Available, close the job, rebuild the Plex index, notify requester.
+app.MapPost("/api/requests/{id:int}/fulfilled", async (int id, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IPlexApiService plex) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == id);
+    if (req is null) return Results.NotFound();
+
+    var alreadyAvailable = req.Status == RequestStatus.Available;
+    if (!alreadyAvailable)
+    {
+        req.Status = RequestStatus.Available;
+        req.AvailableAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+    }
+    await queue.MarkCompletedAsync(id);
+
+    if (!alreadyAvailable)
+    {
+        try { await plex.RebuildAvailabilityIndexAsync(); } catch { /* index refresh is best-effort */ }
+        await notify.RequestAvailableAsync(ToRequestDto(req));
+    }
+    return Results.Ok(new { req.Id, status = req.Status.ToString() });
+});
+
+// Worker reports unrecoverable failure -> mark Failed (needs admin attention), close the job, notify admins.
+app.MapPost("/api/requests/{id:int}/failed", async (int id, FailRequest body, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == id);
+    if (req is null) return Results.NotFound();
+
+    var reason = string.IsNullOrWhiteSpace(body.Reason) ? "Fulfillment failed" : body.Reason!;
+    req.Status = RequestStatus.Failed;
+    req.DenialReason = reason.Length > 1000 ? reason[..1000] : reason;
+    await db.SaveChangesAsync();
+    await queue.MarkFailedAsync(id, reason);
+    await notify.RequestFailedAsync(ToRequestDto(req), reason);
+    return Results.Ok(new { req.Id, status = req.Status.ToString() });
+});
 
 // OAuth callback endpoint - handle authentication BEFORE any response starts
 app.MapGet("/auth/callback", async (HttpContext context, IPlexAuthService plexAuth, [FromServices] CustomAuthStateProvider authProvider) =>

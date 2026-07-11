@@ -8,12 +8,20 @@ using PlexRequestsHosted.Infrastructure.Entities;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
-public class MediaRequestService(AppDbContext db, AuthenticationStateProvider authStateProvider, IMediaMetadataProvider metadataProvider, INotificationService notificationService) : IMediaRequestService
+public class MediaRequestService(
+    AppDbContext db,
+    AuthenticationStateProvider authStateProvider,
+    IMediaMetadataProvider metadataProvider,
+    INotificationService notificationService,
+    IFulfillmentQueue fulfillmentQueue,
+    IConfiguration configuration) : IMediaRequestService
 {
     private readonly AppDbContext _db = db;
     private readonly AuthenticationStateProvider _auth = authStateProvider;
     private readonly IMediaMetadataProvider _metadata = metadataProvider;
     private readonly INotificationService _notify = notificationService;
+    private readonly IFulfillmentQueue _fulfillment = fulfillmentQueue;
+    private readonly IConfiguration _config = configuration;
 
     private async Task<(string username, bool isAdmin)> GetUserAsync()
     {
@@ -341,6 +349,11 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
                 RequestNote = req.RequestNote
             };
             await _notify.RequestApprovedAsync(dto);
+
+            // Hand off to the fulfillment pipeline when a downloader is wired up; otherwise approval
+            // simply marks the request Approved and an admin marks it Available manually.
+            if (_config.GetValue<bool>("Fulfillment:Enabled"))
+                await _fulfillment.EnqueueAsync(dto);
         }
         return ok;
     }

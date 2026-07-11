@@ -36,6 +36,10 @@ public class NotificationService(IServiceScopeFactory scopeFactory, INotificatio
         NotifyUserAsync(request.RequestedByUserId, NotificationType.RequestAvailable,
             "Now available", $"\"{request.Title}\" is now available to watch.", request.Id);
 
+    public Task RequestFailedAsync(MediaRequestDto request, string reason) =>
+        NotifyAdminsAsync(NotificationType.Error, "Fulfillment failed",
+            $"Download failed for \"{request.Title}\": {reason}", request.Id);
+
     private async Task NotifyUserAsync(int userId, NotificationType type, string title, string message, int? relatedRequestId)
     {
         if (userId <= 0) return; // legacy requests without a linked user id

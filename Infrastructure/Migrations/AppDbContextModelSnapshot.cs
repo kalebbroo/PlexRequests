@@ -17,6 +17,84 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.7");
 
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.FulfillmentJobEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("ClaimedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ClaimedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ImdbId")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastUpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MediaId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MediaRequestId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MediaType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Progress")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Quality")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RequestedSeasonsCsv")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("TmdbId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("TvdbId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Year")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaRequestId");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("FulfillmentJobs");
+                });
+
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.MediaRequestEntity", b =>
                 {
                     b.Property<int>("Id")
@@ -334,6 +412,17 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.HasIndex("UserId", "MediaId", "MediaType");
 
                     b.ToTable("Watchlist");
+                });
+
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.FulfillmentJobEntity", b =>
+                {
+                    b.HasOne("PlexRequestsHosted.Infrastructure.Entities.MediaRequestEntity", "MediaRequest")
+                        .WithMany()
+                        .HasForeignKey("MediaRequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaRequest");
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.MediaRequestEntity", b =>

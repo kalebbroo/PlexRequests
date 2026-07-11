@@ -1,0 +1,97 @@
+# PlexRequests full stack. Copy docker/.env.example to .env and fill in the values first.
+#
+# Network topology:
+#   - web is on the default compose network, reachable at http://web:8080.
+#   - gluetun holds a VPN tunnel with a built-in kill-switch.
+#   - downloader and deluge share gluetun's network namespace (network_mode: service:gluetun),
+#     so their ONLY egress is through the VPN. If the VPN drops, they have no network — that IS
+#     the kill-switch, enforced by Docker rather than app code.
+#   - FIREWALL_OUTBOUND_SUBNETS lets the downloader reach `web` on the local Docker subnet without
+#     going through the VPN (otherwise the fulfillment callbacks would be routed into the tunnel).
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    container_name: plexrequests-web
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__AppDb: /data/app.db
+      Fulfillment__Enabled: "true"
+      Fulfillment__ApiKey: ${FULFILLMENT_API_KEY}
+      ApiKeys__TMDb__ApiKey: ${TMDB_API_KEY}
+      Admin__Usernames: ${ADMIN_USERNAMES}
+      Plex__PrimaryServerUrl: ${PLEX_URL}
+      Plex__ServerToken: ${PLEX_TOKEN}
+    volumes:
+      - appdata:/data          # app.db
+      - ./keys:/app/keys       # persisted DataProtection keys (auth cookies survive restarts)
+    restart: unless-stopped
+
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: plexrequests-vpn
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      VPN_SERVICE_PROVIDER: ${VPN_PROVIDER}
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY}
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES}
+      SERVER_COUNTRIES: ${VPN_COUNTRIES}
+      # Allow the downloader to reach `web` on the local Docker network without the VPN.
+      # Set to your Docker network subnet (default bridge is usually 172.16.0.0/12).
+      FIREWALL_OUTBOUND_SUBNETS: ${DOCKER_SUBNET}
+    ports:
+      - "8112:8112"            # Deluge web UI (served through gluetun's namespace)
+    restart: unless-stopped
+
+  deluge:
+    image: lscr.io/linuxserver/deluge:latest
+    container_name: plexrequests-deluge
+    network_mode: "service:gluetun"
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: ${TZ}
+    volumes:
+      - ./deluge-config:/config
+      - media:/data            # downloads + library on ONE filesystem so hardlinks work
+    depends_on:
+      - gluetun
+    restart: unless-stopped
+
+  downloader:
+    build:
+      context: .
+      dockerfile: docker/downloader.Dockerfile
+    container_name: plexrequests-downloader
+    network_mode: "service:gluetun"
+    environment:
+      Api__BaseUrl: http://web:8080
+      Api__Key: ${FULFILLMENT_API_KEY}
+      Deluge__Url: http://localhost:8112     # same namespace as gluetun/deluge
+      Deluge__Password: ${DELUGE_PASSWORD}
+      Library__MoviePath: /data/library/movies
+      Library__TvPath: /data/library/tv
+      Library__Hardlink: "true"
+      Vpn__Enabled: "true"
+      Vpn__HealthCheckUrl: https://api.ipify.org
+    volumes:
+      - media:/data
+      - downloader-state:/app/state
+    depends_on:
+      - gluetun
+      - deluge
+      - web
+    restart: unless-stopped
+
+volumes:
+  appdata:
+  media:
+  downloader-state:

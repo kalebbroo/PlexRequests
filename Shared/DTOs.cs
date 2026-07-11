@@ -106,6 +106,29 @@ public class UserDto : BaseDto
     public int? MusicRequestLimit { get; set; }
 }
 
+// Wire types for the fulfillment worker API — shared by the web app (endpoints) and the downloader (client).
+public record ClaimRequest(string? WorkerId, int? Max);
+public record ProgressRequest(int Progress, string? WorkerId);
+public record FailRequest(string? Reason);
+
+public class FulfillmentJobDto
+{
+    public int Id { get; set; }
+    public int MediaRequestId { get; set; }
+    public int MediaId { get; set; }
+    public MediaType MediaType { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public int? Year { get; set; }
+    public int? TmdbId { get; set; }
+    public string? ImdbId { get; set; }
+    public int? TvdbId { get; set; }
+    public List<int> RequestedSeasons { get; set; } = new();
+    public Quality Quality { get; set; }
+    public FulfillmentStatus Status { get; set; }
+    public int Attempts { get; set; }
+    public int Progress { get; set; }
+}
+
 public class NotificationDto
 {
     public int Id { get; set; }

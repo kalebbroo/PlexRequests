@@ -45,6 +45,16 @@ public enum NotificationType
     RequestAvailable = 7
 }
 
+public enum FulfillmentStatus
+{
+    Queued = 0,
+    Claimed = 1,
+    Downloading = 2,
+    Completed = 3,
+    Failed = 4,
+    Cancelled = 5
+}
+
 public enum Quality
 {
     Any = 0,

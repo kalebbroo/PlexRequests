@@ -11,6 +11,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<UserProfileEntity> UserProfiles => Set<UserProfileEntity>();
     public DbSet<PlexMappingEntity> PlexMappings => Set<PlexMappingEntity>();
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
+    public DbSet<FulfillmentJobEntity> FulfillmentJobs => Set<FulfillmentJobEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -83,6 +84,19 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(x => x.RelatedRequestId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<FulfillmentJobEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Title).HasMaxLength(512);
+            b.HasIndex(x => x.Status); // worker polls queued jobs
+            b.HasIndex(x => x.MediaRequestId);
+
+            b.HasOne(x => x.MediaRequest)
+                .WithMany()
+                .HasForeignKey(x => x.MediaRequestId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

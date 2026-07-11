@@ -37,4 +37,7 @@ public class TraktMetadataProvider : IMediaMetadataProvider
         _logger.LogWarning("Trakt provider not yet implemented, returning empty results");
         return Task.FromResult(new List<MediaCardDto>());
     }
+
+    public Task<string?> GetImdbIdAsync(int mediaId, MediaType mediaType)
+        => Task.FromResult<string?>(null);
 }

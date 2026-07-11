@@ -43,4 +43,7 @@ public class SeedMetadataProvider : IMediaMetadataProvider
 
     public Task<List<MediaCardDto>> GetLibraryAsync(MediaType mediaType, int page = 1, int pageSize = 20)
         => Task.FromResult(_seed.Where(x => x.MediaType == mediaType).ToList());
+
+    public Task<string?> GetImdbIdAsync(int mediaId, MediaType mediaType)
+        => Task.FromResult(_seed.FirstOrDefault(x => x.Id == mediaId && x.MediaType == mediaType)?.ImdbId);
 }

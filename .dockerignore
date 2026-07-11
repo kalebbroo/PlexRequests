@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+**/.vs/
+.git/
+.github/
+logs/
+keys/
+*.db
+*.db-wal
+*.db-shm
+.env
+**/appsettings.Development.json
+scratchpad/

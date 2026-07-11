@@ -294,6 +294,28 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         };
     }
 
+    public async Task<string?> GetImdbIdAsync(int mediaId, PlexRequestsHosted.Shared.Enums.MediaType mediaType)
+    {
+        try
+        {
+            if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
+            {
+                var movie = await _client.GetMovieAsync(mediaId, MovieMethods.ExternalIds);
+                return movie?.ExternalIds?.ImdbId;
+            }
+            if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
+            {
+                var tv = await _client.GetTvShowAsync(mediaId, TvShowMethods.ExternalIds);
+                return tv?.ExternalIds?.ImdbId;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve IMDb id for {MediaType} {MediaId}", mediaType, mediaId);
+        }
+        return null;
+    }
+
     private static string GetGenreName(int genreId)
     {
         return genreId switch

@@ -9,4 +9,7 @@ public interface IMediaMetadataProvider
     Task<MediaDetailDto?> GetDetailsAsync(int mediaId, MediaType mediaType);
     Task<List<MediaCardDto>> GetRecentlyAddedAsync(int count = 10);
     Task<List<MediaCardDto>> GetLibraryAsync(MediaType mediaType, int page = 1, int pageSize = 20);
+
+    /// <summary>Resolve the IMDb id (e.g. "tt0137523") for a media item, or null if unavailable.</summary>
+    Task<string?> GetImdbIdAsync(int mediaId, MediaType mediaType);
 }

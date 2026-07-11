@@ -30,6 +30,7 @@ public interface INotificationService
     Task RequestApprovedAsync(MediaRequestDto request);
     Task RequestRejectedAsync(MediaRequestDto request);
     Task RequestAvailableAsync(MediaRequestDto request);
+    Task RequestFailedAsync(MediaRequestDto request, string reason);
 
     // Persistence-backed reads for the notification bell (survive page refresh/restart).
     Task<List<NotificationDto>> GetForUserAsync(int userId, int take = 20);
