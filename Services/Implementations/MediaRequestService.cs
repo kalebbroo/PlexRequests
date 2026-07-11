@@ -24,13 +24,23 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
         return (name, isAdmin);
     }
 
-    public async Task<bool> AddToWatchlistAsync(int mediaId)
+    public async Task<bool> AddToWatchlistAsync(int mediaId, MediaType mediaType)
     {
         var (username, _) = await GetUserAsync();
         if (string.IsNullOrWhiteSpace(username)) return false;
-        _db.Watchlist.Add(new WatchlistItemEntity { MediaId = mediaId, Username = username });
+        var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
+        // Avoid duplicates for the same (user, media, type)
+        var already = await _db.Watchlist.AnyAsync(w => w.MediaId == mediaId && w.MediaType == mediaType && w.Username == username);
+        if (already) return true;
+        _db.Watchlist.Add(new WatchlistItemEntity
+        {
+            MediaId = mediaId,
+            MediaType = mediaType,
+            UserId = userId,
+            Username = username
+        });
         return await _db.SaveChangesAsync() > 0;
-    } // TODO: Validate media exists in metadata provider before adding
+    }
 
     public async Task<bool> CancelRequestAsync(int requestId)
     {
@@ -62,13 +72,44 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
     public async Task<List<MediaCardDto>> GetWatchlistAsync()
     {
         var (username, _) = await GetUserAsync();
-        var list = await _db.Watchlist
+        var items = await _db.Watchlist
             .Where(w => w.Username == username)
             .OrderByDescending(w => w.AddedAt)
-            .Select(w => new MediaCardDto { Id = w.MediaId, Title = $"Item #{w.MediaId}", RequestStatus = RequestStatus.None })
+            .Select(w => new { w.MediaId, w.MediaType })
             .ToListAsync();
-        return list;
-    } // TODO: Populate MediaCardDto with real data from metadata provider
+
+        var cards = new List<MediaCardDto>(items.Count);
+        foreach (var it in items)
+        {
+            MediaCardDto? card = null;
+            try
+            {
+                var d = await _metadata.GetDetailsAsync(it.MediaId, it.MediaType);
+                if (d is not null)
+                {
+                    card = new MediaCardDto
+                    {
+                        Id = d.Id,
+                        Title = d.Title,
+                        Overview = d.Overview,
+                        PosterUrl = d.PosterUrl,
+                        BackdropUrl = d.BackdropUrl,
+                        Year = d.Year,
+                        Rating = d.Rating,
+                        MediaType = it.MediaType,
+                        Genres = d.Genres,
+                        TmdbId = d.TmdbId,
+                        RequestStatus = RequestStatus.None
+                    };
+                }
+            }
+            catch { /* metadata provider unavailable; fall back to a minimal card */ }
+
+            card ??= new MediaCardDto { Id = it.MediaId, Title = $"Item #{it.MediaId}", MediaType = it.MediaType, RequestStatus = RequestStatus.None };
+            cards.Add(card);
+        }
+        return cards;
+    }
 
     public async Task<MediaRequestDto?> GetRequestByIdAsync(int id)
     {
@@ -153,23 +194,37 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
         return new PagedResult<MediaRequestDto> { Items = items, TotalCount = total, PageNumber = filter.PageNumber, PageSize = filter.PageSize };
     } // TODO: Add user filtering and admin permissions
 
-    public async Task<bool> IsInWatchlistAsync(int mediaId)
+    public async Task<bool> IsInWatchlistAsync(int mediaId, MediaType mediaType)
     {
         var (username, _) = await GetUserAsync();
-        return await _db.Watchlist.AnyAsync(w => w.MediaId == mediaId && w.Username == username);
-    } // TODO: Filter by current user
+        return await _db.Watchlist.AnyAsync(w => w.MediaId == mediaId && w.MediaType == mediaType && w.Username == username);
+    }
 
     public async Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType)
     {
-        var (username, _) = await GetUserAsync();
+        var (username, isAdmin) = await GetUserAsync();
         if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
-
-        var exists = await _db.MediaRequests.AnyAsync(r => r.MediaId == mediaId && r.MediaType == mediaType && r.Status != RequestStatus.Cancelled);
-        if (exists) return new MediaRequestResult { Success = false, ErrorMessage = "Already requested" };
 
         // Get user ID from database
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Username == username);
         var userId = user?.Id;
+
+        // Per-user duplicate check: a second user requesting the same title joins it rather than
+        // being blocked. Only the same user re-requesting an active item is rejected.
+        var alreadyMine = await _db.MediaRequests.AnyAsync(r =>
+            r.MediaId == mediaId && r.MediaType == mediaType &&
+            r.RequestedByUserId == userId &&
+            r.Status != RequestStatus.Cancelled && r.Status != RequestStatus.Rejected);
+        if (alreadyMine) return new MediaRequestResult { Success = false, ErrorMessage = "You've already requested this title." };
+
+        // If it's already available on the server, no need to request again.
+        var alreadyAvailable = await _db.MediaRequests.AnyAsync(r =>
+            r.MediaId == mediaId && r.MediaType == mediaType && r.Status == RequestStatus.Available);
+        if (alreadyAvailable) return new MediaRequestResult { Success = false, ErrorMessage = "This title is already available." };
+
+        // Enforce per-user request limits (admins are exempt).
+        if (!isAdmin && !await CheckRequestLimitsAsync(mediaType))
+            return new MediaRequestResult { Success = false, ErrorMessage = "You've reached your request limit for this media type." };
 
         // Enrich with metadata for nice UI
         string title = $"Item #{mediaId}";
@@ -223,17 +278,39 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
         return new MediaRequestResult { Success = saved, RequestId = entity.Id, NewStatus = entity.Status };
     } // TODO: Implement request limits and validation
 
-    public async Task<bool> RemoveFromWatchlistAsync(int mediaId)
+    public async Task<bool> RemoveFromWatchlistAsync(int mediaId, MediaType mediaType)
     {
         var (username, _) = await GetUserAsync();
-        var item = await _db.Watchlist.FirstOrDefaultAsync(w => w.MediaId == mediaId && w.Username == username);
+        var item = await _db.Watchlist.FirstOrDefaultAsync(w => w.MediaId == mediaId && w.MediaType == mediaType && w.Username == username);
         if (item == null) return false;
         _db.Watchlist.Remove(item);
         return await _db.SaveChangesAsync() > 0;
-    } // TODO: Filter by current user
+    }
 
-    public Task<bool> CheckRequestLimitsAsync(MediaType mediaType)
-        => Task.FromResult(true); // TODO: Implement actual request limits logic
+    public async Task<bool> CheckRequestLimitsAsync(MediaType mediaType)
+    {
+        var (username, isAdmin) = await GetUserAsync();
+        if (isAdmin) return true;
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Username == username);
+        if (user is null) return false;
+
+        var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == user.Id);
+        int? limit = mediaType switch
+        {
+            MediaType.Movie => profile?.MovieRequestLimit,
+            MediaType.TvShow => profile?.TvRequestLimit,
+            MediaType.Music => profile?.MusicRequestLimit,
+            _ => null
+        };
+        if (limit is null) return true; // null => unlimited
+
+        // Count the user's active (not cancelled/rejected) requests of this type.
+        var active = await _db.MediaRequests.CountAsync(r =>
+            r.RequestedByUserId == user.Id && r.MediaType == mediaType &&
+            r.Status != RequestStatus.Cancelled && r.Status != RequestStatus.Rejected);
+        return active < limit.Value;
+    }
 
     public async Task<bool> ApproveRequestAsync(int requestId, string? note = null)
     {
@@ -335,13 +412,16 @@ public class MediaRequestService(AppDbContext db, AuthenticationStateProvider au
         var ids = items.ToList();
         if (ids.Count == 0) return new();
         var mediaIds = ids.Select(i => i.mediaId).Distinct().ToList();
-        var types = ids.Select(i => i.mediaType).Distinct().ToList();
-        IQueryable<MediaRequestEntity> q = _db.MediaRequests.Where(r => mediaIds.Contains(r.MediaId) && types.Contains(r.MediaType));
+        // Query by mediaId only (narrow), then match exact (mediaId, mediaType) pairs in memory so a
+        // movie can't inherit a same-id show's status (the old query cross-joined ids × types).
+        var wanted = ids.Select(i => (i.mediaId, i.mediaType)).ToHashSet();
+        IQueryable<MediaRequestEntity> q = _db.MediaRequests.Where(r => mediaIds.Contains(r.MediaId));
         if (!isAdmin)
             q = q.Where(r => r.RequestedBy == username);
-        var list = await q
+        var list = (await q
             .Select(r => new { r.MediaId, r.MediaType, r.Status })
-            .ToListAsync();
+            .ToListAsync())
+            .Where(r => wanted.Contains((r.MediaId, r.MediaType)));
         var dict = new Dictionary<string, RequestStatus>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in list)
         {

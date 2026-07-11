@@ -330,7 +330,7 @@ else
                 var key = $"{_media.MediaType}:{_media.Id}";
                 if (statuses.TryGetValue(key, out var st)) _media.RequestStatus = st;
 
-                _inWatchlist = await MediaRequestService.IsInWatchlistAsync(_media.Id);
+                _inWatchlist = await MediaRequestService.IsInWatchlistAsync(_media.Id, _media.MediaType);
                 
                 // Load similar content
                 _similarMedia = await PlexApiService.SearchMediaAsync("", mediaType);
@@ -400,8 +400,8 @@ else
         if (_media == null) return;
         
         Boolean success = _inWatchlist
-            ? await MediaRequestService.RemoveFromWatchlistAsync(_media.Id)
-            : await MediaRequestService.AddToWatchlistAsync(_media.Id);
+            ? await MediaRequestService.RemoveFromWatchlistAsync(_media.Id, _media.MediaType)
+            : await MediaRequestService.AddToWatchlistAsync(_media.Id, _media.MediaType);
             
         if (success)
         {

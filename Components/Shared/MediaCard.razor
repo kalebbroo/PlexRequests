@@ -146,7 +146,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _isInWatchlist = await MediaRequestService.IsInWatchlistAsync(Media.Id);
+        _isInWatchlist = await MediaRequestService.IsInWatchlistAsync(Media.Id, Media.MediaType);
     }
 
     private void OnMouseEnter() => _isHovered = true;
@@ -175,8 +175,8 @@
     private async Task ToggleWatchlist()
     {
         var success = _isInWatchlist
-            ? await MediaRequestService.RemoveFromWatchlistAsync(Media.Id)
-            : await MediaRequestService.AddToWatchlistAsync(Media.Id);
+            ? await MediaRequestService.RemoveFromWatchlistAsync(Media.Id, Media.MediaType)
+            : await MediaRequestService.AddToWatchlistAsync(Media.Id, Media.MediaType);
         if (success)
         {
             _isInWatchlist = !_isInWatchlist;

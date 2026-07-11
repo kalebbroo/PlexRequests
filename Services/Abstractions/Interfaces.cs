@@ -9,9 +9,9 @@ public interface IMediaRequestService
     Task<MediaRequestDto?> GetRequestByIdAsync(int id);
     Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType);
     Task<bool> CancelRequestAsync(int requestId);
-    Task<bool> IsInWatchlistAsync(int mediaId);
-    Task<bool> AddToWatchlistAsync(int mediaId);
-    Task<bool> RemoveFromWatchlistAsync(int mediaId);
+    Task<bool> IsInWatchlistAsync(int mediaId, MediaType mediaType);
+    Task<bool> AddToWatchlistAsync(int mediaId, MediaType mediaType);
+    Task<bool> RemoveFromWatchlistAsync(int mediaId, MediaType mediaType);
     Task<List<MediaCardDto>> GetWatchlistAsync();
     Task<UserStatsDto> GetMyStatsAsync();
     Task<bool> CheckRequestLimitsAsync(MediaType mediaType);

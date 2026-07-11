@@ -169,7 +169,7 @@
 
     private async Task RemoveFromList(PlexRequestsHosted.Shared.DTOs.MediaCardDto item)
     {
-        Boolean success = await MediaRequestService.RemoveFromWatchlistAsync(item.Id);
+        Boolean success = await MediaRequestService.RemoveFromWatchlistAsync(item.Id, item.MediaType);
         if (success)
         {
             _watchlist?.Remove(item);
