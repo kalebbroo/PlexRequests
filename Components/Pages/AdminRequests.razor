@@ -1,14 +1,15 @@
 @page "/admin/requests"
 @attribute [Authorize(Roles = "Admin")]
-@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
 @using Microsoft.AspNetCore.Components.Web
 @using MudBlazor
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject PlexRequestsHosted.Services.Abstractions.INotificationBroker Broker
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthProvider
 @inject NavigationManager Navigation
-@using Microsoft.AspNetCore.SignalR.Client
+@implements IDisposable
 
 <PageTitle>Admin Requests - Plex Requests</PageTitle>
 
@@ -24,7 +25,7 @@
                 <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Rejected)">Rejected</MudSelectItem>
                 <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Cancelled)">Cancelled</MudSelectItem>
             </MudSelect>
-            <MudTextField @bind-Value="_search" Placeholder="Search title..." Dense="true" Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" OnBlurred="_ => Refresh()"/>
+            <MudTextField @bind-Value="_search" Placeholder="Search title..." Margin="Margin.Dense" Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" OnBlur="@(_ => Refresh())"/>
             <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="Refresh">Refresh</MudButton>
         </div>
     </div>
@@ -81,9 +82,12 @@
                 </MudTd>
             </RowTemplate>
         </MudTable>
-        <div class="d-flex justify-content-end py-3">
-            <MudPagination Page="@_page" PageSize="@_pageSize" Disabled="@(_filtered.Count <= _pageSize)" HideNext="false" HidePrev="false" OnPageChanged="OnPageChanged" Count="@((int)Math.Ceiling(_filtered.Count/(double)_pageSize))" />
-        </div>
+        @if (_pageCount > 1)
+        {
+            <div class="d-flex justify-content-end py-3">
+                <MudPagination Count="@_pageCount" Selected="@_page" SelectedChanged="OnPageChanged" />
+            </div>
+        }
     }
 </MudContainer>
 
@@ -108,6 +112,7 @@
     private List<MediaRequestDto> _paged = new();
     private int _page = 1;
     private int _pageSize = 25;
+    private int _pageCount = 1;
     private RequestStatus? _statusFilter = RequestStatus.Pending;
     private string _search = string.Empty;
 
@@ -115,40 +120,32 @@
     private MediaRequestDto? _denyTarget;
     private string _denyReason = string.Empty;
 
-    private HubConnection? _hub;
+    private int _userId;
 
     protected override async Task OnInitializedAsync()
     {
+        var state = await AuthProvider.GetAuthenticationStateAsync();
+        int.TryParse(state.User.FindFirst("user_id")?.Value, out _userId);
+
         await Load();
 
-        _hub = new HubConnectionBuilder()
-            .WithUrl(Navigation.ToAbsoluteUri("/hubs/notifications"))
-            .WithAutomaticReconnect()
-            .Build();
+        // Live updates: new requests are persisted as notifications to admins; refresh on those.
+        Broker.Notified += OnNotified;
+    }
 
-        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestCreated", async (req) =>
+    private async void OnNotified(PlexRequestsHosted.Shared.DTOs.NotificationDto n)
+    {
+        if (n.UserId != _userId) return;
+        try
         {
             await InvokeAsync(async () =>
             {
-                await ToastService.ShowInfoAsync($"New request: {req.Title} by {req.RequestedByUsername}");
+                if (n.Type == NotificationType.RequestCreated)
+                    await ToastService.ShowInfoAsync(n.Message);
                 await Load();
             });
-        });
-
-        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestApproved", async (req) =>
-        {
-            await InvokeAsync(async () => { await Load(); });
-        });
-        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestRejected", async (req) =>
-        {
-            await InvokeAsync(async () => { await Load(); });
-        });
-        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestAvailable", async (req) =>
-        {
-            await InvokeAsync(async () => { await Load(); });
-        });
-
-        try { await _hub.StartAsync(); } catch { }
+        }
+        catch { /* component may be disposing */ }
     }
 
     private async Task Load()
@@ -176,6 +173,7 @@
         if (!string.IsNullOrWhiteSpace(_search))
             q = q.Where(i => (i.Title ?? string.Empty).Contains(_search, StringComparison.OrdinalIgnoreCase));
         _filtered = q.OrderByDescending(i => i.RequestedAt).ToList();
+        _pageCount = Math.Max(1, (int)Math.Ceiling(_filtered.Count / (double)_pageSize));
         _page = 1;
         UpdatePaged();
     }
@@ -264,14 +262,5 @@
         __builder.AddAttribute(3, "ChildContent", (RenderFragment)((b2) => b2.AddContent(0, txt)));
         __builder.CloseComponent();
     };
-}
-
-@code {
-    public async ValueTask DisposeAsync()
-    {
-        if (_hub is not null)
-        {
-            try { await _hub.StopAsync(); await _hub.DisposeAsync(); } catch { }
-        }
-    }
+    public void Dispose() => Broker.Notified -= OnNotified;
 }

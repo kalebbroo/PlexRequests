@@ -79,28 +79,32 @@
     <div class="list-item-actions">
         @if (Media.IsAvailable)
         {
-            <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" 
-                          Color="Color.Primary" 
-                          ToolTip="Play"
-                          @onclick="HandlePlay" />
+            <MudTooltip Text="Play">
+                <MudIconButton Icon="@Icons.Material.Filled.PlayArrow"
+                              Color="Color.Primary"
+                              @onclick="HandlePlay" />
+            </MudTooltip>
         }
         else if (Media.RequestStatus == RequestStatus.None)
         {
-            <MudIconButton Icon="@Icons.Material.Filled.Add" 
-                          Color="Color.Primary" 
-                          ToolTip="Request"
-                          @onclick="HandleRequest" />
+            <MudTooltip Text="Request">
+                <MudIconButton Icon="@Icons.Material.Filled.Add"
+                              Color="Color.Primary"
+                              @onclick="HandleRequest" />
+            </MudTooltip>
         }
-        
-        <MudIconButton Icon="@(_inWatchlist ? Icons.Material.Filled.Bookmark : Icons.Material.Outlined.BookmarkBorder)" 
-                      Color="Color.Default" 
-                      ToolTip="@(_inWatchlist ? "Remove from list" : "Add to list")"
-                      @onclick="ToggleWatchlist" />
-        
-        <MudIconButton Icon="@Icons.Material.Filled.MoreVert" 
-                      Color="Color.Default" 
-                      Title="More options"
-                      @onclick="ShowMoreOptions" />
+
+        <MudTooltip Text="@(_inWatchlist ? "Remove from list" : "Add to list")">
+            <MudIconButton Icon="@(_inWatchlist ? Icons.Material.Filled.Bookmark : Icons.Material.Outlined.BookmarkBorder)"
+                          Color="Color.Default"
+                          @onclick="ToggleWatchlist" />
+        </MudTooltip>
+
+        <MudTooltip Text="More options">
+            <MudIconButton Icon="@Icons.Material.Filled.MoreVert"
+                          Color="Color.Default"
+                          @onclick="ShowMoreOptions" />
+        </MudTooltip>
     </div>
 </div>
 

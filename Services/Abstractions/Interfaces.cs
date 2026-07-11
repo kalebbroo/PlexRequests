@@ -25,11 +25,17 @@ public interface IMediaRequestService
 
 public interface INotificationService
 {
-    // Real-time notifications to connected clients (SignalR)
+    // Persist a notification and push it live via the in-process broker.
     Task RequestCreatedAsync(MediaRequestDto request);
     Task RequestApprovedAsync(MediaRequestDto request);
     Task RequestRejectedAsync(MediaRequestDto request);
     Task RequestAvailableAsync(MediaRequestDto request);
+
+    // Persistence-backed reads for the notification bell (survive page refresh/restart).
+    Task<List<NotificationDto>> GetForUserAsync(int userId, int take = 20);
+    Task<int> GetUnreadCountAsync(int userId);
+    Task MarkAllReadAsync(int userId);
+    Task MarkReadAsync(int notificationId, int userId);
 
     // External channels (e.g., Discord) can be triggered here as well in the implementation
 }
@@ -82,6 +88,10 @@ public interface IUserProfileService
     Task<UserPreferencesDto> GetPreferencesAsync();
     Task<bool> UpdatePreferencesAsync(UserPreferencesDto preferences);
     Task<bool> UpdateAvatarAsync(string avatarUrl);
+
+    // Admin user management
+    Task<List<UserDto>> GetAllUsersAsync();
+    Task<bool> SetAdminAsync(int userId, bool isAdmin);
 }
 
 public interface IToastService

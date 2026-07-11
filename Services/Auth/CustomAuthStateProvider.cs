@@ -18,7 +18,8 @@ public class CustomAuthStateProvider(
     HttpClient httpClient,
     IPlexAuthService plexAuth,
     AppDbContext dbContext,
-    IHttpContextAccessor httpContextAccessor)
+    IHttpContextAccessor httpContextAccessor,
+    IConfiguration configuration)
     : AuthenticationStateProvider
 {
     private readonly ISessionStorageService _sessionStorage = sessionStorage;
@@ -26,6 +27,29 @@ public class CustomAuthStateProvider(
     private readonly IPlexAuthService _plexAuth = plexAuth;
     private readonly AppDbContext _db = dbContext;
     private readonly IHttpContextAccessor _http = httpContextAccessor;
+    private readonly IConfiguration _config = configuration;
+
+    /// <summary>
+    /// True when the given Plex username is listed in the ADMIN_USERNAMES / Admin:Usernames
+    /// config (comma-separated). Checked on every login so a configured admin self-heals.
+    /// </summary>
+    private bool IsConfiguredAdmin(string username)
+    {
+        var raw = _config["Admin:Usernames"];
+        if (string.IsNullOrWhiteSpace(raw) || string.IsNullOrWhiteSpace(username)) return false;
+        return raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                  .Any(u => u.Equals(username, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string EnsureRole(string? roles, string role)
+    {
+        var set = (roles ?? "User")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        set.Add("User");
+        set.Add(role);
+        return string.Join(",", set);
+    }
 
     private const string AUTH_TOKEN_KEY = "authToken";
     private const string REFRESH_TOKEN_KEY = "refreshToken";
@@ -120,6 +144,7 @@ public class CustomAuthStateProvider(
             await _db.SaveChangesAsync();
 
             // Upsert profile row
+            var isConfiguredAdmin = IsConfiguredAdmin(plexUser.Username);
             var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == existing.Id);
             if (profile is null)
             {
@@ -128,7 +153,7 @@ public class CustomAuthStateProvider(
                     UserId = existing.Id,
                     PlexId = plexUser.Id,
                     PlexUsername = plexUser.Username,
-                    Roles = "User",
+                    Roles = isConfiguredAdmin ? "User,Admin" : "User",
                     LastLoginAt = DateTime.UtcNow
                 };
                 _db.UserProfiles.Add(profile);
@@ -138,6 +163,8 @@ public class CustomAuthStateProvider(
                 profile.PlexId = plexUser.Id;
                 profile.PlexUsername = plexUser.Username;
                 profile.LastLoginAt = DateTime.UtcNow;
+                // Self-heal: a configured admin always regains the Admin role on login.
+                if (isConfiguredAdmin) profile.Roles = EnsureRole(profile.Roles, "Admin");
             }
             await _db.SaveChangesAsync();
 
@@ -172,7 +199,8 @@ public class CustomAuthStateProvider(
             // Build claims identity
             var claims = new List<Claim>
             {
-                new Claim(ClaimTypes.Name, userDto.Username)
+                new Claim(ClaimTypes.Name, userDto.Username),
+                new Claim("user_id", existing.Id.ToString())
             };
             if (!string.IsNullOrEmpty(userDto.Email)) claims.Add(new Claim(ClaimTypes.Email, userDto.Email));
             if (!string.IsNullOrEmpty(userDto.DisplayName)) claims.Add(new Claim("display_name", userDto.DisplayName));

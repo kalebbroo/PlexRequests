@@ -59,6 +59,8 @@ dkms.conf
 /logs
 .env
 *.db
+*.db-wal
+*.db-shm
 /keys
 
 # Visual Studio / MSBuild per-user files

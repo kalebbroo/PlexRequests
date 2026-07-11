@@ -61,7 +61,7 @@
             @if (Media.Rating.HasValue)
             {
                 <div class="rating">
-                    <MudRating Value="@GetStarRating()" ReadOnly="true" Size="Size.Small" />
+                    <MudRating SelectedValue="@GetStarRating()" ReadOnly="true" Size="Size.Small" />
                     <span class="rating-text">@Media.Rating.Value.ToString("0.0")</span>
                 </div>
             }

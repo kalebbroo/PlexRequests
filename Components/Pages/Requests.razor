@@ -2,8 +2,10 @@
 @attribute [Authorize]
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject PlexRequestsHosted.Services.Abstractions.INotificationBroker Broker
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthProvider
 @inject NavigationManager Navigation
-@using Microsoft.AspNetCore.SignalR.Client
+@implements IDisposable
 
 <PageTitle>My Requests - Plex Requests</PageTitle>
 
@@ -155,23 +157,26 @@
                         <div class="request-actions">
                             @if (request.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Available)
                             {
-                                <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" 
-                                               Color="Color.Primary" 
-                                               ToolTip="Watch Now"
-                                               OnClick="() => WatchNow(request)" />
+                                <MudTooltip Text="Watch Now">
+                                    <MudIconButton Icon="@Icons.Material.Filled.PlayArrow"
+                                                   Color="Color.Primary"
+                                                   OnClick="() => WatchNow(request)" />
+                                </MudTooltip>
                             }
-                            
-                            <MudIconButton Icon="@Icons.Material.Filled.Info" 
-                                           Color="Color.Default" 
-                                           ToolTip="View Details"
-                                           OnClick="() => ViewDetails(request)" />
-                            
+
+                            <MudTooltip Text="View Details">
+                                <MudIconButton Icon="@Icons.Material.Filled.Info"
+                                               Color="Color.Default"
+                                               OnClick="() => ViewDetails(request)" />
+                            </MudTooltip>
+
                             @if (request.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Pending)
                             {
-                                <MudIconButton Icon="@Icons.Material.Filled.Cancel" 
-                                               Color="Color.Error" 
-                                               ToolTip="Cancel Request"
-                                               OnClick="() => CancelRequest(request)" />
+                                <MudTooltip Text="Cancel Request">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Cancel"
+                                                   Color="Color.Error"
+                                                   OnClick="() => CancelRequest(request)" />
+                                </MudTooltip>
                             }
                         </div>
                     </div>
@@ -228,57 +233,42 @@
     private Boolean _hasMore = false;
     private Int32 _currentPage = 1;
 
-    private HubConnection? _hub;
+    private int _userId;
 
     protected override async Task OnInitializedAsync()
     {
+        var state = await AuthProvider.GetAuthenticationStateAsync();
+        int.TryParse(state.User.FindFirst("user_id")?.Value, out _userId);
+
         await LoadData();
 
-        // Setup SignalR connection for real-time updates
-        _hub = new HubConnectionBuilder()
-            .WithUrl(Navigation.ToAbsoluteUri("/hubs/notifications"))
-            .WithAutomaticReconnect()
-            .Build();
-
-        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestApproved", async (req) =>
-        {
-            await InvokeAsync(async () =>
-            {
-                await ToastService.ShowInfoAsync($"Approved: {req.Title}");
-                await LoadData();
-            });
-        });
-
-        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestRejected", async (req) =>
-        {
-            await InvokeAsync(async () =>
-            {
-                await ToastService.ShowWarningAsync($"Rejected: {req.Title}");
-                await LoadData();
-            });
-        });
-
-        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestAvailable", async (req) =>
-        {
-            await InvokeAsync(async () =>
-            {
-                await ToastService.ShowSuccessAsync($"Available: {req.Title}");
-                await LoadData();
-            });
-        });
-
-        // Optional: handle RequestCreated if you want to reflect new requests by others visible to me
-        _hub.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestCreated", async (req) =>
-        {
-            await InvokeAsync(async () =>
-            {
-                // If the created request belongs to the current user, refresh
-                await LoadData();
-            });
-        });
-
-        try { await _hub.StartAsync(); } catch { /* ignore transient */ }
+        // Live updates via the in-process broker: refresh when one of my requests changes state.
+        Broker.Notified += OnNotified;
     }
+
+    private async void OnNotified(PlexRequestsHosted.Shared.DTOs.NotificationDto n)
+    {
+        if (n.UserId != _userId) return;
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                switch (n.Type)
+                {
+                    case PlexRequestsHosted.Shared.Enums.NotificationType.RequestApproved:
+                        await ToastService.ShowInfoAsync(n.Message); break;
+                    case PlexRequestsHosted.Shared.Enums.NotificationType.RequestRejected:
+                        await ToastService.ShowWarningAsync(n.Message); break;
+                    case PlexRequestsHosted.Shared.Enums.NotificationType.RequestAvailable:
+                        await ToastService.ShowSuccessAsync(n.Message); break;
+                }
+                await LoadData();
+            });
+        }
+        catch { /* component may be disposing */ }
+    }
+
+    public void Dispose() => Broker.Notified -= OnNotified;
 
     private async Task LoadData()
     {

@@ -1,8 +1,9 @@
 @page "/admin"
 @attribute [Authorize(Roles = "Admin")]
-@attribute [Authorize(Roles="Admin")]
 @using PlexRequestsHosted.Services.Abstractions
 @inject IPlexApiService PlexApi
+@inject IUserProfileService UserProfiles
+@inject IToastService Toast
 @inject NavigationManager Nav
 
 <PageTitle>Admin - Server Health</PageTitle>
@@ -55,9 +56,45 @@
 
                     <MudStack Row="true" Spacing="2">
                         <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="Refresh">Refresh</MudButton>
-                        <MudButton Color="Color.Secondary" Variant="Variant.Text" Href="/">Go Home</MudButton>
+                        <MudButton Color="Color.Secondary" Variant="Variant.Text" Href="/admin/requests">Manage Requests</MudButton>
+                        <MudButton Color="Color.Secondary" Variant="Variant.Text" Href="/browse">Go Home</MudButton>
                     </MudStack>
                 </MudStack>
+            }
+        </MudPaper>
+
+        <MudText Typo="Typo.h5" Class="mt-4">Users &amp; Roles</MudText>
+        <MudPaper Class="pa-4" Elevation="2">
+            @if (_usersLoading)
+            {
+                <MudProgressCircular Indeterminate="true" />
+            }
+            else if (_users.Count == 0)
+            {
+                <MudText>No users have signed in yet.</MudText>
+            }
+            else
+            {
+                <MudTable Items="_users" Dense="true">
+                    <HeaderContent>
+                        <MudTh>User</MudTh>
+                        <MudTh>Plex Username</MudTh>
+                        <MudTh>Roles</MudTh>
+                        <MudTh>Admin</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="User">@(string.IsNullOrWhiteSpace(context.DisplayName) ? context.Username : context.DisplayName)</MudTd>
+                        <MudTd DataLabel="Plex Username">@context.PlexUsername</MudTd>
+                        <MudTd DataLabel="Roles">@string.Join(", ", context.Roles)</MudTd>
+                        <MudTd DataLabel="Admin">
+                            <MudSwitch T="bool" Value="@context.Roles.Contains("Admin")" Color="Color.Primary"
+                                       ValueChanged="@(v => ToggleAdmin(context, v))" />
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+                <MudText Typo="Typo.caption" Class="mt-2 d-block text-secondary">
+                    Role changes take effect the next time that user signs in.
+                </MudText>
             }
         </MudPaper>
     </MudStack>
@@ -69,9 +106,41 @@
     private PlexServerInfo? _info;
     private List<PlexLibrary> _libraries = new();
 
+    private bool _usersLoading = true;
+    private List<UserDto> _users = new();
+
     protected override async Task OnInitializedAsync()
     {
         await LoadAsync();
+        await LoadUsersAsync();
+    }
+
+    private async Task LoadUsersAsync()
+    {
+        _usersLoading = true;
+        try
+        {
+            _users = await UserProfiles.GetAllUsersAsync();
+        }
+        finally
+        {
+            _usersLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleAdmin(UserDto user, bool isAdmin)
+    {
+        var ok = await UserProfiles.SetAdminAsync(user.Id, isAdmin);
+        if (ok)
+        {
+            await Toast.ShowSuccessAsync($"{(isAdmin ? "Granted" : "Revoked")} admin for {user.Username}");
+            await LoadUsersAsync();
+        }
+        else
+        {
+            await Toast.ShowErrorAsync("Failed to update roles");
+        }
     }
 
     private async Task LoadAsync()

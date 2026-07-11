@@ -84,6 +84,34 @@ public class UserProfileService(AppDbContext db) : IUserProfileService
         return true;
     }
 
+    public async Task<List<UserDto>> GetAllUsersAsync()
+    {
+        var profiles = await _db.UserProfiles
+            .Include(p => p.User)
+            .OrderBy(p => p.User!.Username)
+            .ToListAsync();
+        return profiles
+            .Where(p => p.User != null)
+            .Select(p => MapToDto(p.User!, p))
+            .ToList();
+    }
+
+    public async Task<bool> SetAdminAsync(int userId, bool isAdmin)
+    {
+        var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
+        if (profile is null) return false;
+
+        var set = (profile.Roles ?? "User")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        set.Add("User");
+        if (isAdmin) set.Add("Admin"); else set.Remove("Admin");
+        profile.Roles = string.Join(",", set);
+
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
     private static UserDto MapToDto(UserEntity user, UserProfileEntity profile)
     {
         return new UserDto

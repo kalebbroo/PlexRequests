@@ -47,6 +47,14 @@ static void LoadDotEnvFrom(string rootPath)
             Environment.SetEnvironmentVariable("Plex__ClientIdentifier", val);
         else if (key.Equals("PLEX_ALLOW_INVALID_CERTS", StringComparison.OrdinalIgnoreCase))
             Environment.SetEnvironmentVariable("Plex__AllowInvalidCerts", val);
+        else if (key.Equals("TMDB_API_KEY", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("ApiKeys__TMDb__ApiKey", val);
+        else if (key.Equals("TMDB_READ_ACCESS_TOKEN", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("ApiKeys__TMDb__ReadAccessToken", val);
+        else if (key.Equals("ADMIN_USERNAMES", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("Admin__Usernames", val);
+        else if (key.Equals("DB_PATH", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("ConnectionStrings__AppDb", val);
     }
 }
 
@@ -65,7 +73,6 @@ builder.Services.AddRazorComponents()
 builder.Services.AddMudServices();
 builder.Services.AddBlazoredLocalStorage();
 builder.Services.AddBlazoredSessionStorage();
-builder.Services.AddSignalR();
 // HTTP client for services that depend on HttpClient
 builder.Services.AddHttpClient();
 // HttpContext accessor for cookie sign-in from AuthStateProvider
@@ -141,7 +148,8 @@ builder.Services
     });
 builder.Services.AddAuthorization(options =>
 {
-    // Do NOT set a global fallback policy; components use [Authorize] via _Imports.razor.
+    // Pages are secured by default via `@attribute [Authorize]` in Components/_Imports.razor
+    // (enforced by AuthorizeRouteView); anonymous pages opt out with [AllowAnonymous].
     options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
 });
 builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthStateProvider>();
@@ -155,6 +163,8 @@ builder.Services.AddScoped<IUserProfileService, UserProfileService>();
 builder.Services.AddScoped<IToastService, ToastService>();
 builder.Services.AddScoped<IThemeService, ThemeService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+// In-process notification pub/sub (replaces the SignalR client round-trip) + persistence-backed service
+builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.INotificationBroker, PlexRequestsHosted.Services.Implementations.NotificationBroker>();
 builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.INotificationService, PlexRequestsHosted.Services.Implementations.NotificationService>();
 
 // Metadata providers
@@ -167,9 +177,16 @@ builder.Services.AddScoped<IMetadataProviderFactory, MetadataProviderFactory>();
 builder.Services.AddScoped<IMediaMetadataProvider>(sp =>
     sp.GetRequiredService<IMetadataProviderFactory>().GetDefaultProvider());
 
-// Persistence: SQLite
+// Persistence: SQLite. Resolve an absolute path so the DB doesn't depend on the current
+// working directory (DB_PATH / ConnectionStrings:AppDb override; default is under the content root).
+var configuredDbPath = builder.Configuration["ConnectionStrings:AppDb"];
+var dbPath = string.IsNullOrWhiteSpace(configuredDbPath)
+    ? Path.Combine(builder.Environment.ContentRootPath, "app.db")
+    : (Path.IsPathRooted(configuredDbPath)
+        ? configuredDbPath
+        : Path.Combine(builder.Environment.ContentRootPath, configuredDbPath));
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite("Data Source=app.db"));
+    options.UseSqlite($"Data Source={dbPath}"));
 
 var app = builder.Build();
 
@@ -195,9 +212,6 @@ app.UseAntiforgery();
 app.MapStaticAssets().AllowAnonymous();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
-
-// Hubs
-app.MapHub<PlexRequestsHosted.Hubs.NotificationsHub>("/hubs/notifications").RequireAuthorization();
 
 // Ensure database exists on startup (demo friendly)
 using (var scope = app.Services.CreateScope())

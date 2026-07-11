@@ -16,3 +16,6 @@
 @using PlexRequestsHosted.Shared.Enums
 @using PlexRequestsHosted.Services.Abstractions
 @using PlexRequestsHosted.Components.Shared
+
+@* Secure-by-default: every routable page requires authentication unless it opts out with [AllowAnonymous]. *@
+@attribute [Authorize]

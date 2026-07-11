@@ -66,14 +66,16 @@
                     </MudSelect>
 
                     <div class="view-toggles">
-                        <MudToggleIconButton @bind-Toggled="_showOnlyAvailable"
-                                           Icon="@Icons.Material.Outlined.PlayCircleOutline"
-                                           ToggledIcon="@Icons.Material.Filled.PlayCircle"
-                                           Title="Show only available" />
-                        <MudToggleIconButton @bind-Toggled="_gridView"
-                                           Icon="@Icons.Material.Outlined.ViewModule"
-                                           ToggledIcon="@Icons.Material.Filled.ViewModule"
-                                           Title="Toggle view" />
+                        <MudTooltip Text="Show only available">
+                            <MudToggleIconButton @bind-Toggled="_showOnlyAvailable"
+                                               Icon="@Icons.Material.Outlined.PlayCircleOutline"
+                                               ToggledIcon="@Icons.Material.Filled.PlayCircle" />
+                        </MudTooltip>
+                        <MudTooltip Text="Toggle view">
+                            <MudToggleIconButton @bind-Toggled="_gridView"
+                                               Icon="@Icons.Material.Outlined.ViewModule"
+                                               ToggledIcon="@Icons.Material.Filled.ViewModule" />
+                        </MudTooltip>
                     </div>
                 </div>
             </div>

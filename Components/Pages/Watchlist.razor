@@ -88,11 +88,12 @@
                                           OnClick="ShowDetails"
                                           OnRequest="RequestMedia"
                                           OnPlay="PlayMedia" />
-                            <MudIconButton Icon="@Icons.Material.Filled.Remove" 
-                                          Color="Color.Error" 
-                                          ToolTip="Remove from list"
-                                          Class="list-remove-button"
-                                          @onclick="() => RemoveFromList(item)" />
+                            <MudTooltip Text="Remove from list">
+                                <MudIconButton Icon="@Icons.Material.Filled.Remove"
+                                              Color="Color.Error"
+                                              Class="list-remove-button"
+                                              @onclick="() => RemoveFromList(item)" />
+                            </MudTooltip>
                         </div>
                     }
                 </div>

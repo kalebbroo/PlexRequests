@@ -1,9 +1,10 @@
 @inherits LayoutComponentBase
 @using Microsoft.AspNetCore.Components.Authorization
-@using Microsoft.AspNetCore.SignalR.Client
 @inject NavigationManager Navigation
 @inject AuthenticationStateProvider AuthStateProvider
-@implements IAsyncDisposable
+@inject PlexRequestsHosted.Services.Abstractions.INotificationBroker Broker
+@inject PlexRequestsHosted.Services.Abstractions.INotificationService Notifications
+@implements IDisposable
 
     
     <div class="app-container">
@@ -32,11 +33,8 @@
                     }
                 </div>
                 
-                <MudIconButton Icon="@Icons.Material.Filled.Notifications"
-                               Color="Color.Inherit"
-                               Class="desktop-only notification-btn"
-                               BadgeColor="Color.Error"
-                               BadgeText="@(_notificationCount > 0 ? _notificationCount.ToString() : null)">
+                <MudBadge Content="_unreadCount" Color="Color.Error" Overlap="true" Bordered="true"
+                          Visible="@(_unreadCount > 0)" Class="desktop-only notification-btn">
                     <MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft">
                         <ActivatorContent>
                             <MudIconButton Icon="@Icons.Material.Filled.Notifications" Color="Color.Inherit" />
@@ -49,12 +47,12 @@
                                     <MudMenuItem>
                                         <div class="notification-item">
                                             <MudText Typo="Typo.body2">@notification.Message</MudText>
-                                            <MudText Typo="Typo.caption" Class="text-secondary">@notification.Time.ToString("HH:mm")</MudText>
+                                            <MudText Typo="Typo.caption" Class="text-secondary">@notification.CreatedAt.ToLocalTime().ToString("g")</MudText>
                                         </div>
                                     </MudMenuItem>
                                 }
                                 <MudDivider />
-                                <MudMenuItem OnClick="ClearNotifications">Clear All</MudMenuItem>
+                                <MudMenuItem OnClick="MarkAllRead">Mark all read</MudMenuItem>
                             }
                             else
                             {
@@ -62,7 +60,7 @@
                             }
                         </ChildContent>
                     </MudMenu>
-                </MudIconButton>
+                </MudBadge>
                 
                 <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
                     <ActivatorContent>
@@ -146,18 +144,11 @@
     private System.Timers.Timer? _scrollTimer;
     private string? _userAvatar;
     private string _searchQuery = string.Empty;
-    private int _notificationCount = 0;
-    private List<NotificationItem> _notifications = new();
-    private HubConnection? _hubConnection;
+    private int _unreadCount = 0;
+    private List<NotificationDto> _notifications = new();
+    private int _userId;
     private bool _isAuthenticated = false;
     private string? _currentUsername;
-
-    private class NotificationItem
-    {
-        public string Message { get; set; } = string.Empty;
-        public DateTime Time { get; set; }
-        public PlexRequestsHosted.Shared.Enums.NotificationType Type { get; set; }
-    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -176,81 +167,39 @@
         if (_isAuthenticated)
         {
             // Get avatar from claims
-            var avatarClaim = authState.User.FindFirst("avatar_url");
-            _userAvatar = avatarClaim?.Value;
+            _userAvatar = authState.User.FindFirst("avatar_url")?.Value;
+            int.TryParse(authState.User.FindFirst("user_id")?.Value, out _userId);
 
-            // Initialize SignalR connection for notifications
-            await InitializeNotificationHub();
+            if (_userId > 0)
+            {
+                // Load persisted notifications (survive refresh/restart) and subscribe for live updates.
+                _notifications = await Notifications.GetForUserAsync(_userId, 20);
+                _unreadCount = await Notifications.GetUnreadCountAsync(_userId);
+                Broker.Notified += OnNotified;
+            }
         }
-
-        _notificationCount = _notifications.Count;
     }
 
-    private async Task InitializeNotificationHub()
+    private async void OnNotified(NotificationDto n)
     {
+        if (n.UserId != _userId) return;
         try
         {
-            _hubConnection = new HubConnectionBuilder()
-                .WithUrl(Navigation.ToAbsoluteUri("/hubs/notifications"))
-                .WithAutomaticReconnect()
-                .Build();
-
-            // Subscribe to notification events
-            _hubConnection.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestCreated", async (request) =>
-            {
-                _notifications.Insert(0, new NotificationItem
-                {
-                    Message = $"New request: {request.Title}",
-                    Time = DateTime.Now,
-                    Type = PlexRequestsHosted.Shared.Enums.NotificationType.RequestCreated
-                });
-                _notificationCount = _notifications.Count(n => !string.IsNullOrEmpty(n.Message));
-                await InvokeAsync(StateHasChanged);
-            });
-
-            _hubConnection.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestApproved", async (request) =>
-            {
-                _notifications.Insert(0, new NotificationItem
-                {
-                    Message = $"Your request for '{request.Title}' was approved!",
-                    Time = DateTime.Now,
-                    Type = PlexRequestsHosted.Shared.Enums.NotificationType.RequestApproved
-                });
-                _notificationCount = _notifications.Count(n => !string.IsNullOrEmpty(n.Message));
-                await InvokeAsync(StateHasChanged);
-            });
-
-            _hubConnection.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestRejected", async (request) =>
-            {
-                _notifications.Insert(0, new NotificationItem
-                {
-                    Message = $"Your request for '{request.Title}' was denied: {request.DenialReason}",
-                    Time = DateTime.Now,
-                    Type = PlexRequestsHosted.Shared.Enums.NotificationType.RequestRejected
-                });
-                _notificationCount = _notifications.Count(n => !string.IsNullOrEmpty(n.Message));
-                await InvokeAsync(StateHasChanged);
-            });
-
-            _hubConnection.On<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>("RequestAvailable", async (request) =>
-            {
-                _notifications.Insert(0, new NotificationItem
-                {
-                    Message = $"'{request.Title}' is now available to watch!",
-                    Time = DateTime.Now,
-                    Type = PlexRequestsHosted.Shared.Enums.NotificationType.RequestAvailable
-                });
-                _notificationCount = _notifications.Count(n => !string.IsNullOrEmpty(n.Message));
-                await InvokeAsync(StateHasChanged);
-            });
-
-            await _hubConnection.StartAsync();
+            _notifications.Insert(0, n);
+            if (_notifications.Count > 20) _notifications = _notifications.Take(20).ToList();
+            _unreadCount++;
+            await InvokeAsync(StateHasChanged);
         }
-        catch (Exception ex)
-        {
-            // Log error but don't crash the app
-            Console.WriteLine($"Error initializing SignalR: {ex.Message}");
-        }
+        catch { /* component may be disposing */ }
+    }
+
+    private async Task MarkAllRead()
+    {
+        if (_userId <= 0) return;
+        await Notifications.MarkAllReadAsync(_userId);
+        foreach (var n in _notifications) n.IsRead = true;
+        _unreadCount = 0;
+        StateHasChanged();
     }
 
     private void CheckScroll(object? sender, System.Timers.ElapsedEventArgs e)
@@ -309,22 +258,11 @@
         Navigation.NavigateTo("/", true);
     }
 
-    private void ClearNotifications()
-    {
-        _notifications.Clear();
-        _notificationCount = 0;
-        StateHasChanged();
-    }
-
-    public async ValueTask DisposeAsync()
+    public void Dispose()
     {
         _scrollTimer?.Dispose();
         Navigation.LocationChanged -= HandleLocationChanged;
-
-        if (_hubConnection is not null)
-        {
-            await _hubConnection.DisposeAsync();
-        }
+        Broker.Notified -= OnNotified;
     }
 
     protected override void OnParametersSet()
