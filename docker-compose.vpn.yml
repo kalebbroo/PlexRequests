@@ -1,0 +1,95 @@
+# PlexRequests — full VPN-protected stack (managed VPN + torrent client).
+#
+#   docker compose -f docker-compose.vpn.yml up -d
+#
+# Deluge and the downloader share gluetun's network namespace, so their ONLY egress is the VPN
+# tunnel. If the VPN drops, they have no network — that is the kill-switch, enforced by Docker, not
+# app code. FIREWALL_OUTBOUND_SUBNETS lets the downloader still reach `web` on the local Docker
+# subnet for callbacks. This file is self-contained (use it INSTEAD of docker-compose.yml).
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    container_name: plexrequests-web
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__AppDb: /data/app.db
+      Fulfillment__Enabled: "true"
+      Fulfillment__ApiKey: ${FULFILLMENT_API_KEY}
+      Bridge__Enabled: ${BRIDGE_ENABLED:-false}
+      Bridge__ApiKey: ${BRIDGE_API_KEY:-}
+      ApiKeys__TMDb__ApiKey: ${TMDB_API_KEY}
+      Admin__Usernames: ${ADMIN_USERNAMES}
+      Plex__PrimaryServerUrl: ${PLEX_URL}
+      Plex__ServerToken: ${PLEX_TOKEN}
+    volumes:
+      - appdata:/data
+      - ./keys:/app/keys
+    restart: unless-stopped
+
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: plexrequests-vpn
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      VPN_SERVICE_PROVIDER: ${VPN_PROVIDER}
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY}
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES}
+      SERVER_COUNTRIES: ${VPN_COUNTRIES}
+      FIREWALL_OUTBOUND_SUBNETS: ${DOCKER_SUBNET}
+    ports:
+      - "8112:8112"            # Deluge web UI, published via gluetun's namespace
+    restart: unless-stopped
+
+  deluge:
+    image: lscr.io/linuxserver/deluge:latest
+    container_name: plexrequests-deluge
+    network_mode: "service:gluetun"
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: ${TZ:-Etc/UTC}
+    volumes:
+      - ./deluge-config:/config
+      - media:/data
+    depends_on:
+      - gluetun
+    restart: unless-stopped
+
+  downloader:
+    build:
+      context: .
+      dockerfile: docker/downloader.Dockerfile
+    container_name: plexrequests-downloader
+    network_mode: "service:gluetun"
+    environment:
+      Api__BaseUrl: http://web:8080
+      Api__Key: ${FULFILLMENT_API_KEY}
+      Deluge__Url: http://localhost:8112     # same namespace as gluetun/deluge
+      Deluge__Password: ${DELUGE_PASSWORD:-deluge}
+      Library__MoviePath: /data/library/movies
+      Library__TvPath: /data/library/tv
+      Library__Hardlink: "true"
+      Vpn__Enabled: "true"                   # guard blocks work if the tunnel drops
+      Vpn__HealthCheckUrl: https://api.ipify.org
+    volumes:
+      - media:/data
+      - downloader-state:/app/state
+    depends_on:
+      - gluetun
+      - deluge
+      - web
+    restart: unless-stopped
+
+volumes:
+  appdata:
+  media:
+  downloader-state:

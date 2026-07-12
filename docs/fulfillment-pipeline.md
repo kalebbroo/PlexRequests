@@ -145,6 +145,24 @@ On unrecoverable failure (no candidate, repeated errors, import failure): call
 
 ---
 
+## Deployment — modular VPN & torrent client
+
+The VPN and the torrent client are **both optional** — bring your own, let the app manage them, or mix.
+The code toggles are `Vpn:Enabled` and `Deluge:Url`; the compose files wire them per scenario:
+
+| Scenario | Command | What runs |
+|----------|---------|-----------|
+| **BYO VPN + BYO client** | `docker compose up -d` | web + downloader. Set `DELUGE_URL` to your client; `VPN_ENABLED=false`. |
+| **Managed client, no managed VPN** | `docker compose --profile torrent up -d` | + a Deluge container (downloader auto-uses `http://deluge:8112`). |
+| **Managed VPN + client (kill-switch)** | `docker compose -f docker-compose.vpn.yml up -d` | web + gluetun + Deluge + downloader, with Deluge and the downloader in gluetun's netns. |
+
+Notes:
+- The app-level `IVpnGuard` only blocks work when the downloader is *inside* the VPN namespace and the
+  tunnel drops (egress fails). On a normally-connected box it never blocks, so leaving it on is harmless.
+- "Managed VPN + BYO client" isn't a sensible combo — the managed gluetun only protects containers routed
+  through it, so it comes paired with the managed Deluge.
+- Deluge (or any client) just needs to be reachable at `Deluge:Url` and expose its Web API.
+
 ## Security & ops (4.3)
 
 - **Auth:** rotating shared secret in `X-Fulfillment-Key`, HTTPS only, constant-time compare
