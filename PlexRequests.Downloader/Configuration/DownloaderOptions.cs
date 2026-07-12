@@ -26,8 +26,24 @@ public class IndexerOptions
 {
     public const string Section = "Indexer";
     public int TimeoutSeconds { get; set; } = 20;
-    public string EztvBaseUrl { get; set; } = "https://eztvx.to";   // TV
-    public string YtsBaseUrl { get; set; } = "https://yts.mx";       // movies
+    public string EztvBaseUrl { get; set; } = "https://eztvx.to";   // TV (JSON API)
+    public string YtsBaseUrl { get; set; } = "https://yts.mx";       // movies (JSON API)
+    public string X1337xBaseUrl { get; set; } = "https://1337x.to";  // movies + TV (HTML scrape)
+    public bool X1337xEnabled { get; set; } = true;
+    /// <summary>How many result rows to open for magnet extraction per 1337x search (each is an extra request).</summary>
+    public int X1337xMaxDetail { get; set; } = 8;
+
+    // Nyaa — anime (RSS feed, no scraping).
+    public string NyaaBaseUrl { get; set; } = "https://nyaa.si";
+    public bool NyaaEnabled { get; set; } = true;
+    /// <summary>Nyaa category: 1_2 = Anime English-translated, 1_0 = all anime.</summary>
+    public string NyaaCategory { get; set; } = "1_2";
+
+    // ext.to — general (HTML scrape). {query} is URL-substituted.
+    public string ExtToBaseUrl { get; set; } = "https://ext.to";
+    public bool ExtToEnabled { get; set; } = true;
+    public string ExtToSearchPath { get; set; } = "/search/?q={query}&order=seeders&sort=desc";
+    public int ExtToMaxDetail { get; set; } = 8;
 }
 
 /// <summary>Deluge Web (JSON-RPC) connection + label routing.</summary>

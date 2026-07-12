@@ -42,8 +42,38 @@ builder.Services.AddHttpClient<YtsIndexerProvider>(http =>
     http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
     http.DefaultRequestHeaders.Add("User-Agent", "PlexRequests.Downloader");
 });
+// 1337x is scraped, so present a real browser User-Agent + Accept headers.
+builder.Services.AddHttpClient<X1337xIndexerProvider>(http =>
+{
+    http.BaseAddress = new Uri(indexerCfg.X1337xBaseUrl);
+    http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
+    http.DefaultRequestHeaders.Add("User-Agent",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
+    http.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+    http.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
+});
+// Nyaa uses a plain RSS feed (a normal UA is fine).
+builder.Services.AddHttpClient<NyaaIndexerProvider>(http =>
+{
+    http.BaseAddress = new Uri(indexerCfg.NyaaBaseUrl);
+    http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
+    http.DefaultRequestHeaders.Add("User-Agent", "PlexRequests.Downloader");
+});
+// ext.to is scraped — present a real browser User-Agent.
+builder.Services.AddHttpClient<ExtToIndexerProvider>(http =>
+{
+    http.BaseAddress = new Uri(indexerCfg.ExtToBaseUrl);
+    http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
+    http.DefaultRequestHeaders.Add("User-Agent",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
+    http.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+    http.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
+});
 builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<EztvIndexerProvider>());
 builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<YtsIndexerProvider>());
+builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<X1337xIndexerProvider>());
+builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<NyaaIndexerProvider>());
+builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<ExtToIndexerProvider>());
 builder.Services.AddTransient<IIndexerClient, IndexerClient>();
 
 // Release parsing + ranking.

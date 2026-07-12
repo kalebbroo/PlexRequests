@@ -67,3 +67,5 @@ dkms.conf
 *.csproj.user
 *.user
 /Shared/obj
+/PlexRequests.Downloader/obj
+/PlexRequests.Downloader/bin

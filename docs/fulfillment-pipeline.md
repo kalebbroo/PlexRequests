@@ -89,11 +89,27 @@ sized to the box's concurrency. Persist claimed jobs locally so a worker restart
 (the app already recorded them as `Claimed`).
 
 ### Stage 2 — Search indexers
-Resolve release candidates by title + year + external IDs. Recommended: front a **Prowlarr/Jackett**
-aggregator so you integrate one API instead of many trackers. Query by `imdbId`/`tmdbId`/`tvdbId`
-when present (the app sends `tmdbId`; the worker resolves imdb/tvdb via the TMDb API as needed).
-- Movies: one query for the film.
-- TV: per-season or per-episode queries driven by `requestedSeasons` (empty ⇒ all seasons).
+Release candidates come from a pluggable set of `IIndexerProvider`s, merged by `IndexerClient`. Built in:
+- **EZTV** (`EztvIndexerProvider`) — TV, public JSON API keyed by IMDb id.
+- **YTS** (`YtsIndexerProvider`) — movies, public JSON API keyed by IMDb id; magnet built from the hash.
+- **1337x** (`X1337xIndexerProvider`) — movies + TV, **HTML scrape** (no API): the category-search page
+  lists rows, and each torrent's magnet is fetched from its detail page (top N rows only, `X1337xMaxDetail`).
+- **Nyaa** (`NyaaIndexerProvider`) — anime, via the **RSS feed** (no scraping): parses
+  `nyaa:infoHash`/`nyaa:seeders`/`nyaa:size` and builds a magnet from the hash. Runs for Anime/TV/Movie
+  (TMDB has no anime type), returning nothing for non-anime titles.
+- **ext.to** (`ExtToIndexerProvider`) — movies + TV, **HTML scrape**: follows the top search results to
+  their detail pages and extracts magnet + labelled Seeders/Size (falls back to inline magnets on the
+  search page). Search path is configurable (`ExtToSearchPath`, `{query}` substituted) for tuning.
+
+  ⚠️ **Cloudflare (1337x & ext.to):** both are usually behind Cloudflare, which blocks plain HTTP
+  clients from datacenter IPs (each provider detects the challenge page and returns nothing, logging a
+  warning). They generally work from a residential/VPN egress; if your exit IP is blocked, front them
+  with a solver proxy (e.g. FlareSolverr) and point `X1337xBaseUrl`/`ExtToBaseUrl` at it, or disable
+  them (`X1337xEnabled`/`ExtToEnabled: false`). EZTV/YTS/Nyaa use APIs/RSS and aren't affected.
+
+To add more trackers, drop in another `IIndexerProvider` (or front a **Prowlarr/Jackett** aggregator).
+- Movies: one query for the film (title + year).
+- TV: per-season/episode driven by `requestedSeasons` (empty ⇒ all seasons).
 
 ### Stage 3 — Parse & rank quality
 Parse release names into structured metadata and score them; reject anything below the requested
