@@ -17,6 +17,7 @@ using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.DTOs;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 
 // Load .env if present and map PLEX_* variables to ASP.NET config keys
 static void LoadDotEnvFrom(string rootPath)
@@ -86,6 +87,17 @@ builder.Services.AddBlazoredSessionStorage();
 builder.Services.AddHttpClient();
 // HttpContext accessor for cookie sign-in from AuthStateProvider
 builder.Services.AddHttpContextAccessor();
+
+// Behind a reverse proxy / Cloudflare Tunnel (TLS at the edge, plain HTTP to the origin): trust the
+// forwarded scheme so HttpsRedirection doesn't loop, the auth cookie gets its Secure flag, and Plex
+// OAuth redirect URLs come out as https. cloudflared/the proxy is the only origin client, so trust
+// all proxies. If you expose the origin directly to untrusted networks, restrict KnownProxies instead.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 // Session support for OAuth PIN storage
 // Persist Data Protection keys so session/cookie protection can be unprotected across app restarts
 var keysDir = Path.Combine(builder.Environment.ContentRootPath, "keys");
@@ -202,6 +214,10 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite($"Data Source={dbPath}"));
 
 var app = builder.Build();
+
+// Apply forwarded headers first so every downstream component (HSTS, HttpsRedirection, auth cookie,
+// OAuth URL building) sees the real client scheme/IP from the proxy.
+app.UseForwardedHeaders();
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
