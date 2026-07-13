@@ -23,11 +23,7 @@
                     <NavLink href="/watchlist" class="nav-item">My List</NavLink>
                     @if (_isAdmin)
                     {
-                        <NavLink href="/admin/requests" class="nav-item">Approvals</NavLink>
-                        <NavLink href="/admin/issues" class="nav-item">Issues</NavLink>
                         <NavLink href="/admin" class="nav-item">Admin</NavLink>
-                        <NavLink href="/admin/quality" class="nav-item">Quality</NavLink>
-                        <NavLink href="/admin/downloads" class="nav-item">Downloads</NavLink>
                     }
                 </nav>
             </div>
@@ -99,7 +95,6 @@
                 <NavLink href="/watchlist" class="mobile-nav-item" @onclick="CloseMobileMenu">My List</NavLink>
                 @if (_isAdmin)
                 {
-                    <NavLink href="/admin/requests" class="mobile-nav-item" @onclick="CloseMobileMenu">Approvals</NavLink>
                     <NavLink href="/admin" class="mobile-nav-item" @onclick="CloseMobileMenu">Admin</NavLink>
                 }
                 <NavLink href="/search" class="mobile-nav-item" @onclick="CloseMobileMenu">Search</NavLink>

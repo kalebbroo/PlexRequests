@@ -42,23 +42,29 @@ public class PlexApiService : IPlexApiService
         {
             var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
             if (baseUrl is null) return null;
-            // Use the lightweight /identity endpoint (a couple hundred bytes) rather than the root "/"
-            // (which returns the full ~10KB server payload). This is a health check that only needs
-            // online-status + version; the small response also avoids stalling on links (e.g. a VPN
-            // tunnel with a low MTU) where large responses can hang. friendlyName isn't in /identity,
-            // so Name falls back to the default below — cosmetic only.
-            var url = baseUrl + "/identity";
+            // Root "/" (unlike the lighter /identity) also returns friendlyName + platform +
+            // machineIdentifier, so one request both fixes the server-name display and lets us cache
+            // the machine id used for Plex Web deep links (see EnsureServerMachineIdAsync).
+            var url = baseUrl + "/";
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             EnsureDefaultHeaders(req.Headers);
             req.Headers.Add("X-Plex-Token", _cfg.ServerToken);
             var res = await _http.SendAsync(req);
             if (!res.IsSuccessStatusCode) return new PlexServerInfo { IsOnline = false };
 
+            var contentType = res.Content.Headers.ContentType?.MediaType ?? string.Empty;
             var text = await res.Content.ReadAsStringAsync();
-            // /identity returns machineIdentifier + version; friendlyName is absent, so Name falls back.
-            var name = GetBetween(text, "friendlyName=\"", "\"") ?? "Plex Server";
-            var version = GetBetween(text, "version=\"", "\"") ?? string.Empty;
-            return new PlexServerInfo { Name = name, Version = version, IsOnline = true };
+            var (name, version, platform, platformVersion, machineId) = ParseServerRoot(contentType, text);
+            if (!string.IsNullOrWhiteSpace(machineId)) _serverMachineId = machineId;
+
+            return new PlexServerInfo
+            {
+                Name = name ?? "Plex Server",
+                Version = version ?? string.Empty,
+                Platform = platform ?? string.Empty,
+                PlatformVersion = platformVersion ?? string.Empty,
+                IsOnline = true
+            };
         }
         catch (HttpRequestException ex)
         {
@@ -69,6 +75,25 @@ public class PlexApiService : IPlexApiService
         {
             _logger.LogError(ex, "Error getting Plex server info");
             return new PlexServerInfo { IsOnline = false };
+        }
+    }
+
+    private static (string? name, string? version, string? platform, string? platformVersion, string? machineId) ParseServerRoot(string contentType, string text)
+    {
+        if (contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
+        {
+            using var doc = JsonDocument.Parse(text);
+            var root = doc.RootElement;
+            var mc = root.TryGetProperty("MediaContainer", out var mcEl) ? mcEl : root;
+            string? Get(string prop) => mc.TryGetProperty(prop, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
+            return (Get("friendlyName"), Get("version"), Get("platform"), Get("platformVersion"), Get("machineIdentifier"));
+        }
+        else
+        {
+            var x = XDocument.Parse(text);
+            var root = x.Root?.Name.LocalName == "MediaContainer" ? x.Root : x.Root?.Element("MediaContainer") ?? x.Root;
+            string? Attr(string name) => (string?)root?.Attribute(name);
+            return (Attr("friendlyName"), Attr("version"), Attr("platform"), Attr("platformVersion"), Attr("machineIdentifier"));
         }
     }
 
@@ -181,7 +206,7 @@ public class PlexApiService : IPlexApiService
                         }
                     }
                 }
-                catch { /* ignore parse errors */ }
+                catch (Exception ex) { _logger.LogWarning(ex, "Failed to parse Plex library-sections XML fallback response"); }
             }
         }
 
@@ -346,21 +371,16 @@ public class PlexApiService : IPlexApiService
         return Uri.TryCreate(s, UriKind.Absolute, out var uri) ? uri.GetLeftPart(UriPartial.Authority) : null;
     }
 
-    private static string? GetBetween(string input, string start, string end)
-    {
-        var i = input.IndexOf(start, StringComparison.OrdinalIgnoreCase);
-        if (i < 0) return null;
-        i += start.Length;
-        var j = input.IndexOf(end, i, StringComparison.OrdinalIgnoreCase);
-        if (j < 0) return null;
-        return input.Substring(i, j - i);
-    }
-
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     // Availability index and helpers
     private record AvailabilityIndex(HashSet<string> ByTitleYear, Dictionary<string, string> ByTitleYearKey, Dictionary<string, string> ByExternal, DateTime BuiltAt);
     private const string AvailabilityCacheKey = "plex_availability_index";
+    // Last-rebuild stats live in the (singleton) memory cache rather than an instance field, since
+    // PlexApiService is resolved fresh per DI scope — the background refresh service and an admin
+    // page load run in different scopes and would otherwise never see each other's state.
+    private record LastRebuildResult(int Maps, int Seasons, int Episodes, int PrunedMaps, int PrunedSeasons, DateTime At);
+    private const string LastRebuildCacheKey = "plex_last_rebuild_result";
     // Fast read path: the in-memory match index is projected FROM THE DB (kept fresh by the
     // background AvailabilityRefreshService). This never hits Plex, so annotating a page is cheap.
     private async Task<AvailabilityIndex> EnsureAvailabilityIndexAsync()
@@ -470,6 +490,7 @@ public class PlexApiService : IPlexApiService
         await _db.SaveChangesAsync();
 
         _cache.Remove(AvailabilityCacheKey); // force the read projection to rebuild from fresh DB
+        _cache.Set(LastRebuildCacheKey, new LastRebuildResult(maps, seasons, episodes, staleMaps.Count, staleSeasons.Count, scanStart), TimeSpan.FromDays(30));
         _logger.LogInformation("Plex availability rebuilt: {Maps} id-maps, {Seasons} seasons, {Eps} episodes; pruned {PMaps} maps / {PSeasons} seasons",
             maps, seasons, episodes, staleMaps.Count, staleSeasons.Count);
         return new { maps, seasons, episodes, prunedMaps = staleMaps.Count, prunedSeasons = staleSeasons.Count, at = scanStart };
@@ -543,7 +564,7 @@ public class PlexApiService : IPlexApiService
         return $"{t}|{year}";
     }
 
-    private static (string? type, string? id) ParseGuid(string guid)
+    private (string? type, string? id) ParseGuid(string guid)
     {
         // e.g., tmdb://12345, imdb://tt12345, tvdb://6789
         try
@@ -554,43 +575,20 @@ public class PlexApiService : IPlexApiService
             id = id.Trim('/');
             return (type, id);
         }
-        catch { return (null, null); }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to parse Plex guid {Guid}", guid);
+            return (null, null);
+        }
     }
 
+    // The machine id is parsed as a side effect of GetServerInfoAsync (which hits the same root "/"
+    // endpoint); this just triggers that call once and reuses the cached value afterwards.
     private async Task<string?> EnsureServerMachineIdAsync()
     {
         if (!string.IsNullOrEmpty(_serverMachineId)) return _serverMachineId;
-
-        try
-        {
-            var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
-            if (baseUrl is null) return null;
-            var url = baseUrl + "/?X-Plex-Token=" + Uri.EscapeDataString(_cfg.ServerToken ?? string.Empty);
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            EnsureDefaultHeaders(req.Headers);
-            var res = await _http.SendAsync(req);
-            if (!res.IsSuccessStatusCode) return null;
-            var txt = await res.Content.ReadAsStringAsync();
-            try
-            {
-                var x = XDocument.Parse(txt);
-                var root = x.Root?.Element("MediaContainer") ?? x.Root;
-                var mid = (string?)root?.Attribute("machineIdentifier");
-                if (!string.IsNullOrWhiteSpace(mid)) _serverMachineId = mid;
-            }
-            catch { /* ignore */ }
-            return _serverMachineId;
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogWarning(ex, "Plex server unreachable while fetching machine ID");
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error fetching Plex server machine ID");
-            return null;
-        }
+        await GetServerInfoAsync();
+        return _serverMachineId;
     }
 
     private async Task<string> BuildPlexWebUrlAsync(string ratingKey)
@@ -768,9 +766,17 @@ public class PlexApiService : IPlexApiService
         var url = $"{baseUrl}/library/sections?X-Plex-Token={Uri.EscapeDataString(token)}";
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         EnsureDefaultHeaders(req.Headers);
-        var res = await _http.SendAsync(req);
-        res.EnsureSuccessStatusCode();
-        return await res.Content.ReadAsStringAsync();
+        try
+        {
+            var res = await _http.SendAsync(req);
+            res.EnsureSuccessStatusCode();
+            return await res.Content.ReadAsStringAsync();
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "Plex sections/raw request failed at {Url}", _cfg.PrimaryServerUrl);
+            throw;
+        }
     }
 
     public async Task<object> GetMetadataAsync(string ratingKey)
@@ -780,9 +786,18 @@ public class PlexApiService : IPlexApiService
         var url = $"{baseUrl}/library/metadata/{Uri.EscapeDataString(ratingKey)}?X-Plex-Token={Uri.EscapeDataString(token)}";
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         EnsureDefaultHeaders(req.Headers);
-        var res = await _http.SendAsync(req);
-        res.EnsureSuccessStatusCode();
-        var text = await res.Content.ReadAsStringAsync();
+        string text;
+        try
+        {
+            var res = await _http.SendAsync(req);
+            res.EnsureSuccessStatusCode();
+            text = await res.Content.ReadAsStringAsync();
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "Plex metadata lookup failed for ratingKey {RatingKey}", ratingKey);
+            throw;
+        }
         try
         {
             // Try JSON first
@@ -794,7 +809,7 @@ public class PlexApiService : IPlexApiService
                 return new { ratingKey, md.Title, md.Year, Guids = guids };
             }
         }
-        catch { /* fall back to XML */ }
+        catch (Exception ex) { _logger.LogWarning(ex, "Failed to parse Plex metadata response as JSON for ratingKey {RatingKey}; trying XML", ratingKey); }
         try
         {
             var x = XDocument.Parse(text);
@@ -807,7 +822,7 @@ public class PlexApiService : IPlexApiService
                 return new { ratingKey, Title = title, Year = year, Guids = guids };
             }
         }
-        catch { }
+        catch (Exception ex) { _logger.LogWarning(ex, "Failed to parse Plex metadata response as XML for ratingKey {RatingKey}", ratingKey); }
         return new { ratingKey, raw = text };
     }
 
@@ -819,9 +834,18 @@ public class PlexApiService : IPlexApiService
         var url = $"{baseUrl}/library/search?query={Uri.EscapeDataString(query)}&X-Plex-Token={Uri.EscapeDataString(token)}" + (string.IsNullOrEmpty(typeParam) ? string.Empty : $"&type={typeParam}");
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         EnsureDefaultHeaders(req.Headers);
-        var res = await _http.SendAsync(req);
-        res.EnsureSuccessStatusCode();
-        var text = await res.Content.ReadAsStringAsync();
+        string text;
+        try
+        {
+            var res = await _http.SendAsync(req);
+            res.EnsureSuccessStatusCode();
+            text = await res.Content.ReadAsStringAsync();
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "Plex server search failed for {Query}", query);
+            throw;
+        }
         var results = new List<object>();
         try
         {
@@ -837,7 +861,7 @@ public class PlexApiService : IPlexApiService
                 return results;
             }
         }
-        catch { }
+        catch (Exception ex) { _logger.LogWarning(ex, "Failed to parse Plex search response as JSON for {Query}; trying XML", query); }
         try
         {
             var x = XDocument.Parse(text);
@@ -850,7 +874,7 @@ public class PlexApiService : IPlexApiService
                 results.Add(new { RatingKey = rk, Title = title, Year = year, Guids = guids });
             }
         }
-        catch { }
+        catch (Exception ex) { _logger.LogWarning(ex, "Failed to parse Plex search response as XML for {Query}", query); }
         return results;
     }
 
@@ -879,5 +903,138 @@ public class PlexApiService : IPlexApiService
             .Select(x => (object)new { x.RatingKey, x.Title, x.Year })
             .ToList();
         return filtered;
+    }
+
+    public async Task<List<PlexSessionInfo>> GetActiveSessionsAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_cfg.PrimaryServerUrl) || string.IsNullOrWhiteSpace(_cfg.ServerToken))
+            return new();
+
+        try
+        {
+            var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
+            if (baseUrl is null) return new();
+            var url = baseUrl + "/status/sessions";
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            EnsureDefaultHeaders(req.Headers);
+            req.Headers.Add("X-Plex-Token", _cfg.ServerToken);
+            req.Headers.Accept.Clear();
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            var res = await _http.SendAsync(req);
+            if (!res.IsSuccessStatusCode) return new();
+
+            var contentType = res.Content.Headers.ContentType?.MediaType ?? string.Empty;
+            var text = await res.Content.ReadAsStringAsync();
+            var list = new List<PlexSessionInfo>();
+
+            if (contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
+            {
+                using var doc = JsonDocument.Parse(text);
+                var root = doc.RootElement;
+                var mc = root.TryGetProperty("MediaContainer", out var mcEl) ? mcEl : root;
+                if (mc.ValueKind == JsonValueKind.Object && mc.TryGetProperty("Metadata", out var mdEl) && mdEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var m in mdEl.EnumerateArray())
+                    {
+                        var title = m.TryGetProperty("title", out var tEl) && tEl.ValueKind == JsonValueKind.String ? tEl.GetString() ?? "Unknown" : "Unknown";
+                        var user = m.TryGetProperty("User", out var uEl) && uEl.TryGetProperty("title", out var utEl) && utEl.ValueKind == JsonValueKind.String ? utEl.GetString() ?? "Unknown" : "Unknown";
+                        var duration = m.TryGetProperty("duration", out var dEl) && dEl.ValueKind == JsonValueKind.Number ? dEl.GetInt64() : 0;
+                        var offset = m.TryGetProperty("viewOffset", out var oEl) && oEl.ValueKind == JsonValueKind.Number ? oEl.GetInt64() : 0;
+                        var isTranscode = m.TryGetProperty("TranscodeSession", out _);
+                        int? bitrate = m.TryGetProperty("Session", out var sEl) && sEl.TryGetProperty("bandwidth", out var bEl) && bEl.ValueKind == JsonValueKind.Number ? bEl.GetInt32() : null;
+                        list.Add(new PlexSessionInfo
+                        {
+                            Title = title,
+                            Username = user,
+                            ProgressPercent = duration > 0 ? (int)Math.Clamp(offset * 100 / duration, 0, 100) : 0,
+                            IsTranscoding = isTranscode,
+                            BitrateKbps = bitrate
+                        });
+                    }
+                }
+            }
+            else
+            {
+                var x = XDocument.Parse(text);
+                var root = x.Root?.Element("MediaContainer") ?? x.Root;
+                var items = root?.Elements("Video");
+                if (items is not null)
+                {
+                    foreach (var v in items)
+                    {
+                        var title = (string?)v.Attribute("title") ?? "Unknown";
+                        var user = (string?)v.Element("User")?.Attribute("title") ?? "Unknown";
+                        var duration = (long?)v.Attribute("duration") ?? 0;
+                        var offset = (long?)v.Attribute("viewOffset") ?? 0;
+                        var isTranscode = v.Element("TranscodeSession") is not null;
+                        int? bitrate = (int?)v.Element("Session")?.Attribute("bandwidth");
+                        list.Add(new PlexSessionInfo
+                        {
+                            Title = title,
+                            Username = user,
+                            ProgressPercent = duration > 0 ? (int)Math.Clamp(offset * 100 / duration, 0, 100) : 0,
+                            IsTranscoding = isTranscode,
+                            BitrateKbps = bitrate
+                        });
+                    }
+                }
+            }
+            return list;
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "Plex server unreachable while fetching active sessions");
+            return new();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching Plex active sessions");
+            return new();
+        }
+    }
+
+    public async Task RefreshLibraryAsync(string sectionKey)
+    {
+        if (string.IsNullOrWhiteSpace(_cfg.PrimaryServerUrl) || string.IsNullOrWhiteSpace(_cfg.ServerToken))
+            throw new InvalidOperationException("Plex is not configured.");
+        var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl) ?? throw new InvalidOperationException("Invalid Plex server URL.");
+        var url = $"{baseUrl}/library/sections/{Uri.EscapeDataString(sectionKey)}/refresh";
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        EnsureDefaultHeaders(req.Headers);
+        req.Headers.Add("X-Plex-Token", _cfg.ServerToken);
+        try
+        {
+            var res = await _http.SendAsync(req);
+            if (!res.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Plex library refresh for section {Section} returned {Status}", sectionKey, res.StatusCode);
+                throw new InvalidOperationException($"Plex returned {(int)res.StatusCode}");
+            }
+            _logger.LogInformation("Triggered Plex library refresh for section {Section}", sectionKey);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "Plex server unreachable while refreshing library {Section}", sectionKey);
+            throw;
+        }
+    }
+
+    public async Task<PlexAvailabilityStatus> GetAvailabilityStatusAsync()
+    {
+        var configured = !string.IsNullOrWhiteSpace(_cfg.PrimaryServerUrl) && !string.IsNullOrWhiteSpace(_cfg.ServerToken);
+        var idx = await EnsureAvailabilityIndexAsync();
+        _cache.TryGetValue<LastRebuildResult>(LastRebuildCacheKey, out var last);
+        return new PlexAvailabilityStatus
+        {
+            Configured = configured,
+            LastRebuildAt = last?.At,
+            TitleYearCount = idx.ByTitleYear.Count,
+            ExternalIdCount = idx.ByExternal.Count,
+            LastMaps = last?.Maps ?? 0,
+            LastSeasons = last?.Seasons ?? 0,
+            LastEpisodes = last?.Episodes ?? 0,
+            LastPrunedMaps = last?.PrunedMaps ?? 0,
+            LastPrunedSeasons = last?.PrunedSeasons ?? 0
+        };
     }
 }

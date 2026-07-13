@@ -1,0 +1,80 @@
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@inject PlexRequestsHosted.Services.Implementations.IDownloadPreferencesService Prefs
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h2>Download Preferences</h2>
+    <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="Save" Disabled="_loading">Save</MudButton>
+</div>
+<MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-4">
+    Global rules the downloader uses to choose between a full-season pack and individual episodes, and to
+    rank candidate releases. Applied to new download jobs. Not shown to users.
+</MudText>
+
+@if (_loading || _p is null)
+{
+    <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else
+{
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudText Typo="Typo.h6" Class="mb-3">Season packs vs. episodes</MudText>
+        <div class="d-flex gap-3 flex-wrap align-items-center">
+            <MudSelect T="SeasonPackStrategy" @bind-Value="_p.SeasonPackStrategy" Label="Strategy" Dense="true" Variant="Variant.Outlined" Style="min-width:240px;">
+                <MudSelectItem Value="SeasonPackStrategy.PreferPack">Prefer full-season pack</MudSelectItem>
+                <MudSelectItem Value="SeasonPackStrategy.PreferEpisodes">Prefer individual episodes</MudSelectItem>
+                <MudSelectItem Value="SeasonPackStrategy.Auto">Auto (pack if within size cap, else episodes)</MudSelectItem>
+            </MudSelect>
+            <MudSwitch T="bool" @bind-Value="_p.AllowEpisodeFallback" Color="Color.Primary" Label="Fall back to episodes when no acceptable pack" />
+            <MudNumericField T="int" @bind-Value="_p.MaxEpisodesForFanout" Label="Max episodes to fan out" Variant="Variant.Outlined" Dense="true" Min="1" Max="500" Style="max-width:200px;" />
+        </div>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
+            If a season is missing more episodes than the fan-out cap and no pack exists, the job fails instead of adding many torrents.
+        </MudText>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudText Typo="Typo.h6" Class="mb-3">Filters</MudText>
+        <div class="d-flex gap-3 flex-wrap align-items-center">
+            <MudNumericField T="int" @bind-Value="_p.MinSeeders" Label="Min seeders" Variant="Variant.Outlined" Dense="true" Min="0" Style="max-width:160px;" />
+            <MudNumericField T="double" @bind-Value="_p.MaxSizeGb" Label="Max size (GB)" Variant="Variant.Outlined" Dense="true" Min="0.05" Style="max-width:180px;" />
+            <MudNumericField T="double" @bind-Value="_p.MaxSeasonPackSizeGb" Label="Max season-pack size (GB)" Variant="Variant.Outlined" Dense="true" Min="0.05" Style="max-width:220px;" />
+            <MudSwitch T="bool" @bind-Value="_p.EnforceQualityFloor" Color="Color.Primary" Label="Enforce quality as a hard floor" />
+        </div>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudText Typo="Typo.h6" Class="mb-3">Release preferences</MudText>
+        <div class="d-flex gap-3 flex-wrap align-items-center">
+            <MudTextField @bind-Value="_p.PreferredGroupsCsv" Label="Preferred groups (comma-separated)" Placeholder="e.g. NTb, FLUX" Variant="Variant.Outlined" Dense="true" Style="min-width:280px;" />
+            <MudSwitch T="bool" @bind-Value="_p.PreferX265" Color="Color.Primary" Label="Prefer x265/HEVC" />
+            <MudSwitch T="bool" @bind-Value="_p.PreferHdr" Color="Color.Primary" Label="Prefer HDR" />
+            <MudSwitch T="bool" @bind-Value="_p.PreferHigherQualitySource" Color="Color.Primary" Label="Prefer higher-quality source (BluRay > WebDL)" />
+        </div>
+    </MudPaper>
+}
+
+@code {
+    private bool _loading = true;
+    private DownloadPreferencesDto? _p;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _loading = true; StateHasChanged();
+        try { _p = await Prefs.GetAsync(); }
+        finally { _loading = false; StateHasChanged(); }
+    }
+
+    private async Task Save()
+    {
+        if (_p is null) return;
+        if (await Prefs.UpdateAsync(_p)) await Toast.ShowSuccessAsync("Download preferences saved.");
+        else await Toast.ShowErrorAsync("Save failed.");
+    }
+}

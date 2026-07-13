@@ -1,196 +1,45 @@
 @page "/admin"
 @attribute [Authorize(Roles = "Admin")]
-@using PlexRequestsHosted.Services.Abstractions
-@inject IPlexApiService PlexApi
-@inject IUserProfileService UserProfiles
-@inject IToastService Toast
+@using Microsoft.AspNetCore.WebUtilities
 @inject NavigationManager Nav
 
-<PageTitle>Admin - Server Health</PageTitle>
+<PageTitle>Admin - Plex Requests</PageTitle>
 
-<MudContainer MaxWidth="MaxWidth.Large" Class="py-6">
-    <MudStack Spacing="3">
-        <MudText Typo="Typo.h5">Plex Server Health</MudText>
-
-        <MudPaper Class="pa-4" Elevation="2">
-            @if (_loading)
-            {
-                <MudProgressCircular Indeterminate="true" />
-            }
-            else if (_error is not null)
-            {
-                <MudAlert Severity="Severity.Error">@_error</MudAlert>
-            }
-            else if (_info is not null)
-            {
-                <MudStack Spacing="2">
-                    <MudStack Row="true" Spacing="3">
-                        <MudChip T="string" Color="@(_info.IsOnline ? Color.Success : Color.Error)" Variant="Variant.Filled">
-                            @(_info.IsOnline ? "Online" : "Offline")
-                        </MudChip>
-                        <MudText Typo="Typo.subtitle1">Name: @_info.Name</MudText>
-                        <MudText Typo="Typo.subtitle1">Version: @_info.Version</MudText>
-                    </MudStack>
-
-                    <MudDivider Class="my-2" />
-                    <MudText Typo="Typo.h6">Libraries</MudText>
-                    @if (_libraries.Count == 0)
-                    {
-                        <MudText>No libraries found.</MudText>
-                    }
-                    else
-                    {
-                        <MudTable Items="_libraries" Dense="true">
-                            <HeaderContent>
-                                <MudTh>Title</MudTh>
-                                <MudTh>Type</MudTh>
-                                <MudTh>Items</MudTh>
-                            </HeaderContent>
-                            <RowTemplate>
-                                <MudTd DataLabel="Title">@context.Title</MudTd>
-                                <MudTd DataLabel="Type">@context.Type</MudTd>
-                                <MudTd DataLabel="Items">@context.ItemCount</MudTd>
-                            </RowTemplate>
-                        </MudTable>
-                    }
-
-                    <MudStack Row="true" Spacing="2">
-                        <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="Refresh">Refresh</MudButton>
-                        <MudButton Color="Color.Secondary" Variant="Variant.Text" Href="/admin/requests">Manage Requests</MudButton>
-                        <MudButton Color="Color.Secondary" Variant="Variant.Text" Href="/browse">Go Home</MudButton>
-                    </MudStack>
-                </MudStack>
-            }
-        </MudPaper>
-
-        <MudText Typo="Typo.h5" Class="mt-4">Users &amp; Roles</MudText>
-        <MudPaper Class="pa-4" Elevation="2">
-            @if (_usersLoading)
-            {
-                <MudProgressCircular Indeterminate="true" />
-            }
-            else if (_users.Count == 0)
-            {
-                <MudText>No users have signed in yet.</MudText>
-            }
-            else
-            {
-                <MudTable Items="_users" Dense="true">
-                    <HeaderContent>
-                        <MudTh>User</MudTh>
-                        <MudTh>Plex Username</MudTh>
-                        <MudTh>Roles</MudTh>
-                        <MudTh>Admin</MudTh>
-                        <MudTh>Auto-approve</MudTh>
-                    </HeaderContent>
-                    <RowTemplate>
-                        <MudTd DataLabel="User">@(string.IsNullOrWhiteSpace(context.DisplayName) ? context.Username : context.DisplayName)</MudTd>
-                        <MudTd DataLabel="Plex Username">@context.PlexUsername</MudTd>
-                        <MudTd DataLabel="Roles">@string.Join(", ", context.Roles)</MudTd>
-                        <MudTd DataLabel="Admin">
-                            <MudSwitch T="bool" Value="@context.Roles.Contains("Admin")" Color="Color.Primary"
-                                       ValueChanged="@(v => ToggleAdmin(context, v))" />
-                        </MudTd>
-                        <MudTd DataLabel="Auto-approve">
-                            <MudTooltip Text="@(context.Roles.Contains("Admin") ? "Admins are always auto-approved" : "Approve this user's requests automatically")">
-                                <MudSwitch T="bool" Value="@(context.AutoApprove || context.Roles.Contains("Admin"))" Color="Color.Success"
-                                           Disabled="@context.Roles.Contains("Admin")"
-                                           ValueChanged="@(v => ToggleAutoApprove(context, v))" />
-                            </MudTooltip>
-                        </MudTd>
-                    </RowTemplate>
-                </MudTable>
-                <MudText Typo="Typo.caption" Class="mt-2 d-block text-secondary">
-                    Role changes take effect the next time that user signs in. Auto-approve applies to new requests immediately. Admins are always auto-approved.
-                </MudText>
-            }
-        </MudPaper>
-    </MudStack>
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6">
+    <MudTabs @bind-ActivePanelIndex="_activeIndex" Elevation="0" Rounded="false" Color="Color.Primary" SliderColor="Color.Primary" Class="custom-tabs">
+        <MudTabPanel Text="Server Health">
+            <div class="pt-4"><AdminServerHealthPanel /></div>
+        </MudTabPanel>
+        <MudTabPanel Text="Approvals">
+            <div class="pt-4"><AdminApprovalsPanel /></div>
+        </MudTabPanel>
+        <MudTabPanel Text="Issues">
+            <div class="pt-4"><AdminIssuesPanel /></div>
+        </MudTabPanel>
+        <MudTabPanel Text="Quality">
+            <div class="pt-4"><AdminQualityPanel /></div>
+        </MudTabPanel>
+        <MudTabPanel Text="Downloads">
+            <div class="pt-4"><AdminDownloadsPanel /></div>
+        </MudTabPanel>
+        <MudTabPanel Text="Users &amp; Roles">
+            <div class="pt-4"><AdminUsersPanel /></div>
+        </MudTabPanel>
+    </MudTabs>
 </MudContainer>
 
 @code {
-    private bool _loading = true;
-    private string? _error;
-    private PlexServerInfo? _info;
-    private List<PlexLibrary> _libraries = new();
+    private static readonly string[] TabKeys = { "health", "approvals", "issues", "quality", "downloads", "users" };
+    private int _activeIndex;
 
-    private bool _usersLoading = true;
-    private List<UserDto> _users = new();
-
-    // Load after first render; the two independent sections load in parallel.
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    protected override void OnInitialized()
     {
-        if (!firstRender) return;
-        await Task.WhenAll(LoadAsync(), LoadUsersAsync());
-    }
-
-    private async Task LoadUsersAsync()
-    {
-        _usersLoading = true;
-        try
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("tab", out var tab))
         {
-            _users = await UserProfiles.GetAllUsersAsync();
+            var idx = Array.IndexOf(TabKeys, tab.ToString().ToLowerInvariant());
+            if (idx >= 0) _activeIndex = idx;
         }
-        finally
-        {
-            _usersLoading = false;
-            StateHasChanged();
-        }
-    }
-
-    private async Task ToggleAdmin(UserDto user, bool isAdmin)
-    {
-        var ok = await UserProfiles.SetAdminAsync(user.Id, isAdmin);
-        if (ok)
-        {
-            await Toast.ShowSuccessAsync($"{(isAdmin ? "Granted" : "Revoked")} admin for {user.Username}");
-            await LoadUsersAsync();
-        }
-        else
-        {
-            await Toast.ShowErrorAsync("Failed to update roles");
-        }
-    }
-
-    private async Task ToggleAutoApprove(UserDto user, bool autoApprove)
-    {
-        var ok = await UserProfiles.SetAutoApproveAsync(user.Id, autoApprove);
-        if (ok)
-        {
-            await Toast.ShowSuccessAsync($"{(autoApprove ? "Enabled" : "Disabled")} auto-approve for {user.Username}");
-            await LoadUsersAsync();
-        }
-        else
-        {
-            await Toast.ShowErrorAsync("Failed to update auto-approve");
-        }
-    }
-
-    private async Task LoadAsync()
-    {
-        _error = null; _loading = true;
-        try
-        {
-            var infoTask = PlexApi.GetServerInfoAsync();
-            var libsTask = PlexApi.GetLibrariesAsync();
-            await Task.WhenAll(infoTask, libsTask);
-            _info = infoTask.Result;
-            _libraries = libsTask.Result;
-            if (_info is null) _error = "No server configuration found. Check .env or appsettings.";
-        }
-        catch (Exception ex)
-        {
-            _error = $"Failed to query Plex server: {ex.Message}";
-        }
-        finally
-        {
-            _loading = false;
-            StateHasChanged();
-        }
-    }
-
-    private async Task Refresh()
-    {
-        await LoadAsync();
     }
 }

@@ -1,0 +1,242 @@
+@using PlexRequestsHosted.Services.Abstractions
+@inject IPlexApiService PlexApi
+@inject IToastService Toast
+
+<MudStack Spacing="3">
+    <MudText Typo="Typo.h5">Plex Server Health</MudText>
+
+    <MudPaper Class="pa-4" Elevation="2">
+        @if (_loading)
+        {
+            <MudProgressCircular Indeterminate="true" />
+        }
+        else if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error">@_error</MudAlert>
+        }
+        else if (_info is not null)
+        {
+            <MudStack Spacing="2">
+                <MudStack Row="true" Spacing="3" Class="flex-wrap">
+                    <MudChip T="string" Color="@(_info.IsOnline ? Color.Success : Color.Error)" Variant="Variant.Filled">
+                        @(_info.IsOnline ? "Online" : "Offline")
+                    </MudChip>
+                    <MudText Typo="Typo.subtitle1">Name: @_info.Name</MudText>
+                    <MudText Typo="Typo.subtitle1">Version: @_info.Version</MudText>
+                    @if (!string.IsNullOrWhiteSpace(_info.Platform))
+                    {
+                        <MudText Typo="Typo.subtitle1">Platform: @_info.Platform @_info.PlatformVersion</MudText>
+                    }
+                </MudStack>
+
+                <MudDivider Class="my-2" />
+                <MudText Typo="Typo.h6">Libraries</MudText>
+                @if (_libraries.Count == 0)
+                {
+                    <MudText>No libraries found.</MudText>
+                }
+                else
+                {
+                    <MudTable Items="_libraries" Dense="true">
+                        <HeaderContent>
+                            <MudTh>Title</MudTh>
+                            <MudTh>Type</MudTh>
+                            <MudTh>Items</MudTh>
+                            <MudTh>Actions</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Title">@context.Title</MudTd>
+                            <MudTd DataLabel="Type">@context.Type</MudTd>
+                            <MudTd DataLabel="Items">@context.ItemCount</MudTd>
+                            <MudTd DataLabel="Actions">
+                                <MudTooltip Text="Ask Plex to scan this library for new files">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
+                                                   Disabled="@(_refreshingLibraryKey == context.Key)"
+                                                   OnClick="() => RefreshLibrary(context)" />
+                                </MudTooltip>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+
+                <MudStack Row="true" Spacing="2">
+                    <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="LoadServerAsync">Refresh</MudButton>
+                    <MudButton Color="Color.Secondary" Variant="Variant.Text" Href="/admin?tab=approvals">Manage Requests</MudButton>
+                    <MudButton Color="Color.Secondary" Variant="Variant.Text" Href="/browse">Go Home</MudButton>
+                </MudStack>
+            </MudStack>
+        }
+    </MudPaper>
+
+    <MudText Typo="Typo.h5" Class="mt-4">Now Playing</MudText>
+    <MudPaper Class="pa-4" Elevation="2">
+        @if (_sessionsLoading)
+        {
+            <MudProgressCircular Indeterminate="true" />
+        }
+        else if (_sessions.Count == 0)
+        {
+            <MudText>No active streams.</MudText>
+        }
+        else
+        {
+            <MudTable Items="_sessions" Dense="true">
+                <HeaderContent>
+                    <MudTh>User</MudTh>
+                    <MudTh>Title</MudTh>
+                    <MudTh>Progress</MudTh>
+                    <MudTh>Playback</MudTh>
+                    <MudTh>Bitrate</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="User">@context.Username</MudTd>
+                    <MudTd DataLabel="Title">@context.Title</MudTd>
+                    <MudTd DataLabel="Progress">@context.ProgressPercent%</MudTd>
+                    <MudTd DataLabel="Playback">
+                        <MudChip T="string" Size="Size.Small" Color="@(context.IsTranscoding ? Color.Warning : Color.Success)">
+                            @(context.IsTranscoding ? "Transcode" : "Direct Play")
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Bitrate">@(context.BitrateKbps is int kb ? $"{kb / 1000.0:0.#} Mbps" : "—")</MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </MudPaper>
+
+    <MudText Typo="Typo.h5" Class="mt-4">Availability Index</MudText>
+    <MudPaper Class="pa-4" Elevation="2">
+        @if (_availabilityLoading)
+        {
+            <MudProgressCircular Indeterminate="true" />
+        }
+        else if (_availability is not null)
+        {
+            @if (!_availability.Configured)
+            {
+                <MudAlert Severity="Severity.Warning" Class="mb-3">
+                    Plex is not configured (PLEX_URL / PLEX_TOKEN) — the availability index will never build, so
+                    requested episodes/seasons will never show as already on Plex.
+                </MudAlert>
+            }
+            <MudStack Row="true" Spacing="4" Class="flex-wrap mb-2">
+                <MudText Typo="Typo.body1">
+                    Last built: @(_availability.LastRebuildAt is DateTime at ? at.ToLocalTime().ToString("g") : "never")
+                </MudText>
+                <MudText Typo="Typo.body1">Matched titles: @_availability.TitleYearCount</MudText>
+                <MudText Typo="Typo.body1">External ids: @_availability.ExternalIdCount</MudText>
+            </MudStack>
+            @if (_availability.LastRebuildAt is not null)
+            {
+                <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-2">
+                    Last scan: @_availability.LastMaps id-maps, @_availability.LastSeasons seasons, @_availability.LastEpisodes episodes
+                    (pruned @_availability.LastPrunedMaps maps / @_availability.LastPrunedSeasons seasons).
+                </MudText>
+            }
+            <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="RebuildIndex" Disabled="@(_rebuilding || !_availability.Configured)">
+                @(_rebuilding ? "Rebuilding..." : "Rebuild now")
+            </MudButton>
+        }
+    </MudPaper>
+</MudStack>
+
+@code {
+    private bool _loading = true;
+    private string? _error;
+    private PlexServerInfo? _info;
+    private List<PlexLibrary> _libraries = new();
+    private string? _refreshingLibraryKey;
+
+    private bool _sessionsLoading = true;
+    private List<PlexSessionInfo> _sessions = new();
+
+    private bool _availabilityLoading = true;
+    private PlexAvailabilityStatus? _availability;
+    private bool _rebuilding;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Task.WhenAll(LoadServerAsync(), LoadSessionsAsync(), LoadAvailabilityAsync());
+    }
+
+    private async Task LoadServerAsync()
+    {
+        _error = null; _loading = true;
+        StateHasChanged();
+        try
+        {
+            var infoTask = PlexApi.GetServerInfoAsync();
+            var libsTask = PlexApi.GetLibrariesAsync();
+            await Task.WhenAll(infoTask, libsTask);
+            _info = infoTask.Result;
+            _libraries = libsTask.Result;
+            if (_info is null) _error = "No server configuration found. Check .env or appsettings.";
+            else _info = _info with { LibraryCount = _libraries.Count };
+        }
+        catch (Exception ex)
+        {
+            _error = $"Failed to query Plex server: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadSessionsAsync()
+    {
+        _sessionsLoading = true;
+        StateHasChanged();
+        try { _sessions = await PlexApi.GetActiveSessionsAsync(); }
+        finally { _sessionsLoading = false; StateHasChanged(); }
+    }
+
+    private async Task LoadAvailabilityAsync()
+    {
+        _availabilityLoading = true;
+        StateHasChanged();
+        try { _availability = await PlexApi.GetAvailabilityStatusAsync(); }
+        finally { _availabilityLoading = false; StateHasChanged(); }
+    }
+
+    private async Task RefreshLibrary(PlexLibrary lib)
+    {
+        _refreshingLibraryKey = lib.Key;
+        StateHasChanged();
+        try
+        {
+            await PlexApi.RefreshLibraryAsync(lib.Key);
+            await Toast.ShowSuccessAsync($"Asked Plex to scan '{lib.Title}'.");
+        }
+        catch (Exception ex)
+        {
+            await Toast.ShowErrorAsync($"Failed to refresh '{lib.Title}': {ex.Message}");
+        }
+        finally
+        {
+            _refreshingLibraryKey = null;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RebuildIndex()
+    {
+        _rebuilding = true;
+        StateHasChanged();
+        try
+        {
+            await PlexApi.RebuildAvailabilityIndexAsync();
+            _availability = await PlexApi.GetAvailabilityStatusAsync();
+            await Toast.ShowSuccessAsync($"Availability index rebuilt: {_availability.LastMaps} id-maps, {_availability.LastEpisodes} episodes.");
+        }
+        catch (Exception ex)
+        {
+            await Toast.ShowErrorAsync($"Rebuild failed: {ex.Message}");
+        }
+        finally
+        {
+            _rebuilding = false;
+            StateHasChanged();
+        }
+    }
+}

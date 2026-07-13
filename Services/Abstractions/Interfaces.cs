@@ -91,6 +91,10 @@ public interface IPlexApiService
     Task<List<object>> ResolveByTitleAsync(string title, int? year, MediaType mediaType, int maxResults = 5);
     Task<object> RebuildAvailabilityIndexAsync();
     Task<object> RebuildAvailabilityFromPlexAsync();
+    // Admin server health extras
+    Task<List<PlexSessionInfo>> GetActiveSessionsAsync();
+    Task RefreshLibraryAsync(string sectionKey);
+    Task<PlexAvailabilityStatus> GetAvailabilityStatusAsync();
 }
 
 public interface IAuthService
@@ -156,6 +160,8 @@ public record PlexServerInfo
 {
     public string Name { get; init; } = string.Empty;
     public string Version { get; init; } = string.Empty;
+    public string Platform { get; init; } = string.Empty;
+    public string PlatformVersion { get; init; } = string.Empty;
     public bool IsOnline { get; init; }
     public int LibraryCount { get; init; }
 }
@@ -167,6 +173,28 @@ public record PlexLibrary
     public string Title { get; init; } = string.Empty;
     public MediaType Type { get; init; }
     public int ItemCount { get; init; }
+}
+
+public record PlexSessionInfo
+{
+    public string Title { get; init; } = string.Empty;
+    public string Username { get; init; } = string.Empty;
+    public int ProgressPercent { get; init; }
+    public bool IsTranscoding { get; init; }
+    public int? BitrateKbps { get; init; }
+}
+
+public record PlexAvailabilityStatus
+{
+    public bool Configured { get; init; }
+    public DateTime? LastRebuildAt { get; init; }
+    public int TitleYearCount { get; init; }
+    public int ExternalIdCount { get; init; }
+    public int LastMaps { get; init; }
+    public int LastSeasons { get; init; }
+    public int LastEpisodes { get; init; }
+    public int LastPrunedMaps { get; init; }
+    public int LastPrunedSeasons { get; init; }
 }
 
 public class PlexAuthenticationFlow
