@@ -176,6 +176,32 @@ public class QualityRuleDto
     public Quality TargetQuality { get; set; } = Quality.FullHD;
 }
 
+/// <summary>
+/// Global, admin-configured download-selection preferences. A single record governs how the downloader
+/// ranks releases and chooses between season packs and individual episodes. This is also the wire type
+/// served by GET /api/fulfillment/config and consumed by the downloader.
+/// </summary>
+public class DownloadPreferencesDto
+{
+    public SeasonPackStrategy SeasonPackStrategy { get; set; } = SeasonPackStrategy.PreferPack;
+    /// <summary>When a pack is wanted but none is acceptable, download the missing episodes individually.</summary>
+    public bool AllowEpisodeFallback { get; set; } = true;
+    /// <summary>Safety cap: if a season is missing more episodes than this and no pack exists, fail instead of fanning out.</summary>
+    public int MaxEpisodesForFanout { get; set; } = 30;
+
+    public int MinSeeders { get; set; } = 1;
+    public double MaxSizeGb { get; set; } = 25;
+    public double MaxSeasonPackSizeGb { get; set; } = 80;
+
+    /// <summary>Comma-separated preferred release groups (case-insensitive) that get a scoring bonus.</summary>
+    public string? PreferredGroupsCsv { get; set; }
+    public bool PreferX265 { get; set; } = true;
+    public bool PreferHdr { get; set; }
+    public bool PreferHigherQualitySource { get; set; } = true;
+    /// <summary>Treat the job's Quality as a hard floor (reject lower) rather than a soft preference.</summary>
+    public bool EnforceQualityFloor { get; set; } = true;
+}
+
 public class UserDto : BaseDto
 {
     [Required]
@@ -215,6 +241,12 @@ public class FulfillmentJobDto
     public List<int> RequestedSeasons { get; set; } = new();
     /// <summary>Episode-level targets as (season, episode) pairs. Empty ⇒ use RequestedSeasons / whole title.</summary>
     public List<EpisodeRef> RequestedEpisodes { get; set; } = new();
+    /// <summary>
+    /// Per-season fan-out targets computed at enqueue: for each missing season, its total episode count and
+    /// which episode numbers are still missing from Plex. Lets the downloader prefer a season pack and fall
+    /// back to precisely the missing episodes. Empty ⇒ metadata unavailable, so the downloader is pack-only.
+    /// </summary>
+    public List<SeasonTarget> SeasonTargets { get; set; } = new();
     public Quality Quality { get; set; }
     public FulfillmentStatus Status { get; set; }
     public int Attempts { get; set; }
@@ -226,6 +258,14 @@ public class EpisodeRef
 {
     public int Season { get; set; }
     public int Episode { get; set; }
+}
+
+/// <summary>A season's fan-out target: its total episode count and the episode numbers still missing from Plex.</summary>
+public class SeasonTarget
+{
+    public int Season { get; set; }
+    public int EpisodeCount { get; set; }
+    public List<int> MissingEpisodes { get; set; } = new();
 }
 
 public class NotificationDto

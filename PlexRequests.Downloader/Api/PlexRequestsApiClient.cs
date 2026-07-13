@@ -38,6 +38,25 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         }
     }
 
+    public async Task<DownloadPreferencesDto?> GetConfigAsync(CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _http.GetAsync("/api/fulfillment/config", ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Config fetch returned {Status}", (int)resp.StatusCode);
+                return null;
+            }
+            return await resp.Content.ReadFromJsonAsync<DownloadPreferencesDto>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Config request failed (web app unreachable?)");
+            return null;
+        }
+    }
+
     public async Task<bool> ReportProgressAsync(int jobId, int progress, CancellationToken ct)
     {
         var resp = await _http.PostAsJsonAsync($"/api/fulfillment/{jobId}/progress",

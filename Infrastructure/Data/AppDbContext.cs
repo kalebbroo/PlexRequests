@@ -15,6 +15,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<SeasonEpisodesCacheEntity> SeasonEpisodesCache => Set<SeasonEpisodesCacheEntity>();
     public DbSet<MediaIssueEntity> MediaIssues => Set<MediaIssueEntity>();
     public DbSet<QualityRuleEntity> QualityRules => Set<QualityRuleEntity>();
+    public DbSet<DownloadPreferencesEntity> DownloadPreferences => Set<DownloadPreferencesEntity>();
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
     public DbSet<FulfillmentJobEntity> FulfillmentJobs => Set<FulfillmentJobEntity>();
     public DbSet<BridgeOutboxEntity> BridgeOutbox => Set<BridgeOutboxEntity>();
@@ -104,6 +105,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             b.HasKey(x => x.Id);
             b.HasIndex(x => x.Order);
+        });
+
+        modelBuilder.Entity<DownloadPreferencesEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.IsSingleton).IsUnique(); // enforce the single settings row
         });
 
         modelBuilder.Entity<NotificationEntity>(b =>

@@ -43,6 +43,8 @@ public partial class ReleaseParser : IReleaseParser
         var m = GroupRegex().Match(name);
         if (m.Success) group = m.Groups[1].Value;
 
+        var (season, episode, isPack) = ParseSeasonEpisode(name);
+
         return new ParsedRelease
         {
             Resolution = resolution,
@@ -50,9 +52,44 @@ public partial class ReleaseParser : IReleaseParser
             Codec = codec,
             Hdr = hdr,
             ProperOrRepack = proper,
-            Group = group
+            Group = group,
+            Season = season,
+            Episode = episode,
+            IsSeasonPack = isPack
         };
     }
+
+    /// <summary>
+    /// Extract season/episode and whether the release is a whole-season/complete pack, from the name.
+    /// A single episode (SxxExx or NxNN) sets Season+Episode; a pack (Sxx with no Exx, "Season N",
+    /// "Complete", or a multi-season range Sxx-Sxx) sets IsSeasonPack (+Season when a single one is named).
+    /// </summary>
+    private static (int? season, int? episode, bool isPack) ParseSeasonEpisode(string name)
+    {
+        // Single episode: S01E02 / S1E2 / 1x02.
+        var ep = Regex.Match(name, @"\bS(\d{1,2})[\s._-]*E(\d{1,3})\b", RxOpts);
+        if (ep.Success)
+            return (int.Parse(ep.Groups[1].Value), int.Parse(ep.Groups[2].Value), false);
+        var alt = Regex.Match(name, @"\b(\d{1,2})x(\d{1,3})\b", RxOpts);
+        if (alt.Success)
+            return (int.Parse(alt.Groups[1].Value), int.Parse(alt.Groups[2].Value), false);
+
+        // No explicit episode ⇒ look for pack signals.
+        var multi = Regex.Match(name, @"\bS(\d{1,2})[\s._-]*-[\s._-]*S(\d{1,2})\b", RxOpts); // S01-S05
+        if (multi.Success) return (int.Parse(multi.Groups[1].Value), null, true);
+
+        var seasonWord = Regex.Match(name, @"\bseason[\s._-]*(\d{1,2})\b", RxOpts);          // Season 1
+        if (seasonWord.Success) return (int.Parse(seasonWord.Groups[1].Value), null, true);
+
+        var sOnly = Regex.Match(name, @"\bS(\d{1,2})\b(?![\s._-]*E\d)", RxOpts);             // S01 (no Exx)
+        if (sOnly.Success) return (int.Parse(sOnly.Groups[1].Value), null, true);
+
+        if (Rx(name, @"\b(complete|complete[\s._-]*series)\b")) return (null, null, true);   // whole-series pack
+
+        return (null, null, false);
+    }
+
+    private const RegexOptions RxOpts = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
 
     public int ResolutionFromLabel(string? label)
     {

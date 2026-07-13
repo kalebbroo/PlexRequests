@@ -76,6 +76,9 @@ builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<Nyaa
 builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<ExtToIndexerProvider>());
 builder.Services.AddTransient<IIndexerClient, IndexerClient>();
 
+// Admin-configured download preferences, fetched from the web app (appsettings QualityOptions fallback).
+builder.Services.AddSingleton<IDownloadPreferencesProvider, DownloadPreferencesProvider>();
+
 // Release parsing + ranking.
 builder.Services.AddSingleton<IReleaseParser, ReleaseParser>();
 builder.Services.AddSingleton<IReleaseRanker, ReleaseRanker>();

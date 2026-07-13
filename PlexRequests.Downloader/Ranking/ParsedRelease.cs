@@ -11,4 +11,9 @@ public record ParsedRelease
     public bool Hdr { get; init; }
     public bool ProperOrRepack { get; init; }
     public string? Group { get; init; }
+
+    // TV season/episode signals parsed from the name (works for every provider, not just EZTV).
+    public int? Season { get; init; }           // season number when detectable
+    public int? Episode { get; init; }          // episode number for a single-episode release
+    public bool IsSeasonPack { get; init; }     // whole-season / complete-series / multi-season release
 }

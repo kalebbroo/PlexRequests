@@ -41,6 +41,11 @@ public class FulfillmentJobEntity
     [MaxLength(4096)]
     public string? RequestedEpisodesCsv { get; set; }
 
+    // Per-season fan-out targets (JSON-serialized List<SeasonTarget>): each missing season's total episode
+    // count and which episode numbers are still missing from Plex. Lets the downloader prefer a pack and
+    // fall back to precisely the missing episodes. Null/empty ⇒ pack-only (metadata unavailable at enqueue).
+    public string? SeasonTargetsJson { get; set; }
+
     public Quality Quality { get; set; }
 
     public FulfillmentStatus Status { get; set; } = FulfillmentStatus.Queued;

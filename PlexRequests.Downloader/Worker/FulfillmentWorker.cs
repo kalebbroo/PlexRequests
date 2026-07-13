@@ -32,7 +32,7 @@ public class FulfillmentWorker(
             foreach (var rec in await stateStore.GetAllAsync(stoppingToken))
             {
                 logger.LogInformation("Resuming in-flight job {JobId} \"{Title}\"", rec.Job.Id, rec.Job.Title);
-                StartTracked(rec.Job, () => pipeline.ResumeAsync(rec.Job, rec.TorrentId, stoppingToken));
+                StartTracked(rec.Job, () => pipeline.ResumeAsync(rec, stoppingToken));
             }
         }
         catch (Exception ex) { logger.LogError(ex, "Failed to resume persisted jobs"); }

@@ -142,6 +142,7 @@ builder.Services.AddScoped<IFulfillmentQueue, FulfillmentQueue>();
 builder.Services.AddScoped<IDiscordLinkService, DiscordLinkService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IMediaIssueService, PlexRequestsHosted.Services.Implementations.MediaIssueService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IQualityRuleService, PlexRequestsHosted.Services.Implementations.QualityRuleService>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IDownloadPreferencesService, PlexRequestsHosted.Services.Implementations.DownloadPreferencesService>();
 // Backstop that requeues/fails jobs stranded by a dead downloader.
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.FulfillmentReaperService>();
 // Keeps the DB-backed Plex availability index fresh (per-season episode presence + prune removals).
@@ -378,6 +379,13 @@ app.MapPost("/api/fulfillment/claim", async (ClaimRequest body, HttpContext ctx,
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     var jobs = await queue.ClaimNextAsync(body.WorkerId ?? "worker", Math.Clamp(body.Max ?? 1, 1, 25));
     return Results.Ok(jobs);
+});
+
+// Worker fetches the global download-selection preferences (season-pack strategy, thresholds, etc.).
+app.MapGet("/api/fulfillment/config", async (HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IDownloadPreferencesService prefs) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return Results.Ok(await prefs.GetAsync());
 });
 
 // Worker reports download progress; reflects the request as Processing for the UI.

@@ -81,6 +81,17 @@ public enum Quality
     UHD8K = 4320
 }
 
+/// <summary>How the downloader chooses between a full-season pack and individual episodes for a season-scoped job.</summary>
+public enum SeasonPackStrategy
+{
+    /// <summary>Prefer a full-season pack; fall back to individual episodes only if no acceptable pack exists.</summary>
+    PreferPack = 0,
+    /// <summary>Prefer individual episodes; use a pack only to fill episodes that have no standalone release.</summary>
+    PreferEpisodes = 1,
+    /// <summary>Pick a pack when one is available within the size cap, else fan out to episodes.</summary>
+    Auto = 2
+}
+
 public enum SortOrder
 {
     DateDescending = 0,
