@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+using Microsoft.Extensions.Caching.Memory;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
@@ -17,12 +17,17 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
 {
     private readonly TMDbClient _client;
     private readonly ILogger<TmdbMetadataProvider> _logger;
-    private static readonly ConcurrentDictionary<string, List<MediaCardDto>> _cache = new();
-    private static readonly ConcurrentDictionary<int, MediaDetailDto> _detailCache = new();
+    // Shared IMemoryCache (singleton) with real TTLs — replaces the old never-expiring static
+    // dictionaries. Entries expire so trending/popular stay fresh and memory can't grow unbounded.
+    private readonly Microsoft.Extensions.Caching.Memory.IMemoryCache _mem;
+    private static readonly TimeSpan DiscoverTtl = TimeSpan.FromHours(1);   // trending/popular/library/genre
+    private static readonly TimeSpan SearchTtl = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan DetailTtl = TimeSpan.FromHours(12);
 
-    public TmdbMetadataProvider(IConfiguration configuration, ILogger<TmdbMetadataProvider> logger)
+    public TmdbMetadataProvider(IConfiguration configuration, ILogger<TmdbMetadataProvider> logger, Microsoft.Extensions.Caching.Memory.IMemoryCache cache)
     {
         _logger = logger;
+        _mem = cache;
         var apiKey = configuration["ApiKeys:TMDb:ApiKey"];
         var accessToken = configuration["ApiKeys:TMDb:ReadAccessToken"];
 
@@ -34,15 +39,15 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         _client = new TMDbClient(apiKey ?? accessToken!);
     }
 
+    private T CacheGetOrNull<T>(string key) where T : class => _mem.TryGetValue(key, out var v) ? v as T : null;
+    private T CacheSet<T>(string key, T value, TimeSpan ttl) { _mem.Set(key, value, ttl); return value; }
+
     public async Task<List<MediaCardDto>> SearchAsync(string query, PlexRequestsHosted.Shared.Enums.MediaType? mediaType = null, int page = 1, int pageSize = 20)
     {
         try
         {
             var cacheKey = $"search_{query}_{mediaType}_{page}_{pageSize}";
-            if (_cache.TryGetValue(cacheKey, out var cached))
-            {
-                return cached;
-            }
+            if (CacheGetOrNull<List<MediaCardDto>>(cacheKey) is { } cached) return cached;
 
             var results = new List<MediaCardDto>();
 
@@ -61,8 +66,7 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
             // Apply page size limit
             results = results.Take(pageSize).ToList();
 
-            _cache.TryAdd(cacheKey, results);
-            return results;
+            return CacheSet(cacheKey, results, SearchTtl);
         }
         catch (Exception ex)
         {
@@ -75,11 +79,8 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
     {
         try
         {
-            var cacheKey = $"{mediaType}_{mediaId}";
-            if (_detailCache.TryGetValue(cacheKey.GetHashCode(), out var cached))
-            {
-                return cached;
-            }
+            var cacheKey = $"detail_{mediaType}_{mediaId}";
+            if (CacheGetOrNull<MediaDetailDto>(cacheKey) is { } cached) return cached;
 
             MediaDetailDto? result = null;
 
@@ -100,10 +101,7 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
                 }
             }
 
-            if (result != null)
-            {
-                _detailCache.TryAdd(cacheKey.GetHashCode(), result);
-            }
+            if (result != null) CacheSet(cacheKey, result, DetailTtl);
 
             return result;
         }
@@ -119,10 +117,7 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         try
         {
             var cacheKey = $"recent_{count}";
-            if (_cache.TryGetValue(cacheKey, out var cached))
-            {
-                return cached;
-            }
+            if (CacheGetOrNull<List<MediaCardDto>>(cacheKey) is { } cached) return cached;
 
             // Use discover endpoints for popular content
             var movies = await _client.DiscoverMoviesAsync().Query();
@@ -157,8 +152,7 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
                 TmdbId = t.Id
             }));
 
-            _cache.TryAdd(cacheKey, results);
-            return results;
+            return CacheSet(cacheKey, results, DiscoverTtl);
         }
         catch (Exception ex)
         {
@@ -172,10 +166,7 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         try
         {
             var cacheKey = $"library_{mediaType}_{page}_{pageSize}";
-            if (_cache.TryGetValue(cacheKey, out var cached))
-            {
-                return cached;
-            }
+            if (CacheGetOrNull<List<MediaCardDto>>(cacheKey) is { } cached) return cached;
 
             var results = new List<MediaCardDto>();
 
@@ -190,8 +181,7 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
                 results.AddRange(tvShows.Results.Take(pageSize).Select(MapTvShowToCard));
             }
 
-            _cache.TryAdd(cacheKey, results);
-            return results;
+            return CacheSet(cacheKey, results, DiscoverTtl);
         }
         catch (Exception ex)
         {
@@ -204,12 +194,10 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
 
     private async Task<List<MediaCardDto>> CachedAsync(string cacheKey, Func<Task<List<MediaCardDto>>> factory)
     {
-        if (_cache.TryGetValue(cacheKey, out var cached)) return cached;
+        if (CacheGetOrNull<List<MediaCardDto>>(cacheKey) is { } cached) return cached;
         try
         {
-            var result = await factory();
-            _cache.TryAdd(cacheKey, result);
-            return result;
+            return CacheSet(cacheKey, await factory(), DiscoverTtl);
         }
         catch (Exception ex)
         {
