@@ -21,6 +21,11 @@
                     <NavLink href="/browse/tvshow" class="nav-item">TV Shows</NavLink>
                     <NavLink href="/requests" class="nav-item">My Requests</NavLink>
                     <NavLink href="/watchlist" class="nav-item">My List</NavLink>
+                    @if (_isAdmin)
+                    {
+                        <NavLink href="/admin/requests" class="nav-item">Approvals</NavLink>
+                        <NavLink href="/admin" class="nav-item">Admin</NavLink>
+                    }
                 </nav>
             </div>
             
@@ -89,6 +94,11 @@
                 <NavLink href="/browse/tvshow" class="mobile-nav-item" @onclick="CloseMobileMenu">TV Shows</NavLink>
                 <NavLink href="/requests" class="mobile-nav-item" @onclick="CloseMobileMenu">My Requests</NavLink>
                 <NavLink href="/watchlist" class="mobile-nav-item" @onclick="CloseMobileMenu">My List</NavLink>
+                @if (_isAdmin)
+                {
+                    <NavLink href="/admin/requests" class="mobile-nav-item" @onclick="CloseMobileMenu">Approvals</NavLink>
+                    <NavLink href="/admin" class="mobile-nav-item" @onclick="CloseMobileMenu">Admin</NavLink>
+                }
                 <NavLink href="/search" class="mobile-nav-item" @onclick="CloseMobileMenu">Search</NavLink>
                 <MudDivider Class="my-3" />
                 <NavLink href="/profile" class="mobile-nav-item" @onclick="CloseMobileMenu">Profile</NavLink>
@@ -145,6 +155,7 @@
     private List<NotificationDto> _notifications = new();
     private int _userId;
     private bool _isAuthenticated = false;
+    private bool _isAdmin = false;
     private string? _currentUsername;
 
     protected override async Task OnInitializedAsync()
@@ -156,6 +167,7 @@
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         _isAuthenticated = authState.User.Identity?.IsAuthenticated ?? false;
         _currentUsername = authState.User.Identity?.Name;
+        _isAdmin = authState.User.IsInRole("Admin");
 
         if (_isAuthenticated)
         {

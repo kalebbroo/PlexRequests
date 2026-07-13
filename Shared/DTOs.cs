@@ -110,6 +110,7 @@ public class UserDto : BaseDto
     public string? DisplayName { get; set; }
     public string? AvatarUrl { get; set; }
     public List<string> Roles { get; set; } = new();
+    public bool AutoApprove { get; set; }
     public UserPreferencesDto Preferences { get; set; } = new();
     public UserStatsDto Stats { get; set; } = new();
     public string? PlexUsername { get; set; }

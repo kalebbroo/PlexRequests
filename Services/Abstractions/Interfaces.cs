@@ -111,6 +111,7 @@ public interface IUserProfileService
     // Admin user management
     Task<List<UserDto>> GetAllUsersAsync();
     Task<bool> SetAdminAsync(int userId, bool isAdmin);
+    Task<bool> SetAutoApproveAsync(int userId, bool autoApprove);
 }
 
 public interface IDiscordLinkService

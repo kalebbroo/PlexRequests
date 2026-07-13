@@ -112,6 +112,15 @@ public class UserProfileService(AppDbContext db) : IUserProfileService
         return true;
     }
 
+    public async Task<bool> SetAutoApproveAsync(int userId, bool autoApprove)
+    {
+        var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
+        if (profile is null) return false;
+        profile.AutoApprove = autoApprove;
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
     private static UserDto MapToDto(UserEntity user, UserProfileEntity profile)
     {
         return new UserDto
@@ -122,6 +131,7 @@ public class UserProfileService(AppDbContext db) : IUserProfileService
             Email = user.Email ?? string.Empty,
             AvatarUrl = user.AvatarUrl,
             Roles = (profile.Roles ?? "User").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(),
+            AutoApprove = profile.AutoApprove,
             Preferences = MapPreferences(profile),
             Stats = new UserStatsDto
             {

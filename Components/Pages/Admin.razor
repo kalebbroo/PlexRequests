@@ -81,6 +81,7 @@
                         <MudTh>Plex Username</MudTh>
                         <MudTh>Roles</MudTh>
                         <MudTh>Admin</MudTh>
+                        <MudTh>Auto-approve</MudTh>
                     </HeaderContent>
                     <RowTemplate>
                         <MudTd DataLabel="User">@(string.IsNullOrWhiteSpace(context.DisplayName) ? context.Username : context.DisplayName)</MudTd>
@@ -90,10 +91,17 @@
                             <MudSwitch T="bool" Value="@context.Roles.Contains("Admin")" Color="Color.Primary"
                                        ValueChanged="@(v => ToggleAdmin(context, v))" />
                         </MudTd>
+                        <MudTd DataLabel="Auto-approve">
+                            <MudTooltip Text="@(context.Roles.Contains("Admin") ? "Admins are always auto-approved" : "Approve this user's requests automatically")">
+                                <MudSwitch T="bool" Value="@(context.AutoApprove || context.Roles.Contains("Admin"))" Color="Color.Success"
+                                           Disabled="@context.Roles.Contains("Admin")"
+                                           ValueChanged="@(v => ToggleAutoApprove(context, v))" />
+                            </MudTooltip>
+                        </MudTd>
                     </RowTemplate>
                 </MudTable>
                 <MudText Typo="Typo.caption" Class="mt-2 d-block text-secondary">
-                    Role changes take effect the next time that user signs in.
+                    Role changes take effect the next time that user signs in. Auto-approve applies to new requests immediately. Admins are always auto-approved.
                 </MudText>
             }
         </MudPaper>
@@ -140,6 +148,20 @@
         else
         {
             await Toast.ShowErrorAsync("Failed to update roles");
+        }
+    }
+
+    private async Task ToggleAutoApprove(UserDto user, bool autoApprove)
+    {
+        var ok = await UserProfiles.SetAutoApproveAsync(user.Id, autoApprove);
+        if (ok)
+        {
+            await Toast.ShowSuccessAsync($"{(autoApprove ? "Enabled" : "Disabled")} auto-approve for {user.Username}");
+            await LoadUsersAsync();
+        }
+        else
+        {
+            await Toast.ShowErrorAsync("Failed to update auto-approve");
         }
     }
 

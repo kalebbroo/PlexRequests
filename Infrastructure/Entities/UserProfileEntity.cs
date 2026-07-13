@@ -22,6 +22,10 @@ public class UserProfileEntity
     [MaxLength(256)]
     public string Roles { get; set; } = "User";
 
+    // When true, this user's requests skip the pending queue and are approved automatically.
+    // Admins are always auto-approved regardless of this flag.
+    public bool AutoApprove { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastLoginAt { get; set; }
 

@@ -77,3 +77,46 @@
     .browse-select { flex: 1; min-width: 120px; }
     .browse-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--spacing-md); }
 }
+
+/* Featured hero on the discovery view */
+.browse-hero {
+    position: relative;
+    min-height: 56vh;
+    background-size: cover;
+    background-position: center 20%;
+    display: flex;
+    align-items: flex-end;
+    margin-top: calc(-1 * var(--header-height));
+}
+.browse-hero-scrim {
+    position: absolute; inset: 0;
+    background:
+        linear-gradient(to top, var(--bg-primary) 2%, rgba(20,20,20,0.4) 45%, rgba(20,20,20,0.15) 100%),
+        linear-gradient(to right, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 45%, rgba(0,0,0,0) 75%);
+}
+.browse-hero-content { position: relative; z-index: 1; max-width: 1920px; width: 100%; margin: 0 auto; padding: 0 var(--spacing-2xl) var(--spacing-2xl); }
+.browse-hero-kicker { display: inline-block; text-transform: uppercase; letter-spacing: 0.15em; font-size: var(--font-size-xs); font-weight: 700; color: var(--plex-orange); margin-bottom: var(--spacing-sm); }
+.browse-hero-title { font-size: clamp(2rem, 4.5vw, 3.5rem); font-weight: 900; line-height: 1.05; margin: 0 0 var(--spacing-md); max-width: 60%; text-shadow: 0 2px 20px rgba(0,0,0,0.6); }
+.browse-hero-meta { display: flex; align-items: center; gap: var(--spacing-md); color: var(--text-secondary); font-weight: 600; margin-bottom: var(--spacing-md); }
+.bh-rating { display: inline-flex; align-items: center; gap: 4px; color: #fff; }
+.bh-rating ::deep .mud-icon-root { color: var(--plex-orange); }
+.bh-avail { color: var(--color-success); border: 1px solid var(--color-success); border-radius: var(--radius-sm); padding: 1px 8px; font-size: var(--font-size-xs); text-transform: uppercase; }
+.browse-hero-overview { max-width: 46%; font-size: var(--font-size-base); line-height: 1.5; color: var(--text-secondary); margin: 0 0 var(--spacing-lg); text-shadow: 0 1px 8px rgba(0,0,0,0.7); }
+.browse-hero-actions { display: flex; gap: var(--spacing-md); flex-wrap: wrap; }
+.bh-btn { display: inline-flex; align-items: center; gap: var(--spacing-sm); border: none; border-radius: var(--radius-md); font-size: var(--font-size-base); font-weight: 700; padding: 10px 24px; cursor: pointer; transition: filter var(--transition-fast), background-color var(--transition-fast); }
+.bh-btn.primary { background: var(--plex-orange); color: #000; }
+.bh-btn.primary:hover { filter: brightness(1.08); }
+.bh-btn.ghost { background: rgba(109,109,110,0.5); color: #fff; }
+.bh-btn.ghost:hover { background: rgba(109,109,110,0.75); }
+
+/* When the hero is present the header shouldn't add its own top gradient band */
+.browse-header { position: relative; z-index: 2; }
+
+@media (max-width: 900px) {
+    .browse-hero-title { max-width: 100%; }
+    .browse-hero-overview { max-width: 100%; }
+}
+@media (max-width: 600px) {
+    .browse-hero { min-height: 46vh; }
+    .browse-hero-content { padding: 0 var(--spacing-lg) var(--spacing-lg); }
+}

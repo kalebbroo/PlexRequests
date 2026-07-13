@@ -316,6 +316,10 @@ public class MediaRequestService(
         if (!isAdmin && !await CheckLimitsCoreAsync(userId, mediaType))
             return new MediaRequestResult { Success = false, ErrorMessage = "You've reached your request limit for this media type." };
 
+        // Admins, and users flagged AutoApprove, skip the pending queue.
+        var autoApprove = isAdmin || await _db.UserProfiles
+            .Where(p => p.UserId == userId).Select(p => p.AutoApprove).FirstOrDefaultAsync();
+
         // Enrich with metadata for nice UI
         string title = $"Item #{mediaId}";
         string? poster = null;
@@ -336,8 +340,9 @@ public class MediaRequestService(
             MediaType = mediaType,
             Title = title,
             PosterUrl = poster,
-            Status = RequestStatus.Pending,
+            Status = autoApprove ? RequestStatus.Approved : RequestStatus.Pending,
             RequestedAt = DateTime.UtcNow,
+            ApprovedAt = autoApprove ? DateTime.UtcNow : null,
             RequestedBy = username,
             RequestedByUserId = userId,
             // TV selection: episodes > seasons > whole series. Movies are always "all".
@@ -354,7 +359,20 @@ public class MediaRequestService(
         };
         _db.MediaRequests.Add(entity);
         var saved = await _db.SaveChangesAsync() > 0;
-        if (saved) await _notify.RequestCreatedAsync(ToDto(entity));
+        if (saved)
+        {
+            var dto = ToDto(entity);
+            if (autoApprove)
+            {
+                // Straight to approved: notify + hand off to fulfillment (if a downloader is wired up).
+                await _notify.RequestApprovedAsync(dto);
+                if (_config.GetValue<bool>("Fulfillment:Enabled")) await _fulfillment.EnqueueAsync(dto);
+            }
+            else
+            {
+                await _notify.RequestCreatedAsync(dto);
+            }
+        }
         return new MediaRequestResult { Success = saved, RequestId = entity.Id, NewStatus = entity.Status };
     }
 
