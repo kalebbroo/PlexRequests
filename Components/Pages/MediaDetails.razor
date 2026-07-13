@@ -264,15 +264,14 @@ else
                                         </MudButton>
                                         @if (!SeriesFullyOnPlex)
                                         {
-                                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="RequestEntireSeries">Request Entire Series</MudButton>
+                                            <MudTooltip Text="New episodes may be auto-downloaded as they air, depending on server settings">
+                                                <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="RequestEntireSeries">Request Entire Series</MudButton>
+                                            </MudTooltip>
                                         }
                                         else
                                         {
                                             <MudChip T="string" Color="Color.Success" Variant="Variant.Text" Icon="@Icons.Material.Filled.CheckCircle">All aired seasons on Plex</MudChip>
                                         }
-                                        <MudTooltip Text="Keep this series monitored and auto-download new episodes as they air">
-                                            <MudSwitch T="bool" @bind-Value="_monitor" Color="Color.Primary" Label="Monitor new episodes" />
-                                        </MudTooltip>
                                     </div>
                                 }
                                 else
@@ -484,7 +483,6 @@ else
     private readonly HashSet<int> _expanded = new();
     private readonly Dictionary<int, List<PlexRequestsHosted.Shared.DTOs.EpisodeDto>> _episodes = new();
     private HashSet<int> _availableSeasons = new();
-    private bool _monitor;
 
     // Report-a-Problem dialog
     private bool _reportOpen;
@@ -563,9 +561,8 @@ else
     private async Task RequestEntireSeries()
     {
         if (_media is null) return;
-        var result = await MediaRequestService.RequestSeriesAsync(_media.Id, _media.MediaType, _monitor);
-        var msg = _monitor ? $"{_media.Title} requested and now monitored for new episodes." : $"{_media.Title} (entire series) has been requested!";
-        await AfterTvRequest(result, msg);
+        var result = await MediaRequestService.RequestSeriesAsync(_media.Id, _media.MediaType);
+        await AfterTvRequest(result, $"{_media.Title} (entire series) has been requested!");
     }
 
     private async Task AfterTvRequest(PlexRequestsHosted.Shared.DTOs.MediaRequestResult result, string successMessage)

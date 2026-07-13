@@ -35,6 +35,16 @@ else
     </MudPaper>
 
     <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudText Typo="Typo.h6" Class="mb-3">Series monitoring</MudText>
+        <div class="d-flex gap-3 flex-wrap align-items-center">
+            <MudSwitch T="bool" @bind-Value="_p.AutoMonitorEntireSeriesRequests" Color="Color.Primary" Label="Auto-monitor new episodes when a user requests an entire series" />
+        </div>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
+            When on, requesting an entire series also enables monitoring, so newly-aired episodes are automatically downloaded. Users no longer choose this per-request.
+        </MudText>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
         <MudText Typo="Typo.h6" Class="mb-3">Filters</MudText>
         <div class="d-flex gap-3 flex-wrap align-items-center">
             <MudNumericField T="int" @bind-Value="_p.MinSeeders" Label="Min seeders" Variant="Variant.Outlined" Dense="true" Min="0" Style="max-width:160px;" />

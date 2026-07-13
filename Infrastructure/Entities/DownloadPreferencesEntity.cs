@@ -31,5 +31,9 @@ public class DownloadPreferencesEntity
     public bool PreferHigherQualitySource { get; set; } = true;
     public bool EnforceQualityFloor { get; set; } = true;
 
+    /// <summary>When a user requests an entire series, automatically mark it monitored so newly-aired
+    /// episodes are auto-downloaded. Admins can turn this off to require monitoring to be enabled manually.</summary>
+    public bool AutoMonitorEntireSeriesRequests { get; set; } = true;
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

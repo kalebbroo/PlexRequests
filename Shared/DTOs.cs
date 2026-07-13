@@ -200,6 +200,9 @@ public class DownloadPreferencesDto
     public bool PreferHigherQualitySource { get; set; } = true;
     /// <summary>Treat the job's Quality as a hard floor (reject lower) rather than a soft preference.</summary>
     public bool EnforceQualityFloor { get; set; } = true;
+
+    /// <summary>When a user requests an entire series, automatically monitor it for new episodes.</summary>
+    public bool AutoMonitorEntireSeriesRequests { get; set; } = true;
 }
 
 public class UserDto : BaseDto

@@ -14,7 +14,8 @@ public class MediaRequestService(
     IMediaMetadataProvider metadataProvider,
     INotificationService notificationService,
     IFulfillmentQueue fulfillmentQueue,
-    IConfiguration configuration) : IMediaRequestService
+    IConfiguration configuration,
+    IDownloadPreferencesService downloadPreferences) : IMediaRequestService
 {
     private readonly AppDbContext _db = db;
     private readonly AuthenticationStateProvider _auth = authStateProvider;
@@ -22,6 +23,7 @@ public class MediaRequestService(
     private readonly INotificationService _notify = notificationService;
     private readonly IFulfillmentQueue _fulfillment = fulfillmentQueue;
     private readonly IConfiguration _config = configuration;
+    private readonly IDownloadPreferencesService _downloadPreferences = downloadPreferences;
 
     private async Task<(string username, bool isAdmin)> GetUserAsync()
     {
@@ -321,13 +323,16 @@ public class MediaRequestService(
         return new MediaRequestResult { Success = saved, RequestId = entity.Id, NewStatus = entity.Status };
     }
 
-    /// <summary>Request an entire series, optionally monitoring it for new episodes as they air.</summary>
-    public async Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType, bool monitor)
+    /// <summary>Request an entire series. Whether it's then monitored for new episodes as they air is an
+    /// admin-configured default (<see cref="DownloadPreferencesDto.AutoMonitorEntireSeriesRequests"/>), not
+    /// a per-request user choice.</summary>
+    public async Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType)
     {
         var (username, isAdmin) = await GetUserAsync();
         if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
         var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
         if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
+        var monitor = (await _downloadPreferences.GetAsync()).AutoMonitorEntireSeriesRequests;
         return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons: true, seasons: null, episodes: null, monitored: monitor);
     }
 
