@@ -55,7 +55,7 @@ else
                         <div class="poster-section">
                             @if (!string.IsNullOrEmpty(_media.PosterUrl))
                             {
-                                <img src="@_media.PosterUrl" alt="@_media.Title" class="poster" />
+                                <img src="@_media.PosterUrl" alt="@_media.Title" class="poster" fetchpriority="high" />
                             }
                             <div class="poster-actions mobile-only">
                                 @if (_media.IsAvailable)
@@ -347,56 +347,77 @@ else
     private Boolean _loading = true;
     private Boolean _inWatchlist = false;
 
+    private bool _rendered = false;
+    private int _loadedId = -1;
+    private string? _loadedType;
+
+    // Load after first render (shell/skeleton paints instantly), and again when the route id/type
+    // changes on the same component instance (e.g. clicking a "Similar" title).
     protected override async Task OnParametersSetAsync()
     {
-        _loading = true;
-        StateHasChanged();
+        if (_rendered && (Id != _loadedId || Type != _loadedType))
+            await LoadAsync();
+    }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _rendered = true;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loadedId = Id;
+        _loadedType = Type;
+        _loading = true;
+        _media = null;
+        _similarMedia = null;
+        _availableSeasons = new();
+        _selectedSeasons.Clear();
+        _selectedEpisodes.Clear();
+        _expanded.Clear();
+        _episodes.Clear();
+        await InvokeAsync(StateHasChanged);
 
         try
         {
-            PlexRequestsHosted.Shared.Enums.MediaType mediaType = ParseType(Type);
+            var mediaType = ParseType(Type);
             _media = await PlexApiService.GetMediaDetailsAsync(Id, mediaType);
-            
-            if (_media != null)
+            if (_media is null) return;
+
+            // Phase 1: show the title/poster/overview immediately.
+            if (_media.Seasons?.Any() == true) _selectedSeason = _media.Seasons.First();
+            _loading = false;
+            await InvokeAsync(StateHasChanged);
+
+            // Phase 2: enrich (badges, watchlist, seasons, recommendations). The recommendations fetch
+            // is a TMDB call (own HttpClient) so it can overlap the DB work; the DB calls themselves
+            // run sequentially because scoped services share the circuit's single AppDbContext.
+            var similarTask = PlexApiService.GetSimilarAsync(_media.Id, mediaType, 12);
+
+            await PlexApiService.AnnotateAvailabilityAsync(new List<PlexRequestsHosted.Shared.DTOs.MediaCardDto> { _media });
+            var statuses = await MediaRequestService.GetMyRequestStatusesAsync(new List<(int, PlexRequestsHosted.Shared.Enums.MediaType)> { (_media.Id, _media.MediaType) });
+            if (statuses.TryGetValue($"{_media.MediaType}:{_media.Id}", out var st)) _media.RequestStatus = st;
+            _inWatchlist = await MediaRequestService.IsInWatchlistAsync(_media.Id, _media.MediaType);
+            if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
+                _availableSeasons = (await PlexApiService.GetAvailableSeasonsAsync(_media.Id)).ToHashSet();
+            await InvokeAsync(StateHasChanged);
+
+            _similarMedia = (await similarTask)?.Where(m => m.Id != _media.Id).Take(12).ToList();
+            if (_similarMedia?.Any() == true)
             {
-                // Mark availability for this item and overlay my request status
-                await PlexApiService.AnnotateAvailabilityAsync(new List<PlexRequestsHosted.Shared.DTOs.MediaCardDto> { _media });
-                var statuses = await MediaRequestService.GetMyRequestStatusesAsync(new List<(int, PlexRequestsHosted.Shared.Enums.MediaType)> { (_media.Id, _media.MediaType) });
-                var key = $"{_media.MediaType}:{_media.Id}";
-                if (statuses.TryGetValue(key, out var st)) _media.RequestStatus = st;
-
-                _inWatchlist = await MediaRequestService.IsInWatchlistAsync(_media.Id, _media.MediaType);
-
-                if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
-                    _availableSeasons = (await PlexApiService.GetAvailableSeasonsAsync(_media.Id)).ToHashSet();
-                
-                // Load real recommendations for this title (was an empty-query search that returned nothing).
-                _similarMedia = await PlexApiService.GetSimilarAsync(_media.Id, mediaType, 12);
-                _similarMedia = _similarMedia?.Where(m => m.Id != _media.Id).Take(12).ToList();
-                if (_similarMedia?.Any() == true)
-                {
-                    await PlexApiService.AnnotateAvailabilityAsync(_similarMedia);
-                    var keys = _similarMedia.Select(m => (m.Id, m.MediaType)).ToList();
-                    var map = await MediaRequestService.GetMyRequestStatusesAsync(keys);
-                    foreach (var m in _similarMedia)
-                    {
-                        var k = $"{m.MediaType}:{m.Id}";
-                        if (map.TryGetValue(k, out var st2)) m.RequestStatus = st2;
-                    }
-                }
-                
-                // Set default selected season
-                if (_media.Seasons?.Any() == true)
-                {
-                    _selectedSeason = _media.Seasons.First();
-                }
+                await PlexApiService.AnnotateAvailabilityAsync(_similarMedia);
+                var map = await MediaRequestService.GetMyRequestStatusesAsync(_similarMedia.Select(m => (m.Id, m.MediaType)).ToList());
+                foreach (var m in _similarMedia)
+                    if (map.TryGetValue($"{m.MediaType}:{m.Id}", out var st2)) m.RequestStatus = st2;
+                await InvokeAsync(StateHasChanged);
             }
         }
         finally
         {
             _loading = false;
-            StateHasChanged();
+            await InvokeAsync(StateHasChanged);
         }
     }
 

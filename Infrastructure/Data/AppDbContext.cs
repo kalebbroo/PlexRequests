@@ -11,6 +11,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<UserProfileEntity> UserProfiles => Set<UserProfileEntity>();
     public DbSet<PlexMappingEntity> PlexMappings => Set<PlexMappingEntity>();
     public DbSet<PlexSeasonAvailabilityEntity> PlexSeasonAvailability => Set<PlexSeasonAvailabilityEntity>();
+    public DbSet<MediaMetadataCacheEntity> MediaMetadataCache => Set<MediaMetadataCacheEntity>();
+    public DbSet<SeasonEpisodesCacheEntity> SeasonEpisodesCache => Set<SeasonEpisodesCacheEntity>();
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
     public DbSet<FulfillmentJobEntity> FulfillmentJobs => Set<FulfillmentJobEntity>();
     public DbSet<BridgeOutboxEntity> BridgeOutbox => Set<BridgeOutboxEntity>();
@@ -75,6 +77,18 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasKey(x => x.Id);
             b.HasIndex(x => x.ShowRatingKey);
             b.HasIndex(x => new { x.ShowRatingKey, x.SeasonNumber }).IsUnique();
+        });
+
+        modelBuilder.Entity<MediaMetadataCacheEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => new { x.MediaType, x.TmdbId }).IsUnique();
+        });
+
+        modelBuilder.Entity<SeasonEpisodesCacheEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => new { x.ShowTmdbId, x.SeasonNumber }).IsUnique();
         });
 
         modelBuilder.Entity<NotificationEntity>(b =>

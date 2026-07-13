@@ -108,13 +108,18 @@
     private bool _dmOptIn;
     private string? _linkCode;
 
-    protected override async Task OnInitializedAsync()
+    // Load after first render so the page shell paints immediately.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        _profile = await UserProfileService.GetProfileAsync();
+        if (!firstRender) return;
         var auth = await AuthStateProvider.GetAuthenticationStateAsync();
         int.TryParse(auth.User.FindFirst("user_id")?.Value, out _userId);
+        _profile = await UserProfileService.GetProfileAsync();
+        await InvokeAsync(StateHasChanged);
+        // Sequential: these share the circuit's single AppDbContext (EF forbids concurrent ops).
         await LoadRequestsAndStats();
         await LoadDiscordStatus();
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task LoadDiscordStatus()

@@ -83,7 +83,7 @@
         {
             @if (_loading)
             {
-                <div class="browse-loading"><MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Large" /></div>
+                <PlexRequestsHosted.Components.Shared.PosterGridSkeleton Count="18" />
             }
             else if (_view.Count == 0)
             {
@@ -119,7 +119,7 @@
         {
             @if (_rowsLoading)
             {
-                <div class="browse-loading"><MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Large" /></div>
+                <PlexRequestsHosted.Components.Shared.PosterGridSkeleton Count="18" />
             }
             else
             {

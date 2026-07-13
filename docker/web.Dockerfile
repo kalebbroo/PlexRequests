@@ -13,7 +13,9 @@ RUN dotnet restore PlexRequestsHosted.csproj
 # all client interactivity (buttons do nothing). Letting publish restore with full source present
 # regenerates them correctly; packages are already cached from the restore layer, so it stays fast.
 COPY . .
-RUN dotnet publish PlexRequestsHosted.csproj -c Release -o /app
+# -r linux-x64 + --no-self-contained makes PublishReadyToRun effective (native precompile for faster
+# cold start) while staying framework-dependent on the aspnet base image below.
+RUN dotnet publish PlexRequestsHosted.csproj -c Release -r linux-x64 --no-self-contained -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app

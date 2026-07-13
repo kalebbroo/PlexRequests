@@ -21,9 +21,7 @@
 
         @if (_isLoading)
         {
-            <div class="loading-container">
-                <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Large" />
-            </div>
+            <PlexRequestsHosted.Components.Shared.PosterGridSkeleton Count="12" />
         }
         else if (_watchlist?.Any() == true)
         {
@@ -98,8 +96,10 @@
         _ => s.ToString()
     };
 
-    protected override async Task OnInitializedAsync()
+    // Load after first render so the page shell paints instantly instead of blocking on the DB/TMDB.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (!firstRender) return;
         await LoadWatchlist();
     }
 

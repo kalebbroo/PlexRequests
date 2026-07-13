@@ -55,7 +55,7 @@
                 <MudTd>
                     @if (!string.IsNullOrWhiteSpace(context.PosterUrl))
                     {
-                        <img src="@context.PosterUrl" alt="poster" style="width:48px;height:72px;object-fit:cover;border-radius:4px;" onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
+                        <img src="@context.PosterUrl" alt="poster" loading="lazy" style="width:48px;height:72px;object-fit:cover;border-radius:4px;" onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
                     }
                     else
                     {
@@ -126,11 +126,15 @@
     {
         var state = await AuthProvider.GetAuthenticationStateAsync();
         int.TryParse(state.User.FindFirst("user_id")?.Value, out _userId);
-
-        await Load();
-
         // Live updates: new requests are persisted as notifications to admins; refresh on those.
         Broker.Notified += OnNotified;
+    }
+
+    // Load after first render so the table shell paints instantly.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await Load();
     }
 
     private async void OnNotified(PlexRequestsHosted.Shared.DTOs.NotificationDto n)

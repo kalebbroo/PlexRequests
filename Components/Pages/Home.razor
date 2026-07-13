@@ -49,7 +49,7 @@
     <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="home-body">
         @if (_loading)
         {
-            <div class="home-loading"><MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Large" /></div>
+            <PlexRequestsHosted.Components.Shared.PosterGridSkeleton Count="18" />
         }
         else if (_loadFailed)
         {

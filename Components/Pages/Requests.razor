@@ -91,7 +91,7 @@
                         <div class="request-poster">
                             @if (!string.IsNullOrEmpty(request.PosterUrl))
                             {
-                                <img src="@request.PosterUrl" alt="@request.Title" onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
+                                <img src="@request.PosterUrl" alt="@request.Title" loading="lazy" onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
                             }
                             else
                             {
@@ -236,15 +236,22 @@
 
     private int _userId;
 
+    private bool _rendered = false;
+
     protected override async Task OnInitializedAsync()
     {
         var state = await AuthProvider.GetAuthenticationStateAsync();
         int.TryParse(state.User.FindFirst("user_id")?.Value, out _userId);
-
-        await LoadData();
-
         // Live updates via the in-process broker: refresh when one of my requests changes state.
         Broker.Notified += OnNotified;
+    }
+
+    // Load after first render so the shell paints immediately.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _rendered = true;
+        await LoadData();
     }
 
     private async void OnNotified(PlexRequestsHosted.Shared.DTOs.NotificationDto n)
@@ -278,17 +285,13 @@
 
         try
         {
-            // Load stats
+            // Sequential: both calls share the circuit's single AppDbContext (EF forbids concurrent ops).
             _stats = await MediaRequestService.GetMyStatsAsync();
-            
-            // Load requests
-            PlexRequestsHosted.Shared.DTOs.PagedResult<PlexRequestsHosted.Shared.DTOs.MediaRequestDto> page = 
-                await MediaRequestService.GetRequestsAsync(new PlexRequestsHosted.Shared.DTOs.MediaFilterDto 
-                { 
-                    PageNumber = _currentPage, 
-                    PageSize = 20 
-                });
-            
+            var page = await MediaRequestService.GetRequestsAsync(new PlexRequestsHosted.Shared.DTOs.MediaFilterDto
+            {
+                PageNumber = _currentPage,
+                PageSize = 20
+            });
             _allRequests = page.Items;
             _hasMore = page.HasNext;
             ApplyFilter();

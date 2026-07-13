@@ -164,9 +164,7 @@
             #if DEBUG
             _isDevelopment = true;
             #endif
-
-            // Load some great-looking backdrops from TMDB for the background
-            await LoadBackgroundImages();
+            // Backdrops are loaded in OnAfterRender so the sign-in card paints without waiting on TMDB.
         }
         catch (Exception ex)
         {
@@ -180,6 +178,8 @@
         if (firstRender)
         {
             _firstRenderComplete = true;
+            // Fetch TMDB backdrops after the card is on screen (progressive crossfade fills in).
+            if (!_shouldRedirect) await LoadBackgroundImages();
         }
 
         // Perform redirect after first render is complete

@@ -405,6 +405,12 @@ public class PlexApiService : IPlexApiService
         var libraries = await GetLibrariesAsync();
         _logger.LogInformation("Plex availability scan: {LibCount} libraries", libraries.Count);
 
+        // Preload existing rows ONCE into dictionaries (tracked) so the loop matches in memory instead
+        // of a SELECT per guid/season. New rows are Added; existing rows are mutated in-place.
+        var mapByKey = await _db.PlexMappings.ToDictionaryAsync(m => m.ExternalKey);
+        var seasonRows = await _db.PlexSeasonAvailability.ToListAsync();
+        var seasonByKey = seasonRows.ToDictionary(s => (s.ShowRatingKey, s.SeasonNumber));
+
         foreach (var lib in libraries)
         {
             if (lib.Type != Shared.Enums.MediaType.Movie && lib.Type != Shared.Enums.MediaType.TvShow) continue;
@@ -417,14 +423,16 @@ public class PlexApiService : IPlexApiService
                     var (type, id) = ParseGuid(guid);
                     if (string.IsNullOrEmpty(type) || string.IsNullOrEmpty(id)) continue;
                     var key = $"{type}:{id}";
-                    var existing = await _db.PlexMappings.FirstOrDefaultAsync(m => m.ExternalKey == key);
-                    if (existing is null)
-                        _db.PlexMappings.Add(new PlexMappingEntity { ExternalKey = key, RatingKey = item.ratingKey, MediaType = lib.Type, Title = item.title, Year = item.year, LastSeenAt = scanStart });
-                    else { existing.RatingKey = item.ratingKey; existing.MediaType = lib.Type; existing.Title = item.title; existing.Year = item.year; existing.LastSeenAt = scanStart; }
+                    if (!mapByKey.TryGetValue(key, out var existing))
+                    {
+                        existing = new PlexMappingEntity { ExternalKey = key };
+                        _db.PlexMappings.Add(existing);
+                        mapByKey[key] = existing;
+                    }
+                    existing.RatingKey = item.ratingKey; existing.MediaType = lib.Type; existing.Title = item.title; existing.Year = item.year; existing.LastSeenAt = scanStart;
                     maps++;
                 }
             }
-            await _db.SaveChangesAsync();
 
             // Episodes -> per-season presence (TV libraries only). One type=4 query returns every
             // episode with its show (grandparentRatingKey) + season (parentIndex) + number (index).
@@ -441,15 +449,18 @@ public class PlexApiService : IPlexApiService
                 foreach (var (k, set) in perSeason)
                 {
                     var csv = string.Join(",", set);
-                    var row = await _db.PlexSeasonAvailability.FirstOrDefaultAsync(s => s.ShowRatingKey == k.show && s.SeasonNumber == k.season);
-                    if (row is null)
-                        _db.PlexSeasonAvailability.Add(new PlexSeasonAvailabilityEntity { ShowRatingKey = k.show, SeasonNumber = k.season, AvailableEpisodesCsv = csv, EpisodeCount = set.Count, LastSeenAt = scanStart });
-                    else { row.AvailableEpisodesCsv = csv; row.EpisodeCount = set.Count; row.LastSeenAt = scanStart; }
+                    if (!seasonByKey.TryGetValue((k.show, k.season), out var row))
+                    {
+                        row = new PlexSeasonAvailabilityEntity { ShowRatingKey = k.show, SeasonNumber = k.season };
+                        _db.PlexSeasonAvailability.Add(row);
+                        seasonByKey[(k.show, k.season)] = row;
+                    }
+                    row.AvailableEpisodesCsv = csv; row.EpisodeCount = set.Count; row.LastSeenAt = scanStart;
                     seasons++;
                 }
-                await _db.SaveChangesAsync();
             }
         }
+        await _db.SaveChangesAsync();
 
         // Prune rows not touched this pass: they were removed from the server.
         var staleMaps = await _db.PlexMappings.Where(m => m.LastSeenAt < scanStart).ToListAsync();

@@ -199,14 +199,27 @@ builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.INotifica
 builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.INotificationService, PlexRequestsHosted.Services.Implementations.NotificationService>();
 
 // Metadata providers
-builder.Services.AddScoped<TmdbMetadataProvider>();
+// Singleton so its TMDbClient (and internal HttpClient) is built once, not per scope.
+builder.Services.AddSingleton<TmdbMetadataProvider>();
 builder.Services.AddScoped<TraktMetadataProvider>();
 builder.Services.AddScoped<SeedMetadataProvider>();
 builder.Services.AddScoped<IMetadataProviderFactory, MetadataProviderFactory>();
 
-// Use factory to get default provider
+// Background refresher for stale metadata-cache rows (stale-while-revalidate).
+builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.IMetadataRefreshCoordinator,
+    PlexRequestsHosted.Services.Implementations.MetadataRefreshCoordinator>();
+
+// The active provider wrapped in a DB-backed caching decorator: details/imdb/episodes are served from
+// SQLite instantly and survive restarts; stale rows refresh in the background.
 builder.Services.AddScoped<IMediaMetadataProvider>(sp =>
-    sp.GetRequiredService<IMetadataProviderFactory>().GetDefaultProvider());
+{
+    var innerProvider = sp.GetRequiredService<IMetadataProviderFactory>().GetDefaultProvider();
+    return new PlexRequestsHosted.Services.Implementations.CachingMetadataProvider(
+        innerProvider,
+        sp.GetRequiredService<IDbContextFactory<AppDbContext>>(),
+        sp.GetRequiredService<PlexRequestsHosted.Services.Abstractions.IMetadataRefreshCoordinator>(),
+        sp.GetRequiredService<ILogger<PlexRequestsHosted.Services.Implementations.CachingMetadataProvider>>());
+});
 
 // Persistence: SQLite. Resolve an absolute path so the DB doesn't depend on the current
 // working directory (DB_PATH / ConnectionStrings:AppDb override; default is under the content root).
@@ -216,8 +229,13 @@ var dbPath = string.IsNullOrWhiteSpace(configuredDbPath)
     : (Path.IsPathRooted(configuredDbPath)
         ? configuredDbPath
         : Path.Combine(builder.Environment.ContentRootPath, configuredDbPath));
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite($"Data Source={dbPath}"));
+// Factory registration + a scoped shim: existing scoped consumers keep injecting AppDbContext, while
+// the caching layer + background refreshers create their own short-lived, thread-safe contexts.
+builder.Services.AddDbContextFactory<AppDbContext>(options =>
+    options.UseSqlite($"Data Source={dbPath}")
+           .AddInterceptors(new PlexRequestsHosted.Infrastructure.Data.SqlitePragmaInterceptor()));
+builder.Services.AddScoped<AppDbContext>(sp =>
+    sp.GetRequiredService<IDbContextFactory<AppDbContext>>().CreateDbContext());
 
 var app = builder.Build();
 

@@ -171,18 +171,29 @@
 
         if (_isAuthenticated)
         {
-            // Get avatar from claims
+            // Get avatar from claims (cheap; no network)
             _userAvatar = authState.User.FindFirst("avatar_url")?.Value;
             int.TryParse(authState.User.FindFirst("user_id")?.Value, out _userId);
 
-            if (_userId > 0)
-            {
-                // Load persisted notifications (survive refresh/restart) and subscribe for live updates.
-                _notifications = await Notifications.GetForUserAsync(_userId, 20);
-                _unreadCount = await Notifications.GetUnreadCountAsync(_userId);
-                Broker.Notified += OnNotified;
-            }
+            // Subscribe early so live events aren't missed; the actual notification fetch is deferred
+            // to OnAfterRender so it never blocks the first paint of the page.
+            if (_userId > 0) Broker.Notified += OnNotified;
         }
+    }
+
+    private bool _notificationsLoaded = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _userId <= 0 || _notificationsLoaded) return;
+        _notificationsLoaded = true;
+        // Load persisted notifications after the shell has painted, both queries in parallel.
+        var listTask = Notifications.GetForUserAsync(_userId, 20);
+        var countTask = Notifications.GetUnreadCountAsync(_userId);
+        await Task.WhenAll(listTask, countTask);
+        _notifications = listTask.Result;
+        _unreadCount = countTask.Result;
+        await InvokeAsync(StateHasChanged);
     }
 
     private async void OnNotified(NotificationDto n)

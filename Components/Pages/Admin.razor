@@ -117,10 +117,11 @@
     private bool _usersLoading = true;
     private List<UserDto> _users = new();
 
-    protected override async Task OnInitializedAsync()
+    // Load after first render; the two independent sections load in parallel.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        await LoadAsync();
-        await LoadUsersAsync();
+        if (!firstRender) return;
+        await Task.WhenAll(LoadAsync(), LoadUsersAsync());
     }
 
     private async Task LoadUsersAsync()
@@ -170,8 +171,11 @@
         _error = null; _loading = true;
         try
         {
-            _info = await PlexApi.GetServerInfoAsync();
-            _libraries = await PlexApi.GetLibrariesAsync();
+            var infoTask = PlexApi.GetServerInfoAsync();
+            var libsTask = PlexApi.GetLibrariesAsync();
+            await Task.WhenAll(infoTask, libsTask);
+            _info = infoTask.Result;
+            _libraries = libsTask.Result;
             if (_info is null) _error = "No server configuration found. Check .env or appsettings.";
         }
         catch (Exception ex)

@@ -1,0 +1,24 @@
+.skeleton-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: var(--spacing-lg);
+}
+
+.skeleton-poster {
+    aspect-ratio: 2 / 3;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background-color: var(--bg-tertiary);
+}
+
+/* Make the MudSkeleton fill the fixed-ratio box */
+.skeleton-poster ::deep .mud-skeleton,
+.skeleton-fill {
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: var(--radius-md);
+}
+
+@media (max-width: 768px) {
+    .skeleton-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--spacing-md); }
+}

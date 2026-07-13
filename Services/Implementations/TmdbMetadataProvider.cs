@@ -86,7 +86,7 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
 
             if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
             {
-                var movie = await _client.GetMovieAsync(mediaId, MovieMethods.Credits | MovieMethods.Videos | MovieMethods.Images);
+                var movie = await _client.GetMovieAsync(mediaId, MovieMethods.Credits | MovieMethods.Videos | MovieMethods.Images | MovieMethods.ExternalIds);
                 if (movie != null)
                 {
                     result = MapMovieToDetail(movie);
@@ -94,7 +94,7 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
             }
             else if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
             {
-                var tvShow = await _client.GetTvShowAsync(mediaId, TvShowMethods.Credits | TvShowMethods.Videos | TvShowMethods.Images);
+                var tvShow = await _client.GetTvShowAsync(mediaId, TvShowMethods.Credits | TvShowMethods.Videos | TvShowMethods.Images | TvShowMethods.ExternalIds);
                 if (tvShow != null)
                 {
                     result = MapTvShowToDetail(tvShow);
@@ -386,7 +386,8 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
             ReleaseDate = movie.ReleaseDate,
             Languages = new List<string>(),
             Countries = new List<string>(),
-            TmdbId = movie.Id
+            TmdbId = movie.Id,
+            ImdbId = movie.ExternalIds?.ImdbId ?? movie.ImdbId
         };
     }
 
@@ -422,7 +423,8 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
                 AirDate = s.AirDate,
                 IsAvailable = false
             }).ToList() ?? new List<SeasonDto>(),
-            TmdbId = tvShow.Id
+            TmdbId = tvShow.Id,
+            ImdbId = tvShow.ExternalIds?.ImdbId
         };
     }
 
