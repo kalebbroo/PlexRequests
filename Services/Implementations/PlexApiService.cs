@@ -42,20 +42,34 @@ public class PlexApiService : IPlexApiService
         {
             var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
             if (baseUrl is null) return null;
-            // Root "/" (unlike the lighter /identity) also returns friendlyName + platform +
-            // machineIdentifier, so one request both fixes the server-name display and lets us cache
-            // the machine id used for Plex Web deep links (see EnsureServerMachineIdAsync).
-            var url = baseUrl + "/";
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            EnsureDefaultHeaders(req.Headers);
-            req.Headers.Add("X-Plex-Token", _cfg.ServerToken);
-            var res = await _http.SendAsync(req);
-            if (!res.IsSuccessStatusCode) return new PlexServerInfo { IsOnline = false };
 
-            var contentType = res.Content.Headers.ContentType?.MediaType ?? string.Empty;
-            var text = await res.Content.ReadAsStringAsync();
-            var (name, version, platform, platformVersion, machineId) = ParseServerRoot(contentType, text);
+            // /identity is the reliable online/version check: a tiny (~200 byte) response that still
+            // gets through on constrained links (e.g. a VPN egress path with a low, unclamped MTU)
+            // where a larger response can silently black-hole. IsOnline must never be gated on a
+            // bigger payload than this.
+            var (_, version, _, _, machineId) = await FetchServerRootAsync(baseUrl, "/identity", CancellationToken.None);
+            if (version is null) return new PlexServerInfo { IsOnline = false };
             if (!string.IsNullOrWhiteSpace(machineId)) _serverMachineId = machineId;
+
+            // Best-effort enrichment: root "/" also has friendlyName + platform, but it's a larger
+            // payload than /identity, so give it a short leash — a slow/blocked path here must
+            // degrade to the /identity-only info above, not report the whole server as offline.
+            string? name = null, platform = null, platformVersion = null;
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+                var root = await FetchServerRootAsync(baseUrl, "/", cts.Token);
+                name = root.name; platform = root.platform; platformVersion = root.platformVersion;
+                if (!string.IsNullOrWhiteSpace(root.machineId)) _serverMachineId = root.machineId;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogDebug("Plex root '/' enrichment timed out; using /identity data only");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Plex root '/' enrichment failed; using /identity data only");
+            }
 
             return new PlexServerInfo
             {
@@ -76,6 +90,19 @@ public class PlexApiService : IPlexApiService
             _logger.LogError(ex, "Error getting Plex server info");
             return new PlexServerInfo { IsOnline = false };
         }
+    }
+
+    private async Task<(string? name, string? version, string? platform, string? platformVersion, string? machineId)> FetchServerRootAsync(string baseUrl, string path, CancellationToken ct)
+    {
+        var url = baseUrl + path;
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        EnsureDefaultHeaders(req.Headers);
+        req.Headers.Add("X-Plex-Token", _cfg.ServerToken);
+        var res = await _http.SendAsync(req, ct);
+        if (!res.IsSuccessStatusCode) return (null, null, null, null, null);
+        var contentType = res.Content.Headers.ContentType?.MediaType ?? string.Empty;
+        var text = await res.Content.ReadAsStringAsync(ct);
+        return ParseServerRoot(contentType, text);
     }
 
     private static (string? name, string? version, string? platform, string? platformVersion, string? machineId) ParseServerRoot(string contentType, string text)
