@@ -29,38 +29,51 @@
             </div>
             
             <div class="header-right">
-                <div class="search-container desktop-only @(_searchOpen ? "open" : "")">
-                    <MudIconButton Icon="@Icons.Material.Filled.Search" Color="Color.Inherit" OnClick="ToggleSearch" />
-                    @if (_searchOpen)
-                    {
-                        <input type="text" class="search-input" placeholder="Titles, genres, people" @onblur="CloseSearch" @onkeydown="HandleSearchKeyDown" @bind-value="_searchQuery" />
-                    }
+                <div class="search-container desktop-only">
+                    <MudIcon Icon="@Icons.Material.Filled.Search" Class="search-icon" Size="Size.Small" />
+                    <input type="text" class="search-input" placeholder="Titles, genres, people" @onkeydown="HandleSearchKeyDown" @bind-value="_searchQuery" />
                 </div>
-                
+
                 <MudBadge Content="_unreadCount" Color="Color.Error" Overlap="true" Bordered="true"
                           Visible="@(_unreadCount > 0)" Class="desktop-only notification-btn">
-                    <MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft">
+                    <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight"
+                             PopoverClass="notification-popover" ListClass="notification-list">
                         <ActivatorContent>
                             <MudIconButton Icon="@Icons.Material.Filled.Notifications" Color="Color.Inherit" />
                         </ActivatorContent>
                         <ChildContent>
+                            <div class="notification-header">
+                                <MudText Typo="Typo.subtitle2">Notifications</MudText>
+                                @if (_unreadCount > 0)
+                                {
+                                    <button type="button" class="notification-mark-all" @onclick="MarkAllRead">Mark all read</button>
+                                }
+                            </div>
                             @if (_notifications.Any())
                             {
                                 @foreach (var notification in _notifications)
                                 {
-                                    <MudMenuItem>
-                                        <div class="notification-item">
-                                            <MudText Typo="Typo.body2">@notification.Message</MudText>
-                                            <MudText Typo="Typo.caption" Class="text-secondary">@notification.CreatedAt.ToLocalTime().ToString("g")</MudText>
+                                    <MudMenuItem Class="@("notification-item" + (notification.IsRead ? "" : " unread"))">
+                                        <div class="notification-row">
+                                            <MudIcon Icon="@GetNotificationIcon(notification.Type)" Color="@GetNotificationColor(notification.Type)" Size="Size.Small" Class="notification-icon" />
+                                            <div class="notification-body">
+                                                <MudText Typo="Typo.body2" Class="notification-message">@notification.Message</MudText>
+                                                <MudText Typo="Typo.caption" Class="notification-time">@notification.CreatedAt.ToLocalTime().ToString("g")</MudText>
+                                            </div>
+                                            @if (!notification.IsRead)
+                                            {
+                                                <span class="unread-dot" aria-hidden="true"></span>
+                                            }
                                         </div>
                                     </MudMenuItem>
                                 }
-                                <MudDivider />
-                                <MudMenuItem OnClick="MarkAllRead">Mark all read</MudMenuItem>
                             }
                             else
                             {
-                                <MudMenuItem Disabled="true">No new notifications</MudMenuItem>
+                                <div class="notification-empty">
+                                    <MudIcon Icon="@Icons.Material.Filled.NotificationsNone" Color="Color.Default" />
+                                    <MudText Typo="Typo.body2" Class="text-secondary">No new notifications</MudText>
+                                </div>
                             }
                         </ChildContent>
                     </MudMenu>
@@ -143,7 +156,6 @@
 
 @code {
     private bool _scrolled = false;
-    private bool _searchOpen = false;
     private bool _mobileMenuOpen = false;
     private bool _isHomepage = false;
     private bool _isLoginPage = false;
@@ -222,29 +234,38 @@
         _scrolled = true;
     }
 
-    private void ToggleSearch()
-    {
-        _searchOpen = !_searchOpen;
-    }
-
-    private void CloseSearch()
-    {
-        _searchOpen = false;
-        _searchQuery = string.Empty;
-    }
-
     private void HandleSearchKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_searchQuery))
         {
             Navigation.NavigateTo($"/search?q={Uri.EscapeDataString(_searchQuery)}");
-            CloseSearch();
+            _searchQuery = string.Empty;
         }
         else if (e.Key == "Escape")
         {
-            CloseSearch();
+            _searchQuery = string.Empty;
         }
     }
+
+    private static string GetNotificationIcon(NotificationType type) => type switch
+    {
+        NotificationType.RequestApproved => Icons.Material.Filled.CheckCircle,
+        NotificationType.RequestAvailable => Icons.Material.Filled.PlayCircle,
+        NotificationType.RequestRejected => Icons.Material.Filled.Cancel,
+        NotificationType.RequestCreated => Icons.Material.Filled.AddCircle,
+        NotificationType.Error => Icons.Material.Filled.ErrorOutline,
+        NotificationType.Warning => Icons.Material.Filled.WarningAmber,
+        NotificationType.Success => Icons.Material.Filled.CheckCircle,
+        _ => Icons.Material.Filled.Info
+    };
+
+    private static Color GetNotificationColor(NotificationType type) => type switch
+    {
+        NotificationType.RequestApproved or NotificationType.RequestAvailable or NotificationType.Success => Color.Success,
+        NotificationType.RequestRejected or NotificationType.Error => Color.Error,
+        NotificationType.Warning => Color.Warning,
+        _ => Color.Info
+    };
 
     private void ToggleMobileMenu()
     {

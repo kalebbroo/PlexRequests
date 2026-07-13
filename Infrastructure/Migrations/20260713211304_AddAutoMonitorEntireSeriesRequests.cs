@@ -15,7 +15,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                 table: "DownloadPreferences",
                 type: "INTEGER",
                 nullable: false,
-                defaultValue: false);
+                defaultValue: true);
         }
 
         /// <inheritdoc />

@@ -54,8 +54,10 @@ public class NotificationService(IServiceScopeFactory scopeFactory, INotificatio
 
     public async Task RequestFailedAsync(MediaRequestDto request, string reason)
     {
+        // The user-facing message stays generic; the raw reason (which may contain exception text from the
+        // downloader) is kept in the server logs and the Discord bridge outbox for troubleshooting.
         await NotifyAdminsAsync(NotificationType.Error, "Fulfillment failed",
-            $"Download failed for \"{request.Title}\": {reason}", request.Id);
+            $"We hit a problem downloading \"{request.Title}\". Check the server logs for details.", request.Id);
         await WriteOutboxAsync(request, BridgeEventType.Failed, reason);
     }
 
