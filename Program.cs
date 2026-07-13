@@ -122,7 +122,9 @@ builder.Services.AddMemoryCache();
 // Configure typed HttpClient for PlexApiService with optional invalid cert allowance (for self-signed or IP-based SSL)
 var plexSection = builder.Configuration.GetSection("Plex");
 var allowInvalidCerts = plexSection.GetValue<bool>("AllowInvalidCerts");
-builder.Services.AddHttpClient<IPlexApiService, PlexApiService>()
+// Cap the per-request timeout so a slow/stalled Plex call can never freeze a Blazor render for the
+// default 100s. Plex service methods catch the resulting cancellation and degrade to "unavailable".
+builder.Services.AddHttpClient<IPlexApiService, PlexApiService>(c => c.Timeout = TimeSpan.FromSeconds(15))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
     {
         ServerCertificateCustomValidationCallback = (msg, cert, chain, errors) =>

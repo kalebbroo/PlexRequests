@@ -41,7 +41,12 @@ public class PlexApiService : IPlexApiService
         {
             var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
             if (baseUrl is null) return null;
-            var url = baseUrl + "/";
+            // Use the lightweight /identity endpoint (a couple hundred bytes) rather than the root "/"
+            // (which returns the full ~10KB server payload). This is a health check that only needs
+            // online-status + version; the small response also avoids stalling on links (e.g. a VPN
+            // tunnel with a low MTU) where large responses can hang. friendlyName isn't in /identity,
+            // so Name falls back to the default below — cosmetic only.
+            var url = baseUrl + "/identity";
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             EnsureDefaultHeaders(req.Headers);
             req.Headers.Add("X-Plex-Token", _cfg.ServerToken);
@@ -49,7 +54,7 @@ public class PlexApiService : IPlexApiService
             if (!res.IsSuccessStatusCode) return new PlexServerInfo { IsOnline = false };
 
             var text = await res.Content.ReadAsStringAsync();
-            // The root endpoint returns XML normally; keep lightweight parse by sniffing version/name if present.
+            // /identity returns machineIdentifier + version; friendlyName is absent, so Name falls back.
             var name = GetBetween(text, "friendlyName=\"", "\"") ?? "Plex Server";
             var version = GetBetween(text, "version=\"", "\"") ?? string.Empty;
             return new PlexServerInfo { Name = name, Version = version, IsOnline = true };
