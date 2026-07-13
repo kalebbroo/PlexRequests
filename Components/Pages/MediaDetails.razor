@@ -3,6 +3,7 @@
 @inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject PlexRequestsHosted.Services.Implementations.IMediaIssueService IssueService
 @inject NavigationManager Navigation
 @inject IJSRuntime JSRuntime
 
@@ -155,6 +156,14 @@ else
                                         <span>Trailer</span>
                                     </button>
                                 }
+
+                                @if (_media.IsAvailable)
+                                {
+                                    <button class="action-btn secondary" @onclick="() => _reportOpen = true">
+                                        <MudIcon Icon="@Icons.Material.Filled.ReportProblem" />
+                                        <span>Report a Problem</span>
+                                    </button>
+                                }
                             </div>
                             
                             @if (!string.IsNullOrEmpty(_media.Overview))
@@ -253,7 +262,14 @@ else
                                         <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RequestSelectedSeasons" Disabled="@(_selectedSeasons.Count == 0)">
                                             Request @_selectedSeasons.Count Season@(_selectedSeasons.Count == 1 ? "" : "s")
                                         </MudButton>
-                                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="RequestEntireSeries">Request Entire Series</MudButton>
+                                        @if (!SeriesFullyOnPlex)
+                                        {
+                                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="RequestEntireSeries">Request Entire Series</MudButton>
+                                        }
+                                        else
+                                        {
+                                            <MudChip T="string" Color="Color.Success" Variant="Variant.Text" Icon="@Icons.Material.Filled.CheckCircle">All aired seasons on Plex</MudChip>
+                                        }
                                         <MudTooltip Text="Keep this series monitored and auto-download new episodes as they air">
                                             <MudSwitch T="bool" @bind-Value="_monitor" Color="Color.Primary" Label="Monitor new episodes" />
                                         </MudTooltip>
@@ -336,6 +352,26 @@ else
         </section>
     </div>
 }
+
+<MudDialog @bind-Visible="_reportOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6"><MudIcon Icon="@Icons.Material.Filled.ReportProblem" Class="mr-2" />Report a Problem</MudText></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">Something wrong with "@(_media?.Title)" on Plex? Tell us and an admin can re-download or fix it.</MudText>
+        <MudSelect T="string" @bind-Value="_reportReason" Label="What's wrong?" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+            <MudSelectItem Value="@("Bad quality")">Bad quality / low resolution</MudSelectItem>
+            <MudSelectItem Value="@("Playback broken")">Won't play / playback error</MudSelectItem>
+            <MudSelectItem Value="@("Wrong version")">Wrong version / cut / language</MudSelectItem>
+            <MudSelectItem Value="@("Missing subtitles")">Missing or bad subtitles</MudSelectItem>
+            <MudSelectItem Value="@("Corrupt / incomplete")">Corrupt or incomplete file</MudSelectItem>
+            <MudSelectItem Value="@("Other")">Other</MudSelectItem>
+        </MudSelect>
+        <MudTextField @bind-Value="_reportDetail" Label="Details (optional)" Variant="Variant.Outlined" Lines="3" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => _reportOpen = false">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SubmitReport" Disabled="_reportSubmitting">Submit report</MudButton>
+    </DialogActions>
+</MudDialog>
 
 @code {
     [Parameter] public String? Type { get; set; }
@@ -449,6 +485,43 @@ else
     private readonly Dictionary<int, List<PlexRequestsHosted.Shared.DTOs.EpisodeDto>> _episodes = new();
     private HashSet<int> _availableSeasons = new();
     private bool _monitor;
+
+    // Report-a-Problem dialog
+    private bool _reportOpen;
+    private bool _reportSubmitting;
+    private string _reportReason = "Bad quality";
+    private string _reportDetail = string.Empty;
+
+    private async Task SubmitReport()
+    {
+        if (_media is null) return;
+        _reportSubmitting = true;
+        try
+        {
+            var ok = await IssueService.ReportIssueAsync(_media.Id, _media.MediaType, _media.Title, _media.PosterUrl, _reportReason, _reportDetail);
+            if (ok)
+            {
+                await ToastService.ShowSuccessAsync("Thanks — your report was sent to the admins.");
+                _reportOpen = false;
+                _reportDetail = string.Empty;
+            }
+            else await ToastService.ShowErrorAsync("Couldn't submit the report.");
+        }
+        finally { _reportSubmitting = false; }
+    }
+
+    // True when every aired season of the show is already on Plex — so "Request Entire Series" would be
+    // redundant. Unaired future seasons are ignored (the monitor handles those).
+    private bool SeriesFullyOnPlex
+    {
+        get
+        {
+            var aired = _media?.Seasons?
+                .Where(s => s.SeasonNumber > 0 && (!s.AirDate.HasValue || s.AirDate.Value.Date <= DateTime.UtcNow.Date))
+                .ToList();
+            return aired is { Count: > 0 } && aired.All(s => _availableSeasons.Contains(s.SeasonNumber));
+        }
+    }
 
     private async Task ToggleExpand(int season)
     {

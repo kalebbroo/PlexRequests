@@ -130,9 +130,18 @@ builder.Services.AddHttpClient<IPlexApiService, PlexApiService>(c => c.Timeout =
         ServerCertificateCustomValidationCallback = (msg, cert, chain, errors) =>
             allowInvalidCerts ? true : errors == SslPolicyErrors.None
     });
+// Plex music library access (artist/album/track) — foundation for music requests.
+builder.Services.AddHttpClient<PlexRequestsHosted.Services.Implementations.IPlexMusicService, PlexRequestsHosted.Services.Implementations.PlexMusicService>(c => c.Timeout = TimeSpan.FromSeconds(15))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        ServerCertificateCustomValidationCallback = (msg, cert, chain, errors) =>
+            allowInvalidCerts ? true : errors == SslPolicyErrors.None
+    });
 builder.Services.AddScoped<IMediaRequestService, MediaRequestService>();
 builder.Services.AddScoped<IFulfillmentQueue, FulfillmentQueue>();
 builder.Services.AddScoped<IDiscordLinkService, DiscordLinkService>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IMediaIssueService, PlexRequestsHosted.Services.Implementations.MediaIssueService>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IQualityRuleService, PlexRequestsHosted.Services.Implementations.QualityRuleService>();
 // Backstop that requeues/fails jobs stranded by a dead downloader.
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.FulfillmentReaperService>();
 // Keeps the DB-backed Plex availability index fresh (per-season episode presence + prune removals).

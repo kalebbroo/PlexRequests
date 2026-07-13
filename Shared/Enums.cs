@@ -64,6 +64,13 @@ public enum FulfillmentStatus
     Cancelled = 5
 }
 
+public enum IssueStatus
+{
+    Open = 0,
+    Resolved = 1,
+    Dismissed = 2
+}
+
 public enum Quality
 {
     Any = 0,

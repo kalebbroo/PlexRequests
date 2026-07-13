@@ -101,6 +101,76 @@ public class MediaRequestDto : BaseDto
     public bool Monitored { get; set; }                 // ongoing-series auto-download
 }
 
+public class MediaIssueDto
+{
+    public int Id { get; set; }
+    public int MediaId { get; set; }
+    public MediaType MediaType { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string? PosterUrl { get; set; }
+    public int? ReportedByUserId { get; set; }
+    public string? ReportedBy { get; set; }
+    public string Reason { get; set; } = "Other";
+    public string? Detail { get; set; }
+    public int? SeasonNumber { get; set; }
+    public int? EpisodeNumber { get; set; }
+    public IssueStatus Status { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? ResolvedAt { get; set; }
+}
+
+// --- Music (Plex-native model, ported from PlexBot's artist/album/track hierarchy) ---
+public class MusicArtistDto
+{
+    public string RatingKey { get; set; } = string.Empty;   // Plex id
+    public string Name { get; set; } = string.Empty;
+    public string? ArtworkUrl { get; set; }
+    public string? Genre { get; set; }
+    public string? Key { get; set; }                          // children path -> albums
+}
+
+public class MusicAlbumDto
+{
+    public string RatingKey { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Artist { get; set; } = string.Empty;
+    public int? Year { get; set; }
+    public string? ArtworkUrl { get; set; }
+    public string? Genre { get; set; }
+    public string? Key { get; set; }                          // children path -> tracks
+    public bool IsAvailable { get; set; }                     // present on Plex
+}
+
+public class MusicTrackDto
+{
+    public string RatingKey { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Artist { get; set; } = string.Empty;
+    public string Album { get; set; } = string.Empty;
+    public int? DurationMs { get; set; }
+}
+
+public class MusicSearchResultDto
+{
+    public List<MusicArtistDto> Artists { get; set; } = new();
+    public List<MusicAlbumDto> Albums { get; set; } = new();
+    public List<MusicTrackDto> Tracks { get; set; } = new();
+}
+
+public class QualityRuleDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int Order { get; set; }
+    public bool Enabled { get; set; } = true;
+    public bool IsDefault { get; set; }
+    public MediaType? MatchMediaType { get; set; }
+    public string? MatchGenre { get; set; }
+    public int? MatchTmdbId { get; set; }
+    public string? MatchLibrary { get; set; }
+    public Quality TargetQuality { get; set; } = Quality.FullHD;
+}
+
 public class UserDto : BaseDto
 {
     [Required]

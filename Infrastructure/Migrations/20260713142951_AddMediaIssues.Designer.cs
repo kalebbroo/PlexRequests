@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PlexRequestsHosted.Infrastructure.Data;
 
@@ -10,9 +11,11 @@ using PlexRequestsHosted.Infrastructure.Data;
 namespace PlexRequestsHosted.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260713142951_AddMediaIssues")]
+    partial class AddMediaIssues
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.7");
@@ -475,53 +478,6 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("PlexSeasonAvailability");
-                });
-
-            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.QualityRuleEntity", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool>("Enabled")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("IsDefault")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("MatchGenre")
-                        .HasMaxLength(128)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("MatchLibrary")
-                        .HasMaxLength(256)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("MatchMediaType")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("MatchTmdbId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("Order")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("TargetQuality")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Order");
-
-                    b.ToTable("QualityRules");
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.SeasonEpisodesCacheEntity", b =>

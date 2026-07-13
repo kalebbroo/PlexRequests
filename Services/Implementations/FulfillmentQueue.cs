@@ -11,12 +11,13 @@ namespace PlexRequestsHosted.Services.Implementations;
 /// Database-backed <see cref="IFulfillmentQueue"/>. SQLite is single-writer, so claims are safe
 /// without extra locking at our scale; swap for Redis/RabbitMQ later without touching callers.
 /// </summary>
-public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata) : IFulfillmentQueue
+public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, IQualityRuleService quality) : IFulfillmentQueue
 {
     private readonly AppDbContext _db = db;
     private readonly IMediaMetadataProvider _metadata = metadata;
+    private readonly IQualityRuleService _quality = quality;
 
-    public async Task EnqueueAsync(MediaRequestDto request)
+    public async Task EnqueueAsync(MediaRequestDto request, bool force = false)
     {
         var active = await _db.FulfillmentJobs.AnyAsync(j =>
             j.MediaRequestId == request.Id &&
@@ -30,8 +31,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata) 
 
         // Never re-download content already on Plex: narrow a TV request to only the missing seasons/
         // episodes. If nothing is missing, don't enqueue at all — the reconciliation service marks the
-        // request Available. (Movies fall through unchanged.)
-        if (request.MediaType == MediaType.TvShow)
+        // request Available. (Movies fall through unchanged.) A forced re-download skips this entirely.
+        if (request.MediaType == MediaType.TvShow && !force)
         {
             var (s, e, hasTarget) = await ComputeMissingTvTargetsAsync(request);
             if (!hasTarget) return;   // everything already on Plex
@@ -41,8 +42,19 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata) 
 
         // Resolve the IMDb id up front so the downloader (EZTV/YTS are keyed by IMDb) needs no TMDb key.
         string? imdbId = null;
-        try { imdbId = await _metadata.GetImdbIdAsync(request.MediaId, request.MediaType); }
+        List<string>? genres = null;
+        try
+        {
+            var detail = await _metadata.GetDetailsAsync(request.MediaId, request.MediaType);
+            imdbId = detail?.ImdbId;
+            genres = detail?.Genres;
+            if (string.IsNullOrEmpty(imdbId)) imdbId = await _metadata.GetImdbIdAsync(request.MediaId, request.MediaType);
+        }
         catch { /* best-effort; downloader can still try by title/year */ }
+
+        // Apply the admin quality rules (first matching override, else the default) instead of the
+        // request's own preference, so quality is centrally controlled.
+        var resolvedQuality = await _quality.ResolveQualityAsync(request.MediaType, request.MediaId, genres);
 
         _db.FulfillmentJobs.Add(new FulfillmentJobEntity
         {
@@ -55,7 +67,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata) 
             ImdbId = imdbId,
             RequestedSeasonsCsv = seasonsCsv,
             RequestedEpisodesCsv = episodesCsv,
-            Quality = request.PreferredQuality,
+            Quality = resolvedQuality,
             Status = FulfillmentStatus.Queued,
             CreatedAt = DateTime.UtcNow
         });
