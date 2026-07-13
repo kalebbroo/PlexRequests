@@ -46,15 +46,14 @@ public class MetadataRouter : IMediaMetadataProvider
             string.Join(", ", _providers.Select(p => $"{p.ProviderKey}{(p.IsAvailable ? "" : "(off)")}")));
     }
 
-    /// <summary>Choose the provider for a media type: admin-configured, else keyless fallback, else Seed.</summary>
+    /// <summary>Choose the provider for a media type: admin-configured, else any available real provider, else Seed.</summary>
     private IMediaMetadataProvider Pick(MediaType mediaType)
     {
         var supporting = _providers.Where(p => p.Supports(mediaType) && p.IsAvailable).ToList();
         var key = (_config[$"MetadataProviders:{mediaType}"] ?? _config["MetadataProviders:DefaultProvider"])?.Trim();
 
         return (!string.IsNullOrEmpty(key) ? supporting.FirstOrDefault(p => p.ProviderKey.Equals(key, StringComparison.OrdinalIgnoreCase)) : null)
-            ?? supporting.FirstOrDefault(p => !p.RequiresApiKey)                       // keyless fallback
-            ?? supporting.FirstOrDefault()                                            // any available
+            ?? supporting.FirstOrDefault()                                            // any available real provider (Tmdb etc. before Seed — see _providers order in ctor)
             ?? _providers.FirstOrDefault(p => p.ProviderKey == "seed")                // ultimate fallback
             ?? _providers.First();
     }
