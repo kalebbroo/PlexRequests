@@ -40,6 +40,14 @@ public class MediaRequestEntity
     [MaxLength(256)]
     public string? RequestedSeasonsCsv { get; set; }
 
+    // Episode-level selection, format "S1E1,S1E2,S2E5". Null/empty ⇒ season/series level applies.
+    [MaxLength(4096)]
+    public string? RequestedEpisodesCsv { get; set; }
+
+    // Ongoing-series monitoring: when set (whole-series request of a still-running show), the
+    // SeriesMonitorService keeps checking TMDB for newly-aired episodes and auto-enqueues them.
+    public bool Monitored { get; set; }
+
     // Navigation property
     [ForeignKey(nameof(RequestedByUserId))]
     public UserEntity? RequestedByUser { get; set; }

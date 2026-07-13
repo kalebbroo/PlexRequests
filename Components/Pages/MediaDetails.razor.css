@@ -352,3 +352,17 @@
         grid-template-columns: repeat(2, 1fr);
     }
 }
+
+/* Season / episode selection (Phase 2) */
+.seasons-list { display: flex; flex-direction: column; gap: 8px; }
+.season-block { border: 1px solid var(--divider, rgba(255,255,255,0.1)); border-radius: 8px; overflow: hidden; }
+.season-block.is-available { opacity: 0.6; }
+.season-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
+.season-meta { flex: 1; cursor: pointer; }
+.episode-list { padding: 4px 10px 10px 40px; display: flex; flex-direction: column; gap: 2px; border-top: 1px solid rgba(255,255,255,0.06); }
+.episode-loading { display: flex; align-items: center; gap: 8px; padding: 8px 0; color: var(--text-secondary); }
+.episode-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 0.9rem; }
+.episode-row.is-available { opacity: 0.55; }
+.episode-num { font-weight: 700; color: var(--text-secondary); min-width: 34px; }
+.episode-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.season-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 16px; }

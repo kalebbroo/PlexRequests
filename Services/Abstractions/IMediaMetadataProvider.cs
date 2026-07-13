@@ -37,4 +37,8 @@ public interface IMediaMetadataProvider
     /// <summary>Titles similar to / recommended from a given title.</summary>
     Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, MediaType mediaType, int count = 12)
         => GetLibraryAsync(mediaType, 1, count);
+
+    /// <summary>Episodes of one season (with air dates), for episode-level requests + monitoring.</summary>
+    Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int showId, int seasonNumber)
+        => Task.FromResult(new List<EpisodeDto>());
 }

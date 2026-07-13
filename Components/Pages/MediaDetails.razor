@@ -190,35 +190,74 @@ else
                             <div class="episodes-section">
                                 @if (_media.Seasons?.Any() == true)
                                 {
-                                    @if (CanRequest)
-                                    {
-                                        <MudText Typo="Typo.body2" Class="mb-3">Pick the seasons you want, or request the whole series.</MudText>
-                                    }
+                                    <MudText Typo="Typo.body2" Class="mb-3">Expand a season to pick individual episodes, tick whole seasons, or request the entire series. Titles already on Plex are greyed out.</MudText>
                                     <div class="seasons-list">
-                                        @foreach (PlexRequestsHosted.Shared.DTOs.SeasonDto season in _media.Seasons.Where(s => s.SeasonNumber > 0))
+                                        @foreach (var season in _media.Seasons.Where(s => s.SeasonNumber > 0).OrderBy(s => s.SeasonNumber))
                                         {
-                                            <div class="season-row">
-                                                @if (CanRequest)
-                                                {
+                                            var seasonAvailable = _availableSeasons.Contains(season.SeasonNumber);
+                                            <div class="season-block @(seasonAvailable ? "is-available" : "")">
+                                                <div class="season-row">
                                                     <MudCheckBox T="bool" Value="@_selectedSeasons.Contains(season.SeasonNumber)"
-                                                                 ValueChanged="@((bool v) => ToggleSeason(season.SeasonNumber, v))" Dense="true" />
-                                                }
-                                                <div class="season-meta">
-                                                    <MudText Typo="Typo.subtitle1">Season @season.SeasonNumber</MudText>
-                                                    <MudText Typo="Typo.caption" Color="Color.Tertiary">@season.EpisodeCount episodes</MudText>
+                                                                 ValueChanged="@((bool v) => ToggleSeason(season.SeasonNumber, v))"
+                                                                 Disabled="@seasonAvailable" Dense="true" />
+                                                    <div class="season-meta" @onclick="() => ToggleExpand(season.SeasonNumber)">
+                                                        <MudText Typo="Typo.subtitle1">Season @season.SeasonNumber</MudText>
+                                                        <MudText Typo="Typo.caption" Color="Color.Tertiary">@season.EpisodeCount episodes</MudText>
+                                                    </div>
+                                                    @if (seasonAvailable)
+                                                    {
+                                                        <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Text">On Plex</MudChip>
+                                                    }
+                                                    <MudIconButton Icon="@(_expanded.Contains(season.SeasonNumber) ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                                                                   Size="Size.Small" OnClick="() => ToggleExpand(season.SeasonNumber)" />
                                                 </div>
+
+                                                @if (_expanded.Contains(season.SeasonNumber))
+                                                {
+                                                    <div class="episode-list">
+                                                        @if (!_episodes.ContainsKey(season.SeasonNumber))
+                                                        {
+                                                            <div class="episode-loading"><MudProgressCircular Indeterminate="true" Size="Size.Small" /> <span>Loading episodes…</span></div>
+                                                        }
+                                                        else
+                                                        {
+                                                            @foreach (var ep in _episodes[season.SeasonNumber])
+                                                            {
+                                                                <div class="episode-row @(ep.IsAvailable ? "is-available" : "")">
+                                                                    <MudCheckBox T="bool" Value="@_selectedEpisodes.Contains((ep.SeasonNumber, ep.EpisodeNumber))"
+                                                                                 ValueChanged="@((bool v) => ToggleEpisode(ep.SeasonNumber, ep.EpisodeNumber, v))"
+                                                                                 Disabled="@(ep.IsAvailable || !ep.HasAired)" Dense="true" />
+                                                                    <span class="episode-num">E@ep.EpisodeNumber</span>
+                                                                    <span class="episode-name">@ep.Name</span>
+                                                                    @if (ep.IsAvailable)
+                                                                    {
+                                                                        <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Text">On Plex</MudChip>
+                                                                    }
+                                                                    else if (!ep.HasAired)
+                                                                    {
+                                                                        <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Text">@(ep.AirDate?.ToString("MMM d, yyyy") ?? "Unaired")</MudChip>
+                                                                    }
+                                                                </div>
+                                                            }
+                                                        }
+                                                    </div>
+                                                }
                                             </div>
                                         }
                                     </div>
-                                    @if (CanRequest)
-                                    {
-                                        <div class="season-actions">
-                                            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RequestSelectedSeasons" Disabled="@(_selectedSeasons.Count == 0)">
-                                                Request @_selectedSeasons.Count Season@(_selectedSeasons.Count == 1 ? "" : "s")
-                                            </MudButton>
-                                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="RequestMedia">Request Entire Series</MudButton>
-                                        </div>
-                                    }
+
+                                    <div class="season-actions">
+                                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RequestSelectedEpisodes" Disabled="@(_selectedEpisodes.Count == 0)">
+                                            Request @_selectedEpisodes.Count Episode@(_selectedEpisodes.Count == 1 ? "" : "s")
+                                        </MudButton>
+                                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RequestSelectedSeasons" Disabled="@(_selectedSeasons.Count == 0)">
+                                            Request @_selectedSeasons.Count Season@(_selectedSeasons.Count == 1 ? "" : "s")
+                                        </MudButton>
+                                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="RequestEntireSeries">Request Entire Series</MudButton>
+                                        <MudTooltip Text="Keep this series monitored and auto-download new episodes as they air">
+                                            <MudSwitch T="bool" @bind-Value="_monitor" Color="Color.Primary" Label="Monitor new episodes" />
+                                        </MudTooltip>
+                                    </div>
                                 }
                                 else
                                 {
@@ -328,6 +367,9 @@ else
                 if (statuses.TryGetValue(key, out var st)) _media.RequestStatus = st;
 
                 _inWatchlist = await MediaRequestService.IsInWatchlistAsync(_media.Id, _media.MediaType);
+
+                if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
+                    _availableSeasons = (await PlexApiService.GetAvailableSeasonsAsync(_media.Id)).ToHashSet();
                 
                 // Load real recommendations for this title (was an empty-query search that returned nothing).
                 _similarMedia = await PlexApiService.GetSimilarAsync(_media.Id, mediaType, 12);
@@ -381,25 +423,63 @@ else
     }
 
     private readonly HashSet<int> _selectedSeasons = new();
+    private readonly HashSet<(int season, int episode)> _selectedEpisodes = new();
+    private readonly HashSet<int> _expanded = new();
+    private readonly Dictionary<int, List<PlexRequestsHosted.Shared.DTOs.EpisodeDto>> _episodes = new();
+    private HashSet<int> _availableSeasons = new();
+    private bool _monitor;
 
-    private bool CanRequest => _media is not null && !_media.IsAvailable
-        && _media.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.None;
+    private async Task ToggleExpand(int season)
+    {
+        if (!_expanded.Add(season)) { _expanded.Remove(season); return; }
+        if (_media is not null && !_episodes.ContainsKey(season))
+        {
+            var eps = await PlexApiService.GetSeasonEpisodesAsync(_media.Id, season);
+            _episodes[season] = eps;
+            StateHasChanged();
+        }
+    }
 
     private void ToggleSeason(int seasonNumber, bool selected)
     {
-        if (selected) _selectedSeasons.Add(seasonNumber);
-        else _selectedSeasons.Remove(seasonNumber);
+        if (selected) _selectedSeasons.Add(seasonNumber); else _selectedSeasons.Remove(seasonNumber);
+    }
+
+    private void ToggleEpisode(int season, int episode, bool selected)
+    {
+        if (selected) _selectedEpisodes.Add((season, episode)); else _selectedEpisodes.Remove((season, episode));
     }
 
     private async Task RequestSelectedSeasons()
     {
         if (_media is null || _selectedSeasons.Count == 0) return;
         var result = await MediaRequestService.RequestSeasonsAsync(_media.Id, _media.MediaType, _selectedSeasons.ToList());
+        await AfterTvRequest(result, $"Requested {_selectedSeasons.Count} season(s) of {_media.Title}!");
+        if (result.Success) _selectedSeasons.Clear();
+    }
+
+    private async Task RequestSelectedEpisodes()
+    {
+        if (_media is null || _selectedEpisodes.Count == 0) return;
+        var result = await MediaRequestService.RequestEpisodesAsync(_media.Id, _media.MediaType, _selectedEpisodes.ToList());
+        await AfterTvRequest(result, $"Requested {_selectedEpisodes.Count} episode(s) of {_media.Title}!");
+        if (result.Success) _selectedEpisodes.Clear();
+    }
+
+    private async Task RequestEntireSeries()
+    {
+        if (_media is null) return;
+        var result = await MediaRequestService.RequestSeriesAsync(_media.Id, _media.MediaType, _monitor);
+        var msg = _monitor ? $"{_media.Title} requested and now monitored for new episodes." : $"{_media.Title} (entire series) has been requested!";
+        await AfterTvRequest(result, msg);
+    }
+
+    private async Task AfterTvRequest(PlexRequestsHosted.Shared.DTOs.MediaRequestResult result, string successMessage)
+    {
         if (result.Success)
         {
-            _media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
-            await ToastService.ShowSuccessAsync($"Requested {_selectedSeasons.Count} season(s) of {_media.Title}!");
-            _selectedSeasons.Clear();
+            if (_media is not null) _media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
+            await ToastService.ShowSuccessAsync(successMessage);
             StateHasChanged();
         }
         else await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request");

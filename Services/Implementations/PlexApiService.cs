@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Xml.Linq;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using PlexRequestsHosted.Services.Abstractions;
@@ -205,7 +206,39 @@ public class PlexApiService : IPlexApiService
     public Task<MediaDetailDto?> GetMediaDetailsAsync(int mediaId, MediaType mediaType)
         => _metadata.GetDetailsAsync(mediaId, mediaType);
 
-    public Task<List<int>> GetAvailableSeasonsAsync(int tvShowId) => Task.FromResult(new List<int>());
+    // Episodes of a season with per-episode "already on Plex" overlaid from the DB index.
+    public async Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int showId, int seasonNumber)
+    {
+        var episodes = await _metadata.GetSeasonEpisodesAsync(showId, seasonNumber);
+        if (episodes.Count == 0) return episodes;
+        var ratingKey = await _db.PlexMappings.Where(m => m.ExternalKey == $"tmdb:{showId}").Select(m => m.RatingKey).FirstOrDefaultAsync();
+        if (!string.IsNullOrEmpty(ratingKey))
+        {
+            var csv = await _db.PlexSeasonAvailability
+                .Where(s => s.ShowRatingKey == ratingKey && s.SeasonNumber == seasonNumber)
+                .Select(s => s.AvailableEpisodesCsv).FirstOrDefaultAsync();
+            if (!string.IsNullOrEmpty(csv))
+            {
+                var have = csv.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(x => int.TryParse(x, out var n) ? n : -1).ToHashSet();
+                foreach (var ep in episodes) ep.IsAvailable = have.Contains(ep.EpisodeNumber);
+            }
+        }
+        return episodes;
+    }
+
+    // Which seasons of a TMDB show are already on Plex (from the DB availability index).
+    public async Task<List<int>> GetAvailableSeasonsAsync(int tvShowId)
+    {
+        var key = $"tmdb:{tvShowId}";
+        var ratingKey = await _db.PlexMappings.Where(m => m.ExternalKey == key).Select(m => m.RatingKey).FirstOrDefaultAsync();
+        if (string.IsNullOrEmpty(ratingKey)) return new List<int>();
+        return await _db.PlexSeasonAvailability
+            .Where(s => s.ShowRatingKey == ratingKey && s.EpisodeCount > 0)
+            .OrderBy(s => s.SeasonNumber)
+            .Select(s => s.SeasonNumber)
+            .ToListAsync();
+    }
 
     public Task<bool> IsAvailableOnPlexAsync(int mediaId, MediaType mediaType) => Task.FromResult(false);
 
@@ -328,81 +361,167 @@ public class PlexApiService : IPlexApiService
     // Availability index and helpers
     private record AvailabilityIndex(HashSet<string> ByTitleYear, Dictionary<string, string> ByTitleYearKey, Dictionary<string, string> ByExternal, DateTime BuiltAt);
     private const string AvailabilityCacheKey = "plex_availability_index";
+    // Fast read path: the in-memory match index is projected FROM THE DB (kept fresh by the
+    // background AvailabilityRefreshService). This never hits Plex, so annotating a page is cheap.
     private async Task<AvailabilityIndex> EnsureAvailabilityIndexAsync()
     {
-        if (_cache.TryGetValue<AvailabilityIndex>(AvailabilityCacheKey, out var cached) && (DateTime.UtcNow - cached.BuiltAt) < TimeSpan.FromMinutes(10))
+        if (_cache.TryGetValue<AvailabilityIndex>(AvailabilityCacheKey, out var cached) && (DateTime.UtcNow - cached.BuiltAt) < TimeSpan.FromMinutes(5))
             return cached!;
 
-        // Build new index
         var byTitleYear = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var byTitleYearKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var byExternal = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        var libraries = await GetLibrariesAsync();
-        _logger.LogInformation("Plex index build: {LibCount} libraries", libraries.Count);
-        foreach (var lib in libraries)
+        var rows = await _db.PlexMappings.AsNoTracking()
+            .Select(m => new { m.ExternalKey, m.RatingKey, m.Title, m.Year })
+            .ToListAsync();
+        foreach (var m in rows)
         {
-            // Only index Movies/Shows for now
-            if (lib.Type != Shared.Enums.MediaType.Movie && lib.Type != Shared.Enums.MediaType.TvShow) continue;
-            int added = 0;
-            await foreach (var item in EnumerateLibraryItemsAsync(lib.Key))
+            if (!string.IsNullOrEmpty(m.ExternalKey) && !byExternal.ContainsKey(m.ExternalKey))
+                byExternal[m.ExternalKey] = m.RatingKey;
+            if (!string.IsNullOrEmpty(m.Title) && m.Year.HasValue)
             {
-                var title = item.title;
-                var year = item.year;
-                var ratingKey = item.ratingKey;
-                if (!string.IsNullOrEmpty(title) && year.HasValue)
-                {
-                    var ty = NormalizeTitleYear(title, year.Value);
-                    byTitleYear.Add(ty);
-                    if (!string.IsNullOrEmpty(ratingKey) && !byTitleYearKey.ContainsKey(ty))
-                        byTitleYearKey[ty] = ratingKey;
-                    added++;
-                }
-                foreach (var guid in item.guids)
-                {
-                    // guid formats like tmdb://12345?lang=en
-                    var (type, id) = ParseGuid(guid);
-                    if (!string.IsNullOrEmpty(type) && !string.IsNullOrEmpty(id))
-                    {
-                        var key = $"{type}:{id}";
-                        if (!byExternal.ContainsKey(key)) byExternal[key] = ratingKey;
-                        // Persist mapping to DB (upsert by ExternalKey)
-                        try
-                        {
-                            var existing = _db.PlexMappings.FirstOrDefault(m => m.ExternalKey == key);
-                            if (existing is null)
-                            {
-                                _db.PlexMappings.Add(new PlexMappingEntity
-                                {
-                                    ExternalKey = key,
-                                    RatingKey = ratingKey,
-                                    MediaType = lib.Type,
-                                    Title = title,
-                                    Year = year,
-                                    LastSeenAt = DateTime.UtcNow
-                                });
-                            }
-                            else
-                            {
-                                existing.RatingKey = ratingKey;
-                                existing.MediaType = lib.Type;
-                                existing.Title = title;
-                                existing.Year = year;
-                                existing.LastSeenAt = DateTime.UtcNow;
-                            }
-                        }
-                        catch { /* best-effort; avoid blocking index */ }
-                    }
-                }
+                var ty = NormalizeTitleYear(m.Title, m.Year.Value);
+                byTitleYear.Add(ty);
+                if (!byTitleYearKey.ContainsKey(ty)) byTitleYearKey[ty] = m.RatingKey;
             }
-            _logger.LogInformation("Indexed library {LibTitle} items: {Count}", lib.Title, added);
-            try { await _db.SaveChangesAsync(); } catch { /* best-effort */ }
         }
 
         var index = new AvailabilityIndex(byTitleYear, byTitleYearKey, byExternal, DateTime.UtcNow);
-        _logger.LogInformation("Plex index built. TitleYear={TitleCount} External={ExternalCount}", byTitleYear.Count, byExternal.Count);
-        _cache.Set(AvailabilityCacheKey, index, TimeSpan.FromMinutes(10));
+        _cache.Set(AvailabilityCacheKey, index, TimeSpan.FromMinutes(5));
         return index;
+    }
+
+    // Expensive write path: scan Plex and upsert the availability tables (item id-maps + per-season
+    // episode presence), then prune anything not seen this pass (removed from the server). Called by
+    // the background refresh service and the manual rebuild endpoint.
+    public async Task<object> RebuildAvailabilityFromPlexAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_cfg.PrimaryServerUrl) || string.IsNullOrWhiteSpace(_cfg.ServerToken))
+            return new { skipped = true, reason = "Plex not configured" };
+
+        var scanStart = DateTime.UtcNow;
+        int maps = 0, episodes = 0, seasons = 0;
+        var libraries = await GetLibrariesAsync();
+        _logger.LogInformation("Plex availability scan: {LibCount} libraries", libraries.Count);
+
+        foreach (var lib in libraries)
+        {
+            if (lib.Type != Shared.Enums.MediaType.Movie && lib.Type != Shared.Enums.MediaType.TvShow) continue;
+
+            // Items (movies + shows) -> external id -> ratingKey mappings.
+            await foreach (var item in EnumerateLibraryItemsAsync(lib.Key))
+            {
+                foreach (var guid in item.guids)
+                {
+                    var (type, id) = ParseGuid(guid);
+                    if (string.IsNullOrEmpty(type) || string.IsNullOrEmpty(id)) continue;
+                    var key = $"{type}:{id}";
+                    var existing = await _db.PlexMappings.FirstOrDefaultAsync(m => m.ExternalKey == key);
+                    if (existing is null)
+                        _db.PlexMappings.Add(new PlexMappingEntity { ExternalKey = key, RatingKey = item.ratingKey, MediaType = lib.Type, Title = item.title, Year = item.year, LastSeenAt = scanStart });
+                    else { existing.RatingKey = item.ratingKey; existing.MediaType = lib.Type; existing.Title = item.title; existing.Year = item.year; existing.LastSeenAt = scanStart; }
+                    maps++;
+                }
+            }
+            await _db.SaveChangesAsync();
+
+            // Episodes -> per-season presence (TV libraries only). One type=4 query returns every
+            // episode with its show (grandparentRatingKey) + season (parentIndex) + number (index).
+            if (lib.Type == Shared.Enums.MediaType.TvShow)
+            {
+                var perSeason = new Dictionary<(string show, int season), SortedSet<int>>();
+                await foreach (var ep in EnumerateEpisodesAsync(lib.Key))
+                {
+                    var k = (ep.showRatingKey, ep.season);
+                    if (!perSeason.TryGetValue(k, out var set)) { set = new SortedSet<int>(); perSeason[k] = set; }
+                    if (ep.episode > 0) set.Add(ep.episode);
+                    episodes++;
+                }
+                foreach (var (k, set) in perSeason)
+                {
+                    var csv = string.Join(",", set);
+                    var row = await _db.PlexSeasonAvailability.FirstOrDefaultAsync(s => s.ShowRatingKey == k.show && s.SeasonNumber == k.season);
+                    if (row is null)
+                        _db.PlexSeasonAvailability.Add(new PlexSeasonAvailabilityEntity { ShowRatingKey = k.show, SeasonNumber = k.season, AvailableEpisodesCsv = csv, EpisodeCount = set.Count, LastSeenAt = scanStart });
+                    else { row.AvailableEpisodesCsv = csv; row.EpisodeCount = set.Count; row.LastSeenAt = scanStart; }
+                    seasons++;
+                }
+                await _db.SaveChangesAsync();
+            }
+        }
+
+        // Prune rows not touched this pass: they were removed from the server.
+        var staleMaps = await _db.PlexMappings.Where(m => m.LastSeenAt < scanStart).ToListAsync();
+        var staleSeasons = await _db.PlexSeasonAvailability.Where(s => s.LastSeenAt < scanStart).ToListAsync();
+        if (staleMaps.Count > 0) _db.PlexMappings.RemoveRange(staleMaps);
+        if (staleSeasons.Count > 0) _db.PlexSeasonAvailability.RemoveRange(staleSeasons);
+        await _db.SaveChangesAsync();
+
+        _cache.Remove(AvailabilityCacheKey); // force the read projection to rebuild from fresh DB
+        _logger.LogInformation("Plex availability rebuilt: {Maps} id-maps, {Seasons} seasons, {Eps} episodes; pruned {PMaps} maps / {PSeasons} seasons",
+            maps, seasons, episodes, staleMaps.Count, staleSeasons.Count);
+        return new { maps, seasons, episodes, prunedMaps = staleMaps.Count, prunedSeasons = staleSeasons.Count, at = scanStart };
+    }
+
+    // Enumerate every episode in a TV library section via a single paged type=4 query.
+    private async IAsyncEnumerable<(string showRatingKey, int season, int episode)> EnumerateEpisodesAsync(string sectionKey)
+    {
+        var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
+        if (baseUrl is null) yield break;
+        var token = _cfg.ServerToken ?? string.Empty;
+        int start = 0; const int size = 200;
+        while (true)
+        {
+            var url = $"{baseUrl}/library/sections/{sectionKey}/all?type=4&X-Plex-Container-Start={start}&X-Plex-Container-Size={size}&X-Plex-Token={Uri.EscapeDataString(token)}";
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            EnsureDefaultHeaders(req.Headers);
+            req.Headers.Add("X-Plex-Token", _cfg.ServerToken);
+            req.Headers.Accept.Clear();
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            var res = await _http.SendAsync(req);
+            if (!res.IsSuccessStatusCode) yield break;
+            var text = await res.Content.ReadAsStringAsync();
+            int returned = 0;
+            using (var doc = JsonDocument.Parse(text))
+            {
+                var root = doc.RootElement;
+                var mc = root.TryGetProperty("MediaContainer", out var mcEl) ? mcEl : root;
+                if (mc.ValueKind == JsonValueKind.Object && mc.TryGetProperty("Metadata", out var mdEl) && mdEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var m in mdEl.EnumerateArray())
+                    {
+                        returned++;
+                        var show = JsonStringOrNumber(m, "grandparentRatingKey");
+                        var season = JsonInt(m, "parentIndex");
+                        var episode = JsonInt(m, "index");
+                        if (!string.IsNullOrEmpty(show) && season is >= 0)
+                            yield return (show, season.Value, episode ?? -1);
+                    }
+                }
+            }
+            if (returned < size) yield break;
+            start += size;
+        }
+    }
+
+    private static string JsonStringOrNumber(JsonElement el, string prop)
+    {
+        if (!el.TryGetProperty(prop, out var p)) return string.Empty;
+        return p.ValueKind switch
+        {
+            JsonValueKind.String => p.GetString() ?? string.Empty,
+            JsonValueKind.Number => p.GetInt64().ToString(),
+            _ => string.Empty
+        };
+    }
+
+    private static int? JsonInt(JsonElement el, string prop)
+    {
+        if (!el.TryGetProperty(prop, out var p)) return null;
+        if (p.ValueKind == JsonValueKind.Number && p.TryGetInt32(out var n)) return n;
+        if (p.ValueKind == JsonValueKind.String && int.TryParse(p.GetString(), out var s)) return s;
+        return null;
     }
 
     private static string NormalizeTitleYear(string? title, int year)
@@ -627,13 +746,8 @@ public class PlexApiService : IPlexApiService
         return new { matched = false, reasons };
     }
 
-    // Force rebuild
-    public async Task<object> RebuildAvailabilityIndexAsync()
-    {
-        _cache.Remove(AvailabilityCacheKey);
-        var idx = await EnsureAvailabilityIndexAsync();
-        return new { rebuilt = true, titleYearCount = idx.ByTitleYear.Count, externalCount = idx.ByExternal.Count, builtAt = idx.BuiltAt };
-    }
+    // Force a full Plex -> DB rescan (used by the admin endpoint and after a fulfillment completes).
+    public async Task<object> RebuildAvailabilityIndexAsync() => await RebuildAvailabilityFromPlexAsync();
 
     // Low-level helpers
     public async Task<string> GetSectionsRawAsync()

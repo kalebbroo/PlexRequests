@@ -32,6 +32,10 @@ public class FulfillmentJobEntity
     [MaxLength(256)]
     public string? RequestedSeasonsCsv { get; set; }
 
+    // Episode-level targets, format "S1E1,S2E5". Empty ⇒ fall back to seasons/whole title.
+    [MaxLength(4096)]
+    public string? RequestedEpisodesCsv { get; set; }
+
     public Quality Quality { get; set; }
 
     public FulfillmentStatus Status { get; set; } = FulfillmentStatus.Queued;

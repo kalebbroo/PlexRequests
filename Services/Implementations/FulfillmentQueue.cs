@@ -40,6 +40,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata) 
             TmdbId = request.MediaId, // MediaId is the TMDb id for the default provider
             ImdbId = imdbId,
             RequestedSeasonsCsv = request.RequestedSeasons.Count > 0 ? string.Join(",", request.RequestedSeasons) : null,
+            RequestedEpisodesCsv = request.RequestedEpisodesCsv,
             Quality = request.PreferredQuality,
             Status = FulfillmentStatus.Queued,
             CreatedAt = DateTime.UtcNow
@@ -106,6 +107,19 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata) 
             .OrderByDescending(x => x.Id)
             .FirstOrDefaultAsync();
 
+    // Parse "S1E1,S2E5" into episode targets.
+    private static List<EpisodeRef> ParseEpisodes(string? csv)
+    {
+        var list = new List<EpisodeRef>();
+        if (string.IsNullOrWhiteSpace(csv)) return list;
+        foreach (var tok in csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(tok, @"^[Ss](\d+)[Ee](\d+)$");
+            if (m.Success) list.Add(new EpisodeRef { Season = int.Parse(m.Groups[1].Value), Episode = int.Parse(m.Groups[2].Value) });
+        }
+        return list;
+    }
+
     private static FulfillmentJobDto Map(FulfillmentJobEntity j) => new()
     {
         Id = j.Id,
@@ -122,6 +136,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata) 
             : j.RequestedSeasonsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(s => int.TryParse(s, out var n) ? n : (int?)null)
                 .Where(n => n.HasValue).Select(n => n!.Value).ToList(),
+        RequestedEpisodes = ParseEpisodes(j.RequestedEpisodesCsv),
         Quality = j.Quality,
         Status = j.Status,
         Attempts = j.Attempts,

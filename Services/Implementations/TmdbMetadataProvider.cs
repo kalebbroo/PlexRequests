@@ -305,6 +305,31 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
             return tvList.Take(count).ToList();
         });
 
+    public async Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int showId, int seasonNumber)
+    {
+        var key = $"episodes_{showId}_{seasonNumber}";
+        if (CacheGetOrNull<List<EpisodeDto>>(key) is { } cached) return cached;
+        try
+        {
+            var season = await _client.GetTvSeasonAsync(showId, seasonNumber);
+            var list = (season?.Episodes ?? new()).Select(e => new EpisodeDto
+            {
+                SeasonNumber = seasonNumber,
+                EpisodeNumber = e.EpisodeNumber,
+                Name = e.Name,
+                Overview = e.Overview,
+                StillUrl = e.StillPath != null ? $"https://image.tmdb.org/t/p/w300{e.StillPath}" : null,
+                AirDate = e.AirDate
+            }).ToList();
+            return CacheSet(key, list, DetailTtl);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "TMDB episodes failed for show {Show} S{Season}", showId, seasonNumber);
+            return new List<EpisodeDto>();
+        }
+    }
+
     private static MediaCardDto MapMovieToCard(SearchMovie movie)
     {
         return new MediaCardDto

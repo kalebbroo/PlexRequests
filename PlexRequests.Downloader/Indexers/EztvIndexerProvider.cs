@@ -57,9 +57,19 @@ public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> l
             page++;
         }
 
-        // If specific seasons were requested, keep only those.
-        if (job.RequestedSeasons.Count > 0)
+        // Episode-level targets take precedence (monitored/auto or explicit episode requests); otherwise
+        // fall back to whole-season filtering. No selection ⇒ everything (whole series).
+        if (job.RequestedEpisodes.Count > 0)
+        {
+            var want = job.RequestedEpisodes.Select(e => (e.Season, e.Episode)).ToHashSet();
+            candidates = candidates
+                .Where(c => c.Season is not null && c.Episode is not null && want.Contains((c.Season.Value, c.Episode.Value)))
+                .ToList();
+        }
+        else if (job.RequestedSeasons.Count > 0)
+        {
             candidates = candidates.Where(c => c.Season is null || job.RequestedSeasons.Contains(c.Season.Value)).ToList();
+        }
 
         return candidates;
     }

@@ -63,6 +63,18 @@ public class SeasonDto
     public int AvailableEpisodes { get; set; }
 }
 
+public class EpisodeDto
+{
+    public int SeasonNumber { get; set; }
+    public int EpisodeNumber { get; set; }
+    public string? Name { get; set; }
+    public string? Overview { get; set; }
+    public string? StillUrl { get; set; }
+    public DateTime? AirDate { get; set; }
+    public bool IsAvailable { get; set; }   // already on Plex
+    public bool HasAired => AirDate.HasValue && AirDate.Value.Date <= DateTime.UtcNow.Date;
+}
+
 public class MediaRequestDto : BaseDto
 {
     [Required]
@@ -85,6 +97,8 @@ public class MediaRequestDto : BaseDto
     public string? DenialReason { get; set; }
     public List<int> RequestedSeasons { get; set; } = new();
     public bool RequestAllSeasons { get; set; }
+    public string? RequestedEpisodesCsv { get; set; }   // "S1E1,S2E5" — episode-level targets
+    public bool Monitored { get; set; }                 // ongoing-series auto-download
 }
 
 public class UserDto : BaseDto
@@ -123,10 +137,19 @@ public class FulfillmentJobDto
     public string? ImdbId { get; set; }
     public int? TvdbId { get; set; }
     public List<int> RequestedSeasons { get; set; } = new();
+    /// <summary>Episode-level targets as (season, episode) pairs. Empty ⇒ use RequestedSeasons / whole title.</summary>
+    public List<EpisodeRef> RequestedEpisodes { get; set; } = new();
     public Quality Quality { get; set; }
     public FulfillmentStatus Status { get; set; }
     public int Attempts { get; set; }
     public int Progress { get; set; }
+}
+
+/// <summary>A single episode target for the downloader, e.g. season 2 episode 5.</summary>
+public class EpisodeRef
+{
+    public int Season { get; set; }
+    public int Episode { get; set; }
 }
 
 public class NotificationDto

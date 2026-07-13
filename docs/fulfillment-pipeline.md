@@ -54,9 +54,25 @@ Returns an array of jobs; each claimed job flips `Queued → Claimed` and increm
 ```json
 [{ "id": 1, "mediaRequestId": 1, "mediaId": 550, "mediaType": 0,
    "title": "Fight Club", "tmdbId": 550, "imdbId": null, "tvdbId": null,
-   "requestedSeasons": [], "quality": 0, "status": 1, "attempts": 1, "progress": 0 }]
+   "requestedSeasons": [], "requestedEpisodes": [], "quality": 0, "status": 1, "attempts": 1, "progress": 0 }]
 ```
 `mediaType`: 0=Movie 1=TvShow 2=Music 3=Anime. `quality`: 0=Any 480/720/1080/2160/4320.
+
+**TV target precedence** (a worker should honor the most specific present):
+1. `requestedEpisodes` — `[{ "season": 2, "episode": 5 }, …]`. Fetch exactly these episodes.
+2. `requestedSeasons` — `[1, 2]`. Fetch these whole seasons.
+3. Neither ⇒ the whole series.
+
+The reference `EztvIndexerProvider` filters candidates by episode when `requestedEpisodes` is set,
+else by season, else takes all. Other providers should follow the same precedence.
+
+**Monitored series (auto-download).** When a user requests an entire series with "Monitor" on, the
+request is flagged `Monitored`. After its back-catalog is fulfilled (request → Available), the web
+app's `SeriesMonitorService` periodically checks TMDB for episodes that have **aired but aren't on
+Plex** (per the DB availability index) and enqueues a normal one-episode job for each
+(`requestedEpisodes` = that episode). So from the worker's side there is nothing new to implement for
+monitoring — it just claims ordinary episode jobs. The web app handles the "what's missing" logic and
+dedup; anything already on Plex is never queued.
 
 ### `POST /api/fulfillment/{jobId}/progress`
 Body: `{ "progress": 42, "workerId": "vpnbox" }`. Sets job `Downloading` + percentage; flips the

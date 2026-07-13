@@ -10,6 +10,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<UserEntity> Users => Set<UserEntity>();
     public DbSet<UserProfileEntity> UserProfiles => Set<UserProfileEntity>();
     public DbSet<PlexMappingEntity> PlexMappings => Set<PlexMappingEntity>();
+    public DbSet<PlexSeasonAvailabilityEntity> PlexSeasonAvailability => Set<PlexSeasonAvailabilityEntity>();
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
     public DbSet<FulfillmentJobEntity> FulfillmentJobs => Set<FulfillmentJobEntity>();
     public DbSet<BridgeOutboxEntity> BridgeOutbox => Set<BridgeOutboxEntity>();
@@ -67,6 +68,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasKey(x => x.Id);
             b.HasIndex(x => x.ExternalKey).IsUnique();
             b.HasIndex(x => x.RatingKey);
+        });
+
+        modelBuilder.Entity<PlexSeasonAvailabilityEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.ShowRatingKey);
+            b.HasIndex(x => new { x.ShowRatingKey, x.SeasonNumber }).IsUnique();
         });
 
         modelBuilder.Entity<NotificationEntity>(b =>

@@ -135,6 +135,10 @@ builder.Services.AddScoped<IFulfillmentQueue, FulfillmentQueue>();
 builder.Services.AddScoped<IDiscordLinkService, DiscordLinkService>();
 // Backstop that requeues/fails jobs stranded by a dead downloader.
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.FulfillmentReaperService>();
+// Keeps the DB-backed Plex availability index fresh (per-season episode presence + prune removals).
+builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.AvailabilityRefreshService>();
+// Ongoing-series monitor: auto-downloads newly-aired episodes of monitored series.
+builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.SeriesMonitorService>();
 
 // AuthN/AuthZ
 builder.Services

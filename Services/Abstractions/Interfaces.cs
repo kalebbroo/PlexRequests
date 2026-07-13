@@ -9,6 +9,9 @@ public interface IMediaRequestService
     Task<MediaRequestDto?> GetRequestByIdAsync(int id);
     Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType);
     Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons);
+    Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes);
+    Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType, bool monitor);
+    Task<MediaRequestResult> CreateMonitoredEpisodeAsync(int anchorRequestId, int season, int episode);
     // User-scoped variants for callers without a cookie session (Discord bridge).
     Task<MediaRequestResult> RequestMediaForUserAsync(int userId, int mediaId, MediaType mediaType);
     Task<List<MediaRequestDto>> GetRequestsForUserAsync(int userId, int take = 25);
@@ -72,6 +75,7 @@ public interface IPlexApiService
     Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, MediaType mediaType, int count = 12);
     Task<bool> IsAvailableOnPlexAsync(int mediaId, MediaType mediaType);
     Task<List<int>> GetAvailableSeasonsAsync(int tvShowId);
+    Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int showId, int seasonNumber);
     Task<PlexServerInfo?> GetServerInfoAsync();
     Task<List<PlexLibrary>> GetLibrariesAsync();
     Task AnnotateAvailabilityAsync(List<MediaCardDto> items);
@@ -84,6 +88,7 @@ public interface IPlexApiService
     Task<List<object>> SearchServerAsync(string query, MediaType? mediaType);
     Task<List<object>> ResolveByTitleAsync(string title, int? year, MediaType mediaType, int maxResults = 5);
     Task<object> RebuildAvailabilityIndexAsync();
+    Task<object> RebuildAvailabilityFromPlexAsync();
 }
 
 public interface IAuthService

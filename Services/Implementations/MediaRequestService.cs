@@ -136,6 +136,8 @@ public class MediaRequestService(
             DenialReason = r.DenialReason,
             RequestNote = r.RequestNote,
             RequestAllSeasons = r.RequestAllSeasons,
+            RequestedEpisodesCsv = r.RequestedEpisodesCsv,
+            Monitored = r.Monitored,
             RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv) ? new List<int>() : r.RequestedSeasonsCsv.Split(',').Select(s => int.TryParse(s, out var n) ? n : (int?)null).Where(n => n.HasValue).Select(n => n!.Value).ToList(),
             RequestedByUserId = r.RequestedByUserId ?? 0,
             RequestedByUsername = r.RequestedBy ?? string.Empty
@@ -190,6 +192,8 @@ public class MediaRequestService(
                 DenialReason = r.DenialReason,
                 RequestNote = r.RequestNote,
                 RequestAllSeasons = r.RequestAllSeasons,
+            RequestedEpisodesCsv = r.RequestedEpisodesCsv,
+            Monitored = r.Monitored,
                 RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv) ? new List<int>() : r.RequestedSeasonsCsv.Split(',').Select(s => { int n; return int.TryParse(s, out n) ? (int?)n : null; }).Where(n => n.HasValue).Select(n => n!.Value).ToList(),
                 RequestedByUserId = r.RequestedByUserId ?? 0,
                 RequestedByUsername = r.RequestedBy ?? string.Empty
@@ -228,6 +232,61 @@ public class MediaRequestService(
         return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons, seasons);
     }
 
+    /// <summary>Request specific episodes of a TV show, e.g. [(1,1),(1,2),(2,5)].</summary>
+    public async Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes)
+    {
+        var (username, isAdmin) = await GetUserAsync();
+        if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
+        if (episodes is not { Count: > 0 }) return new MediaRequestResult { Success = false, ErrorMessage = "No episodes selected" };
+        var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
+        if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
+        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons: false, seasons: null, episodes: episodes);
+    }
+
+    /// <summary>
+    /// Create an auto-approved child request for a single newly-aired episode of a monitored series,
+    /// and enqueue it. Used by SeriesMonitorService — flows through the normal one-request/one-job
+    /// pipeline, so the fulfilled callback marks THIS child available (the monitored anchor is untouched).
+    /// </summary>
+    public async Task<MediaRequestResult> CreateMonitoredEpisodeAsync(int anchorRequestId, int season, int episode)
+    {
+        var anchor = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == anchorRequestId);
+        if (anchor is null) return new MediaRequestResult { Success = false, ErrorMessage = "Anchor request not found" };
+
+        var child = new MediaRequestEntity
+        {
+            MediaId = anchor.MediaId,
+            MediaType = anchor.MediaType,
+            Title = anchor.Title,
+            PosterUrl = anchor.PosterUrl,
+            Status = RequestStatus.Approved,
+            RequestedAt = DateTime.UtcNow,
+            ApprovedAt = DateTime.UtcNow,
+            RequestedBy = anchor.RequestedBy,
+            RequestedByUserId = anchor.RequestedByUserId,
+            RequestAllSeasons = false,
+            RequestedEpisodesCsv = $"S{season}E{episode}",
+            Monitored = false
+        };
+        _db.MediaRequests.Add(child);
+        await _db.SaveChangesAsync();
+
+        if (_config.GetValue<bool>("Fulfillment:Enabled"))
+            await _fulfillment.EnqueueAsync(ToDto(child));
+
+        return new MediaRequestResult { Success = true, RequestId = child.Id, NewStatus = child.Status };
+    }
+
+    /// <summary>Request an entire series, optionally monitoring it for new episodes as they air.</summary>
+    public async Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType, bool monitor)
+    {
+        var (username, isAdmin) = await GetUserAsync();
+        if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
+        var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
+        if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
+        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons: true, seasons: null, episodes: null, monitored: monitor);
+    }
+
     /// <summary>Create a request on behalf of an explicit user (used by the Discord bridge, which has no cookie session).</summary>
     public async Task<MediaRequestResult> RequestMediaForUserAsync(int userId, int mediaId, MediaType mediaType)
     {
@@ -240,7 +299,7 @@ public class MediaRequestService(
         return await CreateRequestCoreAsync(userId, user.Username, isAdmin, mediaId, mediaType);
     }
 
-    private async Task<MediaRequestResult> CreateRequestCoreAsync(int userId, string username, bool isAdmin, int mediaId, MediaType mediaType, bool allSeasons = true, List<int>? seasons = null)
+    private async Task<MediaRequestResult> CreateRequestCoreAsync(int userId, string username, bool isAdmin, int mediaId, MediaType mediaType, bool allSeasons = true, List<int>? seasons = null, List<(int season, int episode)>? episodes = null, bool monitored = false)
     {
         // Per-user duplicate check: a second user requesting the same title joins it rather than
         // being blocked. Only the same user re-requesting an active item is rejected.
@@ -281,11 +340,17 @@ public class MediaRequestService(
             RequestedAt = DateTime.UtcNow,
             RequestedBy = username,
             RequestedByUserId = userId,
-            // Seasons only apply to TV; movies are always "all". Empty selection ⇒ whole series.
-            RequestAllSeasons = mediaType != MediaType.TvShow || allSeasons || seasons is not { Count: > 0 },
-            RequestedSeasonsCsv = mediaType == MediaType.TvShow && !allSeasons && seasons is { Count: > 0 }
+            // TV selection: episodes > seasons > whole series. Movies are always "all".
+            RequestAllSeasons = mediaType == MediaType.TvShow
+                ? (episodes is not { Count: > 0 } && seasons is not { Count: > 0 } && allSeasons)
+                : true,
+            RequestedSeasonsCsv = mediaType == MediaType.TvShow && seasons is { Count: > 0 }
                 ? string.Join(",", seasons.Distinct().OrderBy(x => x))
-                : null
+                : null,
+            RequestedEpisodesCsv = mediaType == MediaType.TvShow && episodes is { Count: > 0 }
+                ? string.Join(",", episodes.Distinct().OrderBy(e => e.season).ThenBy(e => e.episode).Select(e => $"S{e.season}E{e.episode}"))
+                : null,
+            Monitored = mediaType == MediaType.TvShow && monitored
         };
         _db.MediaRequests.Add(entity);
         var saved = await _db.SaveChangesAsync() > 0;
@@ -318,6 +383,8 @@ public class MediaRequestService(
         DenialReason = r.DenialReason,
         RequestNote = r.RequestNote,
         RequestAllSeasons = r.RequestAllSeasons,
+            RequestedEpisodesCsv = r.RequestedEpisodesCsv,
+            Monitored = r.Monitored,
         RequestedByUserId = r.RequestedByUserId ?? 0,
         RequestedByUsername = r.RequestedBy ?? string.Empty,
         RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv)
