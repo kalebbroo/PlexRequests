@@ -25,6 +25,20 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata) 
             j.Status != FulfillmentStatus.Cancelled);
         if (active) return;
 
+        var seasonsCsv = request.RequestedSeasons.Count > 0 ? string.Join(",", request.RequestedSeasons) : null;
+        var episodesCsv = request.RequestedEpisodesCsv;
+
+        // Never re-download content already on Plex: narrow a TV request to only the missing seasons/
+        // episodes. If nothing is missing, don't enqueue at all — the reconciliation service marks the
+        // request Available. (Movies fall through unchanged.)
+        if (request.MediaType == MediaType.TvShow)
+        {
+            var (s, e, hasTarget) = await ComputeMissingTvTargetsAsync(request);
+            if (!hasTarget) return;   // everything already on Plex
+            seasonsCsv = s;
+            episodesCsv = e;
+        }
+
         // Resolve the IMDb id up front so the downloader (EZTV/YTS are keyed by IMDb) needs no TMDb key.
         string? imdbId = null;
         try { imdbId = await _metadata.GetImdbIdAsync(request.MediaId, request.MediaType); }
@@ -39,13 +53,73 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata) 
             Year = null,
             TmdbId = request.MediaId, // MediaId is the TMDb id for the default provider
             ImdbId = imdbId,
-            RequestedSeasonsCsv = request.RequestedSeasons.Count > 0 ? string.Join(",", request.RequestedSeasons) : null,
-            RequestedEpisodesCsv = request.RequestedEpisodesCsv,
+            RequestedSeasonsCsv = seasonsCsv,
+            RequestedEpisodesCsv = episodesCsv,
             Quality = request.PreferredQuality,
             Status = FulfillmentStatus.Queued,
             CreatedAt = DateTime.UtcNow
         });
         await _db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Given a TV request, returns the seasons/episodes CSVs to actually fetch (only what's missing
+    /// from Plex) and whether there's anything to fetch at all. A season is considered satisfied when
+    /// Plex already has at least its TMDB episode count.
+    /// </summary>
+    private async Task<(string? seasonsCsv, string? episodesCsv, bool hasTarget)> ComputeMissingTvTargetsAsync(MediaRequestDto request)
+    {
+        var onPlex = await GetPlexSeasonsAsync(request.MediaId);   // season -> available episode numbers
+        var detail = await _metadata.GetDetailsAsync(request.MediaId, MediaType.TvShow);
+
+        // Episode-level request: keep only episodes not already on Plex.
+        if (!string.IsNullOrWhiteSpace(request.RequestedEpisodesCsv))
+        {
+            var wanted = ParseEpisodes(request.RequestedEpisodesCsv);   // reuses the existing S/E parser
+            var missing = wanted.Where(w => !(onPlex.TryGetValue(w.Season, out var set) && set.Contains(w.Episode))).ToList();
+            if (missing.Count == 0) return (null, null, false);
+            return (null, string.Join(",", missing.Select(m => $"S{m.Season}E{m.Episode}")), true);
+        }
+
+        // Which seasons are in scope: an explicit list, else (whole series) every season TMDB knows.
+        var scopeSeasons = detail?.Seasons?.Where(s => s.SeasonNumber > 0);
+        if (request.RequestedSeasons.Count > 0)
+            scopeSeasons = scopeSeasons?.Where(s => request.RequestedSeasons.Contains(s.SeasonNumber));
+        var seasonsList = scopeSeasons?.ToList();
+
+        // If we can't resolve the season list (metadata miss), don't guess — enqueue as originally asked.
+        if (seasonsList is null || seasonsList.Count == 0)
+        {
+            var csv = request.RequestedSeasons.Count > 0 ? string.Join(",", request.RequestedSeasons) : null;
+            return (csv, null, true);
+        }
+
+        var missingSeasons = new List<int>();
+        foreach (var s in seasonsList)
+        {
+            var plexCount = onPlex.TryGetValue(s.SeasonNumber, out var set) ? set.Count : 0;
+            // Complete when Plex has >= the TMDB episode count (or, if TMDB count unknown, any episodes).
+            var complete = plexCount > 0 && (s.EpisodeCount <= 0 || plexCount >= s.EpisodeCount);
+            // Only fetch seasons that have actually started airing; future seasons are the monitor's job,
+            // so a whole-series request of a caught-up show doesn't spawn a doomed job for an unaired season.
+            var aired = !s.AirDate.HasValue || s.AirDate.Value.Date <= DateTime.UtcNow.Date;
+            if (!complete && aired) missingSeasons.Add(s.SeasonNumber);
+        }
+        if (missingSeasons.Count == 0) return (null, null, false);
+        return (string.Join(",", missingSeasons), null, true);
+    }
+
+    // season -> set of episode numbers on Plex (from the DB availability index: tmdb -> ratingKey -> seasons).
+    private async Task<Dictionary<int, HashSet<int>>> GetPlexSeasonsAsync(int tmdbId)
+    {
+        var result = new Dictionary<int, HashSet<int>>();
+        var ratingKey = await _db.PlexMappings.Where(m => m.ExternalKey == $"tmdb:{tmdbId}").Select(m => m.RatingKey).FirstOrDefaultAsync();
+        if (string.IsNullOrEmpty(ratingKey)) return result;
+        var seasons = await _db.PlexSeasonAvailability.Where(s => s.ShowRatingKey == ratingKey).ToListAsync();
+        foreach (var s in seasons)
+            result[s.SeasonNumber] = s.AvailableEpisodesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(x => int.TryParse(x, out var n) ? n : -1).Where(n => n >= 0).ToHashSet();
+        return result;
     }
 
     public async Task<List<FulfillmentJobDto>> ClaimNextAsync(string workerId, int max = 1)

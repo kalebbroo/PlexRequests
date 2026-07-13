@@ -139,6 +139,8 @@ builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.Fulfill
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.AvailabilityRefreshService>();
 // Ongoing-series monitor: auto-downloads newly-aired episodes of monitored series.
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.SeriesMonitorService>();
+// Safety net: auto-mark requests Available when their content appears on Plex by ANY means.
+builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.AvailabilityReconciliationService>();
 
 // AuthN/AuthZ
 builder.Services
