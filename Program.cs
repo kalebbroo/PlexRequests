@@ -209,11 +209,19 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.INotificationBroker, PlexRequestsHosted.Services.Implementations.NotificationBroker>();
 builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.INotificationService, PlexRequestsHosted.Services.Implementations.NotificationService>();
 
-// Metadata providers
+// Metadata providers (modular; the router picks one per media type with a keyless fallback).
 // Singleton so its TMDbClient (and internal HttpClient) is built once, not per scope.
 builder.Services.AddSingleton<TmdbMetadataProvider>();
 builder.Services.AddScoped<TraktMetadataProvider>();
 builder.Services.AddScoped<SeedMetadataProvider>();
+builder.Services.AddScoped<TvdbMetadataProvider>();
+// MusicBrainz requires a descriptive User-Agent; keyless -> default fallback for Music.
+builder.Services.AddHttpClient<MusicBrainzMetadataProvider>(c =>
+{
+    c.BaseAddress = new Uri("https://musicbrainz.org/");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("PlexRequests/1.0 (self-hosted)");
+});
+builder.Services.AddScoped<MetadataRouter>();
 builder.Services.AddScoped<IMetadataProviderFactory, MetadataProviderFactory>();
 
 // Background refresher for stale metadata-cache rows (stale-while-revalidate).

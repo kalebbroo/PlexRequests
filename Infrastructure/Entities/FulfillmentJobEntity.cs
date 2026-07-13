@@ -29,6 +29,11 @@ public class FulfillmentJobEntity
     public string? ImdbId { get; set; }
     public int? TvdbId { get; set; }
 
+    // Non-TMDb identifier (music MBID / Plex ratingKey / etc.) for the downloader to resolve the target.
+    // TODO(music): the downloader needs a music indexer that can search by artist+album (or MBID).
+    [MaxLength(128)] public string? ExternalId { get; set; }
+    [MaxLength(32)] public string? ExternalSource { get; set; }
+
     [MaxLength(256)]
     public string? RequestedSeasonsCsv { get; set; }
 

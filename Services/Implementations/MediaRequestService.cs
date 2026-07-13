@@ -138,6 +138,8 @@ public class MediaRequestService(
             RequestAllSeasons = r.RequestAllSeasons,
             RequestedEpisodesCsv = r.RequestedEpisodesCsv,
             Monitored = r.Monitored,
+            ExternalId = r.ExternalId,
+            ExternalSource = r.ExternalSource,
             RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv) ? new List<int>() : r.RequestedSeasonsCsv.Split(',').Select(s => int.TryParse(s, out var n) ? n : (int?)null).Where(n => n.HasValue).Select(n => n!.Value).ToList(),
             RequestedByUserId = r.RequestedByUserId ?? 0,
             RequestedByUsername = r.RequestedBy ?? string.Empty
@@ -194,6 +196,8 @@ public class MediaRequestService(
                 RequestAllSeasons = r.RequestAllSeasons,
             RequestedEpisodesCsv = r.RequestedEpisodesCsv,
             Monitored = r.Monitored,
+            ExternalId = r.ExternalId,
+            ExternalSource = r.ExternalSource,
                 RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv) ? new List<int>() : r.RequestedSeasonsCsv.Split(',').Select(s => { int n; return int.TryParse(s, out n) ? (int?)n : null; }).Where(n => n.HasValue).Select(n => n!.Value).ToList(),
                 RequestedByUserId = r.RequestedByUserId ?? 0,
                 RequestedByUsername = r.RequestedBy ?? string.Empty
@@ -275,6 +279,46 @@ public class MediaRequestService(
             await _fulfillment.EnqueueAsync(ToDto(child));
 
         return new MediaRequestResult { Success = true, RequestId = child.Id, NewStatus = child.Status };
+    }
+
+    /// <summary>
+    /// SCAFFOLD: request an album/artist by provider id. Music has no TMDb int id, so it flows on the
+    /// string <see cref="MediaRequestEntity.ExternalId"/> instead of MediaId.
+    /// TODO(music): (1) de-dup against Plex via IPlexMusicService.IsAlbumOnPlexAsync before creating;
+    /// (2) enqueue needs a music path in FulfillmentQueue that targets ExternalId, and a music indexer
+    /// in the downloader; (3) availability reconciliation should match music by ExternalId/name.
+    /// </summary>
+    public async Task<MediaRequestResult> RequestMusicAsync(string externalId, string source, string title, string? posterUrl = null)
+    {
+        var (username, isAdmin) = await GetUserAsync();
+        if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
+        var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
+        if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
+
+        var autoApprove = isAdmin || await _db.UserProfiles.Where(p => p.UserId == userId).Select(p => p.AutoApprove).FirstOrDefaultAsync();
+        var entity = new MediaRequestEntity
+        {
+            MediaId = 0,                       // no TMDb id for music
+            MediaType = MediaType.Music,
+            ExternalId = externalId,
+            ExternalSource = string.IsNullOrWhiteSpace(source) ? "musicbrainz" : source,
+            Title = title,
+            PosterUrl = posterUrl,
+            Status = autoApprove ? RequestStatus.Approved : RequestStatus.Pending,
+            RequestedAt = DateTime.UtcNow,
+            ApprovedAt = autoApprove ? DateTime.UtcNow : null,
+            RequestedBy = username,
+            RequestedByUserId = userId
+        };
+        _db.MediaRequests.Add(entity);
+        var saved = await _db.SaveChangesAsync() > 0;
+        if (saved)
+        {
+            var dto = ToDto(entity);
+            if (autoApprove) await _notify.RequestApprovedAsync(dto); else await _notify.RequestCreatedAsync(dto);
+            // TODO(music): if (autoApprove && Fulfillment:Enabled) enqueue a music job (needs downloader support).
+        }
+        return new MediaRequestResult { Success = saved, RequestId = entity.Id, NewStatus = entity.Status };
     }
 
     /// <summary>Request an entire series, optionally monitoring it for new episodes as they air.</summary>
@@ -403,6 +447,8 @@ public class MediaRequestService(
         RequestAllSeasons = r.RequestAllSeasons,
             RequestedEpisodesCsv = r.RequestedEpisodesCsv,
             Monitored = r.Monitored,
+            ExternalId = r.ExternalId,
+            ExternalSource = r.ExternalSource,
         RequestedByUserId = r.RequestedByUserId ?? 0,
         RequestedByUsername = r.RequestedBy ?? string.Empty,
         RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv)

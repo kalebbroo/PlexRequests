@@ -6,6 +6,12 @@ namespace PlexRequestsHosted.Services.Implementations;
 
 public class SeedMetadataProvider : IMediaMetadataProvider
 {
+    // Keyless built-in fallback so the app always has *a* provider (movies/TV) without any API key.
+    public string ProviderKey => "seed";
+    public bool RequiresApiKey => false;
+    public bool IsAvailable => true;
+    public bool Supports(MediaType mediaType) => mediaType is MediaType.Movie or MediaType.TvShow or MediaType.Anime;
+
     private static readonly List<MediaCardDto> _seed = new()
     {
         new MediaCardDto{ Id=1, Title="Inception", Overview="A thief who steals corporate secrets through dream-sharing technology is given the inverse task of planting an idea.", PosterUrl="https://image.tmdb.org/t/p/w342/qmDpIHrmpJINaRKAfWQfftjCdyi.jpg", BackdropUrl="https://image.tmdb.org/t/p/w1280/s3TBrRGB1iav7gFOCNx3H31MoES.jpg", Year=2010, Rating=8.4m, Runtime=148, MediaType=MediaType.Movie, Genres=new(){"Action","Sci-Fi"}, Quality="4K", IsAvailable=true, RequestStatus=RequestStatus.Available, PlexUrl="https://app.plex.tv/" },

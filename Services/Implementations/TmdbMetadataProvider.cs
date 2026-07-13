@@ -39,6 +39,12 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         _client = new TMDbClient(apiKey ?? accessToken!);
     }
 
+    public string ProviderKey => "tmdb";
+    public bool RequiresApiKey => true;
+    public bool IsAvailable => true;   // only constructed when a key/token is present
+    public bool Supports(PlexRequestsHosted.Shared.Enums.MediaType mediaType)
+        => mediaType is PlexRequestsHosted.Shared.Enums.MediaType.Movie or PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime;
+
     private T CacheGetOrNull<T>(string key) where T : class => _mem.TryGetValue(key, out var v) ? v as T : null;
     private T CacheSet<T>(string key, T value, TimeSpan ttl) { _mem.Set(key, value, ttl); return value; }
 

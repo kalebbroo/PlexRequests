@@ -5,6 +5,21 @@ namespace PlexRequestsHosted.Services.Abstractions;
 
 public interface IMediaMetadataProvider
 {
+    // ---- Provider identity & capabilities (drive the modular multi-provider router) ----
+    // Defaults keep existing providers working; each concrete provider overrides as needed.
+
+    /// <summary>Stable key used in config to select this provider, e.g. "tmdb", "tvdb", "musicbrainz", "seed".</summary>
+    string ProviderKey => "unknown";
+
+    /// <summary>True when the provider needs an API key/token to function (affects keyless-fallback selection).</summary>
+    bool RequiresApiKey => false;
+
+    /// <summary>True when the provider can actually serve requests right now (its key/config is present).</summary>
+    bool IsAvailable => true;
+
+    /// <summary>Which media types this provider can serve. Default: movies/TV/anime (the TMDb-style set).</summary>
+    bool Supports(MediaType mediaType) => mediaType is MediaType.Movie or MediaType.TvShow or MediaType.Anime;
+
     Task<List<MediaCardDto>> SearchAsync(string query, MediaType? mediaType = null, int page = 1, int pageSize = 20);
     Task<MediaDetailDto?> GetDetailsAsync(int mediaId, MediaType mediaType);
     Task<List<MediaCardDto>> GetRecentlyAddedAsync(int count = 10);

@@ -65,6 +65,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             Year = null,
             TmdbId = request.MediaId, // MediaId is the TMDb id for the default provider
             ImdbId = imdbId,
+            ExternalId = request.ExternalId,           // music/other-source id (TODO: downloader music support)
+            ExternalSource = request.ExternalSource,
             RequestedSeasonsCsv = seasonsCsv,
             RequestedEpisodesCsv = episodesCsv,
             Quality = resolvedQuality,

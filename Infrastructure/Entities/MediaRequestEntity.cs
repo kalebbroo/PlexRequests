@@ -7,8 +7,17 @@ namespace PlexRequestsHosted.Infrastructure.Entities;
 public class MediaRequestEntity
 {
     public int Id { get; set; }
-    public int MediaId { get; set; }
+    public int MediaId { get; set; }   // TMDb id for movie/TV; 0 for sources without an int id (music)
     public MediaType MediaType { get; set; }
+
+    // Provider-agnostic identifier for non-TMDb sources (e.g. MusicBrainz MBID, Plex ratingKey, TVDB id).
+    // TODO(music): music requests key off this instead of MediaId. Thread it through fulfillment + the
+    // availability match so an album/artist request can be found and downloaded.
+    [MaxLength(128)]
+    public string? ExternalId { get; set; }
+
+    [MaxLength(32)]
+    public string? ExternalSource { get; set; }   // "musicbrainz" | "plex" | "tvdb" | ... (null = tmdb)
 
     [MaxLength(512)]
     public string Title { get; set; } = string.Empty;

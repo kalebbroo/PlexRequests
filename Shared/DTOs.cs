@@ -31,6 +31,9 @@ public class MediaCardDto : BaseDto
     public string? ImdbId { get; set; }
     public int? TmdbId { get; set; }
     public int? TvdbId { get; set; }
+    // Provider-agnostic id for non-TMDb sources (MusicBrainz MBID, Plex ratingKey, ...) + its source key.
+    public string? ExternalId { get; set; }
+    public string? ExternalSource { get; set; }
 }
 
 public class MediaDetailDto : MediaCardDto
@@ -99,6 +102,8 @@ public class MediaRequestDto : BaseDto
     public bool RequestAllSeasons { get; set; }
     public string? RequestedEpisodesCsv { get; set; }   // "S1E1,S2E5" — episode-level targets
     public bool Monitored { get; set; }                 // ongoing-series auto-download
+    public string? ExternalId { get; set; }             // non-TMDb id (music MBID / Plex ratingKey)
+    public string? ExternalSource { get; set; }
 }
 
 public class MediaIssueDto

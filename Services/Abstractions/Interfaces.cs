@@ -12,6 +12,8 @@ public interface IMediaRequestService
     Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes);
     Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType, bool monitor);
     Task<MediaRequestResult> CreateMonitoredEpisodeAsync(int anchorRequestId, int season, int episode);
+    // Music (scaffold): request an album/artist by its provider id (MusicBrainz MBID or Plex ratingKey).
+    Task<MediaRequestResult> RequestMusicAsync(string externalId, string source, string title, string? posterUrl = null);
     // User-scoped variants for callers without a cookie session (Discord bridge).
     Task<MediaRequestResult> RequestMediaForUserAsync(int userId, int mediaId, MediaType mediaType);
     Task<List<MediaRequestDto>> GetRequestsForUserAsync(int userId, int take = 25);

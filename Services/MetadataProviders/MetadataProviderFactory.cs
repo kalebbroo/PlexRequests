@@ -72,7 +72,11 @@ public class MetadataProviderFactory : IMetadataProviderFactory
         };
     }
 
-    public IMediaMetadataProvider GetDefaultProvider() => _defaultProvider;
+    // The "default provider" is now the modular router, which picks a provider per media type (with a
+    // keyless fallback). Consumers/decorator/coordinator all go through it. The _defaultProvider resolved
+    // in the ctor is kept only for the startup log above.
+    public IMediaMetadataProvider GetDefaultProvider()
+        => _serviceProvider.GetRequiredService<Services.Implementations.MetadataRouter>();
 
     public IEnumerable<MetadataProviderType> GetAvailableProviders()
     {
