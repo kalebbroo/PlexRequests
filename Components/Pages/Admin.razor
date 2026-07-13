@@ -1,5 +1,6 @@
 @page "/admin"
 @attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
 @using PlexRequestsHosted.Services.Abstractions
 @inject IPlexApiService PlexApi
 @inject IUserProfileService UserProfiles

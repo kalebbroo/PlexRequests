@@ -1,0 +1,165 @@
+.mcard {
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.mcard-poster {
+    position: relative;
+    aspect-ratio: 2 / 3;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background-color: var(--bg-tertiary);
+    box-shadow: var(--shadow-sm);
+}
+
+.mcard-poster img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: transform var(--transition-normal);
+}
+
+.mcard-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
+    color: var(--text-tertiary);
+}
+
+/* Hover: subtle lift + accent ring. No scale on the box so the grid/row never reflows. */
+.mcard:hover {
+    transform: translateY(-4px);
+    z-index: 2;
+}
+
+.mcard:hover .mcard-poster {
+    box-shadow: var(--shadow-lg);
+    outline: 2px solid var(--plex-orange);
+    outline-offset: 0;
+}
+
+.mcard:hover .mcard-poster img {
+    transform: scale(1.06);
+}
+
+/* Status badge */
+.mcard-badge {
+    position: absolute;
+    top: var(--spacing-sm);
+    right: var(--spacing-sm);
+    width: 26px;
+    height: 26px;
+    border-radius: var(--radius-full);
+    background-color: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+    z-index: 2;
+}
+.mcard-badge.available { color: var(--color-success); }
+.mcard-badge.pending { color: var(--color-warning); }
+.mcard-badge.approved { color: var(--color-info); }
+
+.mcard-seasons {
+    position: absolute;
+    bottom: var(--spacing-sm);
+    left: var(--spacing-sm);
+    background-color: rgba(0, 0, 0, 0.75);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    z-index: 2;
+    transition: opacity var(--transition-fast);
+}
+.mcard:hover .mcard-seasons { opacity: 0; }
+
+/* Overlay lives entirely inside the poster box */
+.mcard-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: var(--spacing-sm);
+    background: linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.35) 45%, rgba(0,0,0,0) 75%);
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+.mcard:hover .mcard-overlay { opacity: 1; }
+
+.mcard-overlay-top { display: flex; justify-content: flex-start; }
+
+.mcard-rating {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    color: #fff;
+    background: rgba(0,0,0,0.55);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+}
+.mcard-rating ::deep .mud-icon-root { color: var(--plex-orange); }
+
+.mcard-overlay-body { display: flex; flex-direction: column; gap: 4px; }
+
+.mcard-title {
+    font-size: var(--font-size-sm);
+    font-weight: 700;
+    line-height: 1.2;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.mcard-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+.mcard-type {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+    color: var(--text-tertiary);
+}
+
+.mcard-actions { display: flex; gap: 6px; margin-top: 2px; }
+
+.mcard-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: filter var(--transition-fast), background-color var(--transition-fast);
+}
+.mcard-btn.primary { background: var(--plex-orange); color: #000; flex: 1; }
+.mcard-btn.primary:hover { filter: brightness(1.08); }
+.mcard-btn.muted { background: rgba(255,255,255,0.15); color: var(--text-secondary); flex: 1; cursor: default; }
+.mcard-btn.icon { background: rgba(255,255,255,0.15); color: #fff; padding: 5px 7px; }
+.mcard-btn.icon:hover { background: rgba(255,255,255,0.3); }
+.mcard-btn.icon.danger:hover { background: var(--color-error); color: #fff; }
+
+/* On touch / small screens the overlay is always legible and actions are visible. */
+@media (hover: none) {
+    .mcard-overlay { opacity: 1; background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 60%); }
+    .mcard-overlay-body .mcard-actions { display: none; }
+    .mcard-seasons { display: none; }
+}

@@ -1,5 +1,6 @@
 @page "/watchlist"
 @attribute [Authorize]
+@rendermode InteractiveServer
 @page "/mylist"
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
@@ -28,21 +29,6 @@
         else if (_watchlist?.Any() == true)
         {
             <div class="watchlist-controls">
-                <div class="view-options">
-                    <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
-                        <MudButton StartIcon="@Icons.Material.Outlined.GridView" 
-                                   Variant="@(_gridView ? Variant.Filled : Variant.Outlined)"
-                                   OnClick="() => _gridView = true">
-                            Grid
-                        </MudButton>
-                        <MudButton StartIcon="@Icons.Material.Outlined.ViewList" 
-                                   Variant="@(!_gridView ? Variant.Filled : Variant.Outlined)"
-                                   OnClick="() => _gridView = false">
-                            List
-                        </MudButton>
-                    </MudButtonGroup>
-                </div>
-
                 <div class="sort-options">
                     <MudSelect T="SortOption"
                                @bind-Value="_sortBy"
@@ -59,46 +45,15 @@
                 </div>
             </div>
 
-            @if (_gridView)
-            {
-                <div class="watchlist-grid">
-                    @foreach (PlexRequestsHosted.Shared.DTOs.MediaCardDto item in GetSortedList())
-                    {
-                        <div class="grid-item">
-                            <div class="item-wrapper">
-                                <MediaTile Media="item"
-                                          OnRequest="RequestMedia"
-                                          OnPlay="PlayMedia" />
-                                <button class="remove-button" 
-                                        @onclick:stopPropagation="true"
-                                        @onclick="() => RemoveFromList(item)">
-                                    <MudIcon Icon="@Icons.Material.Filled.Close" Size="Size.Small" />
-                                </button>
-                            </div>
-                        </div>
-                    }
-                </div>
-            }
-            else
-            {
-                <div class="watchlist-list">
-                    @foreach (PlexRequestsHosted.Shared.DTOs.MediaCardDto item in GetSortedList())
-                    {
-                        <div class="list-item-wrapper">
-                            <MediaListItem Media="item"
-                                          OnClick="ShowDetails"
-                                          OnRequest="RequestMedia"
-                                          OnPlay="PlayMedia" />
-                            <MudTooltip Text="Remove from list">
-                                <MudIconButton Icon="@Icons.Material.Filled.Remove"
-                                              Color="Color.Error"
-                                              Class="list-remove-button"
-                                              @onclick="() => RemoveFromList(item)" />
-                            </MudTooltip>
-                        </div>
-                    }
-                </div>
-            }
+            <div class="watchlist-grid">
+                @foreach (PlexRequestsHosted.Shared.DTOs.MediaCardDto item in GetSortedList())
+                {
+                    <PlexRequestsHosted.Components.Shared.MediaCard Media="item"
+                                                                   OnRequest="RequestMedia"
+                                                                   OnPlay="PlayMedia"
+                                                                   OnRemove="RemoveFromList" />
+                }
+            </div>
         }
         else
         {
@@ -108,10 +63,10 @@
                 <MudText Typo="Typo.body1" Color="Color.Tertiary">
                     Add movies and shows to keep track of what you want to watch
                 </MudText>
-                <MudButton Variant="Variant.Filled" 
-                          Color="Color.Primary" 
+                <MudButton Variant="Variant.Filled"
+                          Color="Color.Primary"
                           Size="Size.Large"
-                          Href="/"
+                          Href="/browse"
                           Class="mt-4">
                     Browse Content
                 </MudButton>

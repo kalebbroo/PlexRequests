@@ -217,6 +217,17 @@ public class MediaRequestService(
         return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType);
     }
 
+    /// <summary>Request specific seasons of a TV show (empty list ⇒ the whole series).</summary>
+    public async Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons)
+    {
+        var (username, isAdmin) = await GetUserAsync();
+        if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
+        var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
+        if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
+        var allSeasons = seasons is not { Count: > 0 };
+        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons, seasons);
+    }
+
     /// <summary>Create a request on behalf of an explicit user (used by the Discord bridge, which has no cookie session).</summary>
     public async Task<MediaRequestResult> RequestMediaForUserAsync(int userId, int mediaId, MediaType mediaType)
     {
@@ -229,7 +240,7 @@ public class MediaRequestService(
         return await CreateRequestCoreAsync(userId, user.Username, isAdmin, mediaId, mediaType);
     }
 
-    private async Task<MediaRequestResult> CreateRequestCoreAsync(int userId, string username, bool isAdmin, int mediaId, MediaType mediaType)
+    private async Task<MediaRequestResult> CreateRequestCoreAsync(int userId, string username, bool isAdmin, int mediaId, MediaType mediaType, bool allSeasons = true, List<int>? seasons = null)
     {
         // Per-user duplicate check: a second user requesting the same title joins it rather than
         // being blocked. Only the same user re-requesting an active item is rejected.
@@ -269,7 +280,12 @@ public class MediaRequestService(
             Status = RequestStatus.Pending,
             RequestedAt = DateTime.UtcNow,
             RequestedBy = username,
-            RequestedByUserId = userId
+            RequestedByUserId = userId,
+            // Seasons only apply to TV; movies are always "all". Empty selection ⇒ whole series.
+            RequestAllSeasons = mediaType != MediaType.TvShow || allSeasons || seasons is not { Count: > 0 },
+            RequestedSeasonsCsv = mediaType == MediaType.TvShow && !allSeasons && seasons is { Count: > 0 }
+                ? string.Join(",", seasons.Distinct().OrderBy(x => x))
+                : null
         };
         _db.MediaRequests.Add(entity);
         var saved = await _db.SaveChangesAsync() > 0;

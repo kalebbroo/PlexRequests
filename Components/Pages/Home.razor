@@ -1,0 +1,202 @@
+@page "/browse"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@using PlexRequestsHosted.Components.Shared
+@inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
+@inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
+@inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject NavigationManager Navigation
+
+<PageTitle>Home - Plex Requests</PageTitle>
+
+<div class="home-page">
+    @if (_hero is not null)
+    {
+        <section class="home-hero" style="background-image: url('@(_hero.BackdropUrl ?? _hero.PosterUrl)')">
+            <div class="home-hero-scrim"></div>
+            <div class="home-hero-content">
+                <span class="home-hero-kicker">@(_hero.MediaType == MediaType.TvShow ? "Trending Series" : "Trending Movie")</span>
+                <h1 class="home-hero-title">@_hero.Title</h1>
+                <div class="home-hero-meta">
+                    @if (_hero.Rating is > 0) { <span class="hero-rating"><MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" /> @_hero.Rating!.Value.ToString("0.0")</span> }
+                    @if (_hero.Year.HasValue) { <span>@_hero.Year</span> }
+                    @if (_hero.IsAvailable) { <span class="hero-avail">On Plex</span> }
+                </div>
+                @if (!string.IsNullOrEmpty(_hero.Overview))
+                {
+                    <p class="home-hero-overview">@Truncate(_hero.Overview, 220)</p>
+                }
+                <div class="home-hero-actions">
+                    @if (_hero.IsAvailable)
+                    {
+                        <button class="hero-btn primary" @onclick="() => Play(_hero)"><MudIcon Icon="@Icons.Material.Filled.PlayArrow" /> Play</button>
+                    }
+                    else if (_hero.RequestStatus == RequestStatus.None)
+                    {
+                        <button class="hero-btn primary" @onclick="() => Request(_hero)"><MudIcon Icon="@Icons.Material.Filled.Add" /> Request</button>
+                    }
+                    else
+                    {
+                        <button class="hero-btn muted" disabled><MudIcon Icon="@Icons.Material.Filled.Schedule" /> @_hero.RequestStatus</button>
+                    }
+                    <button class="hero-btn ghost" @onclick="() => Details(_hero)"><MudIcon Icon="@Icons.Material.Filled.Info" /> More Info</button>
+                </div>
+            </div>
+        </section>
+    }
+
+    <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="home-body">
+        @if (_loading)
+        {
+            <div class="home-loading"><MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Large" /></div>
+        }
+        else if (_loadFailed)
+        {
+            <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="my-6">
+                Couldn't load content right now. Check that your TMDB key is configured, then refresh.
+            </MudAlert>
+        }
+        else
+        {
+            <MediaRow Title="Trending Now" Items="_trending" OnRequest="Request" OnPlay="Play" />
+            <MediaRow Title="Popular Movies" Items="_popularMovies" SeeAllHref="/browse/movie" OnRequest="Request" OnPlay="Play" />
+            <MediaRow Title="Popular TV" Items="_popularTv" SeeAllHref="/browse/tvshow" OnRequest="Request" OnPlay="Play" />
+            <MediaRow Title="Action & Adventure" Items="_actionMovies" SeeAllHref="/browse/movie" OnRequest="Request" OnPlay="Play" />
+
+            @if (_topPicks?.Any() == true)
+            {
+                <section class="home-grid-section">
+                    <div class="home-grid-head">
+                        <h2 class="home-grid-title">Top Rated</h2>
+                    </div>
+                    <div class="home-grid">
+                        @foreach (var item in _topPicks)
+                        {
+                            <MediaCard Media="item" OnRequest="Request" OnPlay="Play" />
+                        }
+                    </div>
+                </section>
+            }
+        }
+    </MudContainer>
+</div>
+
+@code {
+    private MediaCardDto? _hero;
+    private List<MediaCardDto> _trending = new();
+    private List<MediaCardDto> _popularMovies = new();
+    private List<MediaCardDto> _popularTv = new();
+    private List<MediaCardDto> _actionMovies = new();
+    private List<MediaCardDto> _topPicks = new();
+    private bool _loading = true;
+    private bool _loadFailed = false;
+    private bool _loaded = false;
+
+    // Load after first render (interactive circuit) rather than during prerender, so the page shell
+    // paints instantly and a slow TMDB/Plex call never blocks the initial response.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _loaded) return;
+        _loaded = true;
+        await LoadAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var trendingTask = PlexApiService.GetTrendingAsync(null, 1, 20);
+            var popMoviesTask = PlexApiService.GetPopularAsync(MediaType.Movie, 1, 20);
+            var popTvTask = PlexApiService.GetPopularAsync(MediaType.TvShow, 1, 20);
+            var actionTask = PlexApiService.GetByGenreAsync(MediaType.Movie, "Action", 1, 20);
+            var topMoviesTask = PlexApiService.GetTopRatedAsync(MediaType.Movie, 1, 12);
+            var topTvTask = PlexApiService.GetTopRatedAsync(MediaType.TvShow, 1, 12);
+
+            await Task.WhenAll(trendingTask, popMoviesTask, popTvTask, actionTask, topMoviesTask, topTvTask);
+
+            var trending = trendingTask.Result;
+            _hero = trending.FirstOrDefault();
+            _trending = trending.Skip(1).ToList();
+            _popularMovies = popMoviesTask.Result;
+            _popularTv = popTvTask.Result;
+            _actionMovies = actionTask.Result;
+            _topPicks = Interleave(topMoviesTask.Result, topTvTask.Result);
+
+            // Overlay availability + this user's request status across everything we just loaded.
+            var all = new List<MediaCardDto>();
+            if (_hero is not null) all.Add(_hero);
+            all.AddRange(_trending);
+            all.AddRange(_popularMovies);
+            all.AddRange(_popularTv);
+            all.AddRange(_actionMovies);
+            all.AddRange(_topPicks);
+            await AnnotateAsync(all);
+
+            _loadFailed = _hero is null && _trending.Count == 0 && _popularMovies.Count == 0;
+        }
+        catch
+        {
+            _loadFailed = true;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task AnnotateAsync(List<MediaCardDto> items)
+    {
+        if (items.Count == 0) return;
+        try
+        {
+            await PlexApiService.AnnotateAvailabilityAsync(items);
+            var keys = items.Select(m => (m.Id, m.MediaType)).ToList();
+            var statuses = await MediaRequestService.GetMyRequestStatusesAsync(keys);
+            foreach (var m in items)
+            {
+                if (statuses.TryGetValue($"{m.MediaType}:{m.Id}", out var st)) m.RequestStatus = st;
+            }
+        }
+        catch { /* availability is best-effort */ }
+    }
+
+    private static List<MediaCardDto> Interleave(List<MediaCardDto> a, List<MediaCardDto> b)
+    {
+        var merged = new List<MediaCardDto>(a.Count + b.Count);
+        int i = 0, j = 0;
+        while (i < a.Count || j < b.Count)
+        {
+            if (i < a.Count) merged.Add(a[i++]);
+            if (j < b.Count) merged.Add(b[j++]);
+        }
+        return merged;
+    }
+
+    private async Task Request(MediaCardDto media)
+    {
+        var result = await MediaRequestService.RequestMediaAsync(media.Id, media.MediaType);
+        if (result.Success)
+        {
+            media.RequestStatus = RequestStatus.Pending;
+            await ToastService.ShowSuccessAsync($"{media.Title} has been requested!");
+            await InvokeAsync(StateHasChanged);
+        }
+        else
+        {
+            await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request");
+        }
+    }
+
+    private void Play(MediaCardDto media)
+    {
+        if (!string.IsNullOrEmpty(media.PlexUrl)) Navigation.NavigateTo(media.PlexUrl, true);
+    }
+
+    private void Details(MediaCardDto media)
+        => Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLower()}/{media.Id}");
+
+    private static string Truncate(string s, int max) => s.Length <= max ? s : s.Substring(0, max) + "…";
+}

@@ -1,0 +1,46 @@
+@using PlexRequestsHosted.Shared.DTOs
+@inject IJSRuntime JS
+
+@* Horizontal, scroll-snapping row of poster cards with hover-reveal arrows. *@
+@if (Items?.Any() == true)
+{
+    <section class="media-row">
+        <div class="media-row-head">
+            <h2 class="media-row-title">@Title</h2>
+            @if (!string.IsNullOrEmpty(SeeAllHref))
+            {
+                <a class="media-row-seeall" href="@SeeAllHref">See all <MudIcon Icon="@Icons.Material.Filled.ChevronRight" Size="Size.Small" /></a>
+            }
+        </div>
+        <div class="media-row-body">
+            <button class="media-row-arrow left" aria-label="Scroll left" @onclick="ScrollLeft"><MudIcon Icon="@Icons.Material.Filled.ChevronLeft" /></button>
+            <div class="media-row-track" @ref="_track">
+                @foreach (var item in Items)
+                {
+                    <div class="media-row-item">
+                        <MediaCard Media="item" OnRequest="OnRequest" OnPlay="OnPlay" />
+                    </div>
+                }
+            </div>
+            <button class="media-row-arrow right" aria-label="Scroll right" @onclick="ScrollRight"><MudIcon Icon="@Icons.Material.Filled.ChevronRight" /></button>
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public IReadOnlyList<MediaCardDto>? Items { get; set; }
+    [Parameter] public string? SeeAllHref { get; set; }
+    [Parameter] public EventCallback<MediaCardDto> OnRequest { get; set; }
+    [Parameter] public EventCallback<MediaCardDto> OnPlay { get; set; }
+
+    private ElementReference _track;
+
+    private async Task ScrollLeft() => await Scroll(-1);
+    private async Task ScrollRight() => await Scroll(1);
+    private async Task Scroll(int dir)
+    {
+        try { await JS.InvokeVoidAsync("plexui.scrollRow", _track, dir); }
+        catch { /* circuit not ready / JS unavailable — arrows are a progressive enhancement */ }
+    }
+}

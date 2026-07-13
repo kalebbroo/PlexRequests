@@ -212,6 +212,21 @@ public class PlexApiService : IPlexApiService
     public Task<List<MediaCardDto>> GetRecentlyAddedAsync(int count = 10)
         => _metadata.GetRecentlyAddedAsync(count);
 
+    public Task<List<MediaCardDto>> GetTrendingAsync(MediaType? mediaType = null, int page = 1, int pageSize = 20)
+        => _metadata.GetTrendingAsync(mediaType, page, pageSize);
+
+    public Task<List<MediaCardDto>> GetPopularAsync(MediaType mediaType, int page = 1, int pageSize = 20)
+        => _metadata.GetPopularAsync(mediaType, page, pageSize);
+
+    public Task<List<MediaCardDto>> GetTopRatedAsync(MediaType mediaType, int page = 1, int pageSize = 20)
+        => _metadata.GetTopRatedAsync(mediaType, page, pageSize);
+
+    public Task<List<MediaCardDto>> GetByGenreAsync(MediaType mediaType, string genre, int page = 1, int pageSize = 20)
+        => _metadata.GetByGenreAsync(mediaType, genre, page, pageSize);
+
+    public Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, MediaType mediaType, int count = 12)
+        => _metadata.GetSimilarAsync(mediaId, mediaType, count);
+
     public Task<List<MediaCardDto>> SearchMediaAsync(string query, MediaType? mediaType = null)
         => _metadata.SearchAsync(query, mediaType);
 

@@ -1,0 +1,83 @@
+.media-row {
+    margin-bottom: var(--spacing-2xl);
+}
+
+.media-row-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-md);
+    padding: 0 var(--spacing-xs);
+}
+
+.media-row-title {
+    font-size: var(--font-size-2xl);
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.01em;
+}
+
+.media-row-seeall {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    font-weight: 600;
+    transition: color var(--transition-fast);
+}
+.media-row-seeall:hover { color: var(--plex-orange); }
+
+.media-row-body {
+    position: relative;
+}
+
+.media-row-track {
+    display: flex;
+    gap: var(--spacing-md);
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    padding: 4px var(--spacing-xs) var(--spacing-md);
+    scrollbar-width: thin;
+    scrollbar-color: var(--bg-tertiary) transparent;
+}
+.media-row-track::-webkit-scrollbar { height: 8px; }
+.media-row-track::-webkit-scrollbar-thumb { background: var(--bg-tertiary); border-radius: 4px; }
+.media-row-track::-webkit-scrollbar-track { background: transparent; }
+
+.media-row-item {
+    width: 170px;
+    flex: 0 0 170px;
+    scroll-snap-align: start;
+}
+
+/* Hover-reveal scroll arrows */
+.media-row-arrow {
+    position: absolute;
+    top: 0;
+    bottom: var(--spacing-md);
+    width: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    cursor: pointer;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.55);
+    opacity: 0;
+    transition: opacity var(--transition-fast), background-color var(--transition-fast);
+    z-index: 3;
+}
+.media-row-body:hover .media-row-arrow { opacity: 1; }
+.media-row-arrow:hover { background: rgba(0, 0, 0, 0.8); }
+.media-row-arrow.left { left: 0; border-radius: 0 var(--radius-md) var(--radius-md) 0; }
+.media-row-arrow.right { right: 0; border-radius: var(--radius-md) 0 0 var(--radius-md); }
+
+@media (hover: none) {
+    .media-row-arrow { display: none; }
+    .media-row-item { width: 130px; flex-basis: 130px; }
+}
+
+@media (max-width: 600px) {
+    .media-row-title { font-size: var(--font-size-xl); }
+    .media-row-item { width: 130px; flex-basis: 130px; }
+}

@@ -8,6 +8,7 @@ public interface IMediaRequestService
     Task<PagedResult<MediaRequestDto>> GetRequestsAsync(MediaFilterDto filter);
     Task<MediaRequestDto?> GetRequestByIdAsync(int id);
     Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType);
+    Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons);
     // User-scoped variants for callers without a cookie session (Discord bridge).
     Task<MediaRequestResult> RequestMediaForUserAsync(int userId, int mediaId, MediaType mediaType);
     Task<List<MediaRequestDto>> GetRequestsForUserAsync(int userId, int take = 25);
@@ -63,6 +64,12 @@ public interface IPlexApiService
     Task<MediaDetailDto?> GetMediaDetailsAsync(int mediaId, MediaType mediaType);
     Task<List<MediaCardDto>> GetLibraryContentAsync(MediaType mediaType, int page = 1, int pageSize = 20);
     Task<List<MediaCardDto>> GetRecentlyAddedAsync(int count = 10);
+    // Discovery feeds (delegate to the metadata provider's real trending/popular/genre endpoints).
+    Task<List<MediaCardDto>> GetTrendingAsync(MediaType? mediaType = null, int page = 1, int pageSize = 20);
+    Task<List<MediaCardDto>> GetPopularAsync(MediaType mediaType, int page = 1, int pageSize = 20);
+    Task<List<MediaCardDto>> GetTopRatedAsync(MediaType mediaType, int page = 1, int pageSize = 20);
+    Task<List<MediaCardDto>> GetByGenreAsync(MediaType mediaType, string genre, int page = 1, int pageSize = 20);
+    Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, MediaType mediaType, int count = 12);
     Task<bool> IsAvailableOnPlexAsync(int mediaId, MediaType mediaType);
     Task<List<int>> GetAvailableSeasonsAsync(int tvShowId);
     Task<PlexServerInfo?> GetServerInfoAsync();

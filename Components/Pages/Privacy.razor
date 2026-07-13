@@ -1,0 +1,21 @@
+@page "/privacy"
+@attribute [AllowAnonymous]
+
+<PageTitle>Privacy - Plex Requests</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="py-8">
+    <MudText Typo="Typo.h3" GutterBottom="true">Privacy</MudText>
+    <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+        This self-hosted service stores only what it needs to work: your Plex username and account id,
+        your requests and watchlist, and (if you choose to link it) your Discord id for notifications.
+        Data is held on the server owner's own infrastructure.
+    </MudText>
+    <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+        Your Plex authentication is handled by Plex; this service receives an access token to identify
+        you and check library availability. Metadata and images are fetched from TMDB.
+    </MudText>
+    <MudText Typo="Typo.body2" Color="Color.Tertiary">
+        No data is sold or shared with third parties. Contact your server administrator for questions
+        about the data held by this instance.
+    </MudText>
+</MudContainer>

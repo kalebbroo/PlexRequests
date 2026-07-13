@@ -1,135 +1,79 @@
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
-@using MudBlazor
-@inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
-@inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject NavigationManager Navigation
 
-<div class="media-card @(_isHovered ? "hovered" : "")" 
-     @onmouseenter="OnMouseEnter" 
-     @onmouseleave="OnMouseLeave">
-    <div class="poster-container" @onclick="NavigateToDetails">
+@* Unified poster card. CSS-only hover (no JS timer -> no leak), overlay stays INSIDE the card so a
+   grid or row never shifts. Click -> details; quick actions stop propagation. *@
+<div class="mcard" @onclick="NavigateToDetails" title="@Media.Title">
+    <div class="mcard-poster">
         @if (!string.IsNullOrEmpty(Media.PosterUrl))
         {
-            <img src="@Media.PosterUrl" alt="@Media.Title" class="poster-image" loading="lazy" onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
+            <img src="@Media.PosterUrl" alt="@Media.Title" loading="lazy"
+                 onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
         }
         else
         {
-            <div class="poster-placeholder">
-                <MudIcon Icon="@GetMediaTypeIcon()" Size="Size.Large" />
-            </div>
+            <div class="mcard-placeholder"><MudIcon Icon="@GetMediaIcon()" Size="Size.Large" /></div>
         }
+
         @if (Media.IsAvailable)
         {
-            <div class="availability-badge available">
-                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" />
-                Available
-            </div>
-        }
-        else if (Media.RequestStatus == RequestStatus.Approved)
-        {
-            <div class="availability-badge approved">
-                <MudIcon Icon="@Icons.Material.Filled.Schedule" Size="Size.Small" />
-                Coming Soon
-            </div>
+            <div class="mcard-badge available" title="Available on Plex"><MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" /></div>
         }
         else if (Media.RequestStatus == RequestStatus.Pending)
         {
-            <div class="availability-badge pending">
-                <MudIcon Icon="@Icons.Material.Filled.HourglassEmpty" Size="Size.Small" />
-                Requested
-            </div>
+            <div class="mcard-badge pending" title="Requested"><MudIcon Icon="@Icons.Material.Filled.Schedule" Size="Size.Small" /></div>
         }
-        @if (Media.MediaType == MediaType.TvShow && Media.AvailableSeasons > 0)
+        else if (Media.RequestStatus == RequestStatus.Approved || Media.RequestStatus == RequestStatus.Processing)
         {
-            <div class="season-progress">
-                <MudProgressLinear Value="@GetSeasonProgress()" Color="Color.Success" Size="Size.Small" />
-                <span class="season-text">@Media.AvailableSeasons / @Media.TotalSeasons Seasons</span>
-            </div>
+            <div class="mcard-badge approved" title="Approved / downloading"><MudIcon Icon="@Icons.Material.Filled.Downloading" Size="Size.Small" /></div>
         }
-    </div>
 
-    <div class="info-overlay">
-        <div class="title-section">
-            <MudText Typo="Typo.h6" Class="media-title">@Media.Title</MudText>
-            @if (Media.Year.HasValue)
-            {
-                <MudText Typo="Typo.body2" Class="media-year">@Media.Year</MudText>
-            }
-        </div>
-        <div class="metadata-section">
-            @if (Media.Rating.HasValue)
-            {
-                <div class="rating">
-                    <MudRating SelectedValue="@GetStarRating()" ReadOnly="true" Size="Size.Small" />
-                    <span class="rating-text">@Media.Rating.Value.ToString("0.0")</span>
-                </div>
-            }
-            @if (Media.Runtime.HasValue)
-            {
-                <MudChip T="string" Size="Size.Small" Variant="Variant.Text">
-                    @FormatRuntime(Media.Runtime.Value)
-                </MudChip>
-            }
-            @if (!string.IsNullOrEmpty(Media.Quality))
-            {
-                <MudChip T="string" Size="Size.Small" Color="GetQualityColor(Media.Quality)" Variant="Variant.Outlined">
-                    @Media.Quality
-                </MudChip>
-            }
-        </div>
-        @if (Media.Genres?.Any() == true)
+        @if (Media.MediaType == MediaType.TvShow && Media.TotalSeasons > 0)
         {
-            <div class="genres-section">
-                @foreach (var genre in Media.Genres.Take(3))
+            <div class="mcard-seasons">@Media.TotalSeasons @(Media.TotalSeasons == 1 ? "Season" : "Seasons")</div>
+        }
+
+        <div class="mcard-overlay">
+            <div class="mcard-overlay-top">
+                @if (Media.Rating.HasValue && Media.Rating.Value > 0)
                 {
-                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Class="genre-chip">
-                        @genre
-                    </MudChip>
+                    <span class="mcard-rating"><MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" /> @Media.Rating.Value.ToString("0.0")</span>
                 }
             </div>
-        }
-        @if (!string.IsNullOrEmpty(Media.Overview))
-        {
-            <MudText Typo="Typo.body2" Class="overview">
-                @GetTruncatedOverview()
-            </MudText>
-        }
-        <div class="action-buttons">
-            @if (Media.IsAvailable)
-            {
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow" FullWidth="true" @onclick="NavigateToWatch">
-                    Watch Now
-                </MudButton>
-            }
-            else if (Media.RequestStatus == RequestStatus.None)
-            {
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" FullWidth="true" @onclick="RequestMedia" Disabled="@_isRequesting">
-                    @(_isRequesting ? "Requesting..." : "Request")
-                </MudButton>
-            }
-            else if (Media.RequestStatus == RequestStatus.Pending)
-            {
-                <MudButton Variant="Variant.Outlined" Color="Color.Warning" StartIcon="@Icons.Material.Filled.HourglassEmpty" FullWidth="true" Disabled="true">
-                    Pending Approval
-                </MudButton>
-            }
-            else if (Media.RequestStatus == RequestStatus.Approved)
-            {
-                <MudButton Variant="Variant.Outlined" Color="Color.Success" StartIcon="@Icons.Material.Filled.CheckCircle" FullWidth="true" Disabled="true">
-                    Approved
-                </MudButton>
-            }
-            <div class="secondary-actions">
-                <MudTooltip Text="More Info">
-                    <MudIconButton Icon="@Icons.Material.Filled.Info" Size="Size.Small" @onclick="NavigateToDetails" />
-                </MudTooltip>
-                <MudTooltip Text="@(_isInWatchlist ? "Remove from Watchlist" : "Add to Watchlist")">
-                    <MudIconButton Icon="@(_isInWatchlist ? Icons.Material.Filled.Check : Icons.Material.Filled.Add)" Size="Size.Small" @onclick="ToggleWatchlist" />
-                </MudTooltip>
-                <MudTooltip Text="Share">
-                    <MudIconButton Icon="@Icons.Material.Filled.Share" Size="Size.Small" @onclick="ShareMedia" />
-                </MudTooltip>
+            <div class="mcard-overlay-body">
+                <div class="mcard-title">@Media.Title</div>
+                <div class="mcard-meta">
+                    @if (Media.Year.HasValue) { <span>@Media.Year</span> }
+                    <span class="mcard-type">@(Media.MediaType == MediaType.TvShow ? "TV" : "Movie")</span>
+                </div>
+                <div class="mcard-actions">
+                    @if (Media.IsAvailable)
+                    {
+                        <button class="mcard-btn primary" @onclick:stopPropagation="true" @onclick="HandlePlay">
+                            <MudIcon Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small" /> Play
+                        </button>
+                    }
+                    else if (Media.RequestStatus == RequestStatus.None)
+                    {
+                        <button class="mcard-btn primary" @onclick:stopPropagation="true" @onclick="HandleRequest">
+                            <MudIcon Icon="@Icons.Material.Filled.Add" Size="Size.Small" /> Request
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="mcard-btn muted" disabled>@GetStatusText()</button>
+                    }
+                    <button class="mcard-btn icon" title="Details" @onclick:stopPropagation="true" @onclick="NavigateToDetails">
+                        <MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Small" />
+                    </button>
+                    @if (OnRemove.HasDelegate)
+                    {
+                        <button class="mcard-btn icon danger" title="Remove" @onclick:stopPropagation="true" @onclick="HandleRemove">
+                            <MudIcon Icon="@Icons.Material.Filled.Close" Size="Size.Small" />
+                        </button>
+                    }
+                </div>
             </div>
         </div>
     </div>
@@ -138,93 +82,30 @@
 @code {
     [Parameter, EditorRequired] public MediaCardDto Media { get; set; } = default!;
     [Parameter] public EventCallback<MediaCardDto> OnRequest { get; set; }
-    [Parameter] public EventCallback<MediaCardDto> OnWatchlistToggle { get; set; }
+    [Parameter] public EventCallback<MediaCardDto> OnPlay { get; set; }
+    [Parameter] public EventCallback<MediaCardDto> OnRemove { get; set; }
 
-    private bool _isHovered;
-    private bool _isRequesting;
-    private bool _isInWatchlist;
+    private async Task HandleRequest() { if (OnRequest.HasDelegate) await OnRequest.InvokeAsync(Media); }
+    private async Task HandlePlay() { if (OnPlay.HasDelegate) await OnPlay.InvokeAsync(Media); }
+    private async Task HandleRemove() { if (OnRemove.HasDelegate) await OnRemove.InvokeAsync(Media); }
 
-    protected override async Task OnInitializedAsync()
-    {
-        _isInWatchlist = await MediaRequestService.IsInWatchlistAsync(Media.Id, Media.MediaType);
-    }
+    private void NavigateToDetails()
+        => Navigation.NavigateTo($"/media/{Media.MediaType.ToString().ToLower()}/{Media.Id}");
 
-    private void OnMouseEnter() => _isHovered = true;
-    private void OnMouseLeave() => _isHovered = false;
-
-    private async Task RequestMedia()
-    {
-        _isRequesting = true;
-        try
-        {
-            var result = await MediaRequestService.RequestMediaAsync(Media.Id, Media.MediaType);
-            if (result.Success)
-            {
-                Media.RequestStatus = RequestStatus.Pending;
-                await ToastService.ShowSuccessAsync($"{Media.Title} has been requested!");
-                if (OnRequest.HasDelegate) await OnRequest.InvokeAsync(Media);
-            }
-            else
-            {
-                await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request media");
-            }
-        }
-        finally { _isRequesting = false; }
-    }
-
-    private async Task ToggleWatchlist()
-    {
-        var success = _isInWatchlist
-            ? await MediaRequestService.RemoveFromWatchlistAsync(Media.Id, Media.MediaType)
-            : await MediaRequestService.AddToWatchlistAsync(Media.Id, Media.MediaType);
-        if (success)
-        {
-            _isInWatchlist = !_isInWatchlist;
-            var message = _isInWatchlist ? $"Added {Media.Title} to watchlist" : $"Removed {Media.Title} from watchlist";
-            await ToastService.ShowInfoAsync(message);
-            if (OnWatchlistToggle.HasDelegate) await OnWatchlistToggle.InvokeAsync(Media);
-        }
-    }
-
-    private async Task ShareMedia()
-    {
-        var shareUrl = $"{Navigation.BaseUri}media/{Media.MediaType.ToString().ToLower()}/{Media.Id}";
-        await ToastService.ShowInfoAsync("Share link copied to clipboard!");
-    }
-
-    private void NavigateToDetails() => Navigation.NavigateTo($"/media/{Media.MediaType.ToString().ToLower()}/{Media.Id}");
-
-    private void NavigateToWatch()
-    {
-        if (!string.IsNullOrEmpty(Media.PlexUrl)) Navigation.NavigateTo(Media.PlexUrl, true);
-    }
-
-    private string GetMediaTypeIcon() => Media.MediaType switch
+    private string GetMediaIcon() => Media.MediaType switch
     {
         MediaType.Movie => Icons.Material.Filled.Movie,
         MediaType.TvShow => Icons.Material.Filled.Tv,
-        MediaType.Music => Icons.Material.Filled.MusicNote,
         _ => Icons.Material.Filled.VideoLibrary
     };
 
-    private int GetStarRating() => !Media.Rating.HasValue ? 0 : (int)Math.Round(Media.Rating.Value / 2);
-    private double GetSeasonProgress() => Media.TotalSeasons == 0 ? 0 : (double)Media.AvailableSeasons / Media.TotalSeasons * 100;
-    private string FormatRuntime(int minutes) => minutes < 60 ? $"{minutes}m" : ($"{minutes / 60}h" + (minutes % 60 > 0 ? $" {minutes % 60}m" : ""));
-    private string GetTruncatedOverview()
+    private string GetStatusText() => Media.RequestStatus switch
     {
-        if (string.IsNullOrEmpty(Media.Overview)) return string.Empty;
-        const int maxLength = 150;
-        return Media.Overview.Length > maxLength ? Media.Overview[..maxLength] + "..." : Media.Overview;
-    }
-    private Color GetQualityColor(string quality) => (quality.ToUpper()) switch
-    {
-        "4K" or "UHD" => Color.Success,
-        "1080P" or "FHD" => Color.Info,
-        "720P" or "HD" => Color.Warning,
-        _ => Color.Default
+        RequestStatus.Pending => "Pending",
+        RequestStatus.Approved => "Approved",
+        RequestStatus.Processing => "Downloading",
+        RequestStatus.Available => "Available",
+        RequestStatus.Rejected => "Denied",
+        _ => "Requested"
     };
 }
-
-<style>
-/* Styles omitted for brevity; can be pasted from the original and adjusted */
-</style>

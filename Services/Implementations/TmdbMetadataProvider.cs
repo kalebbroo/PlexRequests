@@ -8,6 +8,8 @@ using TMDbLib.Objects.Movies;
 using TMDbLib.Objects.Search;
 using TMDbLib.Objects.TvShows;
 using TMDbLib.Objects.Authentication;
+using TMDbLib.Objects.Discover;
+using TMDbLib.Objects.Trending;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
@@ -198,6 +200,123 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         }
     }
 
+    // ---- Discovery (real TMDB endpoints) ----
+
+    private async Task<List<MediaCardDto>> CachedAsync(string cacheKey, Func<Task<List<MediaCardDto>>> factory)
+    {
+        if (_cache.TryGetValue(cacheKey, out var cached)) return cached;
+        try
+        {
+            var result = await factory();
+            _cache.TryAdd(cacheKey, result);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "TMDB discovery failed for {Key}", cacheKey);
+            return new List<MediaCardDto>();
+        }
+    }
+
+    // Interleave movie + TV results so a mixed feed alternates types instead of grouping them.
+    private static List<MediaCardDto> Interleave(List<MediaCardDto> a, List<MediaCardDto> b, int take)
+    {
+        var merged = new List<MediaCardDto>(a.Count + b.Count);
+        int i = 0, j = 0;
+        while (i < a.Count || j < b.Count)
+        {
+            if (i < a.Count) merged.Add(a[i++]);
+            if (j < b.Count) merged.Add(b[j++]);
+        }
+        return merged.Take(take).ToList();
+    }
+
+    public Task<List<MediaCardDto>> GetTrendingAsync(PlexRequestsHosted.Shared.Enums.MediaType? mediaType = null, int page = 1, int pageSize = 20)
+        => CachedAsync($"trending_{mediaType}_{page}_{pageSize}", async () =>
+        {
+            var movies = new List<MediaCardDto>();
+            var tv = new List<MediaCardDto>();
+            if (mediaType is null or PlexRequestsHosted.Shared.Enums.MediaType.Movie)
+            {
+                var m = await _client.GetTrendingMoviesAsync(TimeWindow.Week, page);
+                movies.AddRange(m.Results.Select(MapMovieToCard));
+            }
+            if (mediaType is null or PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
+            {
+                var t = await _client.GetTrendingTvAsync(TimeWindow.Week, page);
+                tv.AddRange(t.Results.Select(MapTvShowToCard));
+            }
+            return mediaType == null ? Interleave(movies, tv, pageSize) : movies.Concat(tv).Take(pageSize).ToList();
+        });
+
+    public Task<List<MediaCardDto>> GetPopularAsync(PlexRequestsHosted.Shared.Enums.MediaType mediaType, int page = 1, int pageSize = 20)
+        => CachedAsync($"popular_{mediaType}_{page}_{pageSize}", async () =>
+        {
+            if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
+            {
+                var m = await _client.GetMoviePopularListAsync(page: page);
+                return m.Results.Take(pageSize).Select(MapMovieToCard).ToList();
+            }
+            var t = await _client.GetTvShowPopularAsync(page: page);
+            return t.Results.Take(pageSize).Select(MapTvShowToCard).ToList();
+        });
+
+    public Task<List<MediaCardDto>> GetTopRatedAsync(PlexRequestsHosted.Shared.Enums.MediaType mediaType, int page = 1, int pageSize = 20)
+        => CachedAsync($"toprated_{mediaType}_{page}_{pageSize}", async () =>
+        {
+            if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
+            {
+                var m = await _client.GetMovieTopRatedListAsync(page: page);
+                return m.Results.Take(pageSize).Select(MapMovieToCard).ToList();
+            }
+            var t = await _client.GetTvShowTopRatedAsync(page: page);
+            return t.Results.Take(pageSize).Select(MapTvShowToCard).ToList();
+        });
+
+    public Task<List<MediaCardDto>> GetByGenreAsync(PlexRequestsHosted.Shared.Enums.MediaType mediaType, string genre, int page = 1, int pageSize = 20)
+        => CachedAsync($"genre_{mediaType}_{genre}_{page}_{pageSize}", async () =>
+        {
+            var genreId = GetGenreId(genre);
+            if (genreId == 0) return new List<MediaCardDto>();
+            if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
+            {
+                var m = await _client.DiscoverMoviesAsync()
+                    .IncludeWithAllOfGenre(new[] { genreId })
+                    .OrderBy(DiscoverMovieSortBy.PopularityDesc)
+                    .Query(page);
+                return m.Results.Take(pageSize).Select(MapMovieToCard).ToList();
+            }
+            var t = await _client.DiscoverTvShowsAsync()
+                .WhereGenresInclude(new[] { genreId })
+                .OrderBy(DiscoverTvShowSortBy.PopularityDesc)
+                .Query(page);
+            return t.Results.Take(pageSize).Select(MapTvShowToCard).ToList();
+        });
+
+    public Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, PlexRequestsHosted.Shared.Enums.MediaType mediaType, int count = 12)
+        => CachedAsync($"similar_{mediaType}_{mediaId}_{count}", async () =>
+        {
+            if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
+            {
+                var m = await _client.GetMovieRecommendationsAsync(mediaId);
+                var list = m.Results.Select(MapMovieToCard).ToList();
+                if (list.Count == 0)
+                {
+                    var s = await _client.GetMovieSimilarAsync(mediaId);
+                    list = s.Results.Select(MapMovieToCard).ToList();
+                }
+                return list.Take(count).ToList();
+            }
+            var tv = await _client.GetTvShowRecommendationsAsync(mediaId);
+            var tvList = tv.Results.Select(MapTvShowToCard).ToList();
+            if (tvList.Count == 0)
+            {
+                var s = await _client.GetTvShowSimilarAsync(mediaId);
+                tvList = s.Results.Select(MapTvShowToCard).ToList();
+            }
+            return tvList.Take(count).ToList();
+        });
+
     private static MediaCardDto MapMovieToCard(SearchMovie movie)
     {
         return new MediaCardDto
@@ -351,4 +470,34 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
             _ => "Unknown"
         };
     }
+
+    // Reverse of GetGenreName: map a genre display name to its TMDB id (0 = unknown). Accepts both the
+    // movie and TV spellings so a single "Action" row works across types.
+    private static int GetGenreId(string genre) => genre?.Trim().ToLowerInvariant() switch
+    {
+        "action" => 28,
+        "adventure" => 12,
+        "animation" => 16,
+        "comedy" => 35,
+        "crime" => 80,
+        "documentary" => 99,
+        "drama" => 18,
+        "family" => 10751,
+        "fantasy" => 14,
+        "history" => 36,
+        "horror" => 27,
+        "music" => 10402,
+        "mystery" => 9648,
+        "romance" => 10749,
+        "science fiction" or "sci-fi" => 878,
+        "thriller" => 53,
+        "war" => 10752,
+        "western" => 37,
+        "action & adventure" => 10759,
+        "kids" => 10762,
+        "reality" => 10764,
+        "sci-fi & fantasy" => 10765,
+        "war & politics" => 10768,
+        _ => 0
+    };
 }

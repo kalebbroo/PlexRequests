@@ -1,5 +1,6 @@
 @page "/search"
 @attribute [Authorize]
+@rendermode InteractiveServer
 @inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
@@ -101,11 +102,7 @@
                 <div class="results-grid">
                     @foreach (PlexRequestsHosted.Shared.DTOs.MediaCardDto result in _searchResults)
                     {
-                        <div class="result-item" @onclick="() => ShowDetails(result)">
-                            <MediaTile Media="result"
-                                      OnRequest="RequestMedia"
-                                      OnPlay="PlayMedia" />
-                        </div>
+                        <PlexRequestsHosted.Components.Shared.MediaCard Media="result" OnRequest="RequestMedia" OnPlay="PlayMedia" />
                     }
                 </div>
             }
@@ -159,15 +156,19 @@
         "Trending Now", "Popular Movies", "Award Winners", "Classic Films"
     };
 
-    protected override async Task OnInitializedAsync()
-    {
-        // Load initial trending/popular content
-        LoadPopularContent();
-    }
+    [SupplyParameterFromQuery(Name = "q")] public string? Q { get; set; }
+    private string? _lastQ;
 
-    private void LoadPopularContent()
+    protected override async Task OnParametersSetAsync()
     {
-        // This would load popular/trending content for the empty search state
+        // Accept a query handed off from the header search box (/search?q=...).
+        if (!string.IsNullOrWhiteSpace(Q) && Q != _lastQ)
+        {
+            _lastQ = Q;
+            _searchQuery = Q!;
+            _showFilters = true;
+            await PerformSearch();
+        }
     }
 
     private void HandleKeyUp(KeyboardEventArgs e)
@@ -237,7 +238,8 @@
 
     private void BrowseGenre(String genre)
     {
-        Navigation.NavigateTo($"/browse?genre={genre}");
+        // The typed grid reads ?genre=; plain /browse (Home) ignores it.
+        Navigation.NavigateTo($"/browse/movie?genre={Uri.EscapeDataString(genre)}");
     }
 
     private void ClearSearch()

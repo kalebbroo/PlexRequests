@@ -1,10 +1,12 @@
 @page "/requests"
 @attribute [Authorize]
+@rendermode InteractiveServer
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject PlexRequestsHosted.Services.Abstractions.INotificationBroker Broker
 @inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthProvider
 @inject NavigationManager Navigation
+@inject MudBlazor.IDialogService DialogService
 @implements IDisposable
 
 <PageTitle>My Requests - Plex Requests</PageTitle>
@@ -369,10 +371,13 @@
         Navigation.NavigateTo($"/media/{request.MediaType.ToString().ToLower()}/{request.MediaId}");
     }
 
-    private Task<Boolean> ConfirmAction(String message)
+    private async Task<Boolean> ConfirmAction(String message)
     {
-        // In a real implementation, this would show a confirmation dialog
-        return Task.FromResult(true);
+        var result = await DialogService.ShowMessageBox(
+            title: "Please confirm",
+            message: message,
+            yesText: "Yes", cancelText: "No");
+        return result == true;
     }
 
     private String GetMediaIcon(PlexRequestsHosted.Shared.Enums.MediaType type) => type switch

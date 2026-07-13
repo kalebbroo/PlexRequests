@@ -70,7 +70,6 @@
                     </ActivatorContent>
                     <ChildContent>
                         <MudMenuItem Href="/profile">Profile</MudMenuItem>
-                        <MudMenuItem Href="/settings">Settings</MudMenuItem>
                         <MudDivider />
                         <MudMenuItem OnClick="SignOut">Sign Out</MudMenuItem>
                     </ChildContent>
@@ -93,7 +92,6 @@
                 <NavLink href="/search" class="mobile-nav-item" @onclick="CloseMobileMenu">Search</NavLink>
                 <MudDivider Class="my-3" />
                 <NavLink href="/profile" class="mobile-nav-item" @onclick="CloseMobileMenu">Profile</NavLink>
-                <NavLink href="/settings" class="mobile-nav-item" @onclick="CloseMobileMenu">Settings</NavLink>
             </nav>
         </div>
     }
@@ -141,7 +139,6 @@
     private bool _mobileMenuOpen = false;
     private bool _isHomepage = false;
     private bool _isLoginPage = false;
-    private System.Timers.Timer? _scrollTimer;
     private string? _userAvatar;
     private string _searchQuery = string.Empty;
     private int _unreadCount = 0;
@@ -152,10 +149,6 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _scrollTimer = new System.Timers.Timer(100);
-        _scrollTimer.Elapsed += CheckScroll;
-        _scrollTimer.Start();
-
         DetermineRouteContext();
         Navigation.LocationChanged += HandleLocationChanged;
 
@@ -202,15 +195,9 @@
         StateHasChanged();
     }
 
-    private void CheckScroll(object? sender, System.Timers.ElapsedEventArgs e)
-    {
-        // This would need JS interop to get actual scroll position
-        // For now, we'll simulate scroll behavior
-    }
-
     private void HandleScroll()
     {
-        // Handle scroll to add background to header
+        // Header gains a solid background once the page is scrolled past the hero.
         _scrolled = true;
     }
 
@@ -260,7 +247,6 @@
 
     public void Dispose()
     {
-        _scrollTimer?.Dispose();
         Navigation.LocationChanged -= HandleLocationChanged;
         Broker.Notified -= OnNotified;
     }

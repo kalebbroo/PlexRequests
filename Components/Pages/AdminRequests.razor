@@ -1,5 +1,6 @@
 @page "/admin/requests"
 @attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
 @using Microsoft.AspNetCore.Components.Web
 @using MudBlazor
 @using PlexRequestsHosted.Shared.DTOs
@@ -17,7 +18,7 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h2>Admin - Media Requests</h2>
         <div class="d-flex gap-2">
-            <MudSelect T="RequestStatus?" @bind-Value="_statusFilter" Label="Status" Dense="true" Variant="Variant.Outlined" Class="me-2">
+            <MudSelect T="RequestStatus?" Value="_statusFilter" ValueChanged="OnStatusChanged" Label="Status" Dense="true" Variant="Variant.Outlined" Class="me-2">
                 <MudSelectItem T="RequestStatus?" Value="@( (RequestStatus?)null )">All</MudSelectItem>
                 <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Pending)">Pending</MudSelectItem>
                 <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Approved)">Approved</MudSelectItem>
@@ -25,7 +26,7 @@
                 <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Rejected)">Rejected</MudSelectItem>
                 <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Cancelled)">Cancelled</MudSelectItem>
             </MudSelect>
-            <MudTextField @bind-Value="_search" Placeholder="Search title..." Margin="Margin.Dense" Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" OnBlur="@(_ => Refresh())"/>
+            <MudTextField T="string" Value="_search" ValueChanged="OnSearchChanged" Placeholder="Search title..." Margin="Margin.Dense" Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" DebounceInterval="250"/>
             <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="Refresh">Refresh</MudButton>
         </div>
     </div>
@@ -190,6 +191,20 @@
     }
 
     private void Refresh() => ApplyFilters();
+
+    private void OnStatusChanged(RequestStatus? value)
+    {
+        _statusFilter = value;
+        _page = 1;
+        ApplyFilters();
+    }
+
+    private void OnSearchChanged(string value)
+    {
+        _search = value ?? string.Empty;
+        _page = 1;
+        ApplyFilters();
+    }
 
     private async Task Approve(MediaRequestDto r)
     {

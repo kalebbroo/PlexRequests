@@ -1,5 +1,6 @@
 @page "/media/{type}/{id:int}"
 @attribute [Authorize]
+@rendermode InteractiveServer
 @inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
@@ -186,44 +187,43 @@ else
                 <MudTabs Elevation="0" Rounded="false" Centered="false" Color="Color.Default" SliderColor="Color.Primary" Class="custom-tabs">
                     @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
                     {
-                        <MudTabPanel Text="Episodes">
+                        <MudTabPanel Text="Seasons">
                             <div class="episodes-section">
                                 @if (_media.Seasons?.Any() == true)
                                 {
-                                    <MudSelect T="PlexRequestsHosted.Shared.DTOs.SeasonDto" 
-                                               @bind-Value="_selectedSeason" 
-                                               Label="Season" 
-                                               Variant="Variant.Outlined"
-                                               Class="season-select">
-                                        @foreach (PlexRequestsHosted.Shared.DTOs.SeasonDto season in _media.Seasons)
-                                        {
-                                            <MudSelectItem Value="season">
-                                                Season @season.SeasonNumber
-                                                @if (season.IsAvailable)
-                                                {
-                                                    <MudChip T="string" Size="Size.Small" Color="Color.Success">Available</MudChip>
-                                                }
-                                            </MudSelectItem>
-                                        }
-                                    </MudSelect>
-                                    
-                                    @if (_selectedSeason != null)
+                                    @if (CanRequest)
                                     {
-                                        <div class="season-info">
-                                            <MudText Typo="Typo.h6">Season @_selectedSeason.SeasonNumber</MudText>
-                                            <MudText Typo="Typo.body2">
-                                                @_selectedSeason.EpisodeCount Episodes
-                                                @if (_selectedSeason.IsAvailable)
+                                        <MudText Typo="Typo.body2" Class="mb-3">Pick the seasons you want, or request the whole series.</MudText>
+                                    }
+                                    <div class="seasons-list">
+                                        @foreach (PlexRequestsHosted.Shared.DTOs.SeasonDto season in _media.Seasons.Where(s => s.SeasonNumber > 0))
+                                        {
+                                            <div class="season-row">
+                                                @if (CanRequest)
                                                 {
-                                                    <span> • @_selectedSeason.AvailableEpisodes Available</span>
+                                                    <MudCheckBox T="bool" Value="@_selectedSeasons.Contains(season.SeasonNumber)"
+                                                                 ValueChanged="@((bool v) => ToggleSeason(season.SeasonNumber, v))" Dense="true" />
                                                 }
-                                            </MudText>
+                                                <div class="season-meta">
+                                                    <MudText Typo="Typo.subtitle1">Season @season.SeasonNumber</MudText>
+                                                    <MudText Typo="Typo.caption" Color="Color.Tertiary">@season.EpisodeCount episodes</MudText>
+                                                </div>
+                                            </div>
+                                        }
+                                    </div>
+                                    @if (CanRequest)
+                                    {
+                                        <div class="season-actions">
+                                            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RequestSelectedSeasons" Disabled="@(_selectedSeasons.Count == 0)">
+                                                Request @_selectedSeasons.Count Season@(_selectedSeasons.Count == 1 ? "" : "s")
+                                            </MudButton>
+                                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="RequestMedia">Request Entire Series</MudButton>
                                         </div>
                                     }
                                 }
                                 else
                                 {
-                                    <MudText Typo="Typo.body1">Episode information not available</MudText>
+                                    <MudText Typo="Typo.body1">Season information not available</MudText>
                                 }
                             </div>
                         </MudTabPanel>
@@ -283,9 +283,7 @@ else
                                 <div class="similar-grid">
                                     @foreach (PlexRequestsHosted.Shared.DTOs.MediaCardDto similar in _similarMedia)
                                     {
-                                        <div class="similar-item" @onclick="() => NavigateToMedia(similar)">
-                                            <MediaTile Media="similar" />
-                                        </div>
+                                        <PlexRequestsHosted.Components.Shared.MediaCard Media="similar" OnRequest="RequestSimilar" />
                                     }
                                 </div>
                             }
@@ -332,8 +330,8 @@ else
 
                 _inWatchlist = await MediaRequestService.IsInWatchlistAsync(_media.Id, _media.MediaType);
                 
-                // Load similar content
-                _similarMedia = await PlexApiService.SearchMediaAsync("", mediaType);
+                // Load real recommendations for this title (was an empty-query search that returned nothing).
+                _similarMedia = await PlexApiService.GetSimilarAsync(_media.Id, mediaType, 12);
                 _similarMedia = _similarMedia?.Where(m => m.Id != _media.Id).Take(12).ToList();
                 if (_similarMedia?.Any() == true)
                 {
@@ -381,6 +379,43 @@ else
         {
             await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request");
         }
+    }
+
+    private readonly HashSet<int> _selectedSeasons = new();
+
+    private bool CanRequest => _media is not null && !_media.IsAvailable
+        && _media.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.None;
+
+    private void ToggleSeason(int seasonNumber, bool selected)
+    {
+        if (selected) _selectedSeasons.Add(seasonNumber);
+        else _selectedSeasons.Remove(seasonNumber);
+    }
+
+    private async Task RequestSelectedSeasons()
+    {
+        if (_media is null || _selectedSeasons.Count == 0) return;
+        var result = await MediaRequestService.RequestSeasonsAsync(_media.Id, _media.MediaType, _selectedSeasons.ToList());
+        if (result.Success)
+        {
+            _media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
+            await ToastService.ShowSuccessAsync($"Requested {_selectedSeasons.Count} season(s) of {_media.Title}!");
+            _selectedSeasons.Clear();
+            StateHasChanged();
+        }
+        else await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request");
+    }
+
+    private async Task RequestSimilar(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        var result = await MediaRequestService.RequestMediaAsync(media.Id, media.MediaType);
+        if (result.Success)
+        {
+            media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
+            await ToastService.ShowSuccessAsync($"{media.Title} has been requested!");
+            StateHasChanged();
+        }
+        else await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request");
     }
 
     private void PlayNow()
