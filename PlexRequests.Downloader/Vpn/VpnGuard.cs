@@ -29,6 +29,23 @@ public class VpnGuard(HttpClient http, IOptions<VpnOptions> options, ILogger<Vpn
                 _logger.LogWarning("VPN health check returned {Status}; holding off", (int)resp.StatusCode);
                 return false;
             }
+
+            // Weak but real signal on top of "the HTTP call succeeded": if egress resolves to this
+            // host's own known public IP, the VPN tunnel likely isn't actually in the traffic path even
+            // though outbound connectivity works fine. Note this only covers THIS process's own HTTP
+            // calls (indexer scraping, Deluge JSON-RPC) — it has no visibility into Deluge's own torrent
+            // traffic, which is the traffic that actually needs VPN protection; that's an infra concern
+            // (Deluge's own outgoing_interface bind), not something this check can verify.
+            if (!string.IsNullOrWhiteSpace(_opts.ExpectedNonVpnIp))
+            {
+                var egressIp = (await resp.Content.ReadAsStringAsync(cts.Token)).Trim();
+                if (string.Equals(egressIp, _opts.ExpectedNonVpnIp, StringComparison.Ordinal))
+                {
+                    _logger.LogWarning("VPN health check egress IP ({Ip}) matches the configured non-VPN IP; holding off — tunnel likely down", egressIp);
+                    return false;
+                }
+            }
+
             return true;
         }
         catch (Exception ex)

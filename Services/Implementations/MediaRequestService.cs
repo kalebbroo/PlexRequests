@@ -15,7 +15,8 @@ public class MediaRequestService(
     INotificationService notificationService,
     IFulfillmentQueue fulfillmentQueue,
     IConfiguration configuration,
-    IDownloadPreferencesService downloadPreferences) : IMediaRequestService
+    IDownloadPreferencesService downloadPreferences,
+    ISeasonAvailabilityEvaluator seasonAvailability) : IMediaRequestService
 {
     private readonly AppDbContext _db = db;
     private readonly AuthenticationStateProvider _auth = authStateProvider;
@@ -24,6 +25,13 @@ public class MediaRequestService(
     private readonly IFulfillmentQueue _fulfillment = fulfillmentQueue;
     private readonly IConfiguration _config = configuration;
     private readonly IDownloadPreferencesService _downloadPreferences = downloadPreferences;
+    private readonly ISeasonAvailabilityEvaluator _seasonAvailability = seasonAvailability;
+
+    // Statuses that still legitimately block a duplicate request/re-request; Failed/Cancelled/Rejected
+    // don't (a failed download should be retryable), and Available is checked separately/live so its
+    // message can be specific rather than folded into "you've already requested this".
+    private static bool IsActiveStatus(RequestStatus s) =>
+        s is RequestStatus.Pending or RequestStatus.Approved or RequestStatus.Processing;
 
     private async Task<(string username, bool isAdmin)> GetUserAsync()
     {
@@ -351,16 +359,12 @@ public class MediaRequestService(
     private async Task<MediaRequestResult> CreateRequestCoreAsync(int userId, string username, bool isAdmin, int mediaId, MediaType mediaType, bool allSeasons = true, List<int>? seasons = null, List<(int season, int episode)>? episodes = null, bool monitored = false)
     {
         // Per-user duplicate check: a second user requesting the same title joins it rather than
-        // being blocked. Only the same user re-requesting an active item is rejected.
-        var alreadyMine = await _db.MediaRequests.AnyAsync(r =>
-            r.MediaId == mediaId && r.MediaType == mediaType &&
-            r.RequestedByUserId == userId &&
-            r.Status != RequestStatus.Cancelled && r.Status != RequestStatus.Rejected);
-        if (alreadyMine) return new MediaRequestResult { Success = false, ErrorMessage = "You've already requested this title." };
-
-        var alreadyAvailable = await _db.MediaRequests.AnyAsync(r =>
-            r.MediaId == mediaId && r.MediaType == mediaType && r.Status == RequestStatus.Available);
-        if (alreadyAvailable) return new MediaRequestResult { Success = false, ErrorMessage = "This title is already available." };
+        // being blocked. Only the same user re-requesting an already-covered scope is rejected — for TV
+        // this is season/episode-scope aware, so e.g. an active season-1 request doesn't block a season-3
+        // request for the same show, and a season is only "already available" when it's genuinely complete
+        // (not just the instant any single episode landed).
+        var (blocked, blockMessage) = await CheckScopeConflictAsync(userId, mediaId, mediaType, allSeasons, seasons, episodes);
+        if (blocked) return new MediaRequestResult { Success = false, ErrorMessage = blockMessage };
 
         if (!isAdmin && !await CheckLimitsCoreAsync(userId, mediaType))
             return new MediaRequestResult { Success = false, ErrorMessage = "You've reached your request limit for this media type." };
@@ -423,6 +427,82 @@ public class MediaRequestService(
             }
         }
         return new MediaRequestResult { Success = saved, RequestId = entity.Id, NewStatus = entity.Status };
+    }
+
+    /// <summary>
+    /// Whether a new request would be entirely redundant: for movies, the classic status-based checks;
+    /// for TV, a season-scope-aware check that only blocks when the new request's exact scope is already
+    /// fully covered by the same user's other active requests, or is already fully available on Plex
+    /// right now (not a sticky terminal status that can never un-stick).
+    /// </summary>
+    private async Task<(bool blocked, string? message)> CheckScopeConflictAsync(
+        int userId, int mediaId, MediaType mediaType, bool allSeasons, List<int>? seasons, List<(int season, int episode)>? episodes)
+    {
+        if (mediaType != MediaType.TvShow)
+        {
+            var alreadyMine = await _db.MediaRequests.AnyAsync(r =>
+                r.MediaId == mediaId && r.MediaType == mediaType && r.RequestedByUserId == userId &&
+                (r.Status == RequestStatus.Pending || r.Status == RequestStatus.Approved || r.Status == RequestStatus.Processing));
+            if (alreadyMine) return (true, "You've already requested this title.");
+
+            var alreadyAvailable = await _db.MediaRequests.AnyAsync(r =>
+                r.MediaId == mediaId && r.MediaType == mediaType && r.Status == RequestStatus.Available);
+            if (alreadyAvailable) return (true, "This title is already available.");
+
+            return (false, null);
+        }
+
+        var newScope = await ResolveSeasonScopeAsync(mediaId, allSeasons, seasons, episodes);
+        if (newScope.Count == 0) return (false, null); // couldn't resolve scope (metadata miss) — don't guess, allow it
+
+        var myActive = await _db.MediaRequests
+            .Where(r => r.MediaId == mediaId && r.MediaType == mediaType && r.RequestedByUserId == userId)
+            .ToListAsync();
+        var covered = new HashSet<int>();
+        foreach (var r in myActive.Where(r => IsActiveStatus(r.Status)))
+            covered.UnionWith(await ResolveRequestScopeAsync(r));
+        if (newScope.All(covered.Contains))
+            return (true, "You've already requested this title/season.");
+
+        var evaluation = await _seasonAvailability.EvaluateAsync(mediaId);
+        if (newScope.All(s => evaluation.TryGetValue(s, out var sc) && sc.Complete))
+            return (true, "This season is already fully available.");
+
+        return (false, null);
+    }
+
+    // The set of season numbers a new request would target: explicit episodes/seasons, or (whole series)
+    // every season TMDB currently knows about.
+    private async Task<HashSet<int>> ResolveSeasonScopeAsync(int mediaId, bool wholeSeries, List<int>? seasons, List<(int season, int episode)>? episodes)
+    {
+        if (episodes is { Count: > 0 }) return episodes.Select(e => e.season).ToHashSet();
+        if (seasons is { Count: > 0 }) return seasons.ToHashSet();
+        if (!wholeSeries) return new HashSet<int>();
+        var detail = await _metadata.GetDetailsAsync(mediaId, MediaType.TvShow);
+        return (detail?.Seasons?.Where(s => s.SeasonNumber > 0).Select(s => s.SeasonNumber) ?? Enumerable.Empty<int>()).ToHashSet();
+    }
+
+    // The set of season numbers an EXISTING request row targets, same rules as above.
+    private async Task<HashSet<int>> ResolveRequestScopeAsync(MediaRequestEntity r)
+    {
+        if (!string.IsNullOrWhiteSpace(r.RequestedEpisodesCsv))
+            return ParseEpisodeSeasons(r.RequestedEpisodesCsv);
+        if (!string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv))
+            return r.RequestedSeasonsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => int.TryParse(s, out var n) ? n : -1).Where(n => n >= 0).ToHashSet();
+        var detail = await _metadata.GetDetailsAsync(r.MediaId, MediaType.TvShow);
+        return (detail?.Seasons?.Where(s => s.SeasonNumber > 0).Select(s => s.SeasonNumber) ?? Enumerable.Empty<int>()).ToHashSet();
+    }
+
+    private static HashSet<int> ParseEpisodeSeasons(string csv)
+    {
+        var seasons = new HashSet<int>();
+        foreach (var tok in csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(tok, @"^[Ss](\d+)[Ee](\d+)$");
+            if (m.Success) seasons.Add(int.Parse(m.Groups[1].Value));
+        }
+        return seasons;
     }
 
     /// <summary>A specific user's requests, newest first (used by the Discord bridge /request status).</summary>

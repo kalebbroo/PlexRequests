@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PlexRequestsHosted.Infrastructure.Data;
 
@@ -10,9 +11,11 @@ using PlexRequestsHosted.Infrastructure.Data;
 namespace PlexRequestsHosted.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260714062000_AddMinTitleSimilarityToDownloadPreferences")]
+    partial class AddMinTitleSimilarityToDownloadPreferences
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.7");
@@ -223,129 +226,6 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.HasIndex("MediaId", "MediaType");
 
                     b.ToTable("FulfillmentJobs");
-                });
-
-            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.ImportedFileEntity", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("DestinationPath")
-                        .IsRequired()
-                        .HasMaxLength(2048)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("EpisodeNumber")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("FileType")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("FulfillmentJobId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("ImportedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("SeasonNumber")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("SizeBytes")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("SourcePath")
-                        .IsRequired()
-                        .HasMaxLength(2048)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("TorrentId")
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("FulfillmentJobId");
-
-                    b.ToTable("ImportedFiles");
-                });
-
-            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.LibraryOrganizationPreferencesEntity", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("DeleteSourceAfterImport")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("ExtractArchives")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("IsSingleton")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("KeepSubtitles")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("LibraryRootRulesJson")
-                        .HasColumnType("TEXT");
-
-                    b.Property<double>("MinVideoFileSizeMb")
-                        .HasColumnType("REAL");
-
-                    b.Property<string>("MoviePath")
-                        .IsRequired()
-                        .HasMaxLength(1024)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("MovieTemplate")
-                        .IsRequired()
-                        .HasMaxLength(512)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("SeasonPackFolderTemplate")
-                        .IsRequired()
-                        .HasMaxLength(512)
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool>("SplitSeasonPacks")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("SubtitleExtensionsCsv")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("TransferMode")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("TvEpisodeTemplate")
-                        .IsRequired()
-                        .HasMaxLength(512)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("TvPath")
-                        .IsRequired()
-                        .HasMaxLength(1024)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("VideoExtensionsCsv")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IsSingleton")
-                        .IsUnique();
-
-                    b.ToTable("LibraryOrganizationPreferences");
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.MediaIssueEntity", b =>
@@ -946,17 +826,6 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("MediaRequest");
-                });
-
-            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.ImportedFileEntity", b =>
-                {
-                    b.HasOne("PlexRequestsHosted.Infrastructure.Entities.FulfillmentJobEntity", "FulfillmentJob")
-                        .WithMany()
-                        .HasForeignKey("FulfillmentJobId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("FulfillmentJob");
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.MediaRequestEntity", b =>

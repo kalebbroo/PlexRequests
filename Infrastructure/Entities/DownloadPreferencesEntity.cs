@@ -31,6 +31,10 @@ public class DownloadPreferencesEntity
     public bool PreferHigherQualitySource { get; set; } = true;
     public bool EnforceQualityFloor { get; set; } = true;
 
+    /// <summary>Minimum normalized title-similarity (0-1) a release name must clear against the requested
+    /// title to be considered — guards free-text-search indexers against wrong-show/spam matches.</summary>
+    public double MinTitleSimilarity { get; set; } = 0.5;
+
     /// <summary>When a user requests an entire series, automatically mark it monitored so newly-aired
     /// episodes are auto-downloaded. Admins can turn this off to require monitoring to be enabled manually.</summary>
     public bool AutoMonitorEntireSeriesRequests { get; set; } = true;

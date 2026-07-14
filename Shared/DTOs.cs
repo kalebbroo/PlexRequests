@@ -201,6 +201,14 @@ public class DownloadPreferencesDto
     /// <summary>Treat the job's Quality as a hard floor (reject lower) rather than a soft preference.</summary>
     public bool EnforceQualityFloor { get; set; } = true;
 
+    /// <summary>
+    /// Minimum normalized token-overlap similarity (0-1) between a release name and the requested title
+    /// for the release to be considered at all. Guards free-text-search indexers (1337x/ext.to/Nyaa)
+    /// against accepting an unrelated/wrong-show/spam release just because it clears quality/seeder/size
+    /// thresholds.
+    /// </summary>
+    public double MinTitleSimilarity { get; set; } = 0.5;
+
     /// <summary>When a user requests an entire series, automatically monitor it for new episodes.</summary>
     public bool AutoMonitorEntireSeriesRequests { get; set; } = true;
 }
@@ -229,6 +237,7 @@ public class UserDto : BaseDto
 public record ClaimRequest(string? WorkerId, int? Max);
 public record ProgressRequest(int Progress, string? WorkerId);
 public record FailRequest(string? Reason);
+public record RefreshLibraryRequest(MediaType MediaType);
 
 public class FulfillmentJobDto
 {
@@ -365,4 +374,66 @@ public class MediaRequestResult
     public int? RequestId { get; set; }
     public string? ErrorMessage { get; set; }
     public RequestStatus? NewStatus { get; set; }
+}
+
+/// <summary>
+/// Admin-configurable settings for how the downloader organizes finished downloads into the Plex
+/// library: where things go (per-media-type root, plus optional routing rules for e.g. a separate
+/// 4K/anime library), what they're named (token templates), and how the transfer happens.
+/// Served to the downloader over the secured /api/fulfillment/library-config endpoint, mirroring
+/// <see cref="DownloadPreferencesDto"/>'s hot-reloadable admin-config pattern.
+/// </summary>
+public class LibraryOrganizationPreferencesDto
+{
+    public string MoviePath { get; set; } = string.Empty;
+    public string TvPath { get; set; } = string.Empty;
+
+    /// <summary>Token template for a movie's destination path, e.g. "{Title} ({Year})/{Title} ({Year}){Ext}".</summary>
+    public string MovieTemplate { get; set; } = "{Title} ({Year})/{Title} ({Year}){Ext}";
+    /// <summary>Token template for a single TV episode's destination path.</summary>
+    public string TvEpisodeTemplate { get; set; } = "{ShowTitle} ({Year})/Season {Season:00}/{ShowTitle} - s{Season:00}e{Episode:00} - {EpisodeTitle}{Ext}";
+    /// <summary>Folder template used for a season pack when SplitSeasonPacks is off.</summary>
+    public string SeasonPackFolderTemplate { get; set; } = "{ShowTitle} ({Year})/Season {Season:00}";
+
+    /// <summary>Ordered routing rules (e.g. send Anime or a quality tier to a separate library root).
+    /// First matching rule wins; no match falls back to MoviePath/TvPath + the default template.</summary>
+    public List<LibraryRootRuleDto> LibraryRootRules { get; set; } = new();
+
+    public TransferMode TransferMode { get; set; } = TransferMode.Hardlink;
+    public bool ExtractArchives { get; set; } = true;
+    public bool SplitSeasonPacks { get; set; } = true;
+    public bool KeepSubtitles { get; set; } = true;
+    public string SubtitleExtensionsCsv { get; set; } = ".srt,.ass,.ssa,.sub,.vtt";
+    public string VideoExtensionsCsv { get; set; } = ".mkv,.mp4,.avi,.m4v,.ts,.mov,.wmv,.m2ts";
+    /// <summary>Files smaller than this are treated as samples/junk rather than real episodes/movies.</summary>
+    public double MinVideoFileSizeMb { get; set; } = 50;
+    /// <summary>Delete the source after import instead of leaving it for the torrent client to keep seeding.
+    /// Forced off when TransferMode is Hardlink (the "source" and the library copy are the same inode).</summary>
+    public bool DeleteSourceAfterImport { get; set; } = false;
+}
+
+/// <summary>One routing rule: media type (+ optional quality/genre condition) -> an alternate library root
+/// and, optionally, an alternate naming template.</summary>
+public class LibraryRootRuleDto
+{
+    public MediaType MediaType { get; set; }
+    public Quality? MinQuality { get; set; }
+    /// <summary>Simple substring match against the request's genre list, e.g. "Anime". Null = no genre condition.</summary>
+    public string? GenreContains { get; set; }
+    public string RootPath { get; set; } = string.Empty;
+    /// <summary>Null = use the media type's default template (MovieTemplate/TvEpisodeTemplate).</summary>
+    public string? TemplateOverride { get; set; }
+}
+
+/// <summary>One file placed into the library by the organizer — the durable audit trail for a fulfillment job.</summary>
+public class ImportedFileDto
+{
+    public string? TorrentId { get; set; }
+    public string SourcePath { get; set; } = string.Empty;
+    public string DestinationPath { get; set; } = string.Empty;
+    /// <summary>"video" | "subtitle".</summary>
+    public string FileType { get; set; } = "video";
+    public int? SeasonNumber { get; set; }
+    public int? EpisodeNumber { get; set; }
+    public long SizeBytes { get; set; }
 }

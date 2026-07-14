@@ -5,6 +5,7 @@ using PlexRequests.Downloader.Download;
 using PlexRequests.Downloader.Import;
 using PlexRequests.Downloader.Indexers;
 using PlexRequests.Downloader.Ranking;
+using PlexRequests.Downloader.Vpn;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 
@@ -26,10 +27,12 @@ public class FulfillmentPipeline(
     IIndexerClient indexer,
     IReleaseRanker ranker,
     IDownloadPreferencesProvider prefs,
+    ILibraryOrganizationProvider libraryPrefs,
     IDownloadClient downloadClient,
     ILibraryImporter importer,
     IPlexRequestsApiClient api,
     IJobStateStore stateStore,
+    IVpnGuard vpn,
     IOptions<DelugeOptions> deluge,
     IOptions<WorkerOptions> worker,
     ILogger<FulfillmentPipeline> logger) : IFulfillmentPipeline
@@ -40,7 +43,14 @@ public class FulfillmentPipeline(
         {
             logger.LogInformation("Processing job {JobId}: \"{Title}\" [{Type}]", job.Id, job.Title, job.MediaType);
 
+            // Touch LastUpdatedAt immediately after claim, before the (potentially slow) search/rank/add
+            // phase — closes the split-brain window where the reaper could otherwise requeue this job
+            // as "stale" while it's still genuinely being worked on, since the next touch wouldn't
+            // normally happen until after torrents are added and the monitor loop starts.
+            await SafeReportProgress(job.Id, 0);
+
             await prefs.RefreshAsync(ct); // pick up the latest admin config before ranking
+            await libraryPrefs.RefreshAsync(ct); // and the latest library-organization config before importing
 
             var candidates = await indexer.SearchAsync(job, ct);
             var plan = ranker.PlanDownload(candidates, job);
@@ -72,7 +82,7 @@ public class FulfillmentPipeline(
             logger.LogInformation("Job {JobId} \"{Title}\": added {Count} torrent(s) [{Kind}]", job.Id, job.Title, torrents.Count, plan.Kind);
             var record = new ActiveJobRecord(job, torrents);
             await stateStore.SaveAsync(record, ct);
-            await api.ReportProgressAsync(job.Id, 0, ct);
+            await SafeReportProgress(job.Id, 0);
             await MonitorAndImportAllAsync(record, ct);
         }
         catch (OperationCanceledException) { throw; }
@@ -103,18 +113,34 @@ public class FulfillmentPipeline(
     /// <summary>
     /// Poll every torrent backing the job; import each as it finishes (so partial successes persist to Plex),
     /// report aggregate progress, and mark the request fulfilled only once all torrents import. If any torrent
-    /// errors/disappears or fails to import, the request is failed — a retry recomputes only the still-missing
-    /// episodes, so already-imported ones aren't refetched.
+    /// errors/disappears/stalls or fails to import, the request is failed (or partially-completed if some
+    /// torrents already imported) — a retry recomputes only the still-missing episodes, so already-imported
+    /// ones aren't refetched.
     /// </summary>
     private async Task MonitorAndImportAllAsync(ActiveJobRecord record, CancellationToken ct)
     {
         var job = record.Job;
         var items = record.Torrents.ToList(); // working copy; entries replaced as they import
         var interval = TimeSpan.FromSeconds(Math.Max(5, worker.Value.MonitorIntervalSeconds));
+        var stallTimeout = TimeSpan.FromMinutes(Math.Max(5, worker.Value.StallTimeoutMinutes));
+        // Per-torrent stall tracking: last progress value seen + when it last changed.
+        var lastProgress = new Dictionary<string, (double Progress, DateTime ChangedAt)>();
+        var now0 = DateTime.UtcNow;
+        foreach (var it in items) lastProgress[it.TorrentId] = (0, now0);
 
         while (true)
         {
             ct.ThrowIfCancellationRequested();
+
+            // Re-check VPN health during the in-flight job too, not just at claim time — if it drops
+            // mid-download, hold off driving more indexer/Deluge/API traffic through it this tick rather
+            // than plowing ahead as if nothing happened.
+            if (!await vpn.IsHealthyAsync(ct))
+            {
+                logger.LogWarning("VPN unhealthy mid-job {JobId}; pausing this tick", job.Id);
+                await Task.Delay(interval, ct);
+                continue;
+            }
 
             double progressSum = 0;
             string? failReason = null;
@@ -131,13 +157,41 @@ public class FulfillmentPipeline(
                     failReason = "A torrent entered an error state"; break;
                 }
 
+                var nowTick = DateTime.UtcNow;
+                if (lastProgress.TryGetValue(it.TorrentId, out var last) && status.Progress > last.Progress)
+                    lastProgress[it.TorrentId] = (status.Progress, nowTick);
+                else if (lastProgress.TryGetValue(it.TorrentId, out var stuck) && nowTick - stuck.ChangedAt > stallTimeout)
+                {
+                    failReason = $"Torrent stalled at {status.Progress:F0}% for over {stallTimeout.TotalMinutes:F0}m (no seeders?)";
+                    break;
+                }
+
                 progressSum += status.Progress;
 
                 if (status.IsFinished || status.Progress >= 100)
                 {
                     var sourcePath = Path.Combine(status.SavePath ?? string.Empty, status.Name);
-                    var imported = await importer.ImportAsync(job, sourcePath, ct);
-                    if (!imported) { failReason = "A download completed but import failed"; break; }
+                    var result = await importer.ImportAsync(job, it, sourcePath, ct);
+                    if (!result.Success) { failReason = result.FailReason ?? "A download completed but import failed"; break; }
+
+                    try
+                    {
+                        var files = result.Files.Select(f => new ImportedFileDto
+                        {
+                            TorrentId = it.TorrentId,
+                            SourcePath = f.SourcePath,
+                            DestinationPath = f.DestinationPath,
+                            FileType = f.FileType,
+                            SeasonNumber = f.Season,
+                            EpisodeNumber = f.Episode,
+                            SizeBytes = f.SizeBytes
+                        }).ToList();
+                        await api.ReportImportedFilesAsync(job.Id, files, ct);
+                    }
+                    catch (Exception ex) { logger.LogWarning(ex, "Could not persist import audit rows for job {JobId}", job.Id); }
+
+                    try { await api.RefreshLibraryAsync(job.MediaType, ct); }
+                    catch (Exception ex) { logger.LogDebug(ex, "Plex library refresh trigger skipped for job {JobId}", job.Id); }
 
                     items[i] = it with { Imported = true };
                     await stateStore.SaveAsync(record with { Torrents = items.ToList() }, ct); // persist so a restart resumes
@@ -146,11 +200,22 @@ public class FulfillmentPipeline(
                 }
             }
 
-            await api.ReportProgressAsync(job.Id, (int)Math.Round(progressSum / Math.Max(1, items.Count)), ct);
+            await SafeReportProgress(job.Id, (int)Math.Round(progressSum / Math.Max(1, items.Count)));
 
             if (failReason is not null)
             {
-                await api.MarkFailedAsync(job.MediaRequestId, failReason, ct);
+                // Clean up the torrents that never made it in — a failed download shouldn't leave orphaned
+                // partial data sitting in Deluge forever. Already-imported items keep seeding as normal.
+                foreach (var it in items.Where(x => !x.Imported))
+                {
+                    try { await downloadClient.RemoveAsync(it.TorrentId, removeData: true, ct); }
+                    catch (Exception ex) { logger.LogDebug(ex, "Cleanup of failed torrent {TorrentId} skipped", it.TorrentId); }
+                }
+
+                if (items.Any(x => x.Imported))
+                    await SafePartiallyComplete(job.MediaRequestId, failReason);
+                else
+                    await SafeFail(job.MediaRequestId, failReason);
                 await SafeRemoveState(job.Id);
                 return;
             }
@@ -160,7 +225,7 @@ public class FulfillmentPipeline(
             await Task.Delay(interval, ct);
         }
 
-        await api.MarkFulfilledAsync(job.MediaRequestId, ct);
+        await SafeMarkFulfilled(job.MediaRequestId);
         await SafeRemoveState(job.Id);
     }
 
@@ -168,6 +233,29 @@ public class FulfillmentPipeline(
     {
         try { await api.MarkFailedAsync(requestId, reason, CancellationToken.None); }
         catch (Exception ex) { logger.LogWarning(ex, "Could not report failure for request {RequestId}", requestId); }
+    }
+
+    private async Task SafePartiallyComplete(int requestId, string reason)
+    {
+        try { await api.MarkPartiallyCompletedAsync(requestId, reason, CancellationToken.None); }
+        catch (Exception ex) { logger.LogWarning(ex, "Could not report partial completion for request {RequestId}", requestId); }
+    }
+
+    // A transient network blip on the SUCCESS path (progress report / fulfilled callback) shouldn't
+    // read as a job failure — these are best-effort status pushes, not the thing that determines whether
+    // the download actually succeeded, so failures here are logged and swallowed rather than propagated
+    // up to the outer catch-all (which would otherwise mark an actually-successful job Failed and delete
+    // its resumable state).
+    private async Task SafeReportProgress(int jobId, int progress)
+    {
+        try { await api.ReportProgressAsync(jobId, progress, CancellationToken.None); }
+        catch (Exception ex) { logger.LogDebug(ex, "Progress report skipped for job {JobId}", jobId); }
+    }
+
+    private async Task SafeMarkFulfilled(int requestId)
+    {
+        try { await api.MarkFulfilledAsync(requestId, CancellationToken.None); }
+        catch (Exception ex) { logger.LogWarning(ex, "Could not report fulfillment for request {RequestId}; will retry next reconciliation pass", requestId); }
     }
 
     private async Task SafeRemoveState(int jobId)

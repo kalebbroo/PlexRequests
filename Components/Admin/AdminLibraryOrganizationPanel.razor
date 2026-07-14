@@ -1,0 +1,183 @@
+@using System.Text.RegularExpressions
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@inject PlexRequestsHosted.Services.Implementations.ILibraryOrganizationPreferencesService Prefs
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h2>Library Organization</h2>
+    <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="Save" Disabled="_loading">Save</MudButton>
+</div>
+<MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-4">
+    Controls how the downloader renames and places finished downloads into the Plex library: where they go,
+    what they're named, and how the transfer happens. Applies to new imports going forward only.
+</MudText>
+
+@if (_loading || _p is null)
+{
+    <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else
+{
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudText Typo="Typo.h6" Class="mb-3">Library roots</MudText>
+        <div class="d-flex gap-3 flex-wrap align-items-center">
+            <MudTextField @bind-Value="_p.MoviePath" Label="Movie library path" Variant="Variant.Outlined" Dense="true" Style="min-width:320px;" />
+            <MudTextField @bind-Value="_p.TvPath" Label="TV library path" Variant="Variant.Outlined" Dense="true" Style="min-width:320px;" />
+        </div>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
+            Paths as seen by the downloader process/container, not the web app.
+        </MudText>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudText Typo="Typo.h6" Class="mb-3">Naming templates</MudText>
+        <div class="d-flex flex-column gap-3">
+            <div>
+                <MudTextField @bind-Value="_p.MovieTemplate" @bind-Value:after="Refresh" Label="Movie template" Variant="Variant.Outlined" Dense="true" FullWidth="true" />
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">Preview: @PreviewMovie()</MudText>
+            </div>
+            <div>
+                <MudTextField @bind-Value="_p.TvEpisodeTemplate" @bind-Value:after="Refresh" Label="TV episode template" Variant="Variant.Outlined" Dense="true" FullWidth="true" />
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">Preview: @PreviewEpisode()</MudText>
+            </div>
+            <div>
+                <MudTextField @bind-Value="_p.SeasonPackFolderTemplate" @bind-Value:after="Refresh" Label="Season-pack folder template (used when pack splitting is off)" Variant="Variant.Outlined" Dense="true" FullWidth="true" />
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">Preview: @PreviewSeasonFolder()</MudText>
+            </div>
+        </div>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-3">
+            Available tokens: <code>{Title}</code>/<code>{ShowTitle}</code>, <code>{Year}</code>, <code>{Season}</code>/<code>{Season:00}</code>,
+            <code>{Episode}</code>/<code>{Episode:00}</code>, <code>{EpisodeTitle}</code>, <code>{Quality}</code>, <code>{Ext}</code>.
+            <code>:00</code> zero-pads season/episode numbers to 2 digits.
+        </MudText>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <MudText Typo="Typo.h6">Advanced routing rules</MudText>
+            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddRule">Add rule</MudButton>
+        </div>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-2">
+            Optional: route content to an alternate library root (e.g. a separate 4K or Anime library) instead of the
+            default path above. First matching rule wins; unmatched content falls back to the roots/templates above.
+        </MudText>
+        @if (_p.LibraryRootRules.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="py-2">No routing rules — everything uses the default roots/templates.</MudText>
+        }
+        else
+        {
+            @for (var i = 0; i < _p.LibraryRootRules.Count; i++)
+            {
+                var idx = i;
+                var rule = _p.LibraryRootRules[idx];
+                <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
+                    <MudSelect T="MediaType" @bind-Value="rule.MediaType" Label="Media type" Dense="true" Variant="Variant.Outlined" Style="min-width:140px;">
+                        <MudSelectItem Value="MediaType.Movie">Movie</MudSelectItem>
+                        <MudSelectItem Value="MediaType.TvShow">TV Show</MudSelectItem>
+                        <MudSelectItem Value="MediaType.Anime">Anime</MudSelectItem>
+                    </MudSelect>
+                    <MudTextField @bind-Value="rule.GenreContains" Label="Genre contains (optional)" Placeholder="e.g. Anime" Dense="true" Variant="Variant.Outlined" Style="min-width:200px;" />
+                    <MudTextField @bind-Value="rule.RootPath" Label="Root path" Dense="true" Variant="Variant.Outlined" Style="min-width:280px;" />
+                    <MudTextField @bind-Value="rule.TemplateOverride" Label="Template override (optional)" Dense="true" Variant="Variant.Outlined" Style="min-width:280px;" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="@(() => RemoveRule(idx))" />
+                </div>
+            }
+        }
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudText Typo="Typo.h6" Class="mb-3">Transfer behavior</MudText>
+        <div class="d-flex gap-3 flex-wrap align-items-center">
+            <MudSelect T="TransferMode" @bind-Value="_p.TransferMode" Label="Transfer mode" Dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
+                <MudSelectItem Value="TransferMode.Hardlink">Hardlink (keeps seeding)</MudSelectItem>
+                <MudSelectItem Value="TransferMode.Copy">Copy</MudSelectItem>
+                <MudSelectItem Value="TransferMode.Move">Move</MudSelectItem>
+            </MudSelect>
+            <MudSwitch T="bool" @bind-Value="_p.ExtractArchives" Color="Color.Primary" Label="Extract RAR/ZIP archives" />
+            <MudSwitch T="bool" @bind-Value="_p.SplitSeasonPacks" Color="Color.Primary" Label="Split season packs into per-episode files" />
+            <MudSwitch T="bool" @bind-Value="_p.KeepSubtitles" Color="Color.Primary" Label="Keep subtitles" />
+            <MudSwitch T="bool" @bind-Value="_p.DeleteSourceAfterImport" Color="Color.Primary" Label="Delete source after import" Disabled="_p.TransferMode == TransferMode.Hardlink" />
+        </div>
+        @if (_p.TransferMode == TransferMode.Hardlink)
+        {
+            <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
+                "Delete source after import" is unavailable in Hardlink mode — the library copy and the seeding torrent's file are the same data on disk.
+            </MudText>
+        }
+        <div class="d-flex gap-3 flex-wrap align-items-center mt-3">
+            <MudTextField @bind-Value="_p.VideoExtensionsCsv" Label="Video extensions (comma-separated)" Variant="Variant.Outlined" Dense="true" Style="min-width:320px;" />
+            <MudTextField @bind-Value="_p.SubtitleExtensionsCsv" Label="Subtitle extensions (comma-separated)" Variant="Variant.Outlined" Dense="true" Style="min-width:320px;" />
+            <MudNumericField T="double" @bind-Value="_p.MinVideoFileSizeMb" Label="Min video file size (MB)" Variant="Variant.Outlined" Dense="true" Min="0" Style="max-width:220px;" />
+        </div>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
+            Files below the minimum size are treated as samples/junk, not real episodes/movies.
+        </MudText>
+    </MudPaper>
+}
+
+@code {
+    private bool _loading = true;
+    private LibraryOrganizationPreferencesDto? _p;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _loading = true; StateHasChanged();
+        try { _p = await Prefs.GetAsync(); }
+        finally { _loading = false; StateHasChanged(); }
+    }
+
+    private async Task Save()
+    {
+        if (_p is null) return;
+        if (await Prefs.UpdateAsync(_p)) await Toast.ShowSuccessAsync("Library organization settings saved.");
+        else await Toast.ShowErrorAsync("Save failed.");
+    }
+
+    private void Refresh() => StateHasChanged();
+
+    private void AddRule()
+    {
+        _p!.LibraryRootRules.Add(new LibraryRootRuleDto { MediaType = MediaType.TvShow });
+        StateHasChanged();
+    }
+
+    private void RemoveRule(int index)
+    {
+        _p!.LibraryRootRules.RemoveAt(index);
+        StateHasChanged();
+    }
+
+    // Preview-only rendering — a simplified stand-in for the downloader's real NamingTemplateEngine,
+    // just to show admins roughly what a sample title would resolve to before saving.
+    private static readonly Regex TokenRx = new(@"\{(\w+)(?::(0+))?\}", RegexOptions.Compiled);
+
+    private string PreviewMovie() => Render(_p!.MovieTemplate, "Sample Movie", 2024, null, null, null, "1080p", ".mkv");
+    private string PreviewEpisode() => Render(_p!.TvEpisodeTemplate, "Sample Show", 2024, 1, 3, "The Pilot", "1080p", ".mkv");
+    private string PreviewSeasonFolder() => Render(_p!.SeasonPackFolderTemplate, "Sample Show", 2024, 1, null, null, null, null);
+
+    private static string Render(string template, string title, int? year, int? season, int? episode, string? episodeTitle, string? quality, string? ext)
+    {
+        if (string.IsNullOrWhiteSpace(template)) return "(empty template)";
+        return TokenRx.Replace(template, m =>
+        {
+            var token = m.Groups[1].Value;
+            var pad = m.Groups[2].Success ? m.Groups[2].Value.Length : 0;
+            string? value = token switch
+            {
+                "Title" or "ShowTitle" => title,
+                "Year" => year?.ToString(),
+                "Season" => pad > 0 ? season?.ToString($"D{pad}") : season?.ToString(),
+                "Episode" => pad > 0 ? episode?.ToString($"D{pad}") : episode?.ToString(),
+                "EpisodeTitle" => episodeTitle,
+                "Quality" => quality,
+                "Ext" => ext,
+                _ => null
+            };
+            return value ?? string.Empty;
+        });
+    }
+}

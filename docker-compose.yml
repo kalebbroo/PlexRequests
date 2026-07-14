@@ -76,6 +76,8 @@ services:
       # connected box anyway — it only matters when the downloader is inside the VPN namespace).
       Vpn__Enabled: ${VPN_ENABLED:-false}
       Vpn__HealthCheckUrl: https://api.ipify.org
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # lets DELUGE_URL point at a client running on THIS host, outside Docker
     volumes:
       - media:/data
       - downloader-state:/app/state

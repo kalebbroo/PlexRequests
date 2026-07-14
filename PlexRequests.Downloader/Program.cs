@@ -3,6 +3,7 @@ using PlexRequests.Downloader.Configuration;
 using PlexRequests.Downloader.Download;
 using PlexRequests.Downloader.Import;
 using PlexRequests.Downloader.Indexers;
+using PlexRequests.Downloader.Organize;
 using PlexRequests.Downloader.Ranking;
 using PlexRequests.Downloader.Vpn;
 using PlexRequests.Downloader.Worker;
@@ -78,6 +79,8 @@ builder.Services.AddTransient<IIndexerClient, IndexerClient>();
 
 // Admin-configured download preferences, fetched from the web app (appsettings QualityOptions fallback).
 builder.Services.AddSingleton<IDownloadPreferencesProvider, DownloadPreferencesProvider>();
+// Admin-configured library organization (paths, naming templates, transfer mode), same fetch/fallback pattern.
+builder.Services.AddSingleton<ILibraryOrganizationProvider, LibraryOrganizationPreferencesProvider>();
 
 // Release parsing + ranking.
 builder.Services.AddSingleton<IReleaseParser, ReleaseParser>();
@@ -96,7 +99,12 @@ builder.Services.AddHttpClient<IDownloadClient, DelugeDownloadClient>(http =>
     UseCookies = true
 });
 
-// Library import + VPN health guard.
+// Library organizer: archive extraction, season-pack splitting, Plex-convention naming/transfer.
+builder.Services.AddSingleton<IArchiveExtractor, ArchiveExtractor>();
+builder.Services.AddSingleton<ISeasonPackSplitter, SeasonPackSplitter>();
+builder.Services.AddSingleton<IPlexNamingService, PlexNamingService>();
+builder.Services.AddSingleton<IEpisodeTitleProvider, EpisodeTitleProvider>();
+builder.Services.AddSingleton<ILibraryOrganizer, LibraryOrganizer>();
 builder.Services.AddSingleton<ILibraryImporter, LibraryImporter>();
 builder.Services.AddHttpClient<IVpnGuard, VpnGuard>();
 

@@ -24,6 +24,7 @@ public class EffectiveDownloadPreferences
     public bool PreferHdr { get; init; }
     public bool PreferHigherQualitySource { get; init; } = true;
     public bool EnforceQualityFloor { get; init; } = true;
+    public double MinTitleSimilarity { get; init; } = 0.5;
 }
 
 public interface IDownloadPreferencesProvider
@@ -111,6 +112,7 @@ public class DownloadPreferencesProvider : IDownloadPreferencesProvider
         PreferX265 = d.PreferX265,
         PreferHdr = d.PreferHdr,
         PreferHigherQualitySource = d.PreferHigherQualitySource,
-        EnforceQualityFloor = d.EnforceQualityFloor
+        EnforceQualityFloor = d.EnforceQualityFloor,
+        MinTitleSimilarity = d.MinTitleSimilarity
     };
 }

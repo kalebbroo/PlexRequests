@@ -16,8 +16,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<MediaIssueEntity> MediaIssues => Set<MediaIssueEntity>();
     public DbSet<QualityRuleEntity> QualityRules => Set<QualityRuleEntity>();
     public DbSet<DownloadPreferencesEntity> DownloadPreferences => Set<DownloadPreferencesEntity>();
+    public DbSet<LibraryOrganizationPreferencesEntity> LibraryOrganizationPreferences => Set<LibraryOrganizationPreferencesEntity>();
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
     public DbSet<FulfillmentJobEntity> FulfillmentJobs => Set<FulfillmentJobEntity>();
+    public DbSet<ImportedFileEntity> ImportedFiles => Set<ImportedFileEntity>();
     public DbSet<BridgeOutboxEntity> BridgeOutbox => Set<BridgeOutboxEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -113,6 +115,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasIndex(x => x.IsSingleton).IsUnique(); // enforce the single settings row
         });
 
+        modelBuilder.Entity<LibraryOrganizationPreferencesEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.IsSingleton).IsUnique(); // enforce the single settings row
+        });
+
         modelBuilder.Entity<NotificationEntity>(b =>
         {
             b.HasKey(x => x.Id);
@@ -137,10 +145,22 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.Property(x => x.Title).HasMaxLength(512);
             b.HasIndex(x => x.Status); // worker polls queued jobs
             b.HasIndex(x => x.MediaRequestId);
+            b.HasIndex(x => new { x.MediaId, x.MediaType }); // cross-request in-flight job dedup
 
             b.HasOne(x => x.MediaRequest)
                 .WithMany()
                 .HasForeignKey(x => x.MediaRequestId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ImportedFileEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.FulfillmentJobId);
+
+            b.HasOne(x => x.FulfillmentJob)
+                .WithMany()
+                .HasForeignKey(x => x.FulfillmentJobId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

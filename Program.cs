@@ -138,11 +138,13 @@ builder.Services.AddHttpClient<PlexRequestsHosted.Services.Implementations.IPlex
             allowInvalidCerts ? true : errors == SslPolicyErrors.None
     });
 builder.Services.AddScoped<IMediaRequestService, MediaRequestService>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.ISeasonAvailabilityEvaluator, PlexRequestsHosted.Services.Implementations.SeasonAvailabilityEvaluator>();
 builder.Services.AddScoped<IFulfillmentQueue, FulfillmentQueue>();
 builder.Services.AddScoped<IDiscordLinkService, DiscordLinkService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IMediaIssueService, PlexRequestsHosted.Services.Implementations.MediaIssueService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IQualityRuleService, PlexRequestsHosted.Services.Implementations.QualityRuleService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IDownloadPreferencesService, PlexRequestsHosted.Services.Implementations.DownloadPreferencesService>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.ILibraryOrganizationPreferencesService, PlexRequestsHosted.Services.Implementations.LibraryOrganizationPreferencesService>();
 // Backstop that requeues/fails jobs stranded by a dead downloader.
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.FulfillmentReaperService>();
 // Keeps the DB-backed Plex availability index fresh (per-season episode presence + prune removals).
@@ -388,6 +390,64 @@ app.MapGet("/api/fulfillment/config", async (HttpContext ctx, IConfiguration cfg
     return Results.Ok(await prefs.GetAsync());
 });
 
+// Worker fetches the admin-configured library organization settings (paths, naming templates, transfer
+// mode, archive/subtitle/season-pack-split toggles) — hot-reloadable, same pattern as /config above.
+app.MapGet("/api/fulfillment/library-config", async (HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.ILibraryOrganizationPreferencesService libraryPrefs) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return Results.Ok(await libraryPrefs.GetAsync());
+});
+
+// Worker fetches cached TMDB episode titles for a season, to name individual files in a season pack.
+// Fetched lazily at import time (not bundled at enqueue) so titles stay fresh and cover every episode
+// in the pack, not just the ones that were missing from Plex when the job was originally enqueued.
+app.MapGet("/api/fulfillment/episodes", async (int tmdbId, int season, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Abstractions.IMediaMetadataProvider metadata) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var episodes = await metadata.GetSeasonEpisodesAsync(tmdbId, season);
+    return Results.Ok(episodes);
+});
+
+// Worker persists the durable audit trail of what got imported for a job (one row per video/subtitle
+// file) — otherwise the only record is a transient JSON file the worker deletes once the job completes.
+app.MapPost("/api/fulfillment/{jobId:int}/imported-files", async (int jobId, List<PlexRequestsHosted.Shared.DTOs.ImportedFileDto> files, HttpContext ctx, IConfiguration cfg, AppDbContext db) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    if (!await db.FulfillmentJobs.AnyAsync(j => j.Id == jobId)) return Results.NotFound();
+    db.ImportedFiles.AddRange(files.Select(f => new PlexRequestsHosted.Infrastructure.Entities.ImportedFileEntity
+    {
+        FulfillmentJobId = jobId,
+        TorrentId = f.TorrentId,
+        SourcePath = f.SourcePath,
+        DestinationPath = f.DestinationPath,
+        FileType = f.FileType,
+        SeasonNumber = f.SeasonNumber,
+        EpisodeNumber = f.EpisodeNumber,
+        SizeBytes = f.SizeBytes
+    }));
+    await db.SaveChangesAsync();
+    return Results.Ok();
+});
+
+// Worker asks Plex to rescan the relevant library section after a successful import — previously nothing
+// ever called this at all, so Plex relied entirely on its own periodic scan to notice new files.
+app.MapPost("/api/fulfillment/refresh-library", async (RefreshLibraryRequest body, HttpContext ctx, IConfiguration cfg, IPlexApiService plex) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var sectionKey = await plex.ResolveSectionKeyAsync(body.MediaType);
+    if (sectionKey is null) return Results.Ok(new { refreshed = false, reason = "No matching Plex library section" });
+    try
+    {
+        await plex.RefreshLibraryAsync(sectionKey);
+        return Results.Ok(new { refreshed = true });
+    }
+    catch (Exception ex)
+    {
+        // Best-effort — a refresh failure should never fail the worker's import flow.
+        return Results.Ok(new { refreshed = false, reason = ex.Message });
+    }
+});
+
 // Worker reports download progress; reflects the request as Processing for the UI.
 app.MapPost("/api/fulfillment/{jobId:int}/progress", async (int jobId, ProgressRequest body, HttpContext ctx, IConfiguration cfg, IFulfillmentQueue queue, AppDbContext db) =>
 {
@@ -444,6 +504,26 @@ app.MapPost("/api/requests/{id:int}/failed", async (int id, FailRequest body, Ht
     await db.SaveChangesAsync();
     await queue.MarkFailedAsync(id, reason);
     await notify.RequestFailedAsync(ToRequestDto(req), reason);
+    return Results.Ok(new { req.Id, status = req.Status.ToString() });
+});
+
+// Worker reports a partial success: some seasons/episodes imported before another torrent in the same
+// job failed. Distinct from a hard failure so a retry can target only what's still missing, and the UI
+// can say "partially available" instead of implying nothing arrived.
+app.MapPost("/api/requests/{id:int}/partially-completed", async (int id, FailRequest body, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IPlexApiService plex) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == id);
+    if (req is null) return Results.NotFound();
+
+    var reason = string.IsNullOrWhiteSpace(body.Reason) ? "Some content imported before the rest failed" : body.Reason!;
+    req.Status = RequestStatus.PartiallyAvailable;
+    req.DenialReason = reason.Length > 1000 ? reason[..1000] : reason;
+    req.AvailableAt = DateTime.UtcNow;
+    await db.SaveChangesAsync();
+    await queue.MarkPartiallyCompletedAsync(id, reason);
+    try { await plex.RebuildAvailabilityIndexAsync(); } catch { /* index refresh is best-effort */ }
+    await notify.RequestFailedAsync(ToRequestDto(req), $"Partially completed — {reason}");
     return Results.Ok(new { req.Id, status = req.Status.ToString() });
 });
 

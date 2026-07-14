@@ -19,6 +19,9 @@ public class WorkerOptions
     public string WorkerId { get; set; } = "downloader";
     /// <summary>Where in-flight job↔torrent mappings are persisted so downloads resume after a restart.</summary>
     public string StatePath { get; set; } = "state/active-jobs.json";
+    /// <summary>If a torrent's progress hasn't advanced at all for this long, treat it as stalled/dead
+    /// (no seeders) and fail it rather than polling forever.</summary>
+    public int StallTimeoutMinutes { get; set; } = 120;
 }
 
 /// <summary>Indexer endpoints (public JSON APIs keyed by IMDb id).</summary>
@@ -81,4 +84,10 @@ public class VpnOptions
     public bool Enabled { get; set; } = true;
     public string HealthCheckUrl { get; set; } = "https://api.ipify.org";
     public int TimeoutSeconds { get; set; } = 10;
+    /// <summary>Optional: this host's own public IP (no VPN). If the health-check egress IP matches this,
+    /// treat VPN as unhealthy even though the HTTP call itself succeeded — a weak but real signal the
+    /// tunnel isn't actually active. Full VPN-tunnel verification is fundamentally an infra/network-
+    /// namespace concern (a kill-switch at the container/network level); this is a best-effort code-level
+    /// improvement on top of that, not a replacement for it.</summary>
+    public string? ExpectedNonVpnIp { get; set; }
 }

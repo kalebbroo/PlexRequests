@@ -27,7 +27,17 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
     private readonly IDownloadPreferencesProvider _prefs = prefs;
     private readonly ILogger<ReleaseRanker> _logger = logger;
 
-    private sealed record Annotated(ReleaseCandidate C, int? Season, int? Episode, bool IsPack, double Score, bool Acceptable);
+    private sealed record Annotated(ReleaseCandidate C, int? Season, int? SeasonEnd, int? Episode, bool IsPack, bool LooksLikeCompleteSeries, double Score, bool Acceptable);
+
+    // A pack matches a requested season if: it names that exact season, the season falls within its
+    // parsed multi-season range (S01-S05), or it's an explicitly-labeled "complete series" pack. A release
+    // that simply failed to parse any season is NOT treated as matching every season (see LooksLikeCompleteSeries).
+    private static bool MatchesSeason(Annotated a, int targetSeason)
+    {
+        if (a.Season is int s)
+            return a.SeasonEnd is int end ? targetSeason >= s && targetSeason <= end : s == targetSeason;
+        return a.LooksLikeCompleteSeries;
+    }
 
     public DownloadPlan PlanDownload(IReadOnlyList<ReleaseCandidate> candidates, FulfillmentJobDto job)
     {
@@ -68,7 +78,7 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
 
         foreach (var target in targets)
         {
-            var packs = acceptable.Where(a => a.IsPack && (a.Season == target.Season || a.Season is null))
+            var packs = acceptable.Where(a => a.IsPack && MatchesSeason(a, target.Season))
                                   .OrderByDescending(a => a.Score).ToList();
             var bestPack = packs.FirstOrDefault();
 
@@ -173,15 +183,47 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
         bool isPack = episode is null && (parsed.IsSeasonPack || season is not null);
 
         double maxSize = isPack ? p.MaxSeasonPackSizeGb : p.MaxSizeGb;
+        double titleSim = TitleSimilarity(c.ReleaseName, job.Title);
+        // Year mismatch penalty only applies when both sides actually have a year to compare — a release
+        // with no parsed year, or a job with no resolved year, gets no penalty either way.
+        bool yearMismatch = job.Year is int jy && parsed.Year is int py && Math.Abs(jy - py) > 1;
+
         bool acceptable =
             (!p.EnforceQualityFloor || floor == 0 || res >= floor) &&
             c.Seeders >= p.MinSeeders &&
             c.SizeGb >= 0.05 &&               // reject 0-byte / fake entries
-            c.SizeGb <= maxSize;
+            c.SizeGb <= maxSize &&
+            titleSim >= p.MinTitleSimilarity &&
+            !yearMismatch;
 
-        double score = Score(c, parsed, res, floor, isPack, p);
-        return new Annotated(c, season, episode, isPack, score, acceptable);
+        double score = Score(c, parsed, res, floor, isPack, p) + titleSim * 40;
+        return new Annotated(c, season, parsed.SeasonEnd, episode, isPack, parsed.LooksLikeCompleteSeries, score, acceptable);
     }
+
+    private static readonly HashSet<string> StopTokens = new(StringComparer.OrdinalIgnoreCase)
+        { "the", "a", "an", "and", "of", "1080p", "2160p", "720p", "480p", "x264", "x265", "h264", "h265",
+          "web", "webdl", "webrip", "bluray", "hdtv", "repack", "proper", "hdr", "dv" };
+
+    // Cheap, dependency-free normalized token-set overlap (Jaccard) between a release name and the
+    // requested title — the acceptability gate that stops free-text-search indexers (1337x/ext.to/Nyaa)
+    // from accepting an unrelated/wrong-show/spam release just because it clears quality/seeder/size.
+    private static double TitleSimilarity(string releaseName, string jobTitle)
+    {
+        var a = Tokenize(releaseName);
+        var b = Tokenize(jobTitle);
+        if (a.Count == 0 || b.Count == 0) return 0;
+        var intersect = a.Intersect(b).Count();
+        // Recall-weighted toward the job title: every significant word of the requested title should
+        // show up somewhere in the release name (release names commonly have extra quality/group tokens
+        // the title doesn't, so union-based Jaccard would unfairly punish that).
+        return (double)intersect / b.Count;
+    }
+
+    private static HashSet<string> Tokenize(string s) =>
+        System.Text.RegularExpressions.Regex.Matches(s.ToLowerInvariant(), @"[a-z0-9]+")
+            .Select(m => m.Value)
+            .Where(t => t.Length > 1 && !StopTokens.Contains(t))
+            .ToHashSet();
 
     private int EffectiveResolution(ReleaseCandidate c, ParsedRelease parsed)
     {

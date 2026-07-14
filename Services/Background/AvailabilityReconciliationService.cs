@@ -53,6 +53,7 @@ public class AvailabilityReconciliationService(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var plex = scope.ServiceProvider.GetRequiredService<IPlexApiService>();
+        var seasonEvaluator = scope.ServiceProvider.GetRequiredService<ISeasonAvailabilityEvaluator>();
         var notify = scope.ServiceProvider.GetRequiredService<INotificationService>();
 
         var open = await db.MediaRequests
@@ -69,7 +70,7 @@ public class AvailabilityReconciliationService(
         foreach (var req in open)
         {
             if (ct.IsCancellationRequested) break;
-            if (!await IsSatisfiedAsync(req, titleAvailable, db, plex, ct)) continue;
+            if (!await IsSatisfiedAsync(req, titleAvailable, db, plex, seasonEvaluator, ct)) continue;
 
             req.Status = RequestStatus.Available;
             req.AvailableAt = DateTime.UtcNow;
@@ -91,7 +92,7 @@ public class AvailabilityReconciliationService(
     }
 
     private static async Task<bool> IsSatisfiedAsync(MediaRequestEntity req, Dictionary<(MediaType, int), bool> titleAvailable,
-        AppDbContext db, IPlexApiService plex, CancellationToken ct)
+        AppDbContext db, IPlexApiService plex, ISeasonAvailabilityEvaluator seasonEvaluator, CancellationToken ct)
     {
         // Movies: available when the title is on Plex.
         if (req.MediaType != MediaType.TvShow)
@@ -102,11 +103,12 @@ public class AvailabilityReconciliationService(
         {
             var wanted = ParseEpisodes(req.RequestedEpisodesCsv);
             if (wanted.Count == 0) return false;
-            var have = await GetPlexEpisodesAsync(db, req.MediaId, ct);
+            var have = await seasonEvaluator.GetPlexEpisodesAsync(req.MediaId, ct);
             return wanted.All(w => have.TryGetValue(w.season, out var set) && set.Contains(w.episode));
         }
 
-        // TV, season-level request: every requested season must be present.
+        // TV, season-level request: every requested season must be FULLY complete (all of its episodes,
+        // not just one) — GetAvailableSeasonsAsync now delegates to the shared evaluator for this.
         if (!string.IsNullOrWhiteSpace(req.RequestedSeasonsCsv))
         {
             var wanted = req.RequestedSeasonsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -116,24 +118,9 @@ public class AvailabilityReconciliationService(
             return wanted.All(haveSeasons.Contains);
         }
 
-        // TV, whole series: available once the show is on Plex.
-        return titleAvailable.TryGetValue((MediaType.TvShow, req.MediaId), out var tv) && tv;
-    }
-
-    // season -> set of available episode numbers, from the DB availability index (tmdb -> ratingKey -> seasons).
-    private static async Task<Dictionary<int, HashSet<int>>> GetPlexEpisodesAsync(AppDbContext db, int tmdbId, CancellationToken ct)
-    {
-        var result = new Dictionary<int, HashSet<int>>();
-        var ratingKey = await db.PlexMappings.Where(m => m.ExternalKey == $"tmdb:{tmdbId}").Select(m => m.RatingKey).FirstOrDefaultAsync(ct);
-        if (string.IsNullOrEmpty(ratingKey)) return result;
-        var seasons = await db.PlexSeasonAvailability.Where(s => s.ShowRatingKey == ratingKey).ToListAsync(ct);
-        foreach (var s in seasons)
-        {
-            var set = s.AvailableEpisodesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(x => int.TryParse(x, out var n) ? n : -1).Where(n => n >= 0).ToHashSet();
-            result[s.SeasonNumber] = set;
-        }
-        return result;
+        // TV, whole series: every season that has aired must be fully complete on Plex — not merely
+        // "the show exists in the library at all", which used to fire the instant even one episode landed.
+        return await seasonEvaluator.IsWholeSeriesSatisfiedAsync(req.MediaId, ct);
     }
 
     private static List<(int season, int episode)> ParseEpisodes(string csv)

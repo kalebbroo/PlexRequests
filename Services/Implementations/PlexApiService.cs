@@ -20,9 +20,10 @@ public class PlexApiService : IPlexApiService
     private readonly IMemoryCache _cache;
     private readonly ILogger<PlexApiService> _logger;
     private readonly AppDbContext _db;
+    private readonly ISeasonAvailabilityEvaluator _seasonEvaluator;
     private string? _serverMachineId;
 
-    public PlexApiService(IMediaMetadataProvider metadata, HttpClient httpClient, IOptions<PlexConfiguration> options, IMemoryCache cache, ILogger<PlexApiService> logger, AppDbContext db)
+    public PlexApiService(IMediaMetadataProvider metadata, HttpClient httpClient, IOptions<PlexConfiguration> options, IMemoryCache cache, ILogger<PlexApiService> logger, AppDbContext db, ISeasonAvailabilityEvaluator seasonEvaluator)
     {
         _metadata = metadata;
         _http = httpClient;
@@ -30,6 +31,7 @@ public class PlexApiService : IPlexApiService
         _cache = cache;
         _logger = logger;
         _db = db;
+        _seasonEvaluator = seasonEvaluator;
         EnsureDefaultHeaders(_http.DefaultRequestHeaders);
     }
 
@@ -279,18 +281,10 @@ public class PlexApiService : IPlexApiService
         return episodes;
     }
 
-    // Which seasons of a TMDB show are already on Plex (from the DB availability index).
-    public async Task<List<int>> GetAvailableSeasonsAsync(int tvShowId)
-    {
-        var key = $"tmdb:{tvShowId}";
-        var ratingKey = await _db.PlexMappings.Where(m => m.ExternalKey == key).Select(m => m.RatingKey).FirstOrDefaultAsync();
-        if (string.IsNullOrEmpty(ratingKey)) return new List<int>();
-        return await _db.PlexSeasonAvailability
-            .Where(s => s.ShowRatingKey == ratingKey && s.EpisodeCount > 0)
-            .OrderBy(s => s.SeasonNumber)
-            .Select(s => s.SeasonNumber)
-            .ToListAsync();
-    }
+    // Which seasons of a TMDB show are FULLY complete on Plex (Plex episode count >= TMDB's expected
+    // count for that season) — not merely "has at least one episode". Delegates to the shared evaluator
+    // so this definition can never drift out of sync with the fulfillment queue's missing-target logic.
+    public Task<List<int>> GetAvailableSeasonsAsync(int tvShowId) => _seasonEvaluator.GetCompleteSeasonsAsync(tvShowId);
 
     public Task<bool> IsAvailableOnPlexAsync(int mediaId, MediaType mediaType) => Task.FromResult(false);
 
@@ -1044,6 +1038,19 @@ public class PlexApiService : IPlexApiService
             _logger.LogWarning(ex, "Plex server unreachable while refreshing library {Section}", sectionKey);
             throw;
         }
+    }
+
+    public async Task<string?> ResolveSectionKeyAsync(MediaType mediaType)
+    {
+        var cacheKey = $"section-key:{mediaType}";
+        if (_cache.TryGetValue<string?>(cacheKey, out var cached)) return cached;
+
+        var libraries = await GetLibrariesAsync();
+        // First matching section wins; multi-section-per-type (e.g. a separate 4K library) refreshes
+        // only this one for now — a follow-up once library-routing rules also carry a section key.
+        var key = libraries.FirstOrDefault(l => l.Type == mediaType)?.Key;
+        _cache.Set(cacheKey, key, TimeSpan.FromMinutes(10));
+        return key;
     }
 
     public async Task<PlexAvailabilityStatus> GetAvailabilityStatusAsync()

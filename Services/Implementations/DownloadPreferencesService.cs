@@ -35,6 +35,7 @@ public class DownloadPreferencesService(AppDbContext db) : IDownloadPreferencesS
         e.PreferHdr = prefs.PreferHdr;
         e.PreferHigherQualitySource = prefs.PreferHigherQualitySource;
         e.EnforceQualityFloor = prefs.EnforceQualityFloor;
+        e.MinTitleSimilarity = Math.Clamp(prefs.MinTitleSimilarity, 0, 1);
         e.AutoMonitorEntireSeriesRequests = prefs.AutoMonitorEntireSeriesRequests;
         e.UpdatedAt = DateTime.UtcNow;
         return await db.SaveChangesAsync() > 0;
@@ -63,6 +64,7 @@ public class DownloadPreferencesService(AppDbContext db) : IDownloadPreferencesS
         PreferHdr = e.PreferHdr,
         PreferHigherQualitySource = e.PreferHigherQualitySource,
         EnforceQualityFloor = e.EnforceQualityFloor,
+        MinTitleSimilarity = e.MinTitleSimilarity,
         AutoMonitorEntireSeriesRequests = e.AutoMonitorEntireSeriesRequests
     };
 }

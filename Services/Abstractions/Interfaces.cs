@@ -94,8 +94,35 @@ public interface IPlexApiService
     // Admin server health extras
     Task<List<PlexSessionInfo>> GetActiveSessionsAsync();
     Task RefreshLibraryAsync(string sectionKey);
+    /// <summary>Resolve the Plex library section key for a media type (first matching section), memoized
+    /// briefly since sections rarely change. Null if Plex has no library of that type configured.</summary>
+    Task<string?> ResolveSectionKeyAsync(MediaType mediaType);
     Task<PlexAvailabilityStatus> GetAvailabilityStatusAsync();
 }
+
+/// <summary>
+/// Single source of truth for "is this TV season/series actually complete on Plex" — compares real
+/// Plex per-season episode counts against TMDB's expected count, rather than treating "has any episode"
+/// as "available". Shared by <see cref="IPlexApiService.GetAvailableSeasonsAsync"/>, the availability
+/// reconciliation background service, and the fulfillment queue's missing-target computation, so the
+/// definition of "complete" can never drift out of sync between them again.
+/// </summary>
+public interface ISeasonAvailabilityEvaluator
+{
+    /// <summary>season -> set of episode numbers already on Plex, from the DB availability index.</summary>
+    Task<Dictionary<int, HashSet<int>>> GetPlexEpisodesAsync(int tmdbShowId, CancellationToken ct = default);
+
+    /// <summary>Per-season completeness for every season TMDB knows about (season 0/specials excluded).</summary>
+    Task<Dictionary<int, SeasonCompleteness>> EvaluateAsync(int tmdbShowId, CancellationToken ct = default);
+
+    /// <summary>Seasons that are fully complete on Plex (Plex episode count >= TMDB's expected count).</summary>
+    Task<List<int>> GetCompleteSeasonsAsync(int tmdbShowId, CancellationToken ct = default);
+
+    /// <summary>True iff every season that has actually aired is complete. Unaired future seasons never block this.</summary>
+    Task<bool> IsWholeSeriesSatisfiedAsync(int tmdbShowId, CancellationToken ct = default);
+}
+
+public record SeasonCompleteness(int SeasonNumber, int PlexCount, int ExpectedCount, bool Complete, bool Aired, List<int> MissingEpisodes);
 
 public interface IAuthService
 {

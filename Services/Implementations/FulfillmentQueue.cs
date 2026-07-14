@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
@@ -12,11 +13,12 @@ namespace PlexRequestsHosted.Services.Implementations;
 /// Database-backed <see cref="IFulfillmentQueue"/>. SQLite is single-writer, so claims are safe
 /// without extra locking at our scale; swap for Redis/RabbitMQ later without touching callers.
 /// </summary>
-public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, IQualityRuleService quality) : IFulfillmentQueue
+public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, IQualityRuleService quality, ISeasonAvailabilityEvaluator seasonEvaluator) : IFulfillmentQueue
 {
     private readonly AppDbContext _db = db;
     private readonly IMediaMetadataProvider _metadata = metadata;
     private readonly IQualityRuleService _quality = quality;
+    private readonly ISeasonAvailabilityEvaluator _seasonEvaluator = seasonEvaluator;
 
     public async Task EnqueueAsync(MediaRequestDto request, bool force = false)
     {
@@ -26,6 +28,18 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             j.Status != FulfillmentStatus.Failed &&
             j.Status != FulfillmentStatus.Cancelled);
         if (active) return;
+
+        // Other active jobs for the SAME title from a DIFFERENT request (two users, or one user
+        // requesting different seasons at different times) — never let two jobs re-download the same
+        // content concurrently. Subtracted from what this job would target, below.
+        var otherActive = await _db.FulfillmentJobs.Where(j =>
+                j.MediaId == request.MediaId && j.MediaType == request.MediaType &&
+                j.MediaRequestId != request.Id &&
+                j.Status != FulfillmentStatus.Completed && j.Status != FulfillmentStatus.Failed && j.Status != FulfillmentStatus.Cancelled)
+            .ToListAsync();
+
+        if (request.MediaType != MediaType.TvShow && otherActive.Count > 0)
+            return; // no sub-scope for movies/other media — one in-flight job for the title is enough
 
         var seasonsCsv = request.RequestedSeasons.Count > 0 ? string.Join(",", request.RequestedSeasons) : null;
         var episodesCsv = request.RequestedEpisodesCsv;
@@ -41,16 +55,59 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             seasonsCsv = s;
             episodesCsv = e;
             seasonTargets = targets;
+
+            if (otherActive.Count > 0)
+            {
+                if (otherActive.Any(j => ExpandJobScope(j).coversEverything))
+                    return; // another in-flight job already covers the whole show — nothing left to add
+
+                var inFlightSeasons = new HashSet<int>();
+                var inFlightEpisodes = new HashSet<(int season, int episode)>();
+                foreach (var j in otherActive)
+                {
+                    var (js, je, _) = ExpandJobScope(j);
+                    inFlightSeasons.UnionWith(js);
+                    inFlightEpisodes.UnionWith(je);
+                }
+
+                if (!string.IsNullOrWhiteSpace(episodesCsv))
+                {
+                    var remaining = episodesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Where(tok =>
+                        {
+                            var m = Regex.Match(tok, @"^[Ss](\d+)[Ee](\d+)$");
+                            if (!m.Success) return true;
+                            var se = (int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value));
+                            return !inFlightEpisodes.Contains(se) && !inFlightSeasons.Contains(se.Item1);
+                        }).ToList();
+                    if (remaining.Count == 0) return;
+                    episodesCsv = string.Join(",", remaining);
+                }
+                else if (!string.IsNullOrWhiteSpace(seasonsCsv))
+                {
+                    var remainingSeasons = seasonsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Select(x => int.TryParse(x, out var n) ? n : -1)
+                        .Where(n => n >= 0 && !inFlightSeasons.Contains(n))
+                        .ToList();
+                    if (remainingSeasons.Count == 0) return;
+                    seasonsCsv = string.Join(",", remainingSeasons);
+                    seasonTargets = seasonTargets.Where(t => remainingSeasons.Contains(t.Season)).ToList();
+                }
+            }
         }
 
-        // Resolve the IMDb id up front so the downloader (EZTV/YTS are keyed by IMDb) needs no TMDb key.
+        // Resolve the IMDb id + year up front so the downloader (EZTV/YTS are keyed by IMDb; year
+        // disambiguates free-text searches and gates the ranker against wrong-year matches) needs no
+        // further metadata lookups of its own.
         string? imdbId = null;
         List<string>? genres = null;
+        int? year = null;
         try
         {
             var detail = await _metadata.GetDetailsAsync(request.MediaId, request.MediaType);
             imdbId = detail?.ImdbId;
             genres = detail?.Genres;
+            year = detail?.Year;
             if (string.IsNullOrEmpty(imdbId)) imdbId = await _metadata.GetImdbIdAsync(request.MediaId, request.MediaType);
         }
         catch { /* best-effort; downloader can still try by title/year */ }
@@ -65,7 +122,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             MediaId = request.MediaId,
             MediaType = request.MediaType,
             Title = request.Title,
-            Year = null,
+            Year = year,
             TmdbId = request.MediaId, // MediaId is the TMDb id for the default provider
             ImdbId = imdbId,
             ExternalId = request.ExternalId,           // music/other-source id (TODO: downloader music support)
@@ -87,28 +144,31 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
     /// </summary>
     private async Task<(string? seasonsCsv, string? episodesCsv, List<SeasonTarget> seasonTargets, bool hasTarget)> ComputeMissingTvTargetsAsync(MediaRequestDto request)
     {
-        var onPlex = await GetPlexSeasonsAsync(request.MediaId);   // season -> available episode numbers
-        var detail = await _metadata.GetDetailsAsync(request.MediaId, MediaType.TvShow);
-
         // Episode-level request: keep only episodes not already on Plex. (Fan-out is precise via the CSV;
         // no SeasonTargets needed — the downloader uses RequestedEpisodes directly.)
         if (!string.IsNullOrWhiteSpace(request.RequestedEpisodesCsv))
         {
+            var onPlex = await _seasonEvaluator.GetPlexEpisodesAsync(request.MediaId);
             var wanted = ParseEpisodes(request.RequestedEpisodesCsv);   // reuses the existing S/E parser
             var missing = wanted.Where(w => !(onPlex.TryGetValue(w.Season, out var set) && set.Contains(w.Episode))).ToList();
             if (missing.Count == 0) return (null, null, new(), false);
             return (null, string.Join(",", missing.Select(m => $"S{m.Season}E{m.Episode}")), new(), true);
         }
 
-        // Which seasons are in scope: an explicit list, else (whole series) every season TMDB knows.
-        var scopeSeasons = detail?.Seasons?.Where(s => s.SeasonNumber > 0);
-        if (request.RequestedSeasons.Count > 0)
-            scopeSeasons = scopeSeasons?.Where(s => request.RequestedSeasons.Contains(s.SeasonNumber));
-        var seasonsList = scopeSeasons?.ToList();
+        // Per-season completeness (Plex episode count vs. TMDB's expected count), from the single shared
+        // evaluator also used by PlexApiService.GetAvailableSeasonsAsync and the reconciliation service.
+        var evaluation = await _seasonEvaluator.EvaluateAsync(request.MediaId);
 
-        // If we can't resolve the season list (metadata miss), don't guess — enqueue as originally asked.
-        // Without episode counts the downloader can't fan out, so SeasonTargets stays empty (pack-only).
-        if (seasonsList is null || seasonsList.Count == 0)
+        // Which seasons are in scope: an explicit list, else (whole series) every season TMDB knows.
+        var scopeSeasons = evaluation.Values.AsEnumerable();
+        if (request.RequestedSeasons.Count > 0)
+            scopeSeasons = scopeSeasons.Where(s => request.RequestedSeasons.Contains(s.SeasonNumber));
+        var seasonsList = scopeSeasons.ToList();
+
+        // If we can't resolve the season list (metadata miss, or requested seasons TMDB doesn't know
+        // about), don't guess — enqueue as originally asked. Without episode counts the downloader can't
+        // fan out, so SeasonTargets stays empty (pack-only).
+        if (seasonsList.Count == 0)
         {
             var csv = request.RequestedSeasons.Count > 0 ? string.Join(",", request.RequestedSeasons) : null;
             return (csv, null, new(), true);
@@ -118,39 +178,16 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         var targets = new List<SeasonTarget>();
         foreach (var s in seasonsList)
         {
-            var plexSet = onPlex.TryGetValue(s.SeasonNumber, out var set) ? set : new HashSet<int>();
-            var plexCount = plexSet.Count;
-            // Complete when Plex has >= the TMDB episode count (or, if TMDB count unknown, any episodes).
-            var complete = plexCount > 0 && (s.EpisodeCount <= 0 || plexCount >= s.EpisodeCount);
             // Only fetch seasons that have actually started airing; future seasons are the monitor's job,
             // so a whole-series request of a caught-up show doesn't spawn a doomed job for an unaired season.
-            var aired = !s.AirDate.HasValue || s.AirDate.Value.Date <= DateTime.UtcNow.Date;
-            if (!complete && aired)
+            if (!s.Complete && s.Aired)
             {
                 missingSeasons.Add(s.SeasonNumber);
-                // Precise fan-out list: episodes 1..EpisodeCount not already on Plex. Empty when the TMDB
-                // count is unknown ⇒ the downloader is pack-only for this season.
-                var missingEps = s.EpisodeCount > 0
-                    ? Enumerable.Range(1, s.EpisodeCount).Where(n => !plexSet.Contains(n)).ToList()
-                    : new List<int>();
-                targets.Add(new SeasonTarget { Season = s.SeasonNumber, EpisodeCount = s.EpisodeCount, MissingEpisodes = missingEps });
+                targets.Add(new SeasonTarget { Season = s.SeasonNumber, EpisodeCount = s.ExpectedCount, MissingEpisodes = s.MissingEpisodes });
             }
         }
         if (missingSeasons.Count == 0) return (null, null, new(), false);
         return (string.Join(",", missingSeasons), null, targets, true);
-    }
-
-    // season -> set of episode numbers on Plex (from the DB availability index: tmdb -> ratingKey -> seasons).
-    private async Task<Dictionary<int, HashSet<int>>> GetPlexSeasonsAsync(int tmdbId)
-    {
-        var result = new Dictionary<int, HashSet<int>>();
-        var ratingKey = await _db.PlexMappings.Where(m => m.ExternalKey == $"tmdb:{tmdbId}").Select(m => m.RatingKey).FirstOrDefaultAsync();
-        if (string.IsNullOrEmpty(ratingKey)) return result;
-        var seasons = await _db.PlexSeasonAvailability.Where(s => s.ShowRatingKey == ratingKey).ToListAsync();
-        foreach (var s in seasons)
-            result[s.SeasonNumber] = s.AvailableEpisodesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(x => int.TryParse(x, out var n) ? n : -1).Where(n => n >= 0).ToHashSet();
-        return result;
     }
 
     public async Task<List<FulfillmentJobDto>> ClaimNextAsync(string workerId, int max = 1)
@@ -206,11 +243,51 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         await _db.SaveChangesAsync();
     }
 
+    public async Task MarkPartiallyCompletedAsync(int mediaRequestId, string reason)
+    {
+        var j = await LatestJobAsync(mediaRequestId);
+        if (j is null) return;
+        j.Status = FulfillmentStatus.PartiallyCompleted;
+        j.LastError = reason.Length > 2000 ? reason[..2000] : reason;
+        j.CompletedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+    }
+
     private Task<FulfillmentJobEntity?> LatestJobAsync(int mediaRequestId) =>
         _db.FulfillmentJobs
             .Where(x => x.MediaRequestId == mediaRequestId)
             .OrderByDescending(x => x.Id)
             .FirstOrDefaultAsync();
+
+    // What another in-flight job is already targeting for the same show, for cross-request dedup:
+    // explicit episodes/seasons from its CSVs, or — when a job was enqueued pack-only because metadata
+    // was unavailable at the time (both CSVs null) — "covers everything", since we can't enumerate what
+    // it actually targets and shouldn't risk a duplicate whole-series download.
+    private static (HashSet<int> seasons, HashSet<(int season, int episode)> episodes, bool coversEverything) ExpandJobScope(FulfillmentJobEntity job)
+    {
+        var seasons = new HashSet<int>();
+        var episodes = new HashSet<(int, int)>();
+        if (!string.IsNullOrWhiteSpace(job.RequestedEpisodesCsv))
+        {
+            foreach (var tok in job.RequestedEpisodesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var m = Regex.Match(tok, @"^[Ss](\d+)[Ee](\d+)$");
+                if (!m.Success) continue;
+                var s = int.Parse(m.Groups[1].Value);
+                var e = int.Parse(m.Groups[2].Value);
+                episodes.Add((s, e));
+                seasons.Add(s);
+            }
+            return (seasons, episodes, false);
+        }
+        if (!string.IsNullOrWhiteSpace(job.RequestedSeasonsCsv))
+        {
+            foreach (var tok in job.RequestedSeasonsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                if (int.TryParse(tok, out var s)) seasons.Add(s);
+            return (seasons, episodes, false);
+        }
+        return (seasons, episodes, true);
+    }
 
     // Parse "S1E1,S2E5" into episode targets.
     private static List<EpisodeRef> ParseEpisodes(string? csv)

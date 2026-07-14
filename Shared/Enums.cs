@@ -9,7 +9,10 @@ public enum RequestStatus
     Processing = 4,
     Available = 5,
     Failed = 6,
-    Cancelled = 7
+    Cancelled = 7,
+    /// <summary>Some but not all of the requested seasons/episodes imported before the rest failed —
+    /// distinct from a hard Failed so the UI can offer "retry the rest" instead of "retry everything".</summary>
+    PartiallyAvailable = 8
 }
 
 public enum MediaType
@@ -61,7 +64,10 @@ public enum FulfillmentStatus
     Downloading = 2,
     Completed = 3,
     Failed = 4,
-    Cancelled = 5
+    Cancelled = 5,
+    /// <summary>One or more torrents imported before another in the same job failed/errored — not a
+    /// clean Completed, but not a total loss either.</summary>
+    PartiallyCompleted = 6
 }
 
 public enum IssueStatus
@@ -90,6 +96,16 @@ public enum SeasonPackStrategy
     PreferEpisodes = 1,
     /// <summary>Pick a pack when one is available within the size cap, else fan out to episodes.</summary>
     Auto = 2
+}
+
+/// <summary>How the organizer places a finished download's video files into the library.</summary>
+public enum TransferMode
+{
+    /// <summary>Hardlink into the library (keeps the torrent seeding); falls back to Copy when the
+    /// library path is on a different filesystem or the host OS doesn't support it.</summary>
+    Hardlink = 0,
+    Copy = 1,
+    Move = 2
 }
 
 public enum SortOrder
