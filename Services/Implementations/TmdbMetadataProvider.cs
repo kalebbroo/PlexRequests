@@ -390,8 +390,10 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
             Tagline = movie.Tagline,
             Studio = movie.ProductionCompanies?.FirstOrDefault()?.Name,
             ReleaseDate = movie.ReleaseDate,
-            Languages = new List<string>(),
-            Countries = new List<string>(),
+            // Original language + production country — movies have no origin_country field on TMDB
+            // (that's TV-only), so production country is the closest available signal for them.
+            Languages = string.IsNullOrEmpty(movie.OriginalLanguage) ? new List<string>() : new List<string> { movie.OriginalLanguage },
+            Countries = movie.ProductionCountries?.Select(c => c.Iso_3166_1).Where(c => !string.IsNullOrEmpty(c)).ToList() ?? new List<string>(),
             TmdbId = movie.Id,
             ImdbId = movie.ExternalIds?.ImdbId ?? movie.ImdbId
         };
@@ -418,8 +420,8 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
             LastAired = tvShow.LastAirDate,
             Status = tvShow.Status,
             TotalSeasons = tvShow.NumberOfSeasons,
-            Languages = new List<string>(),
-            Countries = new List<string>(),
+            Languages = string.IsNullOrEmpty(tvShow.OriginalLanguage) ? new List<string>() : new List<string> { tvShow.OriginalLanguage },
+            Countries = tvShow.OriginCountry ?? new List<string>(),
             Seasons = tvShow.Seasons?.Select(s => new SeasonDto
             {
                 SeasonNumber = s.SeasonNumber,

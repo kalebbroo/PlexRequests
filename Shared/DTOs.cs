@@ -260,6 +260,10 @@ public class FulfillmentJobDto
     /// </summary>
     public List<SeasonTarget> SeasonTargets { get; set; } = new();
     public Quality Quality { get; set; }
+    /// <summary>Genres snapshotted at enqueue time (for admin-configured library-routing rules).</summary>
+    public List<string> Genres { get; set; } = new();
+    /// <summary>Animation+Japanese-origin heuristic result, snapshotted at enqueue time (see <see cref="PlexRequestsHosted.Shared.AnimeClassifier"/>).</summary>
+    public bool IsAnime { get; set; }
     public FulfillmentStatus Status { get; set; }
     public int Attempts { get; set; }
     public int Progress { get; set; }
@@ -416,9 +420,15 @@ public class LibraryOrganizationPreferencesDto
 /// and, optionally, an alternate naming template.</summary>
 public class LibraryRootRuleDto
 {
+    /// <summary>Movie or TvShow — the only values a job is ever actually tagged with.</summary>
     public MediaType MediaType { get; set; }
     public Quality? MinQuality { get; set; }
-    /// <summary>Simple substring match against the request's genre list, e.g. "Anime". Null = no genre condition.</summary>
+    /// <summary>Tri-state: null = don't care, true = anime only, false = non-anime only. Backed by the
+    /// shared Animation+Japanese-origin heuristic (<see cref="PlexRequestsHosted.Shared.AnimeClassifier"/>),
+    /// snapshotted on the job at enqueue time — not a raw genre-name match, since TMDB has no genre
+    /// literally called "Anime" (Japanese and Western animation are both just "Animation").</summary>
+    public bool? RequireAnime { get; set; }
+    /// <summary>Simple substring match against the request's genre list, e.g. "Documentary". Null = no genre condition.</summary>
     public string? GenreContains { get; set; }
     public string RootPath { get; set; } = string.Empty;
     /// <summary>Null = use the media type's default template (MovieTemplate/TvEpisodeTemplate).</summary>

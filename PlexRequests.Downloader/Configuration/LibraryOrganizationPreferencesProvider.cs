@@ -31,12 +31,13 @@ public class EffectiveLibraryOrganization
 
     /// <summary>Resolve the effective (root, template) for a job: first matching routing rule wins,
     /// else the media type's default root/template.</summary>
-    public (string Root, string Template) Resolve(MediaType mediaType, Quality? quality, IReadOnlyList<string>? genres, bool isEpisode)
+    public (string Root, string Template) Resolve(MediaType mediaType, Quality? quality, IReadOnlyList<string>? genres, bool isAnime, bool isEpisode)
     {
         foreach (var rule in RootRules)
         {
             if (rule.MediaType != mediaType) continue;
             if (rule.MinQuality is Quality mq && quality is Quality q && (int)q < (int)mq) continue;
+            if (rule.RequireAnime is bool requireAnime && requireAnime != isAnime) continue;
             if (!string.IsNullOrWhiteSpace(rule.GenreContains) &&
                 (genres is null || !genres.Any(g => g.Contains(rule.GenreContains, StringComparison.OrdinalIgnoreCase))))
                 continue;

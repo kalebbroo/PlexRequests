@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Abstractions;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 
@@ -102,12 +103,14 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         string? imdbId = null;
         List<string>? genres = null;
         int? year = null;
+        bool isAnime = false;
         try
         {
             var detail = await _metadata.GetDetailsAsync(request.MediaId, request.MediaType);
             imdbId = detail?.ImdbId;
             genres = detail?.Genres;
             year = detail?.Year;
+            isAnime = AnimeClassifier.IsAnime(detail?.Genres, detail?.Languages, detail?.Countries);
             if (string.IsNullOrEmpty(imdbId)) imdbId = await _metadata.GetImdbIdAsync(request.MediaId, request.MediaType);
         }
         catch { /* best-effort; downloader can still try by title/year */ }
@@ -131,6 +134,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             RequestedEpisodesCsv = episodesCsv,
             SeasonTargetsJson = seasonTargets.Count > 0 ? JsonSerializer.Serialize(seasonTargets) : null,
             Quality = resolvedQuality,
+            GenresCsv = genres is { Count: > 0 } ? string.Join(",", genres) : null,
+            IsAnime = isAnime,
             Status = FulfillmentStatus.Queued,
             CreatedAt = DateTime.UtcNow
         });
@@ -323,6 +328,10 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             ? new List<SeasonTarget>()
             : (JsonSerializer.Deserialize<List<SeasonTarget>>(j.SeasonTargetsJson) ?? new List<SeasonTarget>()),
         Quality = j.Quality,
+        Genres = string.IsNullOrWhiteSpace(j.GenresCsv)
+            ? new List<string>()
+            : j.GenresCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(),
+        IsAnime = j.IsAnime,
         Status = j.Status,
         Attempts = j.Attempts,
         Progress = j.Progress

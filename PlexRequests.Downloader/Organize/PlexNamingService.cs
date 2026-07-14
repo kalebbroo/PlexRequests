@@ -21,14 +21,14 @@ public class PlexNamingService : IPlexNamingService
 {
     public string BuildMoviePath(EffectiveLibraryOrganization prefs, FulfillmentJobDto job, string ext)
     {
-        var (root, template) = prefs.Resolve(MediaType.Movie, job.Quality, null, isEpisode: false);
+        var (root, template) = prefs.Resolve(MediaType.Movie, job.Quality, job.Genres, job.IsAnime, isEpisode: false);
         var ctx = new TemplateContext(Title: job.Title, Year: job.Year, Quality: QualityLabel(job.Quality), Ext: NormalizeExt(ext));
         return Combine(root, NamingTemplateEngine.Render(template, ctx));
     }
 
     public string BuildEpisodePath(EffectiveLibraryOrganization prefs, FulfillmentJobDto job, int season, int episode, string? episodeTitle, string ext)
     {
-        var (root, template) = prefs.Resolve(MediaType.TvShow, job.Quality, null, isEpisode: true);
+        var (root, template) = prefs.Resolve(MediaType.TvShow, job.Quality, job.Genres, job.IsAnime, isEpisode: true);
         var ctx = new TemplateContext(
             Title: job.Title, ShowTitle: job.Title, Year: job.Year, Season: season, Episode: episode,
             EpisodeTitle: episodeTitle, Quality: QualityLabel(job.Quality), Ext: NormalizeExt(ext));
@@ -37,7 +37,7 @@ public class PlexNamingService : IPlexNamingService
 
     public string BuildSeasonPackFolder(EffectiveLibraryOrganization prefs, FulfillmentJobDto job, int season)
     {
-        var (root, template) = prefs.Resolve(MediaType.TvShow, job.Quality, null, isEpisode: false);
+        var (root, template) = prefs.Resolve(MediaType.TvShow, job.Quality, job.Genres, job.IsAnime, isEpisode: false);
         var ctx = new TemplateContext(Title: job.Title, ShowTitle: job.Title, Year: job.Year, Season: season);
         return Combine(root, NamingTemplateEngine.Render(template, ctx));
     }

@@ -81,6 +81,12 @@ services:
     volumes:
       - media:/data
       - downloader-state:/app/state
+      # Optional passthrough for a network drive (e.g. a NAS mounted on the host via CIFS/NFS in
+      # /etc/fstab). Set NETWORK_LIBRARY_PATH in .env to that host mount point; it shows up in the
+      # container at /mnt/network-library. Point Library Organization routing rules (Admin UI) at
+      # subfolders under it, e.g. /mnt/network-library/Anime/Movies. Defaults to a local folder so
+      # nothing breaks if you don't have one.
+      - ${NETWORK_LIBRARY_PATH:-./network-library}:/mnt/network-library
     depends_on:
       - web
     restart: unless-stopped

@@ -59,8 +59,15 @@ else
             <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddRule">Add rule</MudButton>
         </div>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-2">
-            Optional: route content to an alternate library root (e.g. a separate 4K or Anime library) instead of the
+            Optional: route content to an alternate library root (e.g. a separate Anime or 4K library) instead of the
             default path above. First matching rule wins; unmatched content falls back to the roots/templates above.
+            Anime is detected automatically (Animation genre + Japanese language/origin) — no manual tagging needed.
+        </MudText>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-2">
+            <b>Root path</b> must be a path the downloader container can see. To point at a network drive, mount it on
+            the host (e.g. an <code>/etc/fstab</code> CIFS/NFS entry) and map it into the container via the
+            <code>NETWORK_LIBRARY_PATH</code> setting in your <code>.env</code> file — then use a path under
+            <code>/mnt/network-library</code> here (e.g. <code>/mnt/network-library/Anime/Movies</code>).
         </MudText>
         @if (_p.LibraryRootRules.Count == 0)
         {
@@ -76,10 +83,14 @@ else
                     <MudSelect T="MediaType" @bind-Value="rule.MediaType" Label="Media type" Dense="true" Variant="Variant.Outlined" Style="min-width:140px;">
                         <MudSelectItem Value="MediaType.Movie">Movie</MudSelectItem>
                         <MudSelectItem Value="MediaType.TvShow">TV Show</MudSelectItem>
-                        <MudSelectItem Value="MediaType.Anime">Anime</MudSelectItem>
                     </MudSelect>
-                    <MudTextField @bind-Value="rule.GenreContains" Label="Genre contains (optional)" Placeholder="e.g. Anime" Dense="true" Variant="Variant.Outlined" Style="min-width:200px;" />
-                    <MudTextField @bind-Value="rule.RootPath" Label="Root path" Dense="true" Variant="Variant.Outlined" Style="min-width:280px;" />
+                    <MudSelect T="bool?" @bind-Value="rule.RequireAnime" Label="Content" Dense="true" Variant="Variant.Outlined" Style="min-width:160px;">
+                        <MudSelectItem T="bool?" Value="null">Any</MudSelectItem>
+                        <MudSelectItem T="bool?" Value="true">Anime only</MudSelectItem>
+                        <MudSelectItem T="bool?" Value="false">Non-anime only</MudSelectItem>
+                    </MudSelect>
+                    <MudTextField @bind-Value="rule.GenreContains" Label="Genre contains (optional)" Placeholder="e.g. Documentary" Dense="true" Variant="Variant.Outlined" Style="min-width:200px;" />
+                    <MudTextField @bind-Value="rule.RootPath" Label="Root path" Placeholder="/mnt/network-library/Anime/Movies" Dense="true" Variant="Variant.Outlined" Style="min-width:300px;" />
                     <MudTextField @bind-Value="rule.TemplateOverride" Label="Template override (optional)" Dense="true" Variant="Variant.Outlined" Style="min-width:280px;" />
                     <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="@(() => RemoveRule(idx))" />
                 </div>

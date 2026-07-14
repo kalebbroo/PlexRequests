@@ -48,6 +48,12 @@ public class FulfillmentJobEntity
 
     public Quality Quality { get; set; }
 
+    // Classification snapshot taken at enqueue time, so the downloader can route/organize without
+    // re-fetching metadata: genres for admin-configured "GenreContains" routing rules, and the shared
+    // Animation+Japanese-origin heuristic result for anime-specific routing rules.
+    [MaxLength(512)] public string? GenresCsv { get; set; }
+    public bool IsAnime { get; set; }
+
     public FulfillmentStatus Status { get; set; } = FulfillmentStatus.Queued;
     public int Attempts { get; set; }
     public int Progress { get; set; } // 0-100
