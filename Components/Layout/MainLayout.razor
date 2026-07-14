@@ -100,19 +100,41 @@
 
     @if (_mobileMenuOpen && !_isLoginPage)
     {
+        <div class="mobile-menu-backdrop" @onclick="CloseMobileMenu"></div>
         <div class="mobile-menu">
             <nav class="mobile-nav">
-                <NavLink href="/browse/movie" class="mobile-nav-item" @onclick="CloseMobileMenu">Movies</NavLink>
-                <NavLink href="/browse/tvshow" class="mobile-nav-item" @onclick="CloseMobileMenu">TV Shows</NavLink>
-                <NavLink href="/requests" class="mobile-nav-item" @onclick="CloseMobileMenu">My Requests</NavLink>
-                <NavLink href="/watchlist" class="mobile-nav-item" @onclick="CloseMobileMenu">My List</NavLink>
+                <NavLink href="/browse/movie" class="mobile-nav-item" Match="NavLinkMatch.All" @onclick="CloseMobileMenu">
+                    <MudIcon Icon="@Icons.Material.Filled.Movie" Size="Size.Small" />
+                    <span>Movies</span>
+                </NavLink>
+                <NavLink href="/browse/tvshow" class="mobile-nav-item" Match="NavLinkMatch.All" @onclick="CloseMobileMenu">
+                    <MudIcon Icon="@Icons.Material.Filled.Tv" Size="Size.Small" />
+                    <span>TV Shows</span>
+                </NavLink>
+                <NavLink href="/requests" class="mobile-nav-item" Match="NavLinkMatch.All" @onclick="CloseMobileMenu">
+                    <MudIcon Icon="@Icons.Material.Filled.ListAlt" Size="Size.Small" />
+                    <span>My Requests</span>
+                </NavLink>
+                <NavLink href="/watchlist" class="mobile-nav-item" Match="NavLinkMatch.All" @onclick="CloseMobileMenu">
+                    <MudIcon Icon="@Icons.Material.Filled.Bookmark" Size="Size.Small" />
+                    <span>My List</span>
+                </NavLink>
                 @if (_isAdmin)
                 {
-                    <NavLink href="/admin" class="mobile-nav-item" @onclick="CloseMobileMenu">Admin</NavLink>
+                    <NavLink href="/admin" class="mobile-nav-item" Match="NavLinkMatch.All" @onclick="CloseMobileMenu">
+                        <MudIcon Icon="@Icons.Material.Filled.AdminPanelSettings" Size="Size.Small" />
+                        <span>Admin</span>
+                    </NavLink>
                 }
-                <NavLink href="/search" class="mobile-nav-item" @onclick="CloseMobileMenu">Search</NavLink>
-                <MudDivider Class="my-3" />
-                <NavLink href="/profile" class="mobile-nav-item" @onclick="CloseMobileMenu">Profile</NavLink>
+                <NavLink href="/search" class="mobile-nav-item" Match="NavLinkMatch.All" @onclick="CloseMobileMenu">
+                    <MudIcon Icon="@Icons.Material.Filled.Search" Size="Size.Small" />
+                    <span>Search</span>
+                </NavLink>
+                <MudDivider Class="mobile-nav-divider" />
+                <NavLink href="/profile" class="mobile-nav-item" Match="NavLinkMatch.All" @onclick="CloseMobileMenu">
+                    <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" />
+                    <span>Profile</span>
+                </NavLink>
             </nav>
         </div>
     }
