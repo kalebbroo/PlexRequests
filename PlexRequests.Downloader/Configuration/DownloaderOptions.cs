@@ -30,7 +30,14 @@ public class IndexerOptions
     public const string Section = "Indexer";
     public int TimeoutSeconds { get; set; } = 20;
     public string EztvBaseUrl { get; set; } = "https://eztvx.to";   // TV (JSON API)
-    public string YtsBaseUrl { get; set; } = "https://yts.mx";       // movies (JSON API)
+    // Movies (JSON API). Comma-separated mirrors tried in order — public scrape/API domains for these
+    // sites change or go dark periodically; when the primary stops resolving, add a known-good mirror
+    // here (no code change needed) rather than the app silently having zero movie coverage.
+    // yts.mx stopped resolving entirely (confirmed). Verified live 2026-07: movies-api.accel.li is YTS's
+    // own dedicated API host (the yts.gg /api response itself names this as the new base URL, and it
+    // returns clean results with no deprecation notice); yts.gg is kept as a second fallback since it
+    // currently still serves the same API too (with that migration notice).
+    public string YtsBaseUrlsCsv { get; set; } = "https://movies-api.accel.li,https://yts.gg";
     public string X1337xBaseUrl { get; set; } = "https://1337x.to";  // movies + TV (HTML scrape)
     public bool X1337xEnabled { get; set; } = true;
     /// <summary>How many result rows to open for magnet extraction per 1337x search (each is an extra request).</summary>

@@ -39,7 +39,8 @@ builder.Services.AddHttpClient<EztvIndexerProvider>(http =>
 });
 builder.Services.AddHttpClient<YtsIndexerProvider>(http =>
 {
-    http.BaseAddress = new Uri(indexerCfg.YtsBaseUrl);
+    // No fixed BaseAddress: YtsIndexerProvider tries each configured mirror (YtsBaseUrlsCsv) as an
+    // absolute URL in turn, so one dead domain doesn't take movie search out entirely.
     http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
     http.DefaultRequestHeaders.Add("User-Agent", "PlexRequests.Downloader");
 });

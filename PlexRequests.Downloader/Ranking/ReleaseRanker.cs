@@ -187,6 +187,13 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
         // Year mismatch penalty only applies when both sides actually have a year to compare — a release
         // with no parsed year, or a job with no resolved year, gets no penalty either way.
         bool yearMismatch = job.Year is int jy && parsed.Year is int py && Math.Abs(jy - py) > 1;
+        // A movie job can never legitimately match a release that parses as a TV episode/season pack —
+        // this is a much stronger signal than title text similarity, which text alone can't reliably
+        // catch when the requested title is a short/common word that's also a substring of an unrelated
+        // show's title (e.g. job "Protector" matching a release for "Protector of Kanae" S01E12: pure
+        // token-overlap scores that as a perfect match on the job title's single token, but the release
+        // unambiguously parses as a TV episode, which no movie release ever does).
+        bool mediaTypeMismatch = job.MediaType == MediaType.Movie && (episode is not null || isPack);
 
         bool acceptable =
             (!p.EnforceQualityFloor || floor == 0 || res >= floor) &&
@@ -194,7 +201,8 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
             c.SizeGb >= 0.05 &&               // reject 0-byte / fake entries
             c.SizeGb <= maxSize &&
             titleSim >= p.MinTitleSimilarity &&
-            !yearMismatch;
+            !yearMismatch &&
+            !mediaTypeMismatch;
 
         double score = Score(c, parsed, res, floor, isPack, p) + titleSim * 40;
         return new Annotated(c, season, parsed.SeasonEnd, episode, isPack, parsed.LooksLikeCompleteSeries, score, acceptable);

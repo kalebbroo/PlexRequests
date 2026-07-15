@@ -170,7 +170,12 @@ public class FulfillmentPipeline(
 
                 if (status.IsFinished || status.Progress >= 100)
                 {
-                    var sourcePath = Path.Combine(status.SavePath ?? string.Empty, status.Name);
+                    var sourcePath = ResolveSourcePath(status, job.Id, it.TorrentId);
+                    if (sourcePath is null)
+                    {
+                        failReason = $"Could not resolve an on-disk path for the finished torrent (save_path={status.SavePath}, reported name=\"{status.Name}\")";
+                        break;
+                    }
                     var result = await importer.ImportAsync(job, it, sourcePath, ct);
                     if (!result.Success) { failReason = result.FailReason ?? "A download completed but import failed"; break; }
 
@@ -227,6 +232,88 @@ public class FulfillmentPipeline(
 
         await SafeMarkFulfilled(job.MediaRequestId);
         await SafeRemoveState(job.Id);
+    }
+
+    /// <summary>
+    /// Resolve the real on-disk source path for a finished torrent. A torrent's reported "name" is only
+    /// a display hint (from the magnet's dn= or resolved metadata) and can legitimately differ from the
+    /// actual file/folder Deluge wrote to disk — blindly trusting it (the old behavior) silently failed
+    /// imports whenever they diverged, even though the download itself succeeded. Tries, in order:
+    /// (1) Deluge's own reported file list — authoritative when available; (2) the old name-based guess;
+    /// (3) a last-resort scan of the save directory for its most-recently-modified entry. Every fallback
+    /// tier is logged so a mismatch is visible immediately instead of requiring DB archaeology.
+    /// </summary>
+    private string? ResolveSourcePath(Download.DownloadStatus status, int jobId, string torrentId)
+    {
+        var saveDir = status.SavePath ?? string.Empty;
+
+        if (status.Files.Count > 0)
+        {
+            string? viaFiles = status.Files.Count == 1
+                ? Path.Combine(saveDir, NormalizeRelative(status.Files[0]))
+                : CommonFolder(status.Files) is { } folder ? Path.Combine(saveDir, folder) : saveDir;
+
+            if (Directory.Exists(viaFiles) || File.Exists(viaFiles))
+            {
+                logger.LogDebug("Job {JobId} torrent {TorrentId}: resolved import source via Deluge's file list -> {Path}", jobId, torrentId, viaFiles);
+                return viaFiles;
+            }
+            logger.LogWarning("Job {JobId} torrent {TorrentId}: Deluge reported {Count} file(s) but the derived path doesn't exist ({Path}); falling back to name-based resolution",
+                jobId, torrentId, status.Files.Count, viaFiles);
+        }
+
+        var viaName = Path.Combine(saveDir, status.Name);
+        if (Directory.Exists(viaName) || File.Exists(viaName))
+        {
+            if (status.Files.Count == 0)
+                logger.LogDebug("Job {JobId} torrent {TorrentId}: resolved import source via reported name (no file list available) -> {Path}", jobId, torrentId, viaName);
+            return viaName;
+        }
+
+        logger.LogWarning("Job {JobId} torrent {TorrentId}: reported name \"{Name}\" doesn't exist under {SaveDir} either; falling back to picking the most-recently-modified entry in the save directory",
+            jobId, torrentId, status.Name, saveDir);
+
+        if (Directory.Exists(saveDir))
+        {
+            var newest = Directory.EnumerateFileSystemEntries(saveDir)
+                .Select(p => new { Path = p, Modified = SafeLastWrite(p) })
+                .OrderByDescending(x => x.Modified)
+                .FirstOrDefault();
+            if (newest is not null)
+            {
+                logger.LogWarning("Job {JobId} torrent {TorrentId}: heuristic fallback picked \"{Path}\" (most recently modified in {SaveDir}) — verify this is correct",
+                    jobId, torrentId, newest.Path, saveDir);
+                return newest.Path;
+            }
+        }
+
+        return null;
+    }
+
+    private static string NormalizeRelative(string relativePath) =>
+        relativePath.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+
+    // The shared top-level folder across a multi-file torrent's relative paths, if there is exactly one
+    // (the normal case — a season pack's files all live under "Show.Name.S01/..."). Null when files sit
+    // flat at the torrent root with no common containing folder.
+    private static string? CommonFolder(IReadOnlyList<string> relativePaths)
+    {
+        string? common = null;
+        foreach (var rel in relativePaths)
+        {
+            var normalized = NormalizeRelative(rel);
+            var firstSegment = normalized.Split(Path.DirectorySeparatorChar, 2)[0];
+            if (string.IsNullOrEmpty(firstSegment)) return null;
+            if (common is null) common = firstSegment;
+            else if (!string.Equals(common, firstSegment, StringComparison.Ordinal)) return null;
+        }
+        return common;
+    }
+
+    private static DateTime SafeLastWrite(string path)
+    {
+        try { return Directory.Exists(path) ? Directory.GetLastWriteTimeUtc(path) : File.GetLastWriteTimeUtc(path); }
+        catch { return DateTime.MinValue; }
     }
 
     private async Task SafeFail(int requestId, string reason)

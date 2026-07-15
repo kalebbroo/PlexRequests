@@ -42,7 +42,7 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
     public async Task<DownloadStatus?> GetStatusAsync(string torrentId, CancellationToken ct)
     {
         await EnsureAuthAsync(ct);
-        var keys = new[] { "name", "state", "progress", "total_size", "is_finished", "download_location", "save_path" };
+        var keys = new[] { "name", "state", "progress", "total_size", "is_finished", "download_location", "save_path", "files" };
         var result = await RpcAsync("core.get_torrent_status", new object[] { torrentId, keys }, ct);
         if (result.ValueKind != JsonValueKind.Object || !result.EnumerateObject().Any())
             return null;
@@ -55,7 +55,20 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
         string? path = Str(result, "download_location");
         if (string.IsNullOrEmpty(path)) path = Str(result, "save_path");
 
-        return new DownloadStatus(state, progress, name, size, string.IsNullOrEmpty(path) ? null : path, finished);
+        // The authoritative on-disk relative paths — the torrent's reported "name" is only a display
+        // hint (from the magnet's dn= or resolved metadata) and can differ from what actually lands on
+        // disk, so callers should prefer Files over Name when resolving the real import source path.
+        var files = new List<string>();
+        if (result.TryGetProperty("files", out var filesEl) && filesEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var fileEl in filesEl.EnumerateArray())
+            {
+                var relPath = Str(fileEl, "path");
+                if (!string.IsNullOrEmpty(relPath)) files.Add(relPath);
+            }
+        }
+
+        return new DownloadStatus(state, progress, name, size, string.IsNullOrEmpty(path) ? null : path, finished, files);
     }
 
     public async Task<bool> RemoveAsync(string torrentId, bool removeData, CancellationToken ct)

@@ -1,7 +1,14 @@
 namespace PlexRequests.Downloader.Download;
 
 /// <summary>Status of a torrent in the download client.</summary>
-public record DownloadStatus(string State, double Progress, string Name, long TotalSizeBytes, string? SavePath, bool IsFinished);
+/// <param name="Name">The torrent's display name — sourced from the magnet's dn= hint or the resolved
+/// .torrent metadata. NOT reliable as an on-disk path component: a magnet's dn= is only a hint and can
+/// differ from the actual file/folder name once the torrent resolves. Use <paramref name="Files"/> to
+/// find the real on-disk path; Name is a display-only fallback when Files is unavailable.</param>
+/// <param name="Files">Relative-to-SavePath paths of every file in the torrent, as reported by the
+/// download client — the authoritative source for where content actually landed on disk. Empty if the
+/// client doesn't report it (e.g. an older API) or the torrent metadata isn't resolved yet.</param>
+public record DownloadStatus(string State, double Progress, string Name, long TotalSizeBytes, string? SavePath, bool IsFinished, IReadOnlyList<string> Files);
 
 /// <summary>Torrent client abstraction (implemented for Deluge; swappable).</summary>
 public interface IDownloadClient
