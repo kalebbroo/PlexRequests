@@ -3,6 +3,7 @@
 @using PlexRequestsHosted.Shared.Enums
 @inject PlexRequestsHosted.Services.Implementations.ILibraryOrganizationPreferencesService Prefs
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
+@inject MudBlazor.IDialogService DialogService
 
 <div class="d-flex justify-content-between align-items-center mb-2">
     <h2>Library Organization</h2>
@@ -22,11 +23,15 @@ else
     <MudPaper Class="pa-4 mb-4" Elevation="1">
         <MudText Typo="Typo.h6" Class="mb-3">Library roots</MudText>
         <div class="d-flex gap-3 flex-wrap align-items-center">
-            <MudTextField @bind-Value="_p.MoviePath" Label="Movie library path" Variant="Variant.Outlined" Dense="true" Style="min-width:320px;" />
-            <MudTextField @bind-Value="_p.TvPath" Label="TV library path" Variant="Variant.Outlined" Dense="true" Style="min-width:320px;" />
+            <MudTextField @bind-Value="_p.MoviePath" Label="Movie library path" Variant="Variant.Outlined" Dense="true" Style="min-width:320px;"
+                          Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="BrowseMoviePath" />
+            <MudTextField @bind-Value="_p.TvPath" Label="TV library path" Variant="Variant.Outlined" Dense="true" Style="min-width:320px;"
+                          Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="BrowseTvPath" />
         </div>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
-            Paths as seen by the downloader process/container, not the web app.
+            Paths as seen by the downloader process/container, not the web app. Click the folder icon to browse
+            (the web app mirrors the same library/network-drive mounts read-only, so what you pick here is valid
+            for the downloader too) — or type a path manually.
         </MudText>
     </MudPaper>
 
@@ -90,7 +95,8 @@ else
                         <MudSelectItem T="bool?" Value="false">Non-anime only</MudSelectItem>
                     </MudSelect>
                     <MudTextField @bind-Value="rule.GenreContains" Label="Genre contains (optional)" Placeholder="e.g. Documentary" Dense="true" Variant="Variant.Outlined" Style="min-width:200px;" />
-                    <MudTextField @bind-Value="rule.RootPath" Label="Root path" Placeholder="/mnt/network-library/Anime/Movies" Dense="true" Variant="Variant.Outlined" Style="min-width:300px;" />
+                    <MudTextField @bind-Value="rule.RootPath" Label="Root path" Placeholder="/mnt/network-library/Anime/Movies" Dense="true" Variant="Variant.Outlined" Style="min-width:300px;"
+                                  Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="@(() => BrowseRule(idx))" />
                     <MudTextField @bind-Value="rule.TemplateOverride" Label="Template override (optional)" Dense="true" Variant="Variant.Outlined" Style="min-width:280px;" />
                     <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="@(() => RemoveRule(idx))" />
                 </div>
@@ -149,6 +155,30 @@ else
     }
 
     private void Refresh() => StateHasChanged();
+
+    private async Task BrowseMoviePath()
+    {
+        if (await BrowseAsync(_p!.MoviePath) is { } chosen) _p!.MoviePath = chosen;
+    }
+
+    private async Task BrowseTvPath()
+    {
+        if (await BrowseAsync(_p!.TvPath) is { } chosen) _p!.TvPath = chosen;
+    }
+
+    private async Task BrowseRule(int index)
+    {
+        if (await BrowseAsync(_p!.LibraryRootRules[index].RootPath) is { } chosen) _p!.LibraryRootRules[index].RootPath = chosen;
+    }
+
+    private async Task<string?> BrowseAsync(string? startPath)
+    {
+        var parameters = new MudBlazor.DialogParameters<FolderBrowserDialog> { { x => x.StartPath, startPath } };
+        var options = new MudBlazor.DialogOptions { MaxWidth = MudBlazor.MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true };
+        var dialog = await DialogService.ShowAsync<FolderBrowserDialog>("Choose a folder", parameters, options);
+        var result = await dialog.Result;
+        return result is { Canceled: false } ? result.Data as string : null;
+    }
 
     private void AddRule()
     {

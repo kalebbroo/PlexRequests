@@ -1,0 +1,92 @@
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Services.Implementations
+@inject IFolderBrowserService FolderBrowser
+
+<MudDialog>
+    <DialogContent>
+        <div class="d-flex gap-2 align-items-center mb-3">
+            <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Title="Up one level"
+                           Disabled="@(_current?.ParentPath is null)" OnClick="GoUp" />
+            <MudTextField T="string" @bind-Value="_pathInput" Label="Path" Variant="Variant.Outlined" Dense="true"
+                          FullWidth="true" Immediate="true" OnKeyDown="OnPathKeyDown" />
+            <MudButton Variant="Variant.Outlined" OnClick="@(() => Navigate(_pathInput))">Go</MudButton>
+        </div>
+
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2">@_error</MudAlert>
+        }
+
+        <MudPaper Class="pa-2" Elevation="0" Outlined="true" Style="max-height:360px; overflow-y:auto;">
+            @if (_current is null)
+            {
+                <div class="d-flex justify-content-center py-4"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+            }
+            else if (_current.Directories.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="pa-2">No subfolders here.</MudText>
+            }
+            else
+            {
+                @foreach (var entry in _current.Directories)
+                {
+                    <MudButton Variant="Variant.Text" FullWidth="true" Class="justify-content-start"
+                               StartIcon="@Icons.Material.Filled.Folder" OnClick="@(() => Navigate(entry.FullPath))">
+                        @entry.Name
+                    </MudButton>
+                }
+            }
+        </MudPaper>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(string.IsNullOrWhiteSpace(_pathInput))" OnClick="Select">
+            Select This Folder
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+    /// <summary>Path to start browsing from; empty/null starts at the filesystem root (or drive list on Windows).</summary>
+    [Parameter] public string? StartPath { get; set; }
+
+    private FolderBrowseResultDto? _current;
+    private string _pathInput = string.Empty;
+    private string? _error;
+
+    protected override void OnInitialized()
+    {
+        _pathInput = StartPath ?? string.Empty;
+        Load(StartPath);
+    }
+
+    private void Navigate(string? path)
+    {
+        _pathInput = path ?? string.Empty;
+        Load(path);
+    }
+
+    private void GoUp()
+    {
+        if (_current?.ParentPath is { } parent) Navigate(parent);
+    }
+
+    private void Load(string? path)
+    {
+        _error = null;
+        var result = FolderBrowser.Browse(path);
+        if (!string.IsNullOrWhiteSpace(path) && result.Directories.Count == 0 && result.CurrentPath == path && !System.IO.Directory.Exists(path))
+            _error = "That folder doesn't exist (yet) — you can still type it manually and select it.";
+        _current = result;
+        _pathInput = result.CurrentPath ?? _pathInput;
+    }
+
+    private void OnPathKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") Navigate(_pathInput);
+    }
+
+    private void Select() => MudDialog.Close(DialogResult.Ok(_pathInput));
+    private void Cancel() => MudDialog.Cancel();
+}

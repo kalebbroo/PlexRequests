@@ -145,6 +145,7 @@ builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IMediaIss
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IQualityRuleService, PlexRequestsHosted.Services.Implementations.QualityRuleService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IDownloadPreferencesService, PlexRequestsHosted.Services.Implementations.DownloadPreferencesService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.ILibraryOrganizationPreferencesService, PlexRequestsHosted.Services.Implementations.LibraryOrganizationPreferencesService>();
+builder.Services.AddSingleton<PlexRequestsHosted.Services.Implementations.IFolderBrowserService, PlexRequestsHosted.Services.Implementations.FolderBrowserService>();
 // Backstop that requeues/fails jobs stranded by a dead downloader.
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.FulfillmentReaperService>();
 // Keeps the DB-backed Plex availability index fresh (per-season episode presence + prune removals).
@@ -315,6 +316,15 @@ app.MapPost("/api/plex/index/rebuild", async (IPlexApiService plex) =>
     var res = await plex.RebuildAvailabilityIndexAsync();
     return Results.Ok(res);
 }).RequireAuthorization("AdminOnly");
+
+// Admin folder browser (Library Organization page): lists one directory level at a time so an admin
+// can pick a library/NAS path instead of typing it by hand. Read-only, admin-only, cross-platform
+// (drive list on Windows, "/" root on Linux/Mac). The Blazor page itself calls IFolderBrowserService
+// directly (same process, no need to round-trip through HTTP) — this endpoint exists for parity/any
+// external tooling that might want it.
+app.MapGet("/api/admin/browse-folders", (string? path, PlexRequestsHosted.Services.Implementations.IFolderBrowserService browser) =>
+    Results.Ok(browser.Browse(path)))
+    .RequireAuthorization("AdminOnly");
 
 // Diagnostics: test a single match
 app.MapGet("/api/plex/match", async (string? title, int? year, int? tmdbId, string? imdbId, int? tvdbId, MediaType mediaType, IPlexApiService plex) =>

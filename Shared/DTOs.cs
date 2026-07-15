@@ -447,3 +447,22 @@ public class ImportedFileDto
     public int? EpisodeNumber { get; set; }
     public long SizeBytes { get; set; }
 }
+
+/// <summary>One subfolder returned by the admin folder-browser endpoint.</summary>
+public class FolderEntryDto
+{
+    public string Name { get; set; } = string.Empty;
+    public string FullPath { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Result of listing one directory level for the Library Organization admin folder browser —
+/// current/parent path plus its immediate subfolders. Null <see cref="ParentPath"/> means we're at a
+/// top-level root (a Windows drive, or "/" on Linux/Mac) and "Up" isn't available.
+/// </summary>
+public class FolderBrowseResultDto
+{
+    public string? CurrentPath { get; set; }
+    public string? ParentPath { get; set; }
+    public List<FolderEntryDto> Directories { get; set; } = new();
+}

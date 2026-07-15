@@ -28,7 +28,7 @@ services:
       - "8080:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      ConnectionStrings__AppDb: /data/app.db
+      ConnectionStrings__AppDb: /appdata/app.db
       Fulfillment__Enabled: "true"
       Fulfillment__ApiKey: ${FULFILLMENT_API_KEY}
       Bridge__Enabled: ${BRIDGE_ENABLED:-false}
@@ -38,8 +38,13 @@ services:
       Plex__PrimaryServerUrl: ${PLEX_URL}
       Plex__ServerToken: ${PLEX_TOKEN}
     volumes:
-      - appdata:/data          # app.db
+      - appdata:/appdata       # app.db (moved off /data so the library volumes below can use it)
       - ./keys:/app/keys       # persisted DataProtection keys (auth cookies survive restarts)
+      # Read-only mirror of the downloader's library mounts, at the SAME paths, so the admin UI's
+      # folder browser (Library Organization page) shows paths that are copy-paste-valid for
+      # MoviePath/TvPath/routing-rule RootPath — the web app never writes to these itself.
+      - media:/data:ro
+      - ${NETWORK_LIBRARY_PATH:-./network-library}:/mnt/network-library:ro
     restart: unless-stopped
 
   # Optional managed torrent client — only started with:  --profile torrent
