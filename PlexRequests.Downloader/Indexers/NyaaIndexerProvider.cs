@@ -32,6 +32,7 @@ public class NyaaIndexerProvider(HttpClient http, IOptions<IndexerOptions> optio
 
     public string Name => "Nyaa";
     public bool Supports(MediaType mediaType) => mediaType is MediaType.Anime or MediaType.TvShow or MediaType.Movie;
+    public bool AnimeOnly => true;
 
     public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct)
     {

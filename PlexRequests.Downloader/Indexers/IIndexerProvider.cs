@@ -9,6 +9,9 @@ public interface IIndexerProvider
 {
     string Name { get; }
     bool Supports(MediaType mediaType);
+    /// <summary>True for anime-only sources (e.g. Nyaa). These are skipped for jobs the anime classifier
+    /// didn't flag as anime, so a plain movie like "Lucky" never picks up an anime release ("Lucky Star").</summary>
+    bool AnimeOnly => false;
     Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct);
 }
 

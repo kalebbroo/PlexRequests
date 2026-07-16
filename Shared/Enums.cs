@@ -12,7 +12,11 @@ public enum RequestStatus
     Cancelled = 7,
     /// <summary>Some but not all of the requested seasons/episodes imported before the rest failed —
     /// distinct from a hard Failed so the UI can offer "retry the rest" instead of "retry everything".</summary>
-    PartiallyAvailable = 8
+    PartiallyAvailable = 8,
+    /// <summary>Approved and being worked, but no release is findable yet (e.g. not released, or no seeders
+    /// yet). Not a failure — the downloader keeps re-searching on a backoff until it appears or an admin
+    /// cancels. Distinct from Processing (which means a download is actively in flight).</summary>
+    Searching = 9
 }
 
 public enum MediaType
@@ -67,7 +71,10 @@ public enum FulfillmentStatus
     Cancelled = 5,
     /// <summary>One or more torrents imported before another in the same job failed/errored — not a
     /// clean Completed, but not a total loss either.</summary>
-    PartiallyCompleted = 6
+    PartiallyCompleted = 6,
+    /// <summary>No acceptable release found yet; parked until <c>NextRetryAt</c>, then re-searched. Counts
+    /// as an active job (won't be duplicate-enqueued), but the reaper ignores it (it isn't Claimed).</summary>
+    Deferred = 7
 }
 
 public enum IssueStatus

@@ -51,6 +51,7 @@ public partial class ReleaseParser : IReleaseParser
 
         return new ParsedRelease
         {
+            Title = ExtractTitle(name),
             Resolution = resolution,
             Source = source,
             Codec = codec,
@@ -97,6 +98,31 @@ public partial class ReleaseParser : IReleaseParser
         if (Rx(name, @"\b(complete|complete[\s._-]*series)\b")) return (null, null, null, true, true); // whole-series pack, explicit
 
         return (null, null, null, false, false);
+    }
+
+    // Structural markers that end the title portion of a release name. The title is whatever precedes the
+    // earliest of these. Kept deliberately broad: anything a title would never legitimately contain.
+    private static readonly Regex TitleBoundary = new(
+        @"\b(S\d{1,2}(?:[\s._-]*E\d{1,3})?|\d{1,2}x\d{1,3}|season[\s._-]*\d{1,2}|complete|" +
+        @"19\d{2}|20\d{2}|480p|576p|720p|1080p|2160p|4k|uhd|bluray|blu-ray|bdrip|brrip|web-?dl|webdl|" +
+        @"web-?rip|hdtv|pdtv|remux|x264|x265|h\.?264|h\.?265|hevc|avc|hdr|hdr10|dv|amzn|nf|dsnp|hmax)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>Title portion of a release name: text before the first structural marker, with separators
+    /// normalized to spaces. E.g. "Lucky.Star.S01.1080p-GRP" → "Lucky Star"; "Lucky (2011) 1080p" → "Lucky".</summary>
+    internal static string ExtractTitle(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return string.Empty;
+        // Normalize scene separators (dots/underscores) to spaces FIRST — otherwise "\bcomplete\b" and
+        // friends never match in underscore-separated names ("_" is a regex word char, so there's no
+        // word boundary around it).
+        var normalized = Regex.Replace(name, @"[._]+", " ");
+        var m = TitleBoundary.Match(normalized);
+        var head = m.Success ? normalized[..m.Index] : normalized;
+        head = Regex.Replace(head, @"\s+", " ").Trim();
+        // Strip trailing separators / dangling open brackets left by cutting before a "(2017)"-style marker.
+        head = Regex.Replace(head, @"[\s\-_.\(\[\{:]+$", "").Trim();
+        return head;
     }
 
     private const RegexOptions RxOpts = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;

@@ -10,10 +10,15 @@ public class IndexerClient(IEnumerable<IIndexerProvider> providers, ILogger<Inde
 
     public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct)
     {
-        var applicable = _providers.Where(p => p.Supports(job.MediaType)).ToList();
+        // Anime-only sources (Nyaa) are skipped unless the job was classified as anime — this stops a plain
+        // movie/TV request from ever matching an anime release with a coincidentally-overlapping title.
+        var applicable = _providers
+            .Where(p => p.Supports(job.MediaType))
+            .Where(p => !p.AnimeOnly || job.IsAnime)
+            .ToList();
         if (applicable.Count == 0)
         {
-            _logger.LogWarning("No indexer supports media type {Type}", job.MediaType);
+            _logger.LogWarning("No indexer supports media type {Type} for \"{Title}\" (anime={IsAnime})", job.MediaType, job.Title, job.IsAnime);
             return Array.Empty<ReleaseCandidate>();
         }
 

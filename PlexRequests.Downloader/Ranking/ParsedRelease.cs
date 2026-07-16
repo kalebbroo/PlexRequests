@@ -5,6 +5,11 @@ public enum ReleaseSource { Unknown = 0, Cam = 1, Hdtv = 2, WebRip = 3, WebDl = 
 /// <summary>Structured metadata parsed from a scene/p2p release name.</summary>
 public record ParsedRelease
 {
+    /// <summary>The core title portion: everything before the first structural marker (season/episode,
+    /// year, resolution, source, group…), separators normalized to spaces. Used for strict bidirectional
+    /// title matching so an unrelated longer title (e.g. "Lucky Star") isn't accepted for a short request
+    /// ("Lucky"). Empty when nothing precedes the first marker.</summary>
+    public string Title { get; init; } = string.Empty;
     public int Resolution { get; init; }        // 480/720/1080/2160, 0 = unknown
     public ReleaseSource Source { get; init; }
     public string? Codec { get; init; }         // x264 / x265 / av1

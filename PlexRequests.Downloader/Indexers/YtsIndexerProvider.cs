@@ -73,6 +73,7 @@ public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> option
                     ReleaseName = name,
                     Magnet = BuildMagnet(tor.Hash!, name),
                     InfoHash = tor.Hash,
+                    ImdbId = m.ImdbCode,
                     Seeders = tor.Seeds,
                     Leechers = tor.Peers,
                     SizeBytes = tor.SizeBytes,
@@ -95,6 +96,7 @@ public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> option
     private sealed class YtsMovie
     {
         public string? TitleLong { get; set; }
+        public string? ImdbCode { get; set; }
         public List<YtsTorrent>? Torrents { get; set; }
     }
     private sealed class YtsTorrent

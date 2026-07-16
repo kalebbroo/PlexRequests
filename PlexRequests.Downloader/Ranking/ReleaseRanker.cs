@@ -229,28 +229,50 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
         bool isPack = episode is null && (parsed.IsSeasonPack || season is not null);
 
         double maxSize = isPack ? p.MaxSeasonPackSizeGb : p.MaxSizeGb;
-        double titleSim = TitleSimilarity(c.ReleaseName, job.Title);
+
+        // Authoritative identity check first: if the provider gave us an IMDb id for this release AND the
+        // job has one, they must agree. A match trusts the release regardless of title text (the id is far
+        // stronger than fuzzy name matching); a mismatch is a hard reject (definitively the wrong title).
+        var (idMatch, idMismatch) = CompareImdb(job.ImdbId, c.ImdbId);
+
+        // Strict, bidirectional title check for the id-less case (free-text indexers). The old check was
+        // recall-only — "do the request's words appear in the release name" — which scored a one-word
+        // request like "Lucky" as a perfect match for "Lucky Star" (the extra word "star" was free). Now we
+        // compare against the release's parsed core TITLE (tags stripped) and also reject when that title
+        // carries significant words the request doesn't have, scaled by how specific the request is.
+        double titleRecall = TitleSimilarity(parsed.Title, job.Title);
+        int extraTokens = ExtraTitleTokens(parsed.Title, job.Title);
+        // Tolerance for extra words in the release's core title scales with how specific the request is,
+        // measured by RAW word count (stop-words included) — so a 1-word title like "Lucky" tolerates 0
+        // extra words (rejects "Lucky Star"), while "The Office" (2 raw words) tolerates 1 (accepts the
+        // regional variant "The Office US"). Prevents the short-title false positive without over-rejecting.
+        int jobRawTokens = RawTokenCount(job.Title);
+        int maxExtra = jobRawTokens <= 1 ? 0 : jobRawTokens <= 3 ? 1 : 2;
+        bool titleOk = titleRecall >= p.MinTitleSimilarity && extraTokens <= maxExtra;
+
         // Year mismatch penalty only applies when both sides actually have a year to compare — a release
         // with no parsed year, or a job with no resolved year, gets no penalty either way.
         bool yearMismatch = job.Year is int jy && parsed.Year is int py && Math.Abs(jy - py) > 1;
-        // A movie job can never legitimately match a release that parses as a TV episode/season pack —
-        // this is a much stronger signal than title text similarity, which text alone can't reliably
-        // catch when the requested title is a short/common word that's also a substring of an unrelated
-        // show's title (e.g. job "Protector" matching a release for "Protector of Kanae" S01E12: pure
-        // token-overlap scores that as a perfect match on the job title's single token, but the release
-        // unambiguously parses as a TV episode, which no movie release ever does).
+        // A movie job can never legitimately match a release that parses as a TV episode/season pack.
         bool mediaTypeMismatch = job.MediaType == MediaType.Movie && (episode is not null || isPack);
+
+        bool identityOk = idMatch || (!idMismatch && titleOk); // id wins; else fall back to the strict title gate
 
         bool acceptable =
             (!p.EnforceQualityFloor || floor == 0 || res >= floor) &&
             c.Seeders >= p.MinSeeders &&
             c.SizeGb >= 0.05 &&               // reject 0-byte / fake entries
             c.SizeGb <= maxSize &&
-            titleSim >= p.MinTitleSimilarity &&
+            identityOk &&
             !yearMismatch &&
             !mediaTypeMismatch;
 
-        double score = Score(c, parsed, res, floor, isPack, p) + titleSim * 40;
+        if (!acceptable && (idMismatch || !titleOk))
+            _logger.LogDebug("Rejected \"{Name}\" for \"{Title}\": idMismatch={IdMismatch}, titleRecall={Recall:F2}, extraTokens={Extra} (coreTitle=\"{Core}\")",
+                c.ReleaseName, job.Title, idMismatch, titleRecall, extraTokens, parsed.Title);
+
+        // A confirmed id match is worth a big boost; otherwise reward title recall as before.
+        double score = Score(c, parsed, res, floor, isPack, p) + (idMatch ? 200 : titleRecall * 40);
         return new Annotated(c, season, parsed.SeasonEnd, episode, isPack, parsed.LooksLikeCompleteSeries, score, acceptable);
     }
 
@@ -278,6 +300,38 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
             .Select(m => m.Value)
             .Where(t => t.Length > 1 && !StopTokens.Contains(t))
             .ToHashSet();
+
+    // Raw word count (length > 1), stop-words INCLUDED — a specificity measure for the request title.
+    private static int RawTokenCount(string s) =>
+        System.Text.RegularExpressions.Regex.Matches(s.ToLowerInvariant(), @"[a-z0-9]+").Count(m => m.Value.Length > 1);
+
+    // Significant words in the release's core title that the requested title does NOT contain. This is what
+    // separates "Lucky Star" (extra: "star") from "Lucky" — a strong signal it's a different, longer title.
+    private static int ExtraTitleTokens(string releaseTitle, string jobTitle)
+    {
+        var rel = Tokenize(releaseTitle);
+        var job = Tokenize(jobTitle);
+        if (rel.Count == 0) return 0; // couldn't parse a core title — don't penalize (other gates still apply)
+        return rel.Except(job).Count();
+    }
+
+    // Compare an optional job IMDb id with an optional candidate IMDb id. Returns (match, mismatch): both
+    // false when either side is missing (no signal). Ids are normalized to their numeric core (tt0944947,
+    // "944947", 944947 all compare equal).
+    private static (bool match, bool mismatch) CompareImdb(string? jobImdb, string? candidateImdb)
+    {
+        var a = NormalizeImdb(jobImdb);
+        var b = NormalizeImdb(candidateImdb);
+        if (a is null || b is null) return (false, false);
+        return a == b ? (true, false) : (false, true);
+    }
+
+    private static string? NormalizeImdb(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        var digits = new string(id.Where(char.IsDigit).ToArray()).TrimStart('0');
+        return digits.Length == 0 ? null : digits;
+    }
 
     private int EffectiveResolution(ReleaseCandidate c, ParsedRelease parsed)
     {

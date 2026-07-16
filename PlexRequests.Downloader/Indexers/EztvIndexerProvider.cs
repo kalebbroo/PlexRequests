@@ -45,6 +45,7 @@ public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> l
                     ReleaseName = t.Title ?? string.Empty,
                     Magnet = t.MagnetUrl!,
                     InfoHash = t.Hash,
+                    ImdbId = string.IsNullOrWhiteSpace(t.ImdbId) ? job.ImdbId : t.ImdbId, // EZTV is queried BY imdb id
                     Seeders = t.Seeds,
                     Leechers = t.Peers,
                     SizeBytes = t.SizeBytes,
@@ -88,6 +89,7 @@ public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> l
     private sealed class EztvTorrent
     {
         public string? Title { get; set; }
+        public string? ImdbId { get; set; }
         public string? MagnetUrl { get; set; }
         public string? Hash { get; set; }
         public int Seeds { get; set; }

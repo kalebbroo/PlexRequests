@@ -58,6 +58,17 @@ public class FulfillmentJobEntity
     public int Attempts { get; set; }
     public int Progress { get; set; } // 0-100
 
+    // --- Deferred-retry state (for a request whose release isn't findable yet) ---------------------
+    /// <summary>When a Deferred job becomes claimable again. The downloader's claim query skips deferred
+    /// jobs until this passes, so a "not found yet" request is re-searched on a backoff instead of failing.</summary>
+    public DateTime? NextRetryAt { get; set; }
+    /// <summary>How many times this job has been deferred (no release found yet) — drives the retry backoff
+    /// and is shown in the UI. Reset when a real download attempt begins.</summary>
+    public int DeferCount { get; set; }
+    /// <summary>Movie release / show first-air date, snapshotted at enqueue. Lets the retry cadence back off
+    /// to ~daily while the title isn't out yet instead of hammering indexers.</summary>
+    public DateTime? ReleaseDate { get; set; }
+
     [MaxLength(128)]
     public string? ClaimedBy { get; set; }
 
