@@ -139,7 +139,7 @@
         </div>
     }
 
-    <main class="main-content">
+    <main class="main-content @(_isLoginPage ? "full-bleed" : "")">
         <ErrorBoundary>
             <ChildContent>
                 @Body
@@ -328,8 +328,12 @@
 
     private void DetermineRouteContext()
     {
-        var uri = Navigation.Uri;
-        _isHomepage = uri.EndsWith("/browse") || uri.EndsWith("/dashboard");
-        _isLoginPage = uri.EndsWith("/login") || uri.EndsWith("/") || uri.Contains("/auth/callback");
+        // Compare the path only — query strings (e.g. /login?returnUrl=...) must not change the result.
+        var path = Navigation.ToAbsoluteUri(Navigation.Uri).AbsolutePath.TrimEnd('/');
+        _isHomepage = path.Equals("/browse", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/dashboard", StringComparison.OrdinalIgnoreCase);
+        _isLoginPage = path.Length == 0
+            || path.Equals("/login", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/auth/callback", StringComparison.OrdinalIgnoreCase);
     }
 }

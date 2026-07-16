@@ -55,7 +55,7 @@ public interface INotificationService
 
 public interface IPlexAuthService
 {
-    Task<PlexAuthenticationFlow> BeginAuthenticationAsync();
+    Task<PlexAuthenticationFlow> BeginAuthenticationAsync(string? returnUrl = null);
     Task<bool> OpenAuthenticationWindowAsync(string authUrl);
     Task<PlexAuthenticationResult> PollForAuthenticationAsync(int pinId, CancellationToken cancellationToken = default);
     Task<PlexUser?> GetPlexUserAsync(string authToken);

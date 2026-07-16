@@ -752,8 +752,10 @@ app.MapGet("/auth/callback", async (HttpContext context, IPlexAuthService plexAu
         PlexRequestsHosted.Utils.Logs.Info("OAuth callback endpoint hit");
         
         // Get return URL from query string
+        // Local paths only (no absolute URLs / protocol-relative) so this can't be used as an open redirect.
         var returnUrl = context.Request.Query["returnUrl"].FirstOrDefault() ?? "/browse";
-        if (returnUrl == "/" || returnUrl.StartsWith("/login", StringComparison.OrdinalIgnoreCase))
+        if (!returnUrl.StartsWith('/') || returnUrl.StartsWith("//")
+            || returnUrl == "/" || returnUrl.StartsWith("/login", StringComparison.OrdinalIgnoreCase))
             returnUrl = "/browse";
 
         // Prefer pinId from the query (set in forwardUrl). Fall back to server session if absent.

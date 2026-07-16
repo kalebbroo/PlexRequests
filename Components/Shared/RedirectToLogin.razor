@@ -22,8 +22,6 @@
             return;
         }
 
-        // Give auth state a brief moment to initialize
-        await Task.Delay(150);
         var isAuth = false;
         try
         {
@@ -37,17 +35,12 @@
 
         if (isAuth)
         {
-            // Already authenticated; do not redirect to login
+            // Authenticated but not authorized for this route; login can't help
             return;
         }
 
-        // Ensure we never set a returnUrl that points back to login to prevent loops
-        var full = Navigation.Uri;
-        if (path.StartsWith("/login", StringComparison.OrdinalIgnoreCase))
-        {
-            full = "/browse"; // safe default
-        }
-        var returnUrl = Uri.EscapeDataString(full);
+        // Pass the destination as a local path so the login page can send the user back after auth
+        var returnUrl = Uri.EscapeDataString(current.PathAndQuery);
         Navigation.NavigateTo($"/login?returnUrl={returnUrl}", false);
     }
 }

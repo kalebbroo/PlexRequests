@@ -14,14 +14,22 @@
     <link rel="stylesheet" href="@Assets["app.css"]" />
     <ImportMap />
     <link rel="icon" type="image/png" href="favicon.png" />
-    <HeadOutlet @rendermode="InteractiveServer" />
+    <HeadOutlet @rendermode="PageRenderMode" />
 </head>
 
 <body>
-    <Routes @rendermode="InteractiveServer" />
+    <Routes @rendermode="PageRenderMode" />
     <script src="_content/MudBlazor/MudBlazor.min.js"></script>
     <script src="_framework/blazor.web.js"></script>
     <script src="@Assets["app.js"]"></script>
 </body>
 
 </html>
+
+@code {
+    // Prerendering disabled: with it on, every page paints twice (static SSR pass, then the
+    // interactive circuit re-renders it), which replays entrance animations and causes the
+    // visible "double load" jitter — worst on the login page. This app sits behind auth with
+    // no SEO needs, so the static first paint buys nothing.
+    private static readonly Microsoft.AspNetCore.Components.Web.InteractiveServerRenderMode PageRenderMode = new(prerender: false);
+}

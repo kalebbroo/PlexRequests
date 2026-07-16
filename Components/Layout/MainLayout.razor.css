@@ -372,6 +372,12 @@ body {
     min-height: calc(100vh - 200px);
 }
 
+/* Login page has no header/footer, so drop the header offset and let it own the full viewport */
+.main-content.full-bleed {
+    padding-top: 0;
+    min-height: 100vh;
+}
+
 .app-footer {
     background-color: var(--bg-primary);
     border-top: 1px solid var(--divider);

@@ -30,7 +30,7 @@ public class PlexAuthService : IPlexAuthService
         EnsureDefaultHeaders(_httpClient.DefaultRequestHeaders);
     }
 
-    public async Task<PlexAuthenticationFlow> BeginAuthenticationAsync()
+    public async Task<PlexAuthenticationFlow> BeginAuthenticationAsync(string? returnUrl = null)
     {
         try
         {
@@ -64,6 +64,10 @@ public class PlexAuthService : IPlexAuthService
             // Create callback URL with pinId so the server can complete auth without relying on session state
             var baseUri = _navigation.BaseUri.TrimEnd('/');
             var callbackUrl = $"{baseUri}/auth/callback?pinId={Uri.EscapeDataString(pin.Id.ToString())}";
+            // Carry the caller's destination through the OAuth round-trip. Local paths only —
+            // the callback endpoint redirects to this value verbatim.
+            if (!string.IsNullOrWhiteSpace(returnUrl) && returnUrl.StartsWith('/') && !returnUrl.StartsWith("//"))
+                callbackUrl += $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
             
             // Build Plex OAuth URL with callback
             string authUrl = $"https://app.plex.tv/auth#?clientID={Uri.EscapeDataString(_config.ClientIdentifier)}&code={Uri.EscapeDataString(pin.Code)}&context[device][product]={Uri.EscapeDataString(_config.Product)}&forwardUrl={Uri.EscapeDataString(callbackUrl)}";
