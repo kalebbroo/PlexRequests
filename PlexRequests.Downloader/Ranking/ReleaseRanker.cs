@@ -39,6 +39,12 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
         return a.LooksLikeCompleteSeries;
     }
 
+    // What to keep from a pack chosen for a season target: the specific missing episodes when we know them
+    // (so the download client skips the rest and we don't re-import what Plex already has), else null =
+    // "take the whole pack" (we don't know what's missing — e.g. a metadata miss).
+    private static IReadOnlyList<int>? PackNeeded(SeasonTarget target) =>
+        target.MissingEpisodes.Count > 0 ? target.MissingEpisodes : null;
+
     public DownloadPlan PlanDownload(IReadOnlyList<ReleaseCandidate> candidates, FulfillmentJobDto job)
     {
         var p = _prefs.Current;
@@ -87,14 +93,14 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
             if (wantPackFirst && bestPack is not null)
             {
                 Log("season-pack", bestPack, job);
-                items.Add(ToItem(bestPack) with { Season = target.Season });
+                items.Add(ToItem(bestPack) with { Season = target.Season, NeededEpisodes = PackNeeded(target) });
                 continue;
             }
 
             // Episode fallback (or PreferEpisodes): assemble the best release per missing episode.
             if (!p.AllowEpisodeFallback && p.SeasonPackStrategy != SeasonPackStrategy.PreferEpisodes)
             {
-                if (bestPack is not null) { items.Add(ToItem(bestPack) with { Season = target.Season }); continue; }
+                if (bestPack is not null) { items.Add(ToItem(bestPack) with { Season = target.Season, NeededEpisodes = PackNeeded(target) }); continue; }
                 _logger.LogInformation("No acceptable pack for \"{Title}\" S{Season} and episode fallback disabled", job.Title, target.Season);
                 continue;
             }
@@ -102,14 +108,14 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
             var missing = target.MissingEpisodes;
             if (missing.Count == 0)
             {
-                // No episode list to fan out to (metadata miss) → pack is the only option.
+                // No episode list to fan out to (metadata miss) → pack is the only option (take it whole).
                 if (bestPack is not null) { items.Add(ToItem(bestPack) with { Season = target.Season }); }
                 else _logger.LogInformation("No pack and no episode list for \"{Title}\" S{Season}; skipping", job.Title, target.Season);
                 continue;
             }
             if (missing.Count > p.MaxEpisodesForFanout)
             {
-                if (bestPack is not null) { items.Add(ToItem(bestPack) with { Season = target.Season }); continue; }
+                if (bestPack is not null) { items.Add(ToItem(bestPack) with { Season = target.Season, NeededEpisodes = PackNeeded(target) }); continue; }
                 _logger.LogWarning("\"{Title}\" S{Season} missing {Count} episodes (> cap {Cap}) and no pack; skipping",
                     job.Title, target.Season, missing.Count, p.MaxEpisodesForFanout);
                 continue;
@@ -125,12 +131,13 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
                 else gaps.Add(ep);
             }
 
-            // If some episodes have no standalone release, use the pack to cover the whole season instead.
+            // If some episodes have no standalone release, use the pack to cover the missing episodes
+            // instead (trimmed to just what's missing — we don't re-fetch what Plex already has).
             if (gaps.Count > 0 && bestPack is not null)
             {
-                _logger.LogInformation("\"{Title}\" S{Season}: {Gaps} episode(s) had no standalone release → using season pack",
+                _logger.LogInformation("\"{Title}\" S{Season}: {Gaps} episode(s) had no standalone release → using season pack (trimmed to missing episodes)",
                     job.Title, target.Season, gaps.Count);
-                items.Add(ToItem(bestPack) with { Season = target.Season });
+                items.Add(ToItem(bestPack) with { Season = target.Season, NeededEpisodes = PackNeeded(target) });
                 continue;
             }
 
@@ -150,16 +157,55 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
         return new DownloadPlan(kind, items);
     }
 
+    // Explicit episode targets. Prefer a standalone release per episode; but when an episode has no
+    // standalone release (common for shows only ever packaged as season packs — kids'/preschool titles
+    // especially), fall back to the season pack, trimmed to just the requested episodes so we don't pull
+    // or import the rest of the season. Episodes are grouped by season so one pack covers a season's gaps.
     private DownloadPlan PlanEpisodes(List<Annotated> acceptable, IEnumerable<(int Season, int Episode)> wanted, FulfillmentJobDto job)
     {
+        var p = _prefs.Current;
         var items = new List<DownloadPlanItem>();
-        foreach (var (season, episode) in wanted)
+
+        foreach (var seasonGroup in wanted.GroupBy(w => w.Season))
         {
-            var best = acceptable.Where(a => !a.IsPack && a.Season == season && a.Episode == episode)
-                                 .OrderByDescending(a => a.Score).FirstOrDefault();
-            if (best is not null) items.Add(ToItem(best) with { Season = season, Episode = episode });
-            else _logger.LogWarning("\"{Title}\": no acceptable release for S{Season}E{Episode}", job.Title, season, episode);
+            int season = seasonGroup.Key;
+            var episodes = seasonGroup.Select(w => w.Episode).Distinct().OrderBy(e => e).ToList();
+            var bestPack = acceptable.Where(a => a.IsPack && MatchesSeason(a, season))
+                                     .OrderByDescending(a => a.Score).FirstOrDefault();
+
+            // Too many episodes to fan out one-by-one and a pack is available → take the pack, trimmed to
+            // exactly the requested episodes.
+            if (episodes.Count > p.MaxEpisodesForFanout && bestPack is not null)
+            {
+                Log("season-pack (episode request over fan-out cap)", bestPack, job);
+                items.Add(ToItem(bestPack) with { Season = season, NeededEpisodes = episodes });
+                continue;
+            }
+
+            var gaps = new List<int>();
+            foreach (var ep in episodes)
+            {
+                var best = acceptable.Where(a => !a.IsPack && a.Season == season && a.Episode == ep)
+                                     .OrderByDescending(a => a.Score).FirstOrDefault();
+                if (best is not null) items.Add(ToItem(best) with { Season = season, Episode = ep });
+                else gaps.Add(ep);
+            }
+
+            if (gaps.Count == 0) continue;
+
+            if (bestPack is not null)
+            {
+                _logger.LogInformation("\"{Title}\" S{Season}: {Count} requested episode(s) have no standalone release → using season pack trimmed to episode(s) {Gaps}",
+                    job.Title, season, gaps.Count, string.Join(",", gaps));
+                items.Add(ToItem(bestPack) with { Season = season, NeededEpisodes = gaps });
+            }
+            else
+            {
+                _logger.LogWarning("\"{Title}\" S{Season}: no standalone release and no season pack for episode(s) {Gaps}",
+                    job.Title, season, string.Join(",", gaps));
+            }
         }
+
         return items.Count == 0 ? DownloadPlan.None : new DownloadPlan(DownloadPlanKind.Episodes, items);
     }
 

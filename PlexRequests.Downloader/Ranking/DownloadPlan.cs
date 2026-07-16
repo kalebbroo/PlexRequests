@@ -10,8 +10,15 @@ public enum DownloadPlanKind
     Episodes = 3    // individual episodes (fan-out)
 }
 
-/// <summary>One selected release plus the season/episode it covers (for state tracking and imports).</summary>
-public record DownloadPlanItem(ReleaseCandidate Candidate, int? Season, int? Episode, bool IsPack);
+/// <summary>
+/// One selected release plus the season/episode it covers (for state tracking and imports).
+/// <paramref name="NeededEpisodes"/> is set only when a season pack was chosen to satisfy a specific
+/// subset of episodes (episode-level request, or a partially-missing season): it lists the episode
+/// numbers we actually want, so the download client can skip the pack's other files and the importer
+/// can avoid re-importing episodes already on Plex. Null means "take the whole thing" (movie, single
+/// episode, or a pack covering a fully-missing season).
+/// </summary>
+public record DownloadPlanItem(ReleaseCandidate Candidate, int? Season, int? Episode, bool IsPack, IReadOnlyList<int>? NeededEpisodes = null);
 
 /// <summary>
 /// The downloader's decision for a job: which releases to add. May be a single release (movie / pack)

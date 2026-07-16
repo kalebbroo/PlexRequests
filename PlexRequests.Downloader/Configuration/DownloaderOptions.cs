@@ -22,6 +22,10 @@ public class WorkerOptions
     /// <summary>If a torrent's progress hasn't advanced at all for this long, treat it as stalled/dead
     /// (no seeders) and fail it rather than polling forever.</summary>
     public int StallTimeoutMinutes { get; set; } = 120;
+    /// <summary>Grace window after a torrent first reports "finished" during which we keep re-checking for
+    /// its on-disk files before declaring an import failure — Deluge can flag is_finished a moment before
+    /// the last piece is flushed/moved to disk, so an immediate path lookup can transiently find nothing.</summary>
+    public int FinishSettleSeconds { get; set; } = 45;
 }
 
 /// <summary>Indexer endpoints (public JSON APIs keyed by IMDb id).</summary>

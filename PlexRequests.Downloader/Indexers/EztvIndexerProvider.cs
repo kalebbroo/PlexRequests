@@ -62,8 +62,14 @@ public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> l
         if (job.RequestedEpisodes.Count > 0)
         {
             var want = job.RequestedEpisodes.Select(e => (e.Season, e.Episode)).ToHashSet();
+            var wantSeasons = job.RequestedEpisodes.Select(e => e.Season).ToHashSet();
+            // Keep exact episode matches AND the season packs for the requested seasons: EZTV reports a
+            // season pack with episode 0 (→ null here), so an episode-only filter would drop it — but the
+            // ranker needs it as a fallback when an episode has no standalone release (see PlanEpisodes).
             candidates = candidates
-                .Where(c => c.Season is not null && c.Episode is not null && want.Contains((c.Season.Value, c.Episode.Value)))
+                .Where(c =>
+                    (c.Season is not null && c.Episode is not null && want.Contains((c.Season.Value, c.Episode.Value)))
+                    || (c.Episode is null && (c.Season is null || wantSeasons.Contains(c.Season.Value))))
                 .ToList();
         }
         else if (job.RequestedSeasons.Count > 0)

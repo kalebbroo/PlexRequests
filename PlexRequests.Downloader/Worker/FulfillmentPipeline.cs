@@ -26,6 +26,7 @@ public interface IFulfillmentPipeline
 public class FulfillmentPipeline(
     IIndexerClient indexer,
     IReleaseRanker ranker,
+    IReleaseParser parser,
     IDownloadPreferencesProvider prefs,
     ILibraryOrganizationProvider libraryPrefs,
     IDownloadClient downloadClient,
@@ -70,7 +71,7 @@ public class FulfillmentPipeline(
                     logger.LogWarning("Failed to add magnet for job {JobId} (S{Season}E{Episode})", job.Id, item.Season, item.Episode);
                     continue;
                 }
-                torrents.Add(new TorrentItem(torrentId, item.Season, item.Episode, item.IsPack));
+                torrents.Add(new TorrentItem(torrentId, item.Season, item.Episode, item.IsPack, NeededEpisodes: item.NeededEpisodes));
             }
 
             if (torrents.Count == 0)
@@ -112,10 +113,12 @@ public class FulfillmentPipeline(
 
     /// <summary>
     /// Poll every torrent backing the job; import each as it finishes (so partial successes persist to Plex),
-    /// report aggregate progress, and mark the request fulfilled only once all torrents import. If any torrent
-    /// errors/disappears/stalls or fails to import, the request is failed (or partially-completed if some
-    /// torrents already imported) — a retry recomputes only the still-missing episodes, so already-imported
-    /// ones aren't refetched.
+    /// report aggregate progress, and mark the request fulfilled only once all torrents reach a terminal state.
+    /// Failures are isolated PER TORRENT: if one torrent errors/disappears/stalls or fails to import, only that
+    /// torrent is dropped (and its partial data removed) — its healthy siblings keep downloading independently
+    /// rather than being wiped alongside it. The request is fulfilled if every torrent imported, partially
+    /// completed if some imported and some failed, or failed if none imported. A retry recomputes only the
+    /// still-missing episodes, so already-imported ones aren't refetched.
     /// </summary>
     private async Task MonitorAndImportAllAsync(ActiveJobRecord record, CancellationToken ct)
     {
@@ -123,10 +126,32 @@ public class FulfillmentPipeline(
         var items = record.Torrents.ToList(); // working copy; entries replaced as they import
         var interval = TimeSpan.FromSeconds(Math.Max(5, worker.Value.MonitorIntervalSeconds));
         var stallTimeout = TimeSpan.FromMinutes(Math.Max(5, worker.Value.StallTimeoutMinutes));
+        var finishSettle = TimeSpan.FromSeconds(Math.Max(5, worker.Value.FinishSettleSeconds));
         // Per-torrent stall tracking: last progress value seen + when it last changed.
         var lastProgress = new Dictionary<string, (double Progress, DateTime ChangedAt)>();
+        // Per-torrent finish-settle tracking: when the torrent first reported finished (to grace the
+        // is_finished-before-flush race before declaring a path-resolution failure).
+        var finishedSince = new Dictionary<string, DateTime>();
+        // Torrents that hit a terminal failure — dropped, but do not abort the rest of the batch.
+        var failed = new HashSet<string>();
+        var failReasons = new List<string>();
+        // Season packs restricted to specific episodes get their unwanted files deselected in Deluge once
+        // metadata resolves — tracked here so we only apply it once per torrent.
+        var trimmed = new HashSet<string>();
         var now0 = DateTime.UtcNow;
         foreach (var it in items) lastProgress[it.TorrentId] = (0, now0);
+
+        // Mark a single torrent as failed: record the reason, wipe its partial data (healthy siblings keep
+        // going), and remember it so it's excluded from further polling and from the final "all imported" check.
+        async Task FailTorrentAsync(TorrentItem it, string reason)
+        {
+            if (!failed.Add(it.TorrentId)) return;
+            failReasons.Add(reason);
+            logger.LogWarning("Job {JobId} torrent {TorrentId} (S{Season}E{Episode}) failed: {Reason}",
+                job.Id, it.TorrentId, it.Season, it.Episode, reason);
+            try { await downloadClient.RemoveAsync(it.TorrentId, removeData: true, ct); }
+            catch (Exception ex) { logger.LogDebug(ex, "Cleanup of failed torrent {TorrentId} skipped", it.TorrentId); }
+        }
 
         while (true)
         {
@@ -143,18 +168,18 @@ public class FulfillmentPipeline(
             }
 
             double progressSum = 0;
-            string? failReason = null;
 
             for (int i = 0; i < items.Count; i++)
             {
                 var it = items[i];
                 if (it.Imported) { progressSum += 100; continue; }
+                if (failed.Contains(it.TorrentId)) continue; // dropped; excluded from the average
 
                 var status = await downloadClient.GetStatusAsync(it.TorrentId, ct);
-                if (status is null) { failReason = "A torrent disappeared from the download client"; break; }
+                if (status is null) { await FailTorrentAsync(it, "A torrent disappeared from the download client"); continue; }
                 if (string.Equals(status.State, "Error", StringComparison.OrdinalIgnoreCase))
                 {
-                    failReason = "A torrent entered an error state"; break;
+                    await FailTorrentAsync(it, "A torrent entered an error state"); continue;
                 }
 
                 var nowTick = DateTime.UtcNow;
@@ -162,8 +187,31 @@ public class FulfillmentPipeline(
                     lastProgress[it.TorrentId] = (status.Progress, nowTick);
                 else if (lastProgress.TryGetValue(it.TorrentId, out var stuck) && nowTick - stuck.ChangedAt > stallTimeout)
                 {
-                    failReason = $"Torrent stalled at {status.Progress:F0}% for over {stallTimeout.TotalMinutes:F0}m (no seeders?)";
-                    break;
+                    await FailTorrentAsync(it, $"Torrent stalled at {status.Progress:F0}% for over {stallTimeout.TotalMinutes:F0}m (no seeders?)");
+                    continue;
+                }
+
+                // Pack trimmed to specific episodes: once Deluge has resolved the file list, deselect the
+                // files we don't need so only the wanted episodes download. Best-effort and done once; the
+                // importer also filters to NeededEpisodes, so this is purely a bandwidth/disk optimization.
+                if (it is { IsPack: true, NeededEpisodes: { Count: > 0 } needed } && !trimmed.Contains(it.TorrentId) && status.Files.Count > 0)
+                {
+                    trimmed.Add(it.TorrentId);
+                    var keepSet = needed.ToHashSet();
+                    var keep = status.Files.Select(f =>
+                    {
+                        var ep = parser.Parse(Path.GetFileName(f)).Episode;
+                        return ep is null || keepSet.Contains(ep.Value); // keep unmappable files (subs/extras) to be safe
+                    }).ToList();
+                    // Safety valve for a numbering mismatch (TMDB vs the pack's internal episode numbers,
+                    // classic for kids'/preschool shows): if trimming would leave NOTHING to download, don't
+                    // trim — take the whole pack rather than end up with an empty result.
+                    if (!keep.Any(k => k))
+                        logger.LogWarning("Job {JobId} torrent {TorrentId}: trimming to episode(s) {Needed} would skip every file (numbering mismatch?) — keeping the whole pack",
+                            job.Id, it.TorrentId, string.Join(",", needed));
+                    else if (keep.Any(k => !k) && await downloadClient.SetWantedFilesAsync(it.TorrentId, keep, ct))
+                        logger.LogInformation("Job {JobId} torrent {TorrentId}: season pack trimmed to episode(s) {Needed} — downloading {Kept}/{Total} file(s)",
+                            job.Id, it.TorrentId, string.Join(",", needed), keep.Count(k => k), keep.Count);
                 }
 
                 progressSum += status.Progress;
@@ -173,11 +221,20 @@ public class FulfillmentPipeline(
                     var sourcePath = ResolveSourcePath(status, job.Id, it.TorrentId);
                     if (sourcePath is null)
                     {
-                        failReason = $"Could not resolve an on-disk path for the finished torrent (save_path={status.SavePath}, reported name=\"{status.Name}\")";
-                        break;
+                        // is_finished can lead the actual flush-to-disk; give the files a grace window to
+                        // appear before treating an unresolvable path as a real failure.
+                        var firstFinished = finishedSince.TryGetValue(it.TorrentId, out var t) ? t : (finishedSince[it.TorrentId] = nowTick);
+                        if (nowTick - firstFinished < finishSettle)
+                        {
+                            logger.LogDebug("Job {JobId} torrent {TorrentId}: finished but on-disk path not resolvable yet; re-checking (waited {Elapsed:F0}s of {Grace:F0}s grace)",
+                                job.Id, it.TorrentId, (nowTick - firstFinished).TotalSeconds, finishSettle.TotalSeconds);
+                            continue;
+                        }
+                        await FailTorrentAsync(it, $"Could not resolve an on-disk path for the finished torrent after {finishSettle.TotalSeconds:F0}s (save_path={status.SavePath}, reported name=\"{status.Name}\")");
+                        continue;
                     }
                     var result = await importer.ImportAsync(job, it, sourcePath, ct);
-                    if (!result.Success) { failReason = result.FailReason ?? "A download completed but import failed"; break; }
+                    if (!result.Success) { await FailTorrentAsync(it, result.FailReason ?? "A download completed but import failed"); continue; }
 
                     try
                     {
@@ -198,6 +255,7 @@ public class FulfillmentPipeline(
                     try { await api.RefreshLibraryAsync(job.MediaType, ct); }
                     catch (Exception ex) { logger.LogDebug(ex, "Plex library refresh trigger skipped for job {JobId}", job.Id); }
 
+                    progressSum += 100 - status.Progress; // count the just-imported torrent as fully done this tick
                     items[i] = it with { Imported = true };
                     await stateStore.SaveAsync(record with { Torrents = items.ToList() }, ct); // persist so a restart resumes
                     try { await downloadClient.RemoveAsync(it.TorrentId, removeData: false, ct); } // keep files for seeding
@@ -207,30 +265,26 @@ public class FulfillmentPipeline(
 
             await SafeReportProgress(job.Id, (int)Math.Round(progressSum / Math.Max(1, items.Count)));
 
-            if (failReason is not null)
-            {
-                // Clean up the torrents that never made it in — a failed download shouldn't leave orphaned
-                // partial data sitting in Deluge forever. Already-imported items keep seeding as normal.
-                foreach (var it in items.Where(x => !x.Imported))
-                {
-                    try { await downloadClient.RemoveAsync(it.TorrentId, removeData: true, ct); }
-                    catch (Exception ex) { logger.LogDebug(ex, "Cleanup of failed torrent {TorrentId} skipped", it.TorrentId); }
-                }
-
-                if (items.Any(x => x.Imported))
-                    await SafePartiallyComplete(job.MediaRequestId, failReason);
-                else
-                    await SafeFail(job.MediaRequestId, failReason);
-                await SafeRemoveState(job.Id);
-                return;
-            }
-
-            if (items.All(x => x.Imported)) break;
+            // Terminal when every torrent has either imported or failed — no early abort on a single failure.
+            if (items.All(x => x.Imported || failed.Contains(x.TorrentId))) break;
 
             await Task.Delay(interval, ct);
         }
 
-        await SafeMarkFulfilled(job.MediaRequestId);
+        var importedCount = items.Count(x => x.Imported);
+        if (importedCount == items.Count)
+        {
+            await SafeMarkFulfilled(job.MediaRequestId);
+        }
+        else if (importedCount > 0)
+        {
+            await SafePartiallyComplete(job.MediaRequestId,
+                $"{importedCount}/{items.Count} downloads imported; the rest failed: {string.Join("; ", failReasons.Distinct())}");
+        }
+        else
+        {
+            await SafeFail(job.MediaRequestId, string.Join("; ", failReasons.Distinct()) is { Length: > 0 } r ? r : "All downloads failed");
+        }
         await SafeRemoveState(job.Id);
     }
 

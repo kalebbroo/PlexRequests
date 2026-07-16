@@ -5,8 +5,10 @@ using PlexRequestsHosted.Shared.DTOs;
 
 namespace PlexRequests.Downloader.Worker;
 
-/// <summary>One torrent backing a job: its Deluge id, the season/episode it covers, and whether it imported.</summary>
-public record TorrentItem(string TorrentId, int? Season, int? Episode, bool IsPack, bool Imported = false);
+/// <summary>One torrent backing a job: its Deluge id, the season/episode it covers, and whether it imported.
+/// <paramref name="NeededEpisodes"/> (when set) restricts a season pack to just those episode numbers — used
+/// to skip unwanted files in the download client and to filter what gets imported into Plex.</summary>
+public record TorrentItem(string TorrentId, int? Season, int? Episode, bool IsPack, bool Imported = false, IReadOnlyList<int>? NeededEpisodes = null);
 
 /// <summary>An in-flight download: the claimed job plus the one-or-more torrents fulfilling it.</summary>
 public record ActiveJobRecord(FulfillmentJobDto Job, List<TorrentItem> Torrents);

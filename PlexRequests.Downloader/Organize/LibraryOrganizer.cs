@@ -129,6 +129,26 @@ public class LibraryOrganizer(
             if (prefs.SplitSeasonPacks)
             {
                 var mapped = splitter.Map(videoFiles, season, expectedEpisodeCount);
+                // If this pack was chosen to satisfy only specific episodes (an episode-level request, or a
+                // partially-missing season), import just those — don't re-place episodes Plex already has.
+                if (torrent.NeededEpisodes is { Count: > 0 } needed)
+                {
+                    var keep = needed.ToHashSet();
+                    var before = mapped.Count;
+                    var restricted = mapped.Where(m => keep.Contains(m.Episode)).ToList();
+                    // Safety valve: if the requested episodes don't match any mapped file (TMDB vs the pack's
+                    // internal numbering disagree — common for kids'/preschool shows), import everything the
+                    // pack contains rather than nothing, so the content still lands.
+                    if (restricted.Count == 0 && before > 0)
+                        logger.LogWarning("Season pack S{Season}: none of the requested episode(s) {Needed} matched the pack's {Total} mapped file(s) (numbering mismatch?) — importing the whole pack",
+                            season, string.Join(",", needed), before);
+                    else
+                    {
+                        mapped = restricted;
+                        logger.LogInformation("Season pack S{Season}: importing {Kept} of {Total} mapped episode(s) (restricted to requested episode(s) {Needed})",
+                            season, mapped.Count, before, string.Join(",", needed));
+                    }
+                }
                 foreach (var (file, episode) in mapped)
                 {
                     var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, season, episode, CancellationToken.None).GetAwaiter().GetResult();

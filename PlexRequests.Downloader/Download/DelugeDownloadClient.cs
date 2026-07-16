@@ -78,6 +78,27 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
         return result.ValueKind == JsonValueKind.True;
     }
 
+    public async Task<bool> SetWantedFilesAsync(string torrentId, IReadOnlyList<bool> keep, CancellationToken ct)
+    {
+        if (keep.Count == 0) return false;
+        await EnsureAuthAsync(ct);
+        // Deluge file-priority scale: 0 = Skip (don't download), 4 = Normal. The array is positional,
+        // indexed by the torrent's file index (same order as core.get_torrent_status "files").
+        var priorities = keep.Select(k => (object)(k ? 4 : 0)).ToArray();
+        var options = new Dictionary<string, object> { ["file_priorities"] = priorities };
+        try
+        {
+            // set_torrent_options returns null on success (no "result"); an RPC error throws.
+            await RpcAsync("core.set_torrent_options", new object[] { new[] { torrentId }, options }, ct);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Deluge set_torrent_options(file_priorities) failed for {TorrentId}", torrentId);
+            return false;
+        }
+    }
+
     // ----- JSON-RPC plumbing -----
 
     private async Task EnsureAuthAsync(CancellationToken ct)

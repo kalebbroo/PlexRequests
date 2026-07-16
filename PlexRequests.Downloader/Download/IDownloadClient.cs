@@ -17,4 +17,9 @@ public interface IDownloadClient
     Task<string?> AddMagnetAsync(string magnet, string? label, CancellationToken ct);
     Task<DownloadStatus?> GetStatusAsync(string torrentId, CancellationToken ct);
     Task<bool> RemoveAsync(string torrentId, bool removeData, CancellationToken ct);
+    /// <summary>Restrict which files of a multi-file torrent actually download. <paramref name="keep"/> is
+    /// indexed to match the file order reported by <see cref="DownloadStatus.Files"/> (true = download,
+    /// false = skip). Used to pull only the wanted episodes out of a season pack. Best-effort — returns
+    /// false if the client can't apply it (metadata not yet resolved, plugin/option unsupported).</summary>
+    Task<bool> SetWantedFilesAsync(string torrentId, IReadOnlyList<bool> keep, CancellationToken ct);
 }

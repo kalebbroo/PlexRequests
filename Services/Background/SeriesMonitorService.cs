@@ -79,16 +79,25 @@ public class SeriesMonitorService(
             {
                 if (ct.IsCancellationRequested) break;
                 var eps = await plex.GetSeasonEpisodesAsync(anchor.MediaId, seasonNum); // IsAvailable + HasAired overlaid
+
+                // Batch this season's newly-aired missing episodes into ONE request. A single request means
+                // a single downloader job that can grab a season pack (and trim it to just these episodes)
+                // when no standalone per-episode releases exist — instead of one doomed job per episode.
+                var missing = new List<(int season, int episode)>();
                 foreach (var ep in eps.Where(e => e.HasAired && !e.IsAvailable))
                 {
                     var tag = $"S{ep.SeasonNumber}E{ep.EpisodeNumber}";
                     if (!covered.Add(tag)) continue; // already covered/queued this pass
-                    var result = await requests.CreateMonitoredEpisodeAsync(anchor.Id, ep.SeasonNumber, ep.EpisodeNumber);
-                    if (result.Success)
-                    {
-                        queued++;
-                        logger.LogInformation("Monitor queued {Tag} of \"{Title}\" (anchor #{Anchor})", tag, anchor.Title, anchor.Id);
-                    }
+                    missing.Add((ep.SeasonNumber, ep.EpisodeNumber));
+                }
+                if (missing.Count == 0) continue;
+
+                var result = await requests.CreateMonitoredEpisodesAsync(anchor.Id, missing);
+                if (result.Success)
+                {
+                    queued += missing.Count;
+                    logger.LogInformation("Monitor queued {Count} episode(s) of \"{Title}\" S{Season} (anchor #{Anchor})",
+                        missing.Count, anchor.Title, seasonNum, anchor.Id);
                 }
             }
         }

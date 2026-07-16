@@ -258,15 +258,21 @@ public class MediaRequestService(
     }
 
     /// <summary>
-    /// Create an auto-approved child request for a single newly-aired episode of a monitored series,
-    /// and enqueue it. Used by SeriesMonitorService — flows through the normal one-request/one-job
-    /// pipeline, so the fulfilled callback marks THIS child available (the monitored anchor is untouched).
+    /// Create ONE auto-approved child request covering all newly-aired missing episodes of a monitored
+    /// series (grouped per season by the caller), and enqueue it. Used by SeriesMonitorService — flows
+    /// through the normal one-request/one-job pipeline, so the fulfilled callback marks THIS child available
+    /// (the monitored anchor is untouched). Batching the season's missing episodes into a single request
+    /// (rather than one request per episode) lets the downloader satisfy them from a single season pack
+    /// when no standalone episode releases exist, instead of spawning a doomed job per episode.
     /// </summary>
-    public async Task<MediaRequestResult> CreateMonitoredEpisodeAsync(int anchorRequestId, int season, int episode)
+    public async Task<MediaRequestResult> CreateMonitoredEpisodesAsync(int anchorRequestId, IReadOnlyList<(int season, int episode)> episodes)
     {
+        if (episodes.Count == 0) return new MediaRequestResult { Success = false, ErrorMessage = "No episodes specified" };
         var anchor = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == anchorRequestId);
         if (anchor is null) return new MediaRequestResult { Success = false, ErrorMessage = "Anchor request not found" };
 
+        var csv = string.Join(",", episodes.Distinct().OrderBy(e => e.season).ThenBy(e => e.episode)
+            .Select(e => $"S{e.season}E{e.episode}"));
         var child = new MediaRequestEntity
         {
             MediaId = anchor.MediaId,
@@ -279,7 +285,7 @@ public class MediaRequestService(
             RequestedBy = anchor.RequestedBy,
             RequestedByUserId = anchor.RequestedByUserId,
             RequestAllSeasons = false,
-            RequestedEpisodesCsv = $"S{season}E{episode}",
+            RequestedEpisodesCsv = csv,
             Monitored = false
         };
         _db.MediaRequests.Add(child);
