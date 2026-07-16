@@ -29,6 +29,7 @@ Built with Blazor Server (.NET 10), MudBlazor, EF Core + SQLite. Ships as Docker
 8. [Configuration reference](#8-configuration-reference)
 9. [Backups & data](#9-backups--data)
 10. [Running from source (development)](#10-running-from-source-development)
+11. [Troubleshooting](#11-troubleshooting)
 
 ---
 
@@ -298,6 +299,85 @@ dotnet run --project PlexRequests.Downloader
 
 For local dev, put your keys in environment variables or `appsettings.Development.json` (which is
 gitignored) instead of `.env`. The database migrates itself on startup (EF Core migrations).
+
+---
+
+## 11. Troubleshooting
+
+### Downloads finish in the torrent client, but the request never turns Available
+
+Symptoms: the torrent shows 100% / seeding in your client, but the request stays **Downloading** (or
+flips to **Failed**), and the downloader logs mention *"could not resolve an on-disk path"* or a
+file-not-found.
+
+Almost always this is a **path mismatch**. For the downloader to import a finished download it must be
+able to read the files at the **exact absolute path your torrent client reports for them**, and the
+finished files and your library must live on **one filesystem** (so it can hardlink instead of copy).
+
+- **The managed torrent modes already satisfy this** — with `docker compose --profile torrent` or the
+  VPN stack, Deluge and the downloader share the same `media` volume mounted at `/data`, so the paths
+  always line up. Nothing to configure.
+- **Bring-your-own-client is where it bites** — most often a Deluge/qBittorrent installed **natively on
+  the host** (or in a separate container with different mounts). Your client reports a *host* path such
+  as `/srv/media/downloads/Movie/file.mkv`, but inside the downloader container that path doesn't exist
+  (the container only has the shared volume at `/data`), so the import can't find the file. Waiting
+  longer won't help: the built-in retry/grace window only covers the client still flushing to disk — it
+  can't fix a path that will never resolve.
+
+**Fix:** expose the host's download directory to the downloader container at the *identical* absolute
+path, and put the library on that same filesystem. Create a `docker-compose.override.yml` next to the
+compose file (Docker Compose merges it in automatically):
+
+```yaml
+# docker-compose.override.yml
+services:
+  downloader:
+    volumes:
+      # left  = the host directory your torrent client downloads into
+      # right = the SAME absolute path, so the paths your client reports resolve inside the container
+      - /srv/media:/srv/media
+    environment:
+      # keep the library on the same filesystem as the downloads → hardlinks work (no full copy)
+      Library__MoviePath: /srv/media/library/movies
+      Library__TvPath: /srv/media/library/tv
+```
+
+Then `docker compose up -d`. To confirm the mapping, ask the container to list a path your client
+reports — it should show the file:
+
+```bash
+docker exec plexrequests-downloader ls -l /srv/media/downloads/<...>
+```
+
+> **Rule of thumb (same as Sonarr/Radarr):** every component that touches the files — the torrent
+> client *and* the downloader — must reach them through one shared, identically-mapped path, with
+> downloads and library on the same filesystem. Mismatched paths are the single most common cause of
+> "downloaded but never imported."
+
+If your torrent client runs on a **different machine**, the downloader can't hardlink or move the files
+across the network on its own. Mount that machine's download share on the Docker host and pass it
+through at matching paths, or add it under **Admin → Network Drives**.
+
+### Managed Deluge connects, but downloads stall at 0% / "no peers"
+
+The torrent client is reachable but its traffic isn't getting out — commonly because a VPN or firewall
+already on the host is blocking or misrouting the container's connections. Two supported ways forward:
+
+- Run the torrent stack behind the built-in kill-switch, so its only egress is the VPN tunnel:
+  `docker compose -f docker-compose.vpn.yml up -d` (fill in the `VPN_PROVIDER` / `WIREGUARD_*` vars in
+  `.env`).
+- Or point `DELUGE_URL` at a torrent client you run on the host yourself (for a host-native client, use
+  `http://host.docker.internal:8112`) — then apply the path-mapping fix above so imports can find the
+  finished files.
+
+### Other quick checks
+
+- **Nothing queues on approval.** Set `FULFILLMENT_API_KEY` to the *same* value on both the web and
+  downloader containers, and make sure `FULFILLMENT_ENABLED` isn't turned off.
+- **`ERR_TOO_MANY_REDIRECTS` behind a proxy.** Your reverse proxy isn't forwarding `X-Forwarded-Proto`
+  — see [§5](#5-exposing-it-publicly).
+- **Everyone got logged out after a redeploy.** The `./keys` directory (DataProtection keys) wasn't
+  persisted — see [§9](#9-backups--data).
 
 ---
 

@@ -1,0 +1,213 @@
+@using PlexRequestsHosted.Services.Abstractions
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@implements IDisposable
+@inject IDownloadMonitorService DownloadMonitor
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mt-4">
+    <MudText Typo="Typo.h5">Downloads</MudText>
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+        @if (!_loading)
+        {
+            <MudText Typo="Typo.caption" Color="Color.Tertiary">Live · updates every @PollSeconds s</MudText>
+        }
+        <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small" OnClick="LoadAsync" />
+    </MudStack>
+</MudStack>
+
+<MudPaper Class="pa-4" Elevation="2">
+    @if (_loading && _jobs.Count == 0)
+    {
+        <MudProgressCircular Indeterminate="true" />
+    }
+    else if (_jobs.Count == 0)
+    {
+        <MudText>No active or recent downloads.</MudText>
+    }
+    else
+    {
+        <MudStack Spacing="3">
+            @foreach (var job in _jobs)
+            {
+                <div>
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+                        <MudChip T="string" Size="Size.Small" Color="StageColor(job)" Variant="Variant.Filled">@job.Stage</MudChip>
+                        <MudText Typo="Typo.subtitle1">
+                            @job.Title@(job.Year is int y ? $" ({y})" : "")
+                        </MudText>
+                        <MudIcon Icon="@(job.MediaType == MediaType.TvShow ? Icons.Material.Filled.Tv : Icons.Material.Filled.Movie)" Size="Size.Small" Color="Color.Tertiary" />
+                        @if (!string.IsNullOrWhiteSpace(job.RequestedBy))
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Tertiary">for @job.RequestedBy</MudText>
+                        }
+                        @if (job.Attempts > 1)
+                        {
+                            <MudTooltip Text="Download attempts so far">
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">attempt @job.Attempts</MudChip>
+                            </MudTooltip>
+                        }
+                        <MudSpacer />
+                        <MudText Typo="Typo.body2">@job.Progress%</MudText>
+                    </MudStack>
+
+                    <MudProgressLinear Value="@job.Progress" Color="StageColor(job)" Class="my-1"
+                                       Rounded="true" Size="Size.Small"
+                                       Striped="@(job.Status == FulfillmentStatus.Downloading)" />
+
+                    @if (!string.IsNullOrWhiteSpace(job.LastError) &&
+                         job.Status is FulfillmentStatus.Failed or FulfillmentStatus.PartiallyCompleted)
+                    {
+                        <MudAlert Severity="@(job.Status == FulfillmentStatus.Failed ? Severity.Error : Severity.Warning)"
+                                  Dense="true" Class="mt-1">@job.LastError</MudAlert>
+                    }
+
+                    @if (job.Torrents.Count > 0)
+                    {
+                        <MudSimpleTable Dense="true" Hover="true" Elevation="0" Class="mt-1">
+                            <thead>
+                                <tr>
+                                    <th>Torrent</th>
+                                    <th>Stage</th>
+                                    <th style="text-align:right">Progress</th>
+                                    <th style="text-align:right">Speed</th>
+                                    <th style="text-align:right">Seeds / Peers</th>
+                                    <th style="text-align:right">ETA</th>
+                                    <th style="text-align:right">Size</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var t in job.Torrents)
+                                {
+                                    <tr>
+                                        <td>
+                                            @if (t.Season is int s && t.Episode is int e)
+                                            {
+                                                <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mr-1">S@(s.ToString("00"))E@(e.ToString("00"))</MudText>
+                                            }
+                                            <span style="word-break:break-all">@t.Name</span>
+                                        </td>
+                                        <td><MudChip T="string" Size="Size.Small" Color="TorrentStageColor(t.Stage)" Variant="Variant.Text">@TorrentStageLabel(t.Stage)</MudChip></td>
+                                        <td style="text-align:right">@t.ProgressPercent.ToString("0.0")%</td>
+                                        <td style="text-align:right">@(t.Stage == DownloadTorrentStage.Downloading ? Rate(t.DownloadRateBytesPerSec) : "—")</td>
+                                        <td style="text-align:right">@t.Seeds / @t.Peers</td>
+                                        <td style="text-align:right">@Eta(t.EtaSeconds)</td>
+                                        <td style="text-align:right">@FmtSize(t.TotalSizeBytes)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </MudSimpleTable>
+                    }
+                </div>
+                <MudDivider />
+            }
+        </MudStack>
+    }
+</MudPaper>
+
+@code {
+    private const int PollSeconds = 5;
+    private List<DownloadJobView> _jobs = new();
+    private bool _loading = true;
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource? _cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        // Self-paced live refresh over the Blazor circuit; disposed with the component.
+        _cts = new CancellationTokenSource();
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(PollSeconds));
+        _ = PollLoopAsync(_cts.Token);
+    }
+
+    private async Task PollLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (await _timer!.WaitForNextTickAsync(ct))
+                await InvokeAsync(LoadAsync);
+        }
+        catch (OperationCanceledException) { /* component disposed */ }
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _jobs = await DownloadMonitor.GetActiveAndRecentAsync();
+        }
+        catch
+        {
+            // A transient read failure shouldn't blank the panel; keep the last snapshot.
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private static Color StageColor(DownloadJobView job) => job.Status switch
+    {
+        FulfillmentStatus.Completed => Color.Success,
+        FulfillmentStatus.Failed => Color.Error,
+        FulfillmentStatus.PartiallyCompleted => Color.Warning,
+        FulfillmentStatus.Cancelled => Color.Default,
+        FulfillmentStatus.Downloading when job.Torrents.Any(t => t.Stage == DownloadTorrentStage.Importing) => Color.Warning,
+        FulfillmentStatus.Downloading => Color.Info,
+        FulfillmentStatus.Queued or FulfillmentStatus.Claimed => Color.Default,
+        _ => Color.Primary
+    };
+
+    private static Color TorrentStageColor(DownloadTorrentStage stage) => stage switch
+    {
+        DownloadTorrentStage.Downloading => Color.Info,
+        DownloadTorrentStage.Finishing => Color.Primary,
+        DownloadTorrentStage.Importing => Color.Warning,
+        DownloadTorrentStage.Imported => Color.Success,
+        _ => Color.Default
+    };
+
+    private static string TorrentStageLabel(DownloadTorrentStage stage) => stage switch
+    {
+        DownloadTorrentStage.Downloading => "Downloading",
+        DownloadTorrentStage.Finishing => "Finishing",
+        DownloadTorrentStage.Importing => "Moving",
+        DownloadTorrentStage.Imported => "Imported",
+        _ => stage.ToString()
+    };
+
+    private static string Rate(double bytesPerSec)
+    {
+        if (bytesPerSec < 1) return "—";
+        string[] units = { "B/s", "KB/s", "MB/s", "GB/s" };
+        double v = bytesPerSec; int i = 0;
+        while (v >= 1024 && i < units.Length - 1) { v /= 1024; i++; }
+        return $"{v:0.0} {units[i]}";
+    }
+
+    private static string FmtSize(long bytes)
+    {
+        if (bytes <= 0) return "—";
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        double v = bytes; int i = 0;
+        while (v >= 1024 && i < units.Length - 1) { v /= 1024; i++; }
+        return $"{v:0.#} {units[i]}";
+    }
+
+    private static string Eta(long? seconds)
+    {
+        if (seconds is not > 0) return "—";
+        var t = TimeSpan.FromSeconds(seconds.Value);
+        if (t.TotalHours >= 1) return $"{(int)t.TotalHours}h {t.Minutes}m";
+        if (t.TotalMinutes >= 1) return $"{t.Minutes}m {t.Seconds}s";
+        return $"{t.Seconds}s";
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _timer?.Dispose();
+        _cts?.Dispose();
+    }
+}

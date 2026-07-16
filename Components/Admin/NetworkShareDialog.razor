@@ -1,0 +1,113 @@
+@using PlexRequestsHosted.Shared
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+
+<MudDialog>
+    <DialogContent>
+        <div class="d-flex flex-column gap-3" style="min-width:420px;">
+            <MudTextField @bind-Value="_name" Label="Name" Variant="Variant.Outlined" Dense="true" Required="true"
+                          HelperText="A friendly name, e.g. &quot;Media NAS&quot;." />
+
+            <MudSelect T="NetworkShareProtocol" @bind-Value="_protocol" Label="Protocol" Variant="Variant.Outlined" Dense="true">
+                <MudSelectItem Value="NetworkShareProtocol.Smb">SMB / CIFS (Windows, Synology, QNAP, unRAID, TrueNAS)</MudSelectItem>
+                <MudSelectItem Value="NetworkShareProtocol.Nfs">NFS (Linux/Unix export)</MudSelectItem>
+            </MudSelect>
+
+            <MudTextField @bind-Value="_server" Label="Server" Variant="Variant.Outlined" Dense="true" Required="true"
+                          Placeholder="192.168.1.10"
+                          HelperText="Use the NAS IP address — it avoids a DNS lookup and keeps everything on your LAN." />
+            @if (!ServerLooksPrivate)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true">
+                    That doesn't look like a private LAN address. SMB/NFS to a public address sends traffic
+                    (and credentials) over the internet — only continue if you really mean to.
+                </MudAlert>
+            }
+
+            <MudTextField @bind-Value="_shareName" Variant="Variant.Outlined" Dense="true" Required="true"
+                          Label="@(_protocol == NetworkShareProtocol.Nfs ? "Export path" : "Share name")"
+                          Placeholder="@(_protocol == NetworkShareProtocol.Nfs ? "/volume1/media" : "media")" />
+
+            @if (_protocol == NetworkShareProtocol.Smb)
+            {
+                <MudTextField @bind-Value="_username" Label="Username (blank = guest)" Variant="Variant.Outlined" Dense="true" />
+                <MudTextField @bind-Value="_password" Label="@PasswordLabel" Variant="Variant.Outlined" Dense="true"
+                              InputType="InputType.Password" Disabled="_clearPassword" />
+                @if (_hasPassword)
+                {
+                    <MudSwitch T="bool" @bind-Value="_clearPassword" Color="Color.Warning" Label="Remove saved password (connect as guest)" />
+                }
+                <MudTextField @bind-Value="_domain" Label="Domain / workgroup (optional)" Variant="Variant.Outlined" Dense="true" />
+            }
+            else
+            {
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                    NFS has no username/password — the server grants access by client IP. Make sure this
+                    container's host/IP is allowed to mount the export.
+                </MudText>
+            }
+
+            <MudSwitch T="bool" @bind-Value="_enabled" Color="Color.Primary" Label="Enabled" />
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(!IsValid)" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+    /// <summary>Existing share to edit, or null to create a new one.</summary>
+    [Parameter] public NetworkShareDto? Existing { get; set; }
+
+    private string _name = string.Empty;
+    private NetworkShareProtocol _protocol = NetworkShareProtocol.Smb;
+    private string _server = string.Empty;
+    private string _shareName = string.Empty;
+    private string? _domain;
+    private string? _username;
+    private string _password = string.Empty;
+    private bool _clearPassword;
+    private bool _hasPassword;
+    private bool _enabled = true;
+
+    private bool ServerLooksPrivate => string.IsNullOrWhiteSpace(_server) || NetworkShareServerHelper.LooksPrivate(_server);
+    private bool IsValid => !string.IsNullOrWhiteSpace(_name) && !string.IsNullOrWhiteSpace(_server) && !string.IsNullOrWhiteSpace(_shareName);
+    private string PasswordLabel => _hasPassword ? "Password (leave blank to keep current)" : "Password";
+
+    protected override void OnInitialized()
+    {
+        if (Existing is null) return;
+        _name = Existing.Name;
+        _protocol = Existing.Protocol;
+        _server = Existing.Server;
+        _shareName = Existing.ShareName;
+        _domain = Existing.Domain;
+        _username = Existing.Username;
+        _hasPassword = Existing.HasPassword;
+        _enabled = Existing.Enabled;
+    }
+
+    private void Save()
+    {
+        // Password semantics: cleared -> "", blank -> null (keep existing on edit / none on create), else the typed value.
+        string? password = _clearPassword ? string.Empty
+            : string.IsNullOrEmpty(_password) ? null
+            : _password;
+
+        MudDialog.Close(DialogResult.Ok(new NetworkShareEditDto
+        {
+            Name = _name.Trim(),
+            Protocol = _protocol,
+            Server = _server.Trim(),
+            ShareName = _shareName.Trim(),
+            Domain = _protocol == NetworkShareProtocol.Smb ? _domain : null,
+            Username = _protocol == NetworkShareProtocol.Smb ? _username : null,
+            Password = _protocol == NetworkShareProtocol.Smb ? password : null,
+            Enabled = _enabled
+        }));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

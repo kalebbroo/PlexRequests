@@ -64,10 +64,10 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         }
     }
 
-    public async Task<bool> ReportProgressAsync(int jobId, int progress, CancellationToken ct)
+    public async Task<bool> ReportProgressAsync(int jobId, int progress, IReadOnlyList<DownloadTorrentTelemetry>? torrents, CancellationToken ct)
     {
         var resp = await _http.PostAsJsonAsync($"/api/fulfillment/{jobId}/progress",
-            new ProgressRequest(progress, _worker.WorkerId), ct);
+            new ProgressRequest(progress, _worker.WorkerId, torrents?.ToList()), ct);
         return resp.IsSuccessStatusCode;
     }
 
@@ -104,6 +104,25 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Library config request failed (web app unreachable?)");
+            return null;
+        }
+    }
+
+    public async Task<IReadOnlyList<NetworkShareMountDto>?> GetNetworkSharesAsync(CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _http.GetAsync("/api/fulfillment/network-shares", ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Network shares fetch returned {Status}", (int)resp.StatusCode);
+                return null;
+            }
+            return await resp.Content.ReadFromJsonAsync<List<NetworkShareMountDto>>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Network shares request failed (web app unreachable?)");
             return null;
         }
     }

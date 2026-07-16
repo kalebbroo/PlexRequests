@@ -138,8 +138,43 @@ public class FulfillmentPipeline(
         // Season packs restricted to specific episodes get their unwanted files deselected in Deluge once
         // metadata resolves — tracked here so we only apply it once per torrent.
         var trimmed = new HashSet<string>();
+        // Latest raw client status per torrent, kept so we can assemble a live telemetry snapshot for the
+        // admin downloads panel at any point in the tick (including right before a blocking import).
+        var latest = new Dictionary<string, DownloadStatus>();
         var now0 = DateTime.UtcNow;
         foreach (var it in items) lastProgress[it.TorrentId] = (0, now0);
+
+        // Assemble the per-torrent telemetry snapshot pushed up with each progress report. Failed torrents
+        // are omitted; a torrent named in importingId is forced to the Importing stage (it's mid-move). This
+        // is display-only — never drives control flow — so unknown/missing fields just read as 0.
+        List<DownloadTorrentTelemetry> BuildTelemetry(string? importingId = null)
+        {
+            var list = new List<DownloadTorrentTelemetry>();
+            foreach (var it in items)
+            {
+                if (failed.Contains(it.TorrentId)) continue;
+                latest.TryGetValue(it.TorrentId, out var st);
+                DownloadTorrentStage stage;
+                if (it.Imported) stage = DownloadTorrentStage.Imported;
+                else if (it.TorrentId == importingId) stage = DownloadTorrentStage.Importing;
+                else if (st is not null && (st.IsFinished || st.Progress >= 100)) stage = DownloadTorrentStage.Finishing;
+                else stage = DownloadTorrentStage.Downloading;
+                list.Add(new DownloadTorrentTelemetry
+                {
+                    Name = string.IsNullOrWhiteSpace(st?.Name) ? job.Title : st!.Name,
+                    Stage = stage,
+                    ProgressPercent = it.Imported ? 100 : (st?.Progress ?? 0),
+                    DownloadRateBytesPerSec = stage == DownloadTorrentStage.Downloading ? (st?.DownloadRate ?? 0) : 0,
+                    Seeds = st?.Seeds ?? 0,
+                    Peers = st?.Peers ?? 0,
+                    EtaSeconds = st is { Eta: > 0 } ? st.Eta : null,
+                    TotalSizeBytes = st?.TotalSizeBytes ?? 0,
+                    Season = it.Season,
+                    Episode = it.Episode
+                });
+            }
+            return list;
+        }
 
         // Mark a single torrent as failed: record the reason, wipe its partial data (healthy siblings keep
         // going), and remember it so it's excluded from further polling and from the final "all imported" check.
@@ -177,6 +212,7 @@ public class FulfillmentPipeline(
 
                 var status = await downloadClient.GetStatusAsync(it.TorrentId, ct);
                 if (status is null) { await FailTorrentAsync(it, "A torrent disappeared from the download client"); continue; }
+                latest[it.TorrentId] = status;
                 if (string.Equals(status.State, "Error", StringComparison.OrdinalIgnoreCase))
                 {
                     await FailTorrentAsync(it, "A torrent entered an error state"); continue;
@@ -233,6 +269,9 @@ public class FulfillmentPipeline(
                         await FailTorrentAsync(it, $"Could not resolve an on-disk path for the finished torrent after {finishSettle.TotalSeconds:F0}s (save_path={status.SavePath}, reported name=\"{status.Name}\")");
                         continue;
                     }
+                    // Surface the "renaming & moving" phase in the admin panel before the (potentially slow,
+                    // blocking) import so it doesn't look stuck at 100% while files are being transferred.
+                    await SafeReportProgress(job.Id, (int)Math.Round(progressSum / Math.Max(1, items.Count)), BuildTelemetry(importingId: it.TorrentId));
                     var result = await importer.ImportAsync(job, it, sourcePath, ct);
                     if (!result.Success) { await FailTorrentAsync(it, result.FailReason ?? "A download completed but import failed"); continue; }
 
@@ -263,7 +302,7 @@ public class FulfillmentPipeline(
                 }
             }
 
-            await SafeReportProgress(job.Id, (int)Math.Round(progressSum / Math.Max(1, items.Count)));
+            await SafeReportProgress(job.Id, (int)Math.Round(progressSum / Math.Max(1, items.Count)), BuildTelemetry());
 
             // Terminal when every torrent has either imported or failed — no early abort on a single failure.
             if (items.All(x => x.Imported || failed.Contains(x.TorrentId))) break;
@@ -387,9 +426,9 @@ public class FulfillmentPipeline(
     // the download actually succeeded, so failures here are logged and swallowed rather than propagated
     // up to the outer catch-all (which would otherwise mark an actually-successful job Failed and delete
     // its resumable state).
-    private async Task SafeReportProgress(int jobId, int progress)
+    private async Task SafeReportProgress(int jobId, int progress, IReadOnlyList<DownloadTorrentTelemetry>? torrents = null)
     {
-        try { await api.ReportProgressAsync(jobId, progress, CancellationToken.None); }
+        try { await api.ReportProgressAsync(jobId, progress, torrents, CancellationToken.None); }
         catch (Exception ex) { logger.LogDebug(ex, "Progress report skipped for job {JobId}", jobId); }
     }
 

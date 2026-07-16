@@ -235,8 +235,73 @@ public class UserDto : BaseDto
 
 // Wire types for the fulfillment worker API — shared by the web app (endpoints) and the downloader (client).
 public record ClaimRequest(string? WorkerId, int? Max);
-public record ProgressRequest(int Progress, string? WorkerId);
+public record ProgressRequest(int Progress, string? WorkerId, List<DownloadTorrentTelemetry>? Torrents = null);
 public record FailRequest(string? Reason);
+
+/// <summary>
+/// Live, per-torrent download telemetry the downloader worker samples from the download client each
+/// monitor tick and pushes up with its progress report. Ephemeral — the web app holds only the latest
+/// snapshot in memory to drive the admin live-downloads panel; it is never persisted.
+/// </summary>
+public class DownloadTorrentTelemetry
+{
+    /// <summary>Torrent display name (from the release/magnet), for the admin row label.</summary>
+    public string Name { get; set; } = string.Empty;
+    /// <summary>Where this torrent is in its lifecycle: Downloading, Finishing, Importing, or Imported.</summary>
+    public DownloadTorrentStage Stage { get; set; } = DownloadTorrentStage.Downloading;
+    /// <summary>0-100 completion for this torrent.</summary>
+    public double ProgressPercent { get; set; }
+    /// <summary>Current download rate in bytes/sec (0 once finished/seeding).</summary>
+    public double DownloadRateBytesPerSec { get; set; }
+    public int Seeds { get; set; }
+    public int Peers { get; set; }
+    /// <summary>Estimated seconds to completion as reported by the client, if known (0/absent ⇒ unknown).</summary>
+    public long? EtaSeconds { get; set; }
+    public long TotalSizeBytes { get; set; }
+    /// <summary>Season/episode this torrent covers, when the job is a TV fan-out (null for movies/whole packs).</summary>
+    public int? Season { get; set; }
+    public int? Episode { get; set; }
+}
+
+/// <summary>Per-torrent lifecycle stage surfaced in the admin live-downloads panel.</summary>
+public enum DownloadTorrentStage
+{
+    /// <summary>Actively pulling bytes.</summary>
+    Downloading = 0,
+    /// <summary>Reported finished by the client; in the grace window before the files are resolvable on disk.</summary>
+    Finishing = 1,
+    /// <summary>Files resolved; being renamed and moved/hardlinked into the Plex library.</summary>
+    Importing = 2,
+    /// <summary>Imported into the library; the torrent is being (or has been) removed and kept seeding.</summary>
+    Imported = 3
+}
+
+/// <summary>
+/// A download job as rendered in the admin live-downloads panel: the request identity, its overall
+/// lifecycle stage, and — while in-flight — the live per-torrent telemetry. Assembled by the web app
+/// from the persisted <c>FulfillmentJob</c> row joined with the latest in-memory telemetry snapshot.
+/// </summary>
+public class DownloadJobView
+{
+    public int JobId { get; set; }
+    public int MediaRequestId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public int? Year { get; set; }
+    public MediaType MediaType { get; set; }
+    public string? PosterUrl { get; set; }
+    public string? RequestedBy { get; set; }
+    public FulfillmentStatus Status { get; set; }
+    /// <summary>0-100 aggregate progress persisted for the job.</summary>
+    public int Progress { get; set; }
+    public int Attempts { get; set; }
+    public string? LastError { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+    /// <summary>Whether this is an in-flight job (true) or part of the recently-finished tail (false).</summary>
+    public bool IsActive { get; set; }
+    /// <summary>Human lifecycle label for the whole job (e.g. "Approved — queued", "Downloading", "Available").</summary>
+    public string Stage { get; set; } = string.Empty;
+    public List<DownloadTorrentTelemetry> Torrents { get; set; } = new();
+}
 public record RefreshLibraryRequest(MediaType MediaType);
 
 public class FulfillmentJobDto
@@ -446,6 +511,80 @@ public class ImportedFileDto
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
     public long SizeBytes { get; set; }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Network shares (NAS / network drives). Admins add an SMB or NFS share in the admin UI; both the
+// web app (read-only, for the folder browser) and the downloader (read-write, for placing files)
+// mount it at the SAME path — /mnt/nas/{MountSlug} — so paths configured in Library Organization
+// are valid in both containers. Passwords are encrypted at rest and never returned to the browser.
+// ---------------------------------------------------------------------------------------------
+
+/// <summary>A configured network share as shown in the admin UI. The password is never included;
+/// <see cref="HasPassword"/> just signals whether one is stored.</summary>
+public class NetworkShareDto
+{
+    public int Id { get; set; }
+    /// <summary>Friendly name the admin gives the share (e.g. "Media NAS").</summary>
+    public string Name { get; set; } = string.Empty;
+    /// <summary>Stable path-safe slug; the share is mounted at /mnt/nas/{MountSlug} in both containers.</summary>
+    public string MountSlug { get; set; } = string.Empty;
+    public NetworkShareProtocol Protocol { get; set; } = NetworkShareProtocol.Smb;
+    /// <summary>NAS IP or hostname. IP is recommended (no DNS lookup, no chance of a hostname leak).</summary>
+    public string Server { get; set; } = string.Empty;
+    /// <summary>SMB share name, or the NFS export path (e.g. "media" / "/volume1/media").</summary>
+    public string ShareName { get; set; } = string.Empty;
+    /// <summary>Optional SMB domain/workgroup.</summary>
+    public string? Domain { get; set; }
+    /// <summary>SMB username (blank = guest/anonymous). Unused for NFS.</summary>
+    public string? Username { get; set; }
+    public bool HasPassword { get; set; }
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>The in-container mount path, /mnt/nas/{MountSlug}. Point Library Organization paths here.</summary>
+    public string MountPath => string.IsNullOrEmpty(MountSlug) ? string.Empty : $"/mnt/nas/{MountSlug}";
+    /// <summary>True when Server is a private/RFC1918 LAN address — the safe case (traffic stays local).</summary>
+    public bool ServerIsPrivate { get; set; } = true;
+
+    /// <summary>Live mount status from the web container (populated by the mount service, not stored).</summary>
+    public NetworkMountStatusDto? Status { get; set; }
+}
+
+/// <summary>Create/update payload. A null <see cref="Password"/> on update keeps the existing password;
+/// an empty string clears it (guest). Write-only — the password is never read back out.</summary>
+public class NetworkShareEditDto
+{
+    public string Name { get; set; } = string.Empty;
+    public NetworkShareProtocol Protocol { get; set; } = NetworkShareProtocol.Smb;
+    public string Server { get; set; } = string.Empty;
+    public string ShareName { get; set; } = string.Empty;
+    public string? Domain { get; set; }
+    public string? Username { get; set; }
+    public string? Password { get; set; }
+    public bool Enabled { get; set; } = true;
+}
+
+/// <summary>Runtime mount state for one share, surfaced to the admin UI.</summary>
+public class NetworkMountStatusDto
+{
+    public bool Mounted { get; set; }
+    /// <summary>Human-readable error (mount stderr, trimmed) when the last mount attempt failed.</summary>
+    public string? Error { get; set; }
+    public DateTime CheckedAt { get; set; }
+}
+
+/// <summary>Full mount config INCLUDING the decrypted password. Server-to-downloader only, over the
+/// shared-secret fulfillment API on the internal Docker network — never sent to a browser.</summary>
+public class NetworkShareMountDto
+{
+    public string MountSlug { get; set; } = string.Empty;
+    public NetworkShareProtocol Protocol { get; set; } = NetworkShareProtocol.Smb;
+    public string Server { get; set; } = string.Empty;
+    public string ShareName { get; set; } = string.Empty;
+    public string? Domain { get; set; }
+    public string? Username { get; set; }
+    public string? Password { get; set; }
+    public bool Enabled { get; set; } = true;
 }
 
 /// <summary>One subfolder returned by the admin folder-browser endpoint.</summary>

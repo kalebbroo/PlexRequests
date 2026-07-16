@@ -60,7 +60,7 @@
                 }
 
                 <MudStack Row="true" Spacing="2">
-                    <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="LoadServerAsync">Refresh</MudButton>
+                    <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="RefreshAllAsync">Refresh</MudButton>
                     <MudButton Color="Color.Secondary" Variant="Variant.Text" Href="/admin?tab=approvals">Manage Requests</MudButton>
                     <MudButton Color="Color.Secondary" Variant="Variant.Text" Href="/browse">Go Home</MudButton>
                 </MudStack>
@@ -102,6 +102,8 @@
             </MudTable>
         }
     </MudPaper>
+
+    <AdminDownloadsMonitorPanel />
 
     <MudText Typo="Typo.h5" Class="mt-4">Availability Index</MudText>
     <MudPaper Class="pa-4" Elevation="2">
@@ -157,6 +159,10 @@
     {
         await Task.WhenAll(LoadServerAsync(), LoadSessionsAsync(), LoadAvailabilityAsync());
     }
+
+    // The Refresh button now reloads Now Playing too, not just server info/libraries (it previously left
+    // the sessions table stale). The Downloads panel below refreshes itself on its own timer.
+    private Task RefreshAllAsync() => Task.WhenAll(LoadServerAsync(), LoadSessionsAsync());
 
     private async Task LoadServerAsync()
     {

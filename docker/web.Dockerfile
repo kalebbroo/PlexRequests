@@ -19,6 +19,12 @@ RUN dotnet publish PlexRequestsHosted.csproj -c Release -r linux-x64 --no-self-c
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
+# cifs-utils / nfs-common: mount.cifs & mount.nfs helpers so the app can mount admin-configured NAS
+# shares (Admin > Network Drives) read-only for the folder browser. Needs CAP_SYS_ADMIN at runtime
+# (granted in docker-compose.yml); harmless if the feature is unused.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cifs-utils nfs-common \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app .
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080

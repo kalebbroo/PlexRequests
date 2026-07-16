@@ -1,9 +1,25 @@
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Services.Implementations
 @inject IFolderBrowserService FolderBrowser
+@inject INetworkShareService Shares
 
 <MudDialog>
     <DialogContent>
+        @if (_networkShares.Count > 0)
+        {
+            <div class="d-flex gap-2 align-items-center flex-wrap mb-2">
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">Network drives:</MudText>
+                @foreach (var s in _networkShares)
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                             Icon="@Icons.Material.Filled.Dns"
+                             Color="@(s.Status is { Mounted: true } ? Color.Success : Color.Default)"
+                             OnClick="@(() => Navigate(s.MountPath))">
+                        @s.Name
+                    </MudChip>
+                }
+            </div>
+        }
         <div class="d-flex gap-2 align-items-center mb-3">
             <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Title="Up one level"
                            Disabled="@(_current?.ParentPath is null)" OnClick="GoUp" />
@@ -54,11 +70,14 @@
     private FolderBrowseResultDto? _current;
     private string _pathInput = string.Empty;
     private string? _error;
+    private List<NetworkShareDto> _networkShares = new();
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         _pathInput = StartPath ?? string.Empty;
         Load(StartPath);
+        try { _networkShares = (await Shares.GetAllAsync()).Where(s => s.Enabled).ToList(); }
+        catch { _networkShares = new(); }
     }
 
     private void Navigate(string? path)

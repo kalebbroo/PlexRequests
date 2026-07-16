@@ -17,6 +17,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<QualityRuleEntity> QualityRules => Set<QualityRuleEntity>();
     public DbSet<DownloadPreferencesEntity> DownloadPreferences => Set<DownloadPreferencesEntity>();
     public DbSet<LibraryOrganizationPreferencesEntity> LibraryOrganizationPreferences => Set<LibraryOrganizationPreferencesEntity>();
+    public DbSet<NetworkShareEntity> NetworkShares => Set<NetworkShareEntity>();
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
     public DbSet<FulfillmentJobEntity> FulfillmentJobs => Set<FulfillmentJobEntity>();
     public DbSet<ImportedFileEntity> ImportedFiles => Set<ImportedFileEntity>();
@@ -119,6 +120,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             b.HasKey(x => x.Id);
             b.HasIndex(x => x.IsSingleton).IsUnique(); // enforce the single settings row
+        });
+
+        modelBuilder.Entity<NetworkShareEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.MountSlug).IsUnique(); // one mount path per share
         });
 
         modelBuilder.Entity<NotificationEntity>(b =>

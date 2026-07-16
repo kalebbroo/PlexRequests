@@ -1,0 +1,166 @@
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@inject PlexRequestsHosted.Services.Implementations.INetworkShareService Shares
+@inject PlexRequestsHosted.Services.Background.INetworkMountController MountController
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
+@inject MudBlazor.IDialogService DialogService
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h2>Network Drives</h2>
+    <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Add" OnClick="Add">Add network drive</MudButton>
+</div>
+<MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-4">
+    Add a NAS or network share (SMB or NFS) and both the app and the downloader connect to it directly
+    over your network — no host mounts or <code>.env</code> editing needed. Once a drive is connected,
+    its folders show up in the Library Organization folder picker. Each drive mounts at the path shown
+    below; point your movie/TV/routing paths there (e.g. <code>/mnt/nas/media/Movies</code>).
+</MudText>
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else if (_shares.Count == 0)
+{
+    <MudPaper Class="pa-6 d-flex flex-column align-items-center gap-2" Elevation="1">
+        <MudIcon Icon="@Icons.Material.Filled.Dns" Size="Size.Large" Color="Color.Tertiary" />
+        <MudText Typo="Typo.body1">No network drives yet.</MudText>
+        <MudText Typo="Typo.body2" Color="Color.Tertiary">Add your NAS to route library files to it.</MudText>
+    </MudPaper>
+}
+else
+{
+    <MudPaper Elevation="1">
+        <MudList T="NetworkShareDto" Dense="false">
+            @foreach (var s in _shares)
+            {
+                <MudListItem T="NetworkShareDto">
+                    <div class="d-flex align-items-center justify-content-between gap-3 flex-wrap">
+                        <div class="d-flex flex-column">
+                            <div class="d-flex align-items-center gap-2">
+                                <MudText Typo="Typo.subtitle1">@s.Name</MudText>
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@s.Protocol.ToString().ToUpperInvariant()</MudChip>
+                                @if (!s.Enabled)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Default">Disabled</MudChip>
+                                }
+                                @{ var st = s.Status; }
+                                @if (!s.Enabled)
+                                {
+                                    /* no status chip when disabled */
+                                }
+                                else if (st is null)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Default" Icon="@Icons.Material.Filled.HourglassEmpty">Checking…</MudChip>
+                                }
+                                else if (st.Mounted)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Icon="@Icons.Material.Filled.CheckCircle">Connected</MudChip>
+                                }
+                                else
+                                {
+                                    <MudTooltip Text="@st.Error">
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Error" Icon="@Icons.Material.Filled.Error">Not connected</MudChip>
+                                    </MudTooltip>
+                                }
+                            </div>
+                            <MudText Typo="Typo.body2" Color="Color.Tertiary">
+                                @ServerDisplay(s) &nbsp;→&nbsp; <code>@s.MountPath</code>
+                            </MudText>
+                            @if (st is { Mounted: false, Error: not null } && s.Enabled)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Error">@st.Error</MudText>
+                            }
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.NetworkCheck" OnClick="@(() => Test(s))" Disabled="_busy">Test</MudButton>
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" OnClick="@(() => Edit(s))" Title="Edit" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="@(() => Delete(s))" Title="Delete" />
+                        </div>
+                    </div>
+                </MudListItem>
+            }
+        </MudList>
+    </MudPaper>
+    <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-3 d-block">
+        Tip: prefer the NAS IP over a hostname, and use a private LAN address so traffic never leaves your network.
+        If a drive won't connect, the most common cause is the container missing the mount capability — see the
+        deployment notes for enabling <code>SYS_ADMIN</code>.
+    </MudText>
+}
+
+@code {
+    private bool _loading = true;
+    private bool _busy;
+    private List<NetworkShareDto> _shares = new();
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _loading = true; StateHasChanged();
+        try { _shares = await Shares.GetAllAsync(); }
+        finally { _loading = false; StateHasChanged(); }
+    }
+
+    private static string ServerDisplay(NetworkShareDto s) => s.Protocol == NetworkShareProtocol.Nfs
+        ? $"{s.Server}:{s.ShareName}"
+        : $"//{s.Server}/{s.ShareName}";
+
+    private async Task Add()
+    {
+        var result = await ShowDialog(null);
+        if (result is null) return;
+        await Shares.CreateAsync(result);
+        await AfterChange("Network drive added.");
+    }
+
+    private async Task Edit(NetworkShareDto s)
+    {
+        var result = await ShowDialog(s);
+        if (result is null) return;
+        await Shares.UpdateAsync(s.Id, result);
+        await AfterChange("Network drive updated.");
+    }
+
+    private async Task Delete(NetworkShareDto s)
+    {
+        var ok = await DialogService.ShowMessageBox("Remove network drive",
+            $"Remove \"{s.Name}\"? Library paths pointing at {s.MountPath} will stop working until reconfigured.",
+            yesText: "Remove", cancelText: "Cancel");
+        if (ok != true) return;
+        await Shares.DeleteAsync(s.Id);
+        await AfterChange("Network drive removed.");
+    }
+
+    private async Task Test(NetworkShareDto s)
+    {
+        _busy = true; StateHasChanged();
+        try
+        {
+            await MountController.ReconcileNowAsync();
+            _shares = await Shares.GetAllAsync();
+            var st = _shares.FirstOrDefault(x => x.Id == s.Id)?.Status;
+            if (st is { Mounted: true }) await Toast.ShowSuccessAsync($"Connected to {s.Name}.");
+            else await Toast.ShowErrorAsync($"Could not connect to {s.Name}: {st?.Error ?? "unknown error"}");
+        }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private async Task<NetworkShareEditDto?> ShowDialog(NetworkShareDto? existing)
+    {
+        var parameters = new MudBlazor.DialogParameters<NetworkShareDialog> { { x => x.Existing, existing } };
+        var options = new MudBlazor.DialogOptions { MaxWidth = MudBlazor.MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true };
+        var dialog = await DialogService.ShowAsync<NetworkShareDialog>(existing is null ? "Add network drive" : "Edit network drive", parameters, options);
+        var result = await dialog.Result;
+        return result is { Canceled: false } ? result.Data as NetworkShareEditDto : null;
+    }
+
+    private async Task AfterChange(string message)
+    {
+        await Toast.ShowSuccessAsync(message);
+        // Mount/unmount immediately so the status chips reflect reality without waiting for the tick.
+        try { await MountController.ReconcileNowAsync(); } catch { /* status will catch up on next tick */ }
+        await Load();
+    }
+}

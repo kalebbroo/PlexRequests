@@ -45,6 +45,14 @@ services:
       # MoviePath/TvPath/routing-rule RootPath — the web app never writes to these itself.
       - media:/data:ro
       - ${NETWORK_LIBRARY_PATH:-./network-library}:/mnt/network-library:ro
+    # Lets the app mount admin-configured NAS shares (Admin > Network Drives) read-only for the folder
+    # browser. SYS_ADMIN is required to mount CIFS/NFS inside a container; apparmor:unconfined lets the
+    # mount syscall through on hosts running the default AppArmor profile (Ubuntu/Debian). Remove both
+    # if you don't use the Network Drives feature.
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
     restart: unless-stopped
 
   # Optional managed torrent client — only started with:  --profile torrent
@@ -92,6 +100,12 @@ services:
       # subfolders under it, e.g. /mnt/network-library/Anime/Movies. Defaults to a local folder so
       # nothing breaks if you don't have one.
       - ${NETWORK_LIBRARY_PATH:-./network-library}:/mnt/network-library
+    # Lets the worker mount admin-configured NAS shares (Admin > Network Drives) read-write to place
+    # library files. See the note on the web service above; remove both if the feature is unused.
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
     depends_on:
       - web
     restart: unless-stopped

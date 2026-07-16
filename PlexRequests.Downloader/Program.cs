@@ -113,6 +113,8 @@ builder.Services.AddHttpClient<IVpnGuard, VpnGuard>();
 builder.Services.AddSingleton<IJobStateStore, JsonJobStateStore>();
 builder.Services.AddSingleton<IFulfillmentPipeline, FulfillmentPipeline>();
 builder.Services.AddHostedService<FulfillmentWorker>();
+// Mounts admin-configured NAS/network shares (read-write) so the organizer can place files there.
+builder.Services.AddHostedService<NetworkMountService>();
 
 var host = builder.Build();
 host.Run();

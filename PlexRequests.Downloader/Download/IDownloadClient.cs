@@ -8,7 +8,11 @@ namespace PlexRequests.Downloader.Download;
 /// <param name="Files">Relative-to-SavePath paths of every file in the torrent, as reported by the
 /// download client — the authoritative source for where content actually landed on disk. Empty if the
 /// client doesn't report it (e.g. an older API) or the torrent metadata isn't resolved yet.</param>
-public record DownloadStatus(string State, double Progress, string Name, long TotalSizeBytes, string? SavePath, bool IsFinished, IReadOnlyList<string> Files);
+/// <param name="DownloadRate">Current download rate in bytes/sec (0 while seeding/finished).</param>
+/// <param name="Seeds">Connected seeds, if the client reports it.</param>
+/// <param name="Peers">Connected peers, if the client reports it.</param>
+/// <param name="Eta">Estimated seconds to completion as reported by the client (0 ⇒ unknown/finished).</param>
+public record DownloadStatus(string State, double Progress, string Name, long TotalSizeBytes, string? SavePath, bool IsFinished, IReadOnlyList<string> Files, double DownloadRate = 0, int Seeds = 0, int Peers = 0, long Eta = 0);
 
 /// <summary>Torrent client abstraction (implemented for Deluge; swappable).</summary>
 public interface IDownloadClient

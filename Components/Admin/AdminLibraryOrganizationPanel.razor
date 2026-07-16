@@ -69,10 +69,11 @@ else
             Anime is detected automatically (Animation genre + Japanese language/origin) — no manual tagging needed.
         </MudText>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-2">
-            <b>Root path</b> must be a path the downloader container can see. To point at a network drive, mount it on
-            the host (e.g. an <code>/etc/fstab</code> CIFS/NFS entry) and map it into the container via the
-            <code>NETWORK_LIBRARY_PATH</code> setting in your <code>.env</code> file — then use a path under
-            <code>/mnt/network-library</code> here (e.g. <code>/mnt/network-library/Anime/Movies</code>).
+            <b>Root path</b> must be a path the downloader can write to. To send content to a NAS/network drive,
+            add it under <b>Admin → Network Drives</b> — it's then mounted at <code>/mnt/nas/&lt;name&gt;</code>, so
+            use a path under that here (e.g. <code>/mnt/nas/media/Anime/Movies</code>). The folder icon browses
+            connected drives too. (Hardlink transfer can't cross onto a network drive — it falls back to copy
+            automatically for those targets.)
         </MudText>
         @if (_p.LibraryRootRules.Count == 0)
         {

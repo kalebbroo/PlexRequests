@@ -98,6 +98,15 @@ public enum SeasonPackStrategy
     Auto = 2
 }
 
+/// <summary>Network file-sharing protocol used to reach an admin-configured NAS/network drive.</summary>
+public enum NetworkShareProtocol
+{
+    /// <summary>SMB/CIFS — Windows shares, Synology/QNAP/unRAID/TrueNAS default. The common case.</summary>
+    Smb = 0,
+    /// <summary>NFS export (Linux/Unix-style). No username/password; access is host/IP based.</summary>
+    Nfs = 1
+}
+
 /// <summary>How the organizer places a finished download's video files into the library.</summary>
 public enum TransferMode
 {

@@ -140,12 +140,24 @@ builder.Services.AddHttpClient<PlexRequestsHosted.Services.Implementations.IPlex
 builder.Services.AddScoped<IMediaRequestService, MediaRequestService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.ISeasonAvailabilityEvaluator, PlexRequestsHosted.Services.Implementations.SeasonAvailabilityEvaluator>();
 builder.Services.AddScoped<IFulfillmentQueue, FulfillmentQueue>();
+// Live download telemetry: the store is a singleton (shared by worker progress reports and the admin
+// circuit); the read model service is scoped (needs the DbContext).
+builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.IDownloadTelemetryStore, PlexRequestsHosted.Services.Implementations.DownloadTelemetryStore>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IDownloadMonitorService, PlexRequestsHosted.Services.Implementations.DownloadMonitorService>();
 builder.Services.AddScoped<IDiscordLinkService, DiscordLinkService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IMediaIssueService, PlexRequestsHosted.Services.Implementations.MediaIssueService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IQualityRuleService, PlexRequestsHosted.Services.Implementations.QualityRuleService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IDownloadPreferencesService, PlexRequestsHosted.Services.Implementations.DownloadPreferencesService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.ILibraryOrganizationPreferencesService, PlexRequestsHosted.Services.Implementations.LibraryOrganizationPreferencesService>();
 builder.Services.AddSingleton<PlexRequestsHosted.Services.Implementations.IFolderBrowserService, PlexRequestsHosted.Services.Implementations.FolderBrowserService>();
+// Network shares (NAS/network drives): CRUD service + live mount-status store + the background service
+// that mounts them read-only so the folder browser can list them. The same instance is exposed as
+// INetworkMountController so an admin save/test can trigger an immediate reconcile.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.INetworkShareService, PlexRequestsHosted.Services.Implementations.NetworkShareService>();
+builder.Services.AddSingleton<PlexRequestsHosted.Services.Background.INetworkMountStatusStore, PlexRequestsHosted.Services.Background.NetworkMountStatusStore>();
+builder.Services.AddSingleton<PlexRequestsHosted.Services.Background.WebNetworkMountService>();
+builder.Services.AddSingleton<PlexRequestsHosted.Services.Background.INetworkMountController>(sp => sp.GetRequiredService<PlexRequestsHosted.Services.Background.WebNetworkMountService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PlexRequestsHosted.Services.Background.WebNetworkMountService>());
 // Backstop that requeues/fails jobs stranded by a dead downloader.
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.FulfillmentReaperService>();
 // Keeps the DB-backed Plex availability index fresh (per-season episode presence + prune removals).
@@ -408,6 +420,15 @@ app.MapGet("/api/fulfillment/library-config", async (HttpContext ctx, IConfigura
     return Results.Ok(await libraryPrefs.GetAsync());
 });
 
+// Worker fetches the admin-configured network shares WITH decrypted credentials, so it can mount them
+// read-write and place files there. Credentials cross only the internal Docker network and only to a
+// caller holding the shared fulfillment secret — the same trust boundary as every endpoint here.
+app.MapGet("/api/fulfillment/network-shares", async (HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.INetworkShareService shares) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return Results.Ok(await shares.GetMountConfigsAsync());
+});
+
 // Worker fetches cached TMDB episode titles for a season, to name individual files in a season pack.
 // Fetched lazily at import time (not bundled at enqueue) so titles stay fresh and cover every episode
 // in the pack, not just the ones that were missing from Plex when the job was originally enqueued.
@@ -459,11 +480,13 @@ app.MapPost("/api/fulfillment/refresh-library", async (RefreshLibraryRequest bod
 });
 
 // Worker reports download progress; reflects the request as Processing for the UI.
-app.MapPost("/api/fulfillment/{jobId:int}/progress", async (int jobId, ProgressRequest body, HttpContext ctx, IConfiguration cfg, IFulfillmentQueue queue, AppDbContext db) =>
+app.MapPost("/api/fulfillment/{jobId:int}/progress", async (int jobId, ProgressRequest body, HttpContext ctx, IConfiguration cfg, IFulfillmentQueue queue, AppDbContext db, PlexRequestsHosted.Services.Abstractions.IDownloadTelemetryStore telemetry) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     var ok = await queue.ReportProgressAsync(jobId, body.Progress);
     if (!ok) return Results.NotFound();
+    // Stash the live per-torrent snapshot for the admin downloads panel (ephemeral; not persisted).
+    if (body.Torrents is not null) telemetry.Update(jobId, body.Torrents);
     var job = await db.FulfillmentJobs.FirstOrDefaultAsync(j => j.Id == jobId);
     if (job is not null)
     {

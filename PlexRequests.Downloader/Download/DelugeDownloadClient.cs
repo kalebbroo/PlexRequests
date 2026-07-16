@@ -42,7 +42,8 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
     public async Task<DownloadStatus?> GetStatusAsync(string torrentId, CancellationToken ct)
     {
         await EnsureAuthAsync(ct);
-        var keys = new[] { "name", "state", "progress", "total_size", "is_finished", "download_location", "save_path", "files" };
+        var keys = new[] { "name", "state", "progress", "total_size", "is_finished", "download_location", "save_path", "files",
+                           "download_payload_rate", "num_seeds", "num_peers", "eta" };
         var result = await RpcAsync("core.get_torrent_status", new object[] { torrentId, keys }, ct);
         if (result.ValueKind != JsonValueKind.Object || !result.EnumerateObject().Any())
             return null;
@@ -52,6 +53,13 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
         double progress = result.TryGetProperty("progress", out var pr) && pr.ValueKind == JsonValueKind.Number ? pr.GetDouble() : 0;
         long size = result.TryGetProperty("total_size", out var ts) && ts.ValueKind == JsonValueKind.Number ? ts.GetInt64() : 0;
         bool finished = result.TryGetProperty("is_finished", out var f) && f.ValueKind == JsonValueKind.True;
+        // Live transfer telemetry for the admin downloads panel — all best-effort (older Deluge / missing
+        // keys just leave these at 0). num_seeds/num_peers are the connected counts; eta is seconds (Deluge
+        // reports 0 when finished or unknown).
+        double rate = Num(result, "download_payload_rate");
+        int seeds = (int)Num(result, "num_seeds");
+        int peers = (int)Num(result, "num_peers");
+        long eta = (long)Num(result, "eta");
         string? path = Str(result, "download_location");
         if (string.IsNullOrEmpty(path)) path = Str(result, "save_path");
 
@@ -68,7 +76,7 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
             }
         }
 
-        return new DownloadStatus(state, progress, name, size, string.IsNullOrEmpty(path) ? null : path, finished, files);
+        return new DownloadStatus(state, progress, name, size, string.IsNullOrEmpty(path) ? null : path, finished, files, rate, seeds, peers, eta);
     }
 
     public async Task<bool> RemoveAsync(string torrentId, bool removeData, CancellationToken ct)
@@ -150,6 +158,9 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
         }
         return root.TryGetProperty("result", out var result) ? result.Clone() : default;
     }
+
+    private static double Num(JsonElement obj, string prop) =>
+        obj.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : 0;
 
     private static string Str(JsonElement obj, string prop) =>
         obj.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? string.Empty : string.Empty;
