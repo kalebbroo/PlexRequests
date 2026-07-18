@@ -28,10 +28,10 @@ else if (_media == null)
         <div style="text-align: center; padding: 4rem 0;">
             <MudIcon Icon="@Icons.Material.Filled.ErrorOutline" Style="font-size: 4rem;" />
             <MudText Typo="Typo.h4" Class="mt-4">Content Not Found</MudText>
-            <MudText Typo="Typo.body1" Color="Color.Tertiary">
+            <MudText Typo="Typo.body1" Class="text-secondary">
                 This title isn't available right now.
             </MudText>
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/" Class="mt-4">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/browse" Class="mt-4">
                 Browse Home
             </MudButton>
         </div>
@@ -177,9 +177,12 @@ else
                             {
                                 <div class="genres">
                                     <span class="label">Genres:</span>
+                                    @{
+                                        var genreTypeLabel = _media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow ? "tvshow" : "movie";
+                                    }
                                     @foreach (String genre in _media.Genres)
                                     {
-                                        <a href="/browse?genre=@genre" class="genre-link">@genre</a>
+                                        <a href="/browse/@genreTypeLabel?genre=@Uri.EscapeDataString(genre)" class="genre-link">@genre</a>
                                     }
                                 </div>
                             }
@@ -211,7 +214,7 @@ else
                                                                  Disabled="@seasonAvailable" Dense="true" />
                                                     <div class="season-meta" @onclick="() => ToggleExpand(season.SeasonNumber)">
                                                         <MudText Typo="Typo.subtitle1">Season @season.SeasonNumber</MudText>
-                                                        <MudText Typo="Typo.caption" Color="Color.Tertiary">@season.EpisodeCount episodes</MudText>
+                                                        <MudText Typo="Typo.caption" Class="text-secondary">@season.EpisodeCount episodes</MudText>
                                                     </div>
                                                     @if (seasonAvailable)
                                                     {
@@ -448,6 +451,14 @@ else
                     if (map.TryGetValue($"{m.MediaType}:{m.Id}", out var st2)) m.RequestStatus = st2;
                 await InvokeAsync(StateHasChanged);
             }
+        }
+        catch (Exception ex)
+        {
+            // A failure here (e.g. TMDB unreachable) must not escape into OnAfterRenderAsync,
+            // which would be an unhandled circuit exception and kill the whole page. Fall back
+            // to the "Content Not Found" state.
+            _media = null;
+            PlexRequestsHosted.Utils.Logs.Warning($"MediaDetails load failed for {Type}/{Id}: {ex.Message}");
         }
         finally
         {

@@ -1,5 +1,7 @@
 .requests-page {
-    min-height: 100vh;
+    /* Subtract the fixed header height MainLayout already reserves, so a near-empty page
+       doesn't overflow the viewport and show a spurious scrollbar. */
+    min-height: calc(100vh - var(--header-height));
     background-color: var(--dark-bg);
     padding: 2rem 0;
 }

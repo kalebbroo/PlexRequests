@@ -93,7 +93,7 @@
                 <!-- Search Results -->
                 <div class="results-header">
                     <h2>Results for "@_searchQuery"</h2>
-                    <MudText Typo="Typo.body2" Color="Color.Tertiary">
+                    <MudText Typo="Typo.body2" Class="text-secondary">
                         @_searchResults.Count results found
                     </MudText>
                 </div>
@@ -111,7 +111,7 @@
                 <div class="no-results">
                     <MudIcon Icon="@Icons.Material.Filled.SearchOff" Style="font-size: 4rem;" />
                     <h2>No results found for "@_searchQuery"</h2>
-                    <MudText Typo="Typo.body1" Color="Color.Tertiary">
+                    <MudText Typo="Typo.body1" Class="text-secondary">
                         Try different keywords or browse our categories
                     </MudText>
                     <div class="no-results-suggestions">
@@ -170,20 +170,19 @@
         }
     }
 
+    protected override void OnInitialized()
+    {
+        // One reusable debounce timer. AutoReset=false so it fires once per pause;
+        // each keystroke restarts it. (The old code allocated a new timer per keystroke
+        // and never disposed them, and AutoReset defaulted to true = repeated firing.)
+        _debounceTimer = new System.Timers.Timer(300) { AutoReset = false };
+        _debounceTimer.Elapsed += (_, _) => _ = InvokeAsync(PerformSearch);
+    }
+
     private void HandleKeyUp(KeyboardEventArgs e)
     {
         _debounceTimer?.Stop();
-        _debounceTimer = new System.Timers.Timer(300);
-        _debounceTimer.Elapsed += async (sender, args) =>
-        {
-            await InvokeAsync(async () =>
-            {
-                await PerformSearch();
-            });
-            _debounceTimer?.Stop();
-        };
-        _debounceTimer.Start();
-        
+        _debounceTimer?.Start();
         _showFilters = !string.IsNullOrEmpty(_searchQuery);
     }
 
@@ -202,7 +201,7 @@
         try
         {
             _searchResults = await PlexApiService.SearchMediaAsync(_searchQuery, _filterType);
-            
+
             // Apply additional filtering if needed
             if (_filterType.HasValue)
             {
@@ -221,6 +220,13 @@
                     if (statuses.TryGetValue(k, out var st)) m.RequestStatus = st;
                 }
             }
+        }
+        catch (Exception ex)
+        {
+            // Never let a search error tear down the circuit; show empty results + a toast.
+            _searchResults = null;
+            PlexRequestsHosted.Utils.Logs.Warning($"Search failed for '{_searchQuery}': {ex.Message}");
+            await ToastService.ShowErrorAsync("Search failed. Please try again.");
         }
         finally
         {
@@ -254,11 +260,6 @@
         _ = PerformSearch();
     }
 
-    private void ShowDetails(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
-    {
-        Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLower()}/{media.Id}");
-    }
-
     private async Task RequestMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
     {
         PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(media.Id, media.MediaType);
@@ -266,6 +267,10 @@
         {
             media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
             await ToastService.ShowSuccessAsync($"{media.Title} has been requested!");
+        }
+        else
+        {
+            await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request this title.");
         }
     }
 

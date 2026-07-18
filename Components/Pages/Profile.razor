@@ -7,7 +7,7 @@
 @inject IDiscordLinkService DiscordLink
 @inject PlexRequestsHosted.Infrastructure.Data.AppDbContext Db
 
-<PageTitle>My Profile</PageTitle>
+<PageTitle>My Profile - Plex Requests</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.Large" Class="py-6">
     <MudGrid>
@@ -159,25 +159,37 @@
     {
         try
         {
-            if (_profile?.Username is null) return;
-            _myRequests = await Db.MediaRequests
-                .Where(r => r.RequestedBy == _profile.Username)
+            if (_profile?.Username is null)
+            {
+                // Always assign so the "My Requests" tab shows its empty state instead of spinning forever.
+                _myRequests = new();
+                _stats = new UserStatsDto();
+                return;
+            }
+
+            var baseQuery = Db.MediaRequests.Where(r => r.RequestedBy == _profile.Username);
+
+            // Stats come from the full set (server-side counts) — not the 25-item display list —
+            // so totals match /requests instead of capping at 25.
+            _stats = new UserStatsDto
+            {
+                TotalRequests = await baseQuery.CountAsync(),
+                ApprovedRequests = await baseQuery.CountAsync(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Approved || r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Available),
+                PendingRequests = await baseQuery.CountAsync(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Pending),
+                AvailableRequests = await baseQuery.CountAsync(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Available),
+                LastRequestDate = await baseQuery.OrderByDescending(r => r.RequestedAt).Select(r => (DateTime?)r.RequestedAt).FirstOrDefaultAsync()
+            };
+
+            // Recent 25 for the list itself.
+            _myRequests = await baseQuery
                 .OrderByDescending(r => r.RequestedAt)
                 .Take(25)
                 .ToListAsync();
-
-            _stats = new UserStatsDto
-            {
-                TotalRequests = _myRequests.Count,
-                ApprovedRequests = _myRequests.Count(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Approved || r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Available),
-                PendingRequests = _myRequests.Count(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Pending),
-                AvailableRequests = _myRequests.Count(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Available),
-                LastRequestDate = _myRequests.FirstOrDefault()?.RequestedAt
-            };
         }
         catch
         {
             _myRequests = new();
+            _stats ??= new UserStatsDto();
         }
     }
 }

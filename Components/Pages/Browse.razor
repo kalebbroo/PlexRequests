@@ -50,7 +50,8 @@
                         <MudSelectItem T="MediaType" Value="MediaType.TvShow">TV Shows</MudSelectItem>
                     </MudSelect>
 
-                    <MudSelect T="string" Value="_genre" ValueChanged="OnGenreChanged" Label="Genre" Variant="Variant.Outlined" Dense="true" Class="browse-select">
+                    <MudSelect T="string" Value="_genre" ValueChanged="OnGenreChanged" Label="Genre" Variant="Variant.Outlined" Dense="true" Class="browse-select"
+                               ToStringFunc="@(g => string.IsNullOrEmpty(g) ? "All Genres" : g)">
                         <MudSelectItem T="string" Value='""'>All Genres</MudSelectItem>
                         @foreach (var g in _genres)
                         {
@@ -64,7 +65,6 @@
                                    ToStringFunc="@(s => SortLabel(s))" Class="browse-select">
                             <MudSelectItem Value="SortOrder.PopularityDescending">Most Popular</MudSelectItem>
                             <MudSelectItem Value="SortOrder.RatingDescending">Highest Rated</MudSelectItem>
-                            <MudSelectItem Value="SortOrder.DateDescending">Newest</MudSelectItem>
                             <MudSelectItem Value="SortOrder.TitleAscending">Title A-Z</MudSelectItem>
                             <MudSelectItem Value="SortOrder.TitleDescending">Title Z-A</MudSelectItem>
                         </MudSelect>
@@ -90,7 +90,7 @@
                 <div class="browse-empty">
                     <MudIcon Icon="@Icons.Material.Filled.MovieFilter" Style="font-size: 4rem;" />
                     <MudText Typo="Typo.h5">Nothing here</MudText>
-                    <MudText Typo="Typo.body1" Color="Color.Tertiary">Try a different genre or filter.</MudText>
+                    <MudText Typo="Typo.body1" Class="text-secondary">Try a different genre or filter.</MudText>
                 </div>
             }
             else
@@ -178,7 +178,10 @@
             "tvshow" or "tv" or "tvshows" => MediaType.TvShow,
             _ => MediaType.Movie
         };
-        _genre = string.IsNullOrWhiteSpace(Genre) ? _genre : Genre!;
+        // Always mirror the query param. Previously this was sticky (kept the old value when
+        // Genre was absent), so switching Movies -> TV Shows carried a movie-only genre into the
+        // TV grid and landed on an empty state.
+        _genre = Genre ?? string.Empty;
 
         if (_rendered && (_type != _loadedType || _genre != _loadedGenre))
             await ReloadAsync();
@@ -313,10 +316,14 @@
         Navigation.NavigateTo($"/browse/{(t == MediaType.TvShow ? "tvshow" : "movie")}");
     }
 
-    private async Task OnGenreChanged(string g)
+    private void OnGenreChanged(string g)
     {
-        _genre = g ?? "";
-        await ReloadAsync();
+        // Navigate so the URL reflects the genre (shareable / survives refresh); the resulting
+        // OnParametersSetAsync triggers the reload.
+        var typeLabel = _type == MediaType.TvShow ? "tvshow" : "movie";
+        Navigation.NavigateTo(string.IsNullOrWhiteSpace(g)
+            ? $"/browse/{typeLabel}"
+            : $"/browse/{typeLabel}?genre={Uri.EscapeDataString(g)}");
     }
 
     private async Task OnSortChanged(SortOrder s)

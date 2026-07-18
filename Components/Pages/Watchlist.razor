@@ -75,7 +75,6 @@
 @code {
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _watchlist;
     private Boolean _isLoading = true;
-    private Boolean _gridView = true;
     private SortOption _sortBy = SortOption.DateAdded;
 
     private enum SortOption
@@ -143,11 +142,6 @@
         }
     }
 
-    private void ShowDetails(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
-    {
-        Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLower()}/{media.Id}");
-    }
-
     private async Task RequestMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
     {
         PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(media.Id, media.MediaType);
@@ -155,6 +149,10 @@
         {
             media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
             await ToastService.ShowSuccessAsync($"{media.Title} has been requested!");
+        }
+        else
+        {
+            await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request this title.");
         }
     }
 

@@ -40,6 +40,11 @@
             Primary = "#E5A00D",
             PrimaryContrastText = "#000000",
             Secondary = "#CC8A0B",
+            // Tertiary was never set, so Color.Tertiary fell back to MudBlazor's default teal —
+            // which clashed with this dark Plex-orange theme everywhere it was used for muted text
+            // and icons. Point it at the secondary-text gray so those read as intended.
+            Tertiary = "#B3B3B3",
+            TertiaryContrastText = "#000000",
             Background = "#141414",
             Surface = "#181818",
             AppbarBackground = "rgba(20, 20, 20, 0)",

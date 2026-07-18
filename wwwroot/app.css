@@ -63,6 +63,14 @@
     /* Layout */
     --header-height: 68px;
     --container-max-width: 1920px;
+    /* Legacy aliases — several scoped page stylesheets reference these names.
+       Kept here so those var() lookups resolve instead of collapsing to
+       transparent backgrounds / dropped borders. */
+    --dark-bg: var(--bg-primary);
+    --surface-bg: var(--bg-secondary);
+    --surface-hover: var(--bg-hover);
+    --divider: rgba(255, 255, 255, 0.1);
+    --primary-red: var(--plex-orange);
 }
 
 /* Base reset and dark theme foundations */

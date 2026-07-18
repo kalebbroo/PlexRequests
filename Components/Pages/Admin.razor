@@ -1,12 +1,11 @@
 @page "/admin"
 @attribute [Authorize(Roles = "Admin")]
-@using Microsoft.AspNetCore.WebUtilities
 @inject NavigationManager Nav
 
 <PageTitle>Admin - Plex Requests</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6">
-    <MudTabs @bind-ActivePanelIndex="_activeIndex" Elevation="0" Rounded="false" Color="Color.Primary" SliderColor="Color.Primary" Class="custom-tabs">
+    <MudTabs ActivePanelIndex="_activeIndex" ActivePanelIndexChanged="OnTabChanged" Elevation="0" Rounded="false" Color="Color.Primary" SliderColor="Color.Primary" Class="custom-tabs">
         <MudTabPanel Text="Server Health">
             <div class="pt-4"><AdminServerHealthPanel /></div>
         </MudTabPanel>
@@ -35,17 +34,23 @@
 </MudContainer>
 
 @code {
-    private static readonly string[] TabKeys = { "health", "approvals", "issues", "quality", "downloads", "users" };
+    // Must match the MudTabPanel order above — used for ?tab= deep links.
+    private static readonly string[] TabKeys = { "health", "approvals", "issues", "quality", "downloads", "library", "network", "users" };
     private int _activeIndex;
 
-    protected override void OnInitialized()
+    [SupplyParameterFromQuery(Name = "tab")]
+    public string? Tab { get; set; }
+
+    protected override void OnParametersSet()
     {
-        var uri = Nav.ToAbsoluteUri(Nav.Uri);
-        var query = QueryHelpers.ParseQuery(uri.Query);
-        if (query.TryGetValue("tab", out var tab))
-        {
-            var idx = Array.IndexOf(TabKeys, tab.ToString().ToLowerInvariant());
-            if (idx >= 0) _activeIndex = idx;
-        }
+        var idx = Array.IndexOf(TabKeys, Tab?.ToLowerInvariant() ?? string.Empty);
+        if (idx >= 0) _activeIndex = idx;
+    }
+
+    private void OnTabChanged(int index)
+    {
+        _activeIndex = index;
+        // Keep the URL in sync so refresh/share lands on the same tab.
+        Nav.NavigateTo($"/admin?tab={TabKeys[index]}", forceLoad: false, replace: true);
     }
 }

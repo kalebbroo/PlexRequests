@@ -281,6 +281,10 @@
     private async Task LoadData()
     {
         _isLoading = true;
+        // Reset to the first page. LoadData is a full refresh (initial load, a live notification,
+        // or after a cancel); without this reset it would reload only whatever page the user had
+        // paged to and drop the earlier pages, collapsing the visible list.
+        _currentPage = 1;
         StateHasChanged();
 
         try
@@ -305,25 +309,36 @@
 
     private async Task LoadMore()
     {
+        if (_isLoadingMore || !_hasMore) return;
         _isLoadingMore = true;
-        _currentPage++;
-        
-        PlexRequestsHosted.Shared.DTOs.PagedResult<PlexRequestsHosted.Shared.DTOs.MediaRequestDto> page = 
-            await MediaRequestService.GetRequestsAsync(new PlexRequestsHosted.Shared.DTOs.MediaFilterDto 
-            { 
-                PageNumber = _currentPage, 
-                PageSize = 20 
-            });
-        
-        if (page.Items?.Any() == true)
+        var nextPage = _currentPage + 1;
+        try
         {
-            _allRequests ??= new List<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>();
-            _allRequests.AddRange(page.Items);
-            ApplyFilter();
+            var page = await MediaRequestService.GetRequestsAsync(new PlexRequestsHosted.Shared.DTOs.MediaFilterDto
+            {
+                PageNumber = nextPage,
+                PageSize = 20
+            });
+
+            if (page.Items?.Any() == true)
+            {
+                _allRequests ??= new List<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>();
+                _allRequests.AddRange(page.Items);
+                // Only advance the page cursor once the fetch succeeds, so a failure can't skip a page.
+                _currentPage = nextPage;
+                ApplyFilter();
+            }
+            _hasMore = page.HasNext;
         }
-        
-        _hasMore = page.HasNext;
-        _isLoadingMore = false;
+        catch
+        {
+            await ToastService.ShowErrorAsync("Failed to load more requests.");
+        }
+        finally
+        {
+            _isLoadingMore = false;
+            StateHasChanged();
+        }
     }
 
     private void SetStatusFilter(String filter)
@@ -359,6 +374,10 @@
             request.Status = PlexRequestsHosted.Shared.Enums.RequestStatus.Cancelled;
             await ToastService.ShowInfoAsync("Request cancelled");
             await LoadData();
+        }
+        else
+        {
+            await ToastService.ShowErrorAsync("Couldn't cancel that request. Please try again.");
         }
     }
 
