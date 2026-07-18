@@ -83,6 +83,8 @@ public interface IPlexApiService
     Task<bool> IsAvailableOnPlexAsync(int mediaId, MediaType mediaType);
     Task<List<int>> GetAvailableSeasonsAsync(int tvShowId);
     Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int showId, int seasonNumber);
+    // Per-season media-quality summary (dominant resolution/codec/total size) for a show's seasons on Plex.
+    Task<Dictionary<int, MediaQualityDto>> GetSeasonQualitySummariesAsync(int tvShowId);
     Task<PlexServerInfo?> GetServerInfoAsync();
     Task<List<PlexLibrary>> GetLibrariesAsync();
     Task AnnotateAvailabilityAsync(List<MediaCardDto> items);

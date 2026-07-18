@@ -29,5 +29,13 @@ public class PlexSeasonAvailabilityEntity
     /// <summary>Count of episodes available (denormalized for quick reads).</summary>
     public int EpisodeCount { get; set; }
 
+    /// <summary>
+    /// Per-episode media quality as JSON, keyed by episode number:
+    /// <c>{ "3": { "Resolution": "4K", "VideoCodec": "HEVC", "AudioCodec": "EAC3", "Bitrate": 18500, "FileSizeBytes": 8200000000, "VersionCount": 1 } }</c>.
+    /// Null/empty ⇒ no quality captured (older scans). Parallel to <see cref="AvailableEpisodesCsv"/>.
+    /// </summary>
+    [MaxLength(8192)]
+    public string? EpisodeQualityJson { get; set; }
+
     public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
 }

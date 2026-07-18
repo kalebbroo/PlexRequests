@@ -115,7 +115,13 @@ else
                                 {
                                     <span class="meta-badge">@_media.ContentRating</span>
                                 }
-                                @if (!string.IsNullOrEmpty(_media.Quality))
+                                @if (_media.MediaQuality is not null)
+                                {
+                                    <MudTooltip Text="@_media.MediaQuality.Detail">
+                                        <span class="quality-badge @GetQualityClass()">@_media.MediaQuality.Label</span>
+                                    </MudTooltip>
+                                }
+                                else if (!string.IsNullOrEmpty(_media.Quality))
                                 {
                                     <span class="quality-badge @GetQualityClass()">@_media.Quality</span>
                                 }
@@ -216,6 +222,12 @@ else
                                                         <MudText Typo="Typo.subtitle1">Season @season.SeasonNumber</MudText>
                                                         <MudText Typo="Typo.caption" Class="text-secondary">@season.EpisodeCount episodes</MudText>
                                                     </div>
+                                                    @if (_seasonQuality.TryGetValue(season.SeasonNumber, out var sq))
+                                                    {
+                                                        <MudTooltip Text="@sq.Detail">
+                                                            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">@sq.Label</MudChip>
+                                                        </MudTooltip>
+                                                    }
                                                     @if (seasonAvailable)
                                                     {
                                                         <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Text">On Plex</MudChip>
@@ -239,10 +251,16 @@ else
                                                                     <MudCheckBox T="bool" Value="@_selectedEpisodes.Contains((ep.SeasonNumber, ep.EpisodeNumber))"
                                                                                  ValueChanged="@((bool v) => ToggleEpisode(ep.SeasonNumber, ep.EpisodeNumber, v))"
                                                                                  Disabled="@(ep.IsAvailable || !ep.HasAired)" Dense="true" />
-                                                                    <span class="episode-num">E@ep.EpisodeNumber</span>
+                                                                    <span class="episode-num">E@(ep.EpisodeNumber)</span>
                                                                     <span class="episode-name">@ep.Name</span>
                                                                     @if (ep.IsAvailable)
                                                                     {
+                                                                        @if (ep.MediaQuality is not null)
+                                                                        {
+                                                                            <MudTooltip Text="@ep.MediaQuality.Detail">
+                                                                                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">@ep.MediaQuality.Label</MudChip>
+                                                                            </MudTooltip>
+                                                                        }
                                                                         <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Text">On Plex</MudChip>
                                                                     }
                                                                     else if (!ep.HasAired)
@@ -412,6 +430,7 @@ else
         _media = null;
         _similarMedia = null;
         _availableSeasons = new();
+        _seasonQuality = new();
         _selectedSeasons.Clear();
         _selectedEpisodes.Clear();
         _expanded.Clear();
@@ -439,7 +458,19 @@ else
             if (statuses.TryGetValue($"{_media.MediaType}:{_media.Id}", out var st)) _media.RequestStatus = st;
             _inWatchlist = await MediaRequestService.IsInWatchlistAsync(_media.Id, _media.MediaType);
             if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
+            {
                 _availableSeasons = (await PlexApiService.GetAvailableSeasonsAsync(_media.Id)).ToHashSet();
+                _seasonQuality = await PlexApiService.GetSeasonQualitySummariesAsync(_media.Id);
+                // Series-level header badge: dominant quality across all seasons on Plex.
+                if (_seasonQuality.Count > 0 && _media.MediaQuality is null)
+                {
+                    var best = _seasonQuality.Values
+                        .OrderByDescending(q => q.Bitrate ?? 0)
+                        .FirstOrDefault(q => !string.IsNullOrEmpty(q.Resolution)) ?? _seasonQuality.Values.First();
+                    _media.MediaQuality = best;
+                    _media.Quality ??= best.Resolution;
+                }
+            }
             await InvokeAsync(StateHasChanged);
 
             _similarMedia = (await similarTask)?.Where(m => m.Id != _media.Id).Take(12).ToList();
@@ -494,6 +525,7 @@ else
     private readonly HashSet<int> _expanded = new();
     private readonly Dictionary<int, List<PlexRequestsHosted.Shared.DTOs.EpisodeDto>> _episodes = new();
     private HashSet<int> _availableSeasons = new();
+    private Dictionary<int, PlexRequestsHosted.Shared.DTOs.MediaQualityDto> _seasonQuality = new();
 
     // Report-a-Problem dialog
     private bool _reportOpen;

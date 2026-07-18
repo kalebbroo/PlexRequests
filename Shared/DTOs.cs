@@ -1,5 +1,6 @@
 using PlexRequestsHosted.Shared.Enums;
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 
 namespace PlexRequestsHosted.Shared.DTOs;
 
@@ -8,6 +9,60 @@ public abstract class BaseDto
     public int Id { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
+}
+
+// Media/version quality of an item already on Plex (resolution, codec, size, bitrate).
+// Populated from the Plex library scan; null when the item isn't on Plex or predates quality capture.
+public class MediaQualityDto
+{
+    public string? Resolution { get; set; }   // "4K", "1080p", "720p", "SD"
+    public string? VideoCodec { get; set; }    // "HEVC", "H.264"
+    public string? AudioCodec { get; set; }    // "EAC3", "AAC", "DTS"
+    public int? Bitrate { get; set; }          // kbps
+    public long? FileSizeBytes { get; set; }
+    public int VersionCount { get; set; } = 1; // number of file versions on Plex
+
+    // Compact chip label, e.g. "4K HEVC · 8.2 GB" (or "4K HEVC · 8.2 GB · 2 versions").
+    [JsonIgnore]
+    public string Label
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (!string.IsNullOrEmpty(Resolution)) parts.Add(Resolution!);
+            if (!string.IsNullOrEmpty(VideoCodec)) parts.Add(VideoCodec!);
+            var head = parts.Count > 0 ? string.Join(' ', parts) : "On Plex";
+            var tail = new List<string>();
+            if (FileSizeBytes is > 0) tail.Add(FormatSize(FileSizeBytes.Value));
+            if (VersionCount > 1) tail.Add($"{VersionCount} versions");
+            return tail.Count > 0 ? $"{head} · {string.Join(" · ", tail)}" : head;
+        }
+    }
+
+    // Full hover/expand detail, e.g. "4K · HEVC · EAC3 · 18.5 Mbps · 8.2 GB · 2 versions".
+    [JsonIgnore]
+    public string Detail
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (!string.IsNullOrEmpty(Resolution)) parts.Add(Resolution!);
+            if (!string.IsNullOrEmpty(VideoCodec)) parts.Add(VideoCodec!);
+            if (!string.IsNullOrEmpty(AudioCodec)) parts.Add(AudioCodec!);
+            if (Bitrate is > 0) parts.Add($"{(Bitrate.Value / 1000.0):0.0} Mbps");
+            if (FileSizeBytes is > 0) parts.Add(FormatSize(FileSizeBytes.Value));
+            if (VersionCount > 1) parts.Add($"{VersionCount} versions");
+            return parts.Count > 0 ? string.Join(" · ", parts) : "On Plex";
+        }
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        double gb = bytes / 1_000_000_000.0;
+        if (gb >= 1) return $"{gb:0.0} GB";
+        double mb = bytes / 1_000_000.0;
+        return $"{mb:0} MB";
+    }
 }
 
 public class MediaCardDto : BaseDto
@@ -23,6 +78,8 @@ public class MediaCardDto : BaseDto
     public MediaType MediaType { get; set; }
     public List<string> Genres { get; set; } = new();
     public string? Quality { get; set; }
+    // Detailed Plex media quality (resolution/codec/size/versions); null when not on Plex.
+    public MediaQualityDto? MediaQuality { get; set; }
     public bool IsAvailable { get; set; }
     public RequestStatus RequestStatus { get; set; }
     public string? PlexUrl { get; set; }
@@ -64,6 +121,8 @@ public class SeasonDto
     public DateTime? AirDate { get; set; }
     public bool IsAvailable { get; set; }
     public int AvailableEpisodes { get; set; }
+    // Dominant/best quality across this season's episodes on Plex; null when not on Plex.
+    public MediaQualityDto? MediaQuality { get; set; }
 }
 
 public class EpisodeDto
@@ -75,6 +134,8 @@ public class EpisodeDto
     public string? StillUrl { get; set; }
     public DateTime? AirDate { get; set; }
     public bool IsAvailable { get; set; }   // already on Plex
+    // Quality of this episode's file on Plex; null when not on Plex.
+    public MediaQualityDto? MediaQuality { get; set; }
     public bool HasAired => AirDate.HasValue && AirDate.Value.Date <= DateTime.UtcNow.Date;
 }
 

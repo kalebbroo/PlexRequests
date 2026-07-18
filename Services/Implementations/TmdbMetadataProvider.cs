@@ -212,6 +212,33 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         }
     }
 
+    // TMDB returns a fixed ~20 results per page, so to fill a longer row we page through
+    // successive TMDB pages until we have `pageSize` items (or TMDB runs out). The caller's
+    // logical `startPage` is mapped onto a contiguous block of TMDB pages so "Load More"
+    // paging keeps working. Bounded by pageSize (callers cap it), never an open-ended crawl.
+    private const int TmdbPageSize = 20;
+
+    private static async Task<List<MediaCardDto>> AccumulatePagesAsync<T>(
+        int startPage, int pageSize,
+        Func<int, Task<SearchContainer<T>>> fetchPage,
+        Func<T, MediaCardDto> map)
+    {
+        var acc = new List<MediaCardDto>();
+        int pagesNeeded = Math.Max(1, (int)Math.Ceiling(pageSize / (double)TmdbPageSize));
+        int firstTmdbPage = (Math.Max(1, startPage) - 1) * pagesNeeded + 1;
+        int totalPages = int.MaxValue;
+        for (int i = 0; i < pagesNeeded; i++)
+        {
+            int p = firstTmdbPage + i;
+            if (p > totalPages) break;
+            var container = await fetchPage(p);
+            if (container?.Results is not { Count: > 0 } results) break;
+            totalPages = container.TotalPages > 0 ? container.TotalPages : p;
+            acc.AddRange(results.Select(map));
+        }
+        return acc.Take(pageSize).ToList();
+    }
+
     // Interleave movie + TV results so a mixed feed alternates types instead of grouping them.
     private static List<MediaCardDto> Interleave(List<MediaCardDto> a, List<MediaCardDto> b, int take)
     {
@@ -230,15 +257,17 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         {
             var movies = new List<MediaCardDto>();
             var tv = new List<MediaCardDto>();
+            // For a mixed feed we pull ~half from each type so the interleave still fills pageSize.
+            int perType = mediaType == null ? (pageSize + 1) / 2 : pageSize;
             if (mediaType is null or PlexRequestsHosted.Shared.Enums.MediaType.Movie)
             {
-                var m = await _client.GetTrendingMoviesAsync(TimeWindow.Week, page);
-                movies.AddRange(m.Results.Select(MapMovieToCard));
+                movies = await AccumulatePagesAsync(page, perType,
+                    p => _client.GetTrendingMoviesAsync(TimeWindow.Week, p), MapMovieToCard);
             }
             if (mediaType is null or PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
             {
-                var t = await _client.GetTrendingTvAsync(TimeWindow.Week, page);
-                tv.AddRange(t.Results.Select(MapTvShowToCard));
+                tv = await AccumulatePagesAsync(page, perType,
+                    p => _client.GetTrendingTvAsync(TimeWindow.Week, p), MapTvShowToCard);
             }
             return mediaType == null ? Interleave(movies, tv, pageSize) : movies.Concat(tv).Take(pageSize).ToList();
         });
@@ -248,11 +277,11 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         {
             if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
             {
-                var m = await _client.GetMoviePopularListAsync(page: page);
-                return m.Results.Take(pageSize).Select(MapMovieToCard).ToList();
+                return await AccumulatePagesAsync(page, pageSize,
+                    p => _client.GetMoviePopularListAsync(page: p), MapMovieToCard);
             }
-            var t = await _client.GetTvShowPopularAsync(page: page);
-            return t.Results.Take(pageSize).Select(MapTvShowToCard).ToList();
+            return await AccumulatePagesAsync(page, pageSize,
+                p => _client.GetTvShowPopularAsync(page: p), MapTvShowToCard);
         });
 
     public Task<List<MediaCardDto>> GetTopRatedAsync(PlexRequestsHosted.Shared.Enums.MediaType mediaType, int page = 1, int pageSize = 20)
@@ -260,11 +289,11 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         {
             if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
             {
-                var m = await _client.GetMovieTopRatedListAsync(page: page);
-                return m.Results.Take(pageSize).Select(MapMovieToCard).ToList();
+                return await AccumulatePagesAsync(page, pageSize,
+                    p => _client.GetMovieTopRatedListAsync(page: p), MapMovieToCard);
             }
-            var t = await _client.GetTvShowTopRatedAsync(page: page);
-            return t.Results.Take(pageSize).Select(MapTvShowToCard).ToList();
+            return await AccumulatePagesAsync(page, pageSize,
+                p => _client.GetTvShowTopRatedAsync(page: p), MapTvShowToCard);
         });
 
     public Task<List<MediaCardDto>> GetByGenreAsync(PlexRequestsHosted.Shared.Enums.MediaType mediaType, string genre, int page = 1, int pageSize = 20)
@@ -274,17 +303,19 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
             if (genreId == 0) return new List<MediaCardDto>();
             if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
             {
-                var m = await _client.DiscoverMoviesAsync()
-                    .IncludeWithAllOfGenre(new[] { genreId })
-                    .OrderBy(DiscoverMovieSortBy.PopularityDesc)
-                    .Query(page);
-                return m.Results.Take(pageSize).Select(MapMovieToCard).ToList();
+                return await AccumulatePagesAsync(page, pageSize,
+                    p => _client.DiscoverMoviesAsync()
+                        .IncludeWithAllOfGenre(new[] { genreId })
+                        .OrderBy(DiscoverMovieSortBy.PopularityDesc)
+                        .Query(p),
+                    MapMovieToCard);
             }
-            var t = await _client.DiscoverTvShowsAsync()
-                .WhereGenresInclude(new[] { genreId })
-                .OrderBy(DiscoverTvShowSortBy.PopularityDesc)
-                .Query(page);
-            return t.Results.Take(pageSize).Select(MapTvShowToCard).ToList();
+            return await AccumulatePagesAsync(page, pageSize,
+                p => _client.DiscoverTvShowsAsync()
+                    .WhereGenresInclude(new[] { genreId })
+                    .OrderBy(DiscoverTvShowSortBy.PopularityDesc)
+                    .Query(p),
+                MapTvShowToCard);
         });
 
     public Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, PlexRequestsHosted.Shared.Enums.MediaType mediaType, int count = 12)

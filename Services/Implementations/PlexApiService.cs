@@ -268,17 +268,49 @@ public class PlexApiService : IPlexApiService
         var ratingKey = await _db.PlexMappings.Where(m => m.ExternalKey == $"tmdb:{showId}").Select(m => m.RatingKey).FirstOrDefaultAsync();
         if (!string.IsNullOrEmpty(ratingKey))
         {
-            var csv = await _db.PlexSeasonAvailability
+            var row = await _db.PlexSeasonAvailability
                 .Where(s => s.ShowRatingKey == ratingKey && s.SeasonNumber == seasonNumber)
-                .Select(s => s.AvailableEpisodesCsv).FirstOrDefaultAsync();
-            if (!string.IsNullOrEmpty(csv))
+                .Select(s => new { s.AvailableEpisodesCsv, s.EpisodeQualityJson }).FirstOrDefaultAsync();
+            if (row is not null && !string.IsNullOrEmpty(row.AvailableEpisodesCsv))
             {
-                var have = csv.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                var have = row.AvailableEpisodesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries)
                     .Select(x => int.TryParse(x, out var n) ? n : -1).ToHashSet();
-                foreach (var ep in episodes) ep.IsAvailable = have.Contains(ep.EpisodeNumber);
+                var quality = DeserializeEpisodeQuality(row.EpisodeQualityJson);
+                foreach (var ep in episodes)
+                {
+                    ep.IsAvailable = have.Contains(ep.EpisodeNumber);
+                    if (ep.IsAvailable && quality.TryGetValue(ep.EpisodeNumber, out var q)) ep.MediaQuality = q;
+                }
             }
         }
         return episodes;
+    }
+
+    private static Dictionary<int, MediaQualityDto> DeserializeEpisodeQuality(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return new();
+        try { return JsonSerializer.Deserialize<Dictionary<int, MediaQualityDto>>(json, QualityJsonOpts) ?? new(); }
+        catch { return new(); }
+    }
+
+    // Per-season dominant quality summary for a show (best resolution/codec + total size across the
+    // season's episodes). Used to render season-level and series-level quality chips.
+    public async Task<Dictionary<int, MediaQualityDto>> GetSeasonQualitySummariesAsync(int tvShowId)
+    {
+        var result = new Dictionary<int, MediaQualityDto>();
+        var ratingKey = await _db.PlexMappings.Where(m => m.ExternalKey == $"tmdb:{tvShowId}").Select(m => m.RatingKey).FirstOrDefaultAsync();
+        if (string.IsNullOrEmpty(ratingKey)) return result;
+        var rows = await _db.PlexSeasonAvailability.AsNoTracking()
+            .Where(s => s.ShowRatingKey == ratingKey)
+            .Select(s => new { s.SeasonNumber, s.EpisodeQualityJson }).ToListAsync();
+        foreach (var r in rows)
+        {
+            var qmap = DeserializeEpisodeQuality(r.EpisodeQualityJson);
+            if (qmap.Count == 0) continue;
+            var summary = AggregateQuality(qmap.Values.ToList());
+            if (summary is not null) result[r.SeasonNumber] = summary;
+        }
+        return result;
     }
 
     // Which seasons of a TMDB show are FULLY complete on Plex (Plex episode count >= TMDB's expected
@@ -343,6 +375,11 @@ public class PlexApiService : IPlexApiService
                 if (!string.IsNullOrEmpty(rk))
                 {
                     it.PlexUrl = await BuildPlexWebUrlAsync(rk);
+                    if (idx.ByRatingKeyQuality.TryGetValue(rk, out var q))
+                    {
+                        it.MediaQuality = q;
+                        it.Quality ??= q.Resolution;
+                    }
                 }
                 _logger.LogInformation("Plex match success: {@Title} ({@Year}) via {Path}", it.Title, it.Year, matchPath ?? "unknown");
             }
@@ -395,7 +432,7 @@ public class PlexApiService : IPlexApiService
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     // Availability index and helpers
-    private record AvailabilityIndex(HashSet<string> ByTitleYear, Dictionary<string, string> ByTitleYearKey, Dictionary<string, string> ByExternal, DateTime BuiltAt);
+    private record AvailabilityIndex(HashSet<string> ByTitleYear, Dictionary<string, string> ByTitleYearKey, Dictionary<string, string> ByExternal, Dictionary<string, MediaQualityDto> ByRatingKeyQuality, DateTime BuiltAt);
     private const string AvailabilityCacheKey = "plex_availability_index";
     // Last-rebuild stats live in the (singleton) memory cache rather than an instance field, since
     // PlexApiService is resolved fresh per DI scope — the background refresh service and an admin
@@ -412,9 +449,10 @@ public class PlexApiService : IPlexApiService
         var byTitleYear = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var byTitleYearKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var byExternal = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var byRatingKeyQuality = new Dictionary<string, MediaQualityDto>(StringComparer.Ordinal);
 
         var rows = await _db.PlexMappings.AsNoTracking()
-            .Select(m => new { m.ExternalKey, m.RatingKey, m.Title, m.Year })
+            .Select(m => new { m.ExternalKey, m.RatingKey, m.Title, m.Year, m.VideoResolution, m.VideoCodec, m.AudioCodec, m.Bitrate, m.FileSizeBytes, m.VersionCount })
             .ToListAsync();
         foreach (var m in rows)
         {
@@ -426,9 +464,22 @@ public class PlexApiService : IPlexApiService
                 byTitleYear.Add(ty);
                 if (!byTitleYearKey.ContainsKey(ty)) byTitleYearKey[ty] = m.RatingKey;
             }
+            if (!string.IsNullOrEmpty(m.RatingKey) && !byRatingKeyQuality.ContainsKey(m.RatingKey)
+                && (!string.IsNullOrEmpty(m.VideoResolution) || !string.IsNullOrEmpty(m.VideoCodec) || m.Bitrate is not null || m.FileSizeBytes is not null))
+            {
+                byRatingKeyQuality[m.RatingKey] = new MediaQualityDto
+                {
+                    Resolution = m.VideoResolution,
+                    VideoCodec = m.VideoCodec,
+                    AudioCodec = m.AudioCodec,
+                    Bitrate = m.Bitrate,
+                    FileSizeBytes = m.FileSizeBytes,
+                    VersionCount = m.VersionCount < 1 ? 1 : m.VersionCount
+                };
+            }
         }
 
-        var index = new AvailabilityIndex(byTitleYear, byTitleYearKey, byExternal, DateTime.UtcNow);
+        var index = new AvailabilityIndex(byTitleYear, byTitleYearKey, byExternal, byRatingKeyQuality, DateTime.UtcNow);
         _cache.Set(AvailabilityCacheKey, index, TimeSpan.FromMinutes(5));
         return index;
     }
@@ -471,6 +522,13 @@ public class PlexApiService : IPlexApiService
                         mapByKey[key] = existing;
                     }
                     existing.RatingKey = item.ratingKey; existing.MediaType = lib.Type; existing.Title = item.title; existing.Year = item.year; existing.LastSeenAt = scanStart;
+                    // Quality columns apply to movies (a show container item has no media file of its own).
+                    existing.VideoResolution = item.quality?.Resolution;
+                    existing.VideoCodec = item.quality?.VideoCodec;
+                    existing.AudioCodec = item.quality?.AudioCodec;
+                    existing.Bitrate = item.quality?.Bitrate;
+                    existing.FileSizeBytes = item.quality?.FileSizeBytes;
+                    existing.VersionCount = item.quality?.VersionCount ?? 1;
                     maps++;
                 }
             }
@@ -480,11 +538,17 @@ public class PlexApiService : IPlexApiService
             if (lib.Type == Shared.Enums.MediaType.TvShow)
             {
                 var perSeason = new Dictionary<(string show, int season), SortedSet<int>>();
+                var perSeasonQuality = new Dictionary<(string show, int season), Dictionary<int, MediaQualityDto>>();
                 await foreach (var ep in EnumerateEpisodesAsync(lib.Key))
                 {
                     var k = (ep.showRatingKey, ep.season);
                     if (!perSeason.TryGetValue(k, out var set)) { set = new SortedSet<int>(); perSeason[k] = set; }
                     if (ep.episode > 0) set.Add(ep.episode);
+                    if (ep.episode > 0 && ep.quality is not null)
+                    {
+                        if (!perSeasonQuality.TryGetValue(k, out var qmap)) { qmap = new(); perSeasonQuality[k] = qmap; }
+                        qmap[ep.episode] = ep.quality;
+                    }
                     episodes++;
                 }
                 foreach (var (k, set) in perSeason)
@@ -497,6 +561,9 @@ public class PlexApiService : IPlexApiService
                         seasonByKey[(k.show, k.season)] = row;
                     }
                     row.AvailableEpisodesCsv = csv; row.EpisodeCount = set.Count; row.LastSeenAt = scanStart;
+                    row.EpisodeQualityJson = perSeasonQuality.TryGetValue(k, out var qmap) && qmap.Count > 0
+                        ? JsonSerializer.Serialize(qmap, QualityJsonOpts)
+                        : null;
                     seasons++;
                 }
             }
@@ -518,7 +585,7 @@ public class PlexApiService : IPlexApiService
     }
 
     // Enumerate every episode in a TV library section via a single paged type=4 query.
-    private async IAsyncEnumerable<(string showRatingKey, int season, int episode)> EnumerateEpisodesAsync(string sectionKey)
+    private async IAsyncEnumerable<(string showRatingKey, int season, int episode, MediaQualityDto? quality)> EnumerateEpisodesAsync(string sectionKey)
     {
         var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
         if (baseUrl is null) yield break;
@@ -549,7 +616,7 @@ public class PlexApiService : IPlexApiService
                         var season = JsonInt(m, "parentIndex");
                         var episode = JsonInt(m, "index");
                         if (!string.IsNullOrEmpty(show) && season is >= 0)
-                            yield return (show, season.Value, episode ?? -1);
+                            yield return (show, season.Value, episode ?? -1, ExtractQuality(m));
                     }
                 }
             }
@@ -575,6 +642,161 @@ public class PlexApiService : IPlexApiService
         if (p.ValueKind == JsonValueKind.Number && p.TryGetInt32(out var n)) return n;
         if (p.ValueKind == JsonValueKind.String && int.TryParse(p.GetString(), out var s)) return s;
         return null;
+    }
+
+    private static string? JsonStr(JsonElement el, string prop)
+    {
+        if (!el.TryGetProperty(prop, out var p)) return null;
+        return p.ValueKind switch
+        {
+            JsonValueKind.String => p.GetString(),
+            JsonValueKind.Number => p.ToString(),
+            _ => null
+        };
+    }
+
+    private static long? JsonLong(JsonElement el, string prop)
+    {
+        if (!el.TryGetProperty(prop, out var p)) return null;
+        if (p.ValueKind == JsonValueKind.Number && p.TryGetInt64(out var n)) return n;
+        if (p.ValueKind == JsonValueKind.String && long.TryParse(p.GetString(), out var s)) return s;
+        return null;
+    }
+
+    // ---- Media quality parsing (Media/Part arrays returned by the Plex library endpoints) ----
+    // JSON options for the per-episode quality blob stored on PlexSeasonAvailabilityEntity.
+    private static readonly JsonSerializerOptions QualityJsonOpts = new() { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
+
+    // Rank a resolution label so we can pick the "best" version and aggregate a season/show.
+    private static int ResolutionRank(string? res) => res switch
+    {
+        "8K" => 5, "4K" => 4, "1080p" => 3, "720p" => 2, "576p" => 1, "480p" => 1, _ => 0
+    };
+
+    private static string? NormalizeResolution(string? raw, int? width, int? height)
+    {
+        switch (raw?.Trim().ToLowerInvariant())
+        {
+            case "8k": return "8K";
+            case "4k": return "4K";
+            case "1080": return "1080p";
+            case "720": return "720p";
+            case "576": return "576p";
+            case "480": return "480p";
+            case "sd": return "SD";
+        }
+        // Fall back to pixel dimensions when videoResolution is absent or unrecognized.
+        int w = width ?? 0, h = height ?? 0;
+        if (w >= 7000 || h >= 4000) return "8K";
+        if (w >= 3000 || h >= 1700) return "4K";
+        if (w >= 1900 || h >= 1000) return "1080p";
+        if (w >= 1200 || h >= 700) return "720p";
+        if (w > 0 || h > 0) return "SD";
+        var r = raw?.Trim();
+        return string.IsNullOrEmpty(r) ? null : r.ToUpperInvariant();
+    }
+
+    private static string? NormalizeVideoCodec(string? raw) => raw?.Trim().ToLowerInvariant() switch
+    {
+        null or "" => null,
+        "hevc" or "h265" or "x265" => "HEVC",
+        "h264" or "avc" or "x264" => "H.264",
+        "mpeg4" => "MPEG-4",
+        "mpeg2video" or "mpeg2" => "MPEG-2",
+        "vp9" => "VP9",
+        "av1" => "AV1",
+        var s => s!.ToUpperInvariant()
+    };
+
+    private static string? NormalizeAudioCodec(string? raw) => raw?.Trim().ToLowerInvariant() switch
+    {
+        null or "" => null,
+        "eac3" or "ec-3" => "EAC3",
+        "ac3" => "AC3",
+        "dca" or "dts" => "DTS",
+        "truehd" => "TrueHD",
+        "aac" => "AAC",
+        "flac" => "FLAC",
+        "mp3" => "MP3",
+        "opus" => "Opus",
+        var s => s!.ToUpperInvariant()
+    };
+
+    // Extract quality from a Plex metadata item's Media[]/Part[] arrays. Picks the highest-ranked
+    // version (by resolution, then bitrate); VersionCount reflects how many Media entries exist.
+    // Returns null when the item carries no media (e.g. a TV show container item) or no Media array.
+    private static MediaQualityDto? ExtractQuality(JsonElement item)
+    {
+        if (!item.TryGetProperty("Media", out var mediaArr) || mediaArr.ValueKind != JsonValueKind.Array) return null;
+        MediaQualityDto? best = null;
+        int count = 0;
+        foreach (var media in mediaArr.EnumerateArray())
+        {
+            if (media.ValueKind != JsonValueKind.Object) continue;
+            count++;
+            long size = 0;
+            if (media.TryGetProperty("Part", out var partArr) && partArr.ValueKind == JsonValueKind.Array)
+                foreach (var part in partArr.EnumerateArray())
+                    size += JsonLong(part, "size") ?? 0;
+            var info = new MediaQualityDto
+            {
+                Resolution = NormalizeResolution(JsonStr(media, "videoResolution"), JsonInt(media, "width"), JsonInt(media, "height")),
+                VideoCodec = NormalizeVideoCodec(JsonStr(media, "videoCodec")),
+                AudioCodec = NormalizeAudioCodec(JsonStr(media, "audioCodec")),
+                Bitrate = JsonInt(media, "bitrate"),
+                FileSizeBytes = size > 0 ? size : null,
+                VersionCount = 1
+            };
+            if (best is null
+                || ResolutionRank(info.Resolution) > ResolutionRank(best.Resolution)
+                || (ResolutionRank(info.Resolution) == ResolutionRank(best.Resolution) && (info.Bitrate ?? 0) > (best.Bitrate ?? 0)))
+                best = info;
+        }
+        if (best is null || count == 0) return null;
+        best.VersionCount = count;
+        return best;
+    }
+
+    // Combine several files (e.g. a season's episodes) into one representative summary:
+    // best resolution/codec seen + total size. VersionCount stays 1 (these are distinct items,
+    // not alternate versions of the same title).
+    private static MediaQualityDto? AggregateQuality(IReadOnlyCollection<MediaQualityDto> items)
+    {
+        if (items.Count == 0) return null;
+        MediaQualityDto best = items.First();
+        long totalSize = 0;
+        foreach (var q in items)
+        {
+            totalSize += q.FileSizeBytes ?? 0;
+            if (ResolutionRank(q.Resolution) > ResolutionRank(best.Resolution)
+                || (ResolutionRank(q.Resolution) == ResolutionRank(best.Resolution) && (q.Bitrate ?? 0) > (best.Bitrate ?? 0)))
+                best = q;
+        }
+        return new MediaQualityDto
+        {
+            Resolution = best.Resolution,
+            VideoCodec = best.VideoCodec,
+            AudioCodec = best.AudioCodec,
+            Bitrate = best.Bitrate,
+            FileSizeBytes = totalSize > 0 ? totalSize : null,
+            VersionCount = 1
+        };
+    }
+
+    // Rebuild a MediaQualityDto from the denormalized columns stored on a movie's PlexMappingEntity.
+    private static MediaQualityDto? QualityFromMapping(PlexMappingEntity m)
+    {
+        if (string.IsNullOrEmpty(m.VideoResolution) && string.IsNullOrEmpty(m.VideoCodec)
+            && m.Bitrate is null && m.FileSizeBytes is null) return null;
+        return new MediaQualityDto
+        {
+            Resolution = m.VideoResolution,
+            VideoCodec = m.VideoCodec,
+            AudioCodec = m.AudioCodec,
+            Bitrate = m.Bitrate,
+            FileSizeBytes = m.FileSizeBytes,
+            VersionCount = m.VersionCount < 1 ? 1 : m.VersionCount
+        };
     }
 
     private static string NormalizeTitleYear(string? title, int year)
@@ -626,7 +848,7 @@ public class PlexApiService : IPlexApiService
         return $"{baseUrl}/web/index.html#!/details?key={encodedKey}";
     }
 
-    private async IAsyncEnumerable<(string ratingKey, string? title, int? year, List<string> guids)> EnumerateLibraryItemsAsync(string sectionKey)
+    private async IAsyncEnumerable<(string ratingKey, string? title, int? year, List<string> guids, MediaQualityDto? quality)> EnumerateLibraryItemsAsync(string sectionKey)
     {
         int start = 0;
         const int size = 200;
@@ -687,7 +909,7 @@ public class PlexApiService : IPlexApiService
                                 var s = guidStr.GetString();
                                 if (!string.IsNullOrWhiteSpace(s)) guids.Add(s!); // may be plex:// guid; still capture
                             }
-                            yield return (ratingKey, title, year, guids);
+                            yield return (ratingKey, title, year, guids, ExtractQuality(m));
                         }
                     }
                 }
@@ -706,7 +928,8 @@ public class PlexApiService : IPlexApiService
                         var title = (string?)v.Attribute("title");
                         var year = (int?)v.Attribute("year");
                         var guids = v.Elements("Guid").Select(g => (string?)g.Attribute("id") ?? string.Empty).Where(s => !string.IsNullOrEmpty(s)).ToList();
-                        yield return (rk, title, year, guids);
+                        // XML fallback path: quality isn't parsed here (Plex serves JSON when we ask for it).
+                        yield return (rk, title, year, guids, null);
                     }
                 }
             }

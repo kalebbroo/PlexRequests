@@ -154,6 +154,8 @@
     private bool _loadingMore = false;
     private bool _hasMore = true;
     private const int PageSize = 40;
+    // Number of titles fetched per discovery row (trending/popular/top/genre carousels).
+    private const int RowSize = 100;
 
     private bool GridMode => !string.IsNullOrEmpty(_genre);
 
@@ -212,11 +214,11 @@
         try
         {
             var typeLabel = _type == MediaType.TvShow ? "tvshow" : "movie";
-            var trendingTask = PlexApiService.GetTrendingAsync(_type, 1, 20);
-            var popularTask = PlexApiService.GetPopularAsync(_type, 1, 20);
-            var topTask = PlexApiService.GetTopRatedAsync(_type, 1, 20);
+            var trendingTask = PlexApiService.GetTrendingAsync(_type, 1, RowSize);
+            var popularTask = PlexApiService.GetPopularAsync(_type, 1, RowSize);
+            var topTask = PlexApiService.GetTopRatedAsync(_type, 1, RowSize);
             var rowGenres = _type == MediaType.TvShow ? _tvRowGenres : _movieRowGenres;
-            var genreTasks = rowGenres.Select(g => PlexApiService.GetByGenreAsync(_type, g, 1, 20)).ToList();
+            var genreTasks = rowGenres.Select(g => PlexApiService.GetByGenreAsync(_type, g, 1, RowSize)).ToList();
 
             await Task.WhenAll(new[] { trendingTask, popularTask, topTask }.Concat(genreTasks));
 

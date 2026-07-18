@@ -92,6 +92,8 @@
     private bool _loading = true;
     private bool _loadFailed = false;
     private bool _loaded = false;
+    // Number of titles fetched per home-page row/carousel.
+    private const int RowSize = 100;
 
     // Load after first render (interactive circuit) rather than during prerender, so the page shell
     // paints instantly and a slow TMDB/Plex call never blocks the initial response.
@@ -107,12 +109,12 @@
     {
         try
         {
-            var trendingTask = PlexApiService.GetTrendingAsync(null, 1, 20);
-            var popMoviesTask = PlexApiService.GetPopularAsync(MediaType.Movie, 1, 20);
-            var popTvTask = PlexApiService.GetPopularAsync(MediaType.TvShow, 1, 20);
-            var actionTask = PlexApiService.GetByGenreAsync(MediaType.Movie, "Action", 1, 20);
-            var topMoviesTask = PlexApiService.GetTopRatedAsync(MediaType.Movie, 1, 12);
-            var topTvTask = PlexApiService.GetTopRatedAsync(MediaType.TvShow, 1, 12);
+            var trendingTask = PlexApiService.GetTrendingAsync(null, 1, RowSize);
+            var popMoviesTask = PlexApiService.GetPopularAsync(MediaType.Movie, 1, RowSize);
+            var popTvTask = PlexApiService.GetPopularAsync(MediaType.TvShow, 1, RowSize);
+            var actionTask = PlexApiService.GetByGenreAsync(MediaType.Movie, "Action", 1, RowSize);
+            var topMoviesTask = PlexApiService.GetTopRatedAsync(MediaType.Movie, 1, RowSize);
+            var topTvTask = PlexApiService.GetTopRatedAsync(MediaType.TvShow, 1, RowSize);
 
             await Task.WhenAll(trendingTask, popMoviesTask, popTvTask, actionTask, topMoviesTask, topTvTask);
 

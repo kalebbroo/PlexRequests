@@ -28,5 +28,18 @@ public class PlexMappingEntity
 
     public int? Year { get; set; }
 
+    // Quality of the file on Plex (movies only — TV show items have no media file of their own;
+    // per-episode quality lives on PlexSeasonAvailabilityEntity.EpisodeQualityJson). Reflects the
+    // best/highest version when multiple exist; VersionCount records how many versions are present.
+    [MaxLength(16)]
+    public string? VideoResolution { get; set; }
+    [MaxLength(32)]
+    public string? VideoCodec { get; set; }
+    [MaxLength(32)]
+    public string? AudioCodec { get; set; }
+    public int? Bitrate { get; set; }          // kbps
+    public long? FileSizeBytes { get; set; }
+    public int VersionCount { get; set; } = 1;
+
     public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
 }
