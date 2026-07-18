@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Abstractions;
+using PlexRequestsHosted.Services.Jobs;
 using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
@@ -198,8 +199,11 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
     public async Task<List<FulfillmentJobDto>> ClaimNextAsync(string workerId, int max = 1)
     {
         if (max < 1) max = 1;
+        var now0 = DateTime.UtcNow;
+        // Claim Queued jobs whose retry backoff (if any) has elapsed. Deferred jobs aren't Queued, so they're
+        // skipped here — the scheduler's MissingSearch job flips them back to Queued once they're due.
         var jobs = await _db.FulfillmentJobs
-            .Where(j => j.Status == FulfillmentStatus.Queued)
+            .Where(j => j.Status == FulfillmentStatus.Queued && (j.NextRetryAt == null || j.NextRetryAt <= now0))
             .OrderBy(j => j.CreatedAt)
             .Take(max)
             .ToListAsync();
@@ -256,6 +260,116 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         j.LastError = reason.Length > 2000 ? reason[..2000] : reason;
         j.CompletedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+    }
+
+    public async Task<DeferResult> MarkDeferredAsync(int jobId, string reason)
+    {
+        var j = await _db.FulfillmentJobs.FirstOrDefaultAsync(x => x.Id == jobId);
+        if (j is null) return new DeferResult(false, false, 0, null, false);
+
+        var now = DateTime.UtcNow;
+        j.DeferCount++;
+        j.NextRetryAt = RetryBackoff.ComputeNextRetry(j.DeferCount, j.ReleaseDate, now);
+        j.Status = FulfillmentStatus.Deferred;
+        j.LastError = reason.Length > 2000 ? reason[..2000] : reason;
+        j.LastUpdatedAt = now;
+        j.ClaimedBy = null;          // release the claim so it's not seen as an active download
+        j.Progress = 0;
+
+        // Escalate to admins exactly once, after enough empty searches — never auto-fail.
+        bool shouldEscalate = !j.Escalated && j.DeferCount >= RetryBackoff.EscalateAfterDeferrals;
+        if (shouldEscalate) j.Escalated = true;
+
+        await _db.SaveChangesAsync();
+        return new DeferResult(true, j.IsUpgrade, j.DeferCount, j.NextRetryAt, shouldEscalate);
+    }
+
+    public async Task MarkUpgradeExhaustedAsync(int jobId)
+    {
+        var j = await _db.FulfillmentJobs.FirstOrDefaultAsync(x => x.Id == jobId);
+        if (j is null) return;
+        // The content is already available; an upgrade simply found nothing better. Close the job quietly
+        // (not a failure) and stamp the request's cooldown so it's reconsidered on a later scan, not at once.
+        j.Status = FulfillmentStatus.Cancelled;
+        j.LastError = "No better-quality release found";
+        j.CompletedAt = DateTime.UtcNow;
+        var req = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == j.MediaRequestId);
+        if (req is not null) req.LastUpgradeSearchAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task<bool> EnqueueUpgradeAsync(MediaRequestDto request, Quality target, IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes)
+    {
+        // Never run two upgrades for the same request at once.
+        var activeUpgrade = await _db.FulfillmentJobs.AnyAsync(j =>
+            j.MediaRequestId == request.Id && j.IsUpgrade &&
+            j.Status != FulfillmentStatus.Completed && j.Status != FulfillmentStatus.Failed && j.Status != FulfillmentStatus.Cancelled);
+        if (activeUpgrade) return false;
+
+        // Copy identity fields (IMDb id / year / genres / anime flag) from the most recent real job so the
+        // ranker can search without another metadata lookup; fall back to the request where needed.
+        var origin = await _db.FulfillmentJobs
+            .Where(j => j.MediaRequestId == request.Id && !j.IsUpgrade)
+            .OrderByDescending(j => j.Id).FirstOrDefaultAsync();
+
+        var episodesCsv = episodes.Count > 0
+            ? string.Join(",", episodes.Select(e => $"S{e.season}E{e.episode}"))
+            : null;
+
+        _db.FulfillmentJobs.Add(new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id,
+            MediaId = request.MediaId,
+            MediaType = request.MediaType,
+            Title = request.Title,
+            Year = origin?.Year,
+            TmdbId = origin?.TmdbId ?? request.MediaId,
+            ImdbId = origin?.ImdbId,
+            TvdbId = origin?.TvdbId,
+            ExternalId = request.ExternalId,
+            ExternalSource = request.ExternalSource,
+            RequestedEpisodesCsv = episodesCsv,
+            Quality = target,
+            GenresCsv = origin?.GenresCsv,
+            IsAnime = origin?.IsAnime ?? false,
+            IsUpgrade = true,
+            ReplacePathsJson = replacePaths.Count > 0 ? JsonSerializer.Serialize(replacePaths) : null,
+            Status = FulfillmentStatus.Queued,
+            CreatedAt = DateTime.UtcNow
+        });
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<Quality> RecomputeAchievedQualityAsync(int mediaRequestId)
+    {
+        var req = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == mediaRequestId);
+        if (req is null) return Quality.Any;
+
+        // All video files currently imported for this request, across its jobs (superseded files are removed
+        // when an upgrade replaces them, so what remains is the library's current state).
+        var jobIds = await _db.FulfillmentJobs.Where(j => j.MediaRequestId == mediaRequestId)
+            .Select(j => j.Id).ToListAsync();
+        var heights = await _db.ImportedFiles
+            .Where(f => jobIds.Contains(f.FulfillmentJobId) && f.FileType == "video" && f.ResolutionHeight > 0)
+            .Select(f => f.ResolutionHeight)
+            .ToListAsync();
+
+        // Achieved quality is the WORST video we hold (a single 720p episode leaves a 1080p season below cutoff).
+        var achieved = heights.Count == 0 ? Quality.Any : QualityHelper.FromHeight(heights.Min());
+        req.AchievedQuality = achieved;
+
+        // Target: re-resolve current admin rules so a later rule change re-flags cutoff correctly. Genres come
+        // from the enqueue-time snapshot on the latest job (so genre-based override rules still apply). Only
+        // mark cutoff unmet when we actually know the achieved quality (heights present).
+        var genresCsv = await _db.FulfillmentJobs.Where(j => j.MediaRequestId == mediaRequestId)
+            .OrderByDescending(j => j.Id).Select(j => j.GenresCsv).FirstOrDefaultAsync();
+        var genres = string.IsNullOrWhiteSpace(genresCsv) ? null
+            : genresCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        var target = await _quality.ResolveQualityAsync(req.MediaType, req.MediaId, genres);
+        req.CutoffMet = heights.Count == 0 || target == Quality.Any || (int)achieved >= (int)target;
+        await _db.SaveChangesAsync();
+        return achieved;
     }
 
     private Task<FulfillmentJobEntity?> LatestJobAsync(int mediaRequestId) =>
@@ -334,6 +448,10 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         IsAnime = j.IsAnime,
         Status = j.Status,
         Attempts = j.Attempts,
-        Progress = j.Progress
+        Progress = j.Progress,
+        IsUpgrade = j.IsUpgrade,
+        ReplacePaths = string.IsNullOrWhiteSpace(j.ReplacePathsJson)
+            ? new List<string>()
+            : (JsonSerializer.Deserialize<List<string>>(j.ReplacePathsJson) ?? new List<string>())
     };
 }

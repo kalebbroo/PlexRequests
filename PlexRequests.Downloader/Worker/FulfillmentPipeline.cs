@@ -57,7 +57,10 @@ public class FulfillmentPipeline(
             var plan = ranker.PlanDownload(candidates, job);
             if (plan.IsEmpty)
             {
-                await api.MarkFailedAsync(job.MediaRequestId, "No acceptable release found", ct);
+                // Never dead-end: a normal job is parked and re-searched on a backoff (request shows
+                // "Searching", not "Failed"); an upgrade job simply found nothing better and stops quietly.
+                if (job.IsUpgrade) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
+                else await api.MarkDeferredAsync(job.Id, "No acceptable release found yet", ct);
                 return;
             }
 
@@ -71,12 +74,15 @@ public class FulfillmentPipeline(
                     logger.LogWarning("Failed to add magnet for job {JobId} (S{Season}E{Episode})", job.Id, item.Season, item.Episode);
                     continue;
                 }
-                torrents.Add(new TorrentItem(torrentId, item.Season, item.Episode, item.IsPack, NeededEpisodes: item.NeededEpisodes));
+                torrents.Add(new TorrentItem(torrentId, item.Season, item.Episode, item.IsPack, NeededEpisodes: item.NeededEpisodes, Resolution: item.Resolution));
             }
 
             if (torrents.Count == 0)
             {
-                await api.MarkFailedAsync(job.MediaRequestId, "Failed to add torrent(s) to Deluge", ct);
+                // Adding to the download client failed for everything (usually a transient Deluge/VPN blip).
+                // Defer with a backoff rather than failing so it's retried automatically.
+                if (job.IsUpgrade) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
+                else await api.MarkDeferredAsync(job.Id, "Could not add torrent(s) to the download client", ct);
                 return;
             }
 
@@ -90,7 +96,9 @@ public class FulfillmentPipeline(
         catch (Exception ex)
         {
             logger.LogError(ex, "Pipeline error for job {JobId}", job.Id);
-            await SafeFail(job.MediaRequestId, $"Downloader error: {ex.Message}");
+            // An upgrade job's request is already Available — never flip it to Failed; just stop this attempt.
+            if (job.IsUpgrade) await SafeMarkUpgradeExhausted(job.Id);
+            else await SafeFail(job.MediaRequestId, $"Downloader error: {ex.Message}");
             await SafeRemoveState(job.Id);
         }
     }
@@ -106,7 +114,8 @@ public class FulfillmentPipeline(
         catch (Exception ex)
         {
             logger.LogError(ex, "Resume error for job {JobId}", record.Job.Id);
-            await SafeFail(record.Job.MediaRequestId, $"Downloader error on resume: {ex.Message}");
+            if (record.Job.IsUpgrade) await SafeMarkUpgradeExhausted(record.Job.Id);
+            else await SafeFail(record.Job.MediaRequestId, $"Downloader error on resume: {ex.Message}");
             await SafeRemoveState(record.Job.Id);
         }
     }
@@ -141,6 +150,9 @@ public class FulfillmentPipeline(
         // Latest raw client status per torrent, kept so we can assemble a live telemetry snapshot for the
         // admin downloads panel at any point in the tick (including right before a blocking import).
         var latest = new Dictionary<string, DownloadStatus>();
+        // Every library destination path written this run — used (upgrade jobs only) to avoid deleting an old
+        // file that the new import just overwrote in place.
+        var importedDestinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var now0 = DateTime.UtcNow;
         foreach (var it in items) lastProgress[it.TorrentId] = (0, now0);
 
@@ -285,9 +297,11 @@ public class FulfillmentPipeline(
                             FileType = f.FileType,
                             SeasonNumber = f.Season,
                             EpisodeNumber = f.Episode,
-                            SizeBytes = f.SizeBytes
+                            SizeBytes = f.SizeBytes,
+                            ResolutionHeight = it.Resolution // resolution the ranker chose for this torrent
                         }).ToList();
                         await api.ReportImportedFilesAsync(job.Id, files, ct);
+                        foreach (var f in files) importedDestinations.Add(f.DestinationPath);
                     }
                     catch (Exception ex) { logger.LogWarning(ex, "Could not persist import audit rows for job {JobId}", job.Id); }
 
@@ -311,7 +325,22 @@ public class FulfillmentPipeline(
         }
 
         var importedCount = items.Count(x => x.Imported);
-        if (importedCount == items.Count)
+
+        if (job.IsUpgrade)
+        {
+            // Upgrade job: the request is already Available, so there's no "fail" outcome — either we imported
+            // a better release (replace the old files + report the upgrade) or we got nothing (exhausted).
+            if (importedCount > 0)
+            {
+                DeleteReplacedFiles(job, importedDestinations);
+                await SafeMarkUpgraded(job.Id);
+            }
+            else
+            {
+                await SafeMarkUpgradeExhausted(job.Id);
+            }
+        }
+        else if (importedCount == items.Count)
         {
             await SafeMarkFulfilled(job.MediaRequestId);
         }
@@ -322,9 +351,27 @@ public class FulfillmentPipeline(
         }
         else
         {
-            await SafeFail(job.MediaRequestId, string.Join("; ", failReasons.Distinct()) is { Length: > 0 } r ? r : "All downloads failed");
+            // No hard "Failed" for a first-time grab either: park it and keep searching on a backoff.
+            var reason = string.Join("; ", failReasons.Distinct()) is { Length: > 0 } r ? r : "All downloads failed";
+            await SafeDefer(job.Id, reason);
         }
         await SafeRemoveState(job.Id);
+    }
+
+    // Physically remove the old files an upgrade superseded, EXCEPT any the new import overwrote in place
+    // (same destination path). Best-effort and confined to the recorded ReplacePaths — never deletes anything
+    // the new import didn't produce. Only called on an upgrade that imported at least one file.
+    private void DeleteReplacedFiles(FulfillmentJobDto job, HashSet<string> importedDestinations)
+    {
+        foreach (var path in job.ReplacePaths)
+        {
+            if (string.IsNullOrWhiteSpace(path) || importedDestinations.Contains(path)) continue;
+            try
+            {
+                if (File.Exists(path)) { File.Delete(path); logger.LogInformation("Upgrade {JobId}: removed superseded file {Path}", job.Id, path); }
+            }
+            catch (Exception ex) { logger.LogWarning(ex, "Upgrade {JobId}: could not delete superseded file {Path}", job.Id, path); }
+        }
     }
 
     /// <summary>
@@ -436,6 +483,25 @@ public class FulfillmentPipeline(
     {
         try { await api.MarkFulfilledAsync(requestId, CancellationToken.None); }
         catch (Exception ex) { logger.LogWarning(ex, "Could not report fulfillment for request {RequestId}; will retry next reconciliation pass", requestId); }
+    }
+
+    // Park a normal job for re-search instead of failing it (the never-dead-end path).
+    private async Task SafeDefer(int jobId, string reason)
+    {
+        try { await api.MarkDeferredAsync(jobId, reason, CancellationToken.None); }
+        catch (Exception ex) { logger.LogWarning(ex, "Could not report deferral for job {JobId}", jobId); }
+    }
+
+    private async Task SafeMarkUpgraded(int jobId)
+    {
+        try { await api.MarkUpgradedAsync(jobId, CancellationToken.None); }
+        catch (Exception ex) { logger.LogWarning(ex, "Could not report upgrade success for job {JobId}", jobId); }
+    }
+
+    private async Task SafeMarkUpgradeExhausted(int jobId)
+    {
+        try { await api.MarkUpgradeExhaustedAsync(jobId, CancellationToken.None); }
+        catch (Exception ex) { logger.LogWarning(ex, "Could not report upgrade-exhausted for job {JobId}", jobId); }
     }
 
     private async Task SafeRemoveState(int jobId)

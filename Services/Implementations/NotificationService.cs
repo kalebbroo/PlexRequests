@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Abstractions;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 
@@ -59,6 +60,23 @@ public class NotificationService(IServiceScopeFactory scopeFactory, INotificatio
         await NotifyAdminsAsync(NotificationType.Error, "Fulfillment failed",
             $"We hit a problem downloading \"{request.Title}\". Check the server logs for details.", request.Id);
         await WriteOutboxAsync(request, BridgeEventType.Failed, reason);
+    }
+
+    public async Task RequestSearchStalledAsync(MediaRequestDto request, int attempts)
+    {
+        // Not a failure — the request is still being searched. Surface it to admins so they can add an
+        // indexer or relax quality rules if they want it found sooner.
+        await NotifyAdminsAsync(NotificationType.RequestSearchStalled, "Still searching",
+            $"\"{request.Title}\" has been searched {attempts} times with no release found yet. It will keep retrying; you can help by adding an indexer or adjusting quality rules.",
+            request.Id);
+        await WriteOutboxAsync(request, BridgeEventType.Failed, $"Still searching after {attempts} attempts (not failed)");
+    }
+
+    public async Task RequestUpgradedAsync(MediaRequestDto request, Quality newQuality)
+    {
+        await NotifyUserAsync(request.RequestedByUserId, NotificationType.RequestUpgraded,
+            "Quality upgraded", $"\"{request.Title}\" was upgraded to {newQuality.Label()}.", request.Id);
+        await WriteOutboxAsync(request, BridgeEventType.Available, $"Upgraded to {newQuality.Label()}");
     }
 
     private async Task WriteOutboxAsync(MediaRequestDto request, BridgeEventType type, string? detail = null)

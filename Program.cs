@@ -10,6 +10,7 @@ using PlexRequestsHosted.Services.MetadataProviders;
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using System.Text;
+using System.Text.Json;
 using System.IO;
 using System.Net.Http;
 using System.Net.Security;
@@ -166,6 +167,14 @@ builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.Availab
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.SeriesMonitorService>();
 // Safety net: auto-mark requests Available when their content appears on Plex by ANY means.
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.AvailabilityReconciliationService>();
+
+// Generic background-job engine + its handlers. The scheduler ticks, dispatches due jobs to the matching
+// IJobHandler, and records run history. MissingSearch re-queues deferred requests (never-dead-end);
+// QualityUpgradeScan enqueues auto-upgrades for below-preferred-quality content.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.MissingSearchJob>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.UpgradeScanJob>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IJobAdminService, PlexRequestsHosted.Services.Jobs.JobAdminService>();
+builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.JobSchedulerService>();
 
 // AuthN/AuthZ
 builder.Services
@@ -454,7 +463,8 @@ app.MapPost("/api/fulfillment/{jobId:int}/imported-files", async (int jobId, Lis
         FileType = f.FileType,
         SeasonNumber = f.SeasonNumber,
         EpisodeNumber = f.EpisodeNumber,
-        SizeBytes = f.SizeBytes
+        SizeBytes = f.SizeBytes,
+        ResolutionHeight = f.ResolutionHeight
     }));
     await db.SaveChangesAsync();
     return Results.Ok();
@@ -515,6 +525,9 @@ app.MapPost("/api/requests/{id:int}/fulfilled", async (int id, HttpContext ctx, 
         await db.SaveChangesAsync();
     }
     await queue.MarkCompletedAsync(id);
+    // Record the quality we actually got (min video resolution across imported files) and flag the request
+    // for a later upgrade if it's below the preferred target.
+    try { await queue.RecomputeAchievedQualityAsync(id); } catch { /* best-effort; never block fulfillment */ }
 
     if (!alreadyAvailable)
     {
@@ -558,6 +571,91 @@ app.MapPost("/api/requests/{id:int}/partially-completed", async (int id, FailReq
     try { await plex.RebuildAvailabilityIndexAsync(); } catch { /* index refresh is best-effort */ }
     await notify.RequestFailedAsync(ToRequestDto(req), $"Partially completed — {reason}");
     return Results.Ok(new { req.Id, status = req.Status.ToString() });
+});
+
+// Worker reports "no release findable yet" for a NON-upgrade job — the never-dead-end path. The job is
+// parked (Deferred) on a growing backoff and the request shows as "Searching" (not Failed); the scheduler
+// re-queues it when the backoff elapses. After enough empty searches, admins are notified once — but the
+// request keeps retrying and is never auto-failed.
+app.MapPost("/api/fulfillment/{jobId:int}/deferred", async (int jobId, FailRequest body, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var reason = string.IsNullOrWhiteSpace(body.Reason) ? "No release found yet" : body.Reason!;
+    var result = await queue.MarkDeferredAsync(jobId, reason);
+    if (!result.Found) return Results.NotFound();
+
+    var job = await db.FulfillmentJobs.FirstOrDefaultAsync(j => j.Id == jobId);
+    if (job is not null)
+    {
+        var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == job.MediaRequestId);
+        if (req is not null)
+        {
+            // Reflect it as Searching (a soft, non-failure state) if it's still in an active pre-download state.
+            if (req.Status is RequestStatus.Approved or RequestStatus.Processing or RequestStatus.Pending or RequestStatus.Searching)
+            {
+                if (req.Status != RequestStatus.Searching) { req.Status = RequestStatus.Searching; await db.SaveChangesAsync(); }
+            }
+            if (result.ShouldEscalate)
+                await notify.RequestSearchStalledAsync(ToRequestDto(req), result.DeferCount);
+        }
+    }
+    return Results.Ok(new { jobId, deferCount = result.DeferCount, nextRetryAt = result.NextRetryAt });
+});
+
+// Worker reports an upgrade search found nothing better. The content is already available; close the upgrade
+// job quietly (not a failure) and let the request be reconsidered on a later scan.
+app.MapPost("/api/fulfillment/{jobId:int}/upgrade-exhausted", async (int jobId, HttpContext ctx, IConfiguration cfg, IFulfillmentQueue queue) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    await queue.MarkUpgradeExhaustedAsync(jobId);
+    return Results.Ok();
+});
+
+// Worker reports a successful quality upgrade: the better release imported and the old files were deleted on
+// disk. Drop the superseded audit rows, recompute the request's achieved quality, refresh Plex, and notify.
+app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IPlexApiService plex) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var job = await db.FulfillmentJobs.FirstOrDefaultAsync(j => j.Id == jobId);
+    if (job is null) return Results.NotFound();
+
+    // Supersede the OLD audit rows for exactly the content this upgrade re-imported, matched by
+    // (season, episode) so a PARTIAL upgrade only replaces the episodes it actually got — a failed episode
+    // keeps its original row (and file). A movie (no season/episode) replaces the whole title.
+    var newFiles = await db.ImportedFiles.Where(f => f.FulfillmentJobId == jobId).ToListAsync();
+    var requestJobIds = await db.FulfillmentJobs.Where(j => j.MediaRequestId == job.MediaRequestId)
+        .Select(j => j.Id).ToListAsync();
+    var oldRows = await db.ImportedFiles
+        .Where(f => requestJobIds.Contains(f.FulfillmentJobId) && f.FulfillmentJobId != jobId)
+        .ToListAsync();
+
+    List<PlexRequestsHosted.Infrastructure.Entities.ImportedFileEntity> superseded;
+    if (newFiles.Any(f => f.SeasonNumber == null && f.EpisodeNumber == null))
+    {
+        // Movie / whole-title upgrade — every prior file for the request is replaced.
+        superseded = oldRows;
+    }
+    else
+    {
+        var upgradedEps = newFiles.Where(f => f.SeasonNumber != null && f.EpisodeNumber != null)
+            .Select(f => (f.SeasonNumber, f.EpisodeNumber)).ToHashSet();
+        superseded = oldRows.Where(f => upgradedEps.Contains((f.SeasonNumber, f.EpisodeNumber))).ToList();
+    }
+    if (superseded.Count > 0) { db.ImportedFiles.RemoveRange(superseded); await db.SaveChangesAsync(); }
+
+    job.Status = FulfillmentStatus.Completed;
+    job.Progress = 100;
+    job.CompletedAt = DateTime.UtcNow;
+    await db.SaveChangesAsync();
+
+    var newQuality = await queue.RecomputeAchievedQualityAsync(job.MediaRequestId);
+    var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == job.MediaRequestId);
+    if (req is not null)
+    {
+        try { await plex.RebuildAvailabilityIndexAsync(); } catch { /* best-effort */ }
+        await notify.RequestUpgradedAsync(ToRequestDto(req), newQuality);
+    }
+    return Results.Ok(new { jobId, achievedQuality = newQuality.ToString() });
 });
 
 // ---------------------------------------------------------------------------------------------

@@ -89,6 +89,24 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         return resp.IsSuccessStatusCode;
     }
 
+    public async Task<bool> MarkDeferredAsync(int jobId, string reason, CancellationToken ct)
+    {
+        var resp = await _http.PostAsJsonAsync($"/api/fulfillment/{jobId}/deferred", new FailRequest(reason), ct);
+        return resp.IsSuccessStatusCode;
+    }
+
+    public async Task<bool> MarkUpgradeExhaustedAsync(int jobId, CancellationToken ct)
+    {
+        var resp = await _http.PostAsync($"/api/fulfillment/{jobId}/upgrade-exhausted", content: null, ct);
+        return resp.IsSuccessStatusCode;
+    }
+
+    public async Task<bool> MarkUpgradedAsync(int jobId, CancellationToken ct)
+    {
+        var resp = await _http.PostAsync($"/api/fulfillment/{jobId}/upgraded", content: null, ct);
+        return resp.IsSuccessStatusCode;
+    }
+
     public async Task<LibraryOrganizationPreferencesDto?> GetLibraryConfigAsync(CancellationToken ct)
     {
         try

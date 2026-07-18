@@ -58,6 +58,20 @@ public class FulfillmentJobEntity
     public int Attempts { get; set; }
     public int Progress { get; set; } // 0-100
 
+    // --- Quality-upgrade state -----------------------------------------------------------------------
+    /// <summary>True when this job is an automatic quality upgrade of already-available content (the
+    /// UpgradeScanJob enqueued it because the request was downloaded below its preferred quality). Upgrade
+    /// jobs enforce the quality floor unconditionally (never a downgrade/side-grade) and, on success,
+    /// replace <see cref="ReplacePathsJson"/> rather than adding fresh content.</summary>
+    public bool IsUpgrade { get; set; }
+    /// <summary>For an upgrade job: JSON array of the existing library file paths this upgrade supersedes.
+    /// The downloader deletes them after the better release imports; the web app removes their audit rows.</summary>
+    public string? ReplacePathsJson { get; set; }
+
+    /// <summary>Set once when a long-deferred job is escalated to admins (see <see cref="DeferCount"/>), so
+    /// the "still searching, needs attention" notification fires exactly once rather than every retry.</summary>
+    public bool Escalated { get; set; }
+
     // --- Deferred-retry state (for a request whose release isn't findable yet) ---------------------
     /// <summary>When a Deferred job becomes claimable again. The downloader's claim query skips deferred
     /// jobs until this passes, so a "not found yet" request is re-searched on a backoff instead of failing.</summary>

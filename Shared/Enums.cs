@@ -49,7 +49,12 @@ public enum NotificationType
     RequestCreated = 4,
     RequestApproved = 5,
     RequestRejected = 6,
-    RequestAvailable = 7
+    RequestAvailable = 7,
+    /// <summary>A request has been searching for a long time with no findable release — surfaced to admins
+    /// so they can intervene (add an indexer, adjust quality rules) instead of the request silently failing.</summary>
+    RequestSearchStalled = 8,
+    /// <summary>An already-available title was auto-upgraded to a better-quality release matching preferences.</summary>
+    RequestUpgraded = 9
 }
 
 public enum BridgeEventType
@@ -82,6 +87,29 @@ public enum IssueStatus
     Open = 0,
     Resolved = 1,
     Dismissed = 2
+}
+
+/// <summary>A kind of recurring/on-demand background job the generic scheduler can run. Each value maps to
+/// exactly one <c>IJobHandler</c> implementation, resolved by type at dispatch time. Add a value here + a
+/// handler class to introduce a new job type (e.g. a future LibraryScan or MetadataRefresh).</summary>
+public enum JobType
+{
+    /// <summary>Re-search for requests parked in <see cref="FulfillmentStatus.Deferred"/> whose backoff has
+    /// elapsed: flip them back to Queued so the downloader searches them again. Powers "never dead-end".</summary>
+    MissingSearch = 0,
+    /// <summary>Find already-available titles downloaded below their preferred quality and enqueue an upgrade
+    /// search to auto-replace them with a better release.</summary>
+    QualityUpgradeScan = 1
+}
+
+/// <summary>Outcome of a single scheduled-job execution, recorded in the job-run history.</summary>
+public enum JobRunStatus
+{
+    Running = 0,
+    Succeeded = 1,
+    Failed = 2,
+    /// <summary>Ran but did nothing meaningful (nothing due, feature disabled) — not an error.</summary>
+    Skipped = 3
 }
 
 public enum Quality

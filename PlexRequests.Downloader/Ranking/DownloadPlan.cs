@@ -18,7 +18,12 @@ public enum DownloadPlanKind
 /// can avoid re-importing episodes already on Plex. Null means "take the whole thing" (movie, single
 /// episode, or a pack covering a fully-missing season).
 /// </summary>
-public record DownloadPlanItem(ReleaseCandidate Candidate, int? Season, int? Episode, bool IsPack, IReadOnlyList<int>? NeededEpisodes = null);
+public record DownloadPlanItem(ReleaseCandidate Candidate, int? Season, int? Episode, bool IsPack, IReadOnlyList<int>? NeededEpisodes = null)
+{
+    /// <summary>Vertical resolution (pixel height) of the chosen release, per the ranker. 0 = unknown.
+    /// Carried through to the imported-file audit rows so achieved quality / cutoff can be evaluated.</summary>
+    public int Resolution { get; init; }
+}
 
 /// <summary>
 /// The downloader's decision for a job: which releases to add. May be a single release (movie / pack)

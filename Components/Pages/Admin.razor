@@ -30,12 +30,15 @@
         <MudTabPanel Text="Users &amp; Roles">
             <div class="pt-4"><AdminUsersPanel /></div>
         </MudTabPanel>
+        <MudTabPanel Text="Jobs">
+            <div class="pt-4"><AdminJobsPanel /></div>
+        </MudTabPanel>
     </MudTabs>
 </MudContainer>
 
 @code {
     // Must match the MudTabPanel order above — used for ?tab= deep links.
-    private static readonly string[] TabKeys = { "health", "approvals", "issues", "quality", "downloads", "library", "network", "users" };
+    private static readonly string[] TabKeys = { "health", "approvals", "issues", "quality", "downloads", "library", "network", "users", "jobs" };
     private int _activeIndex;
 
     [SupplyParameterFromQuery(Name = "tab")]

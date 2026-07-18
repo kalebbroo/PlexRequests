@@ -22,6 +22,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<FulfillmentJobEntity> FulfillmentJobs => Set<FulfillmentJobEntity>();
     public DbSet<ImportedFileEntity> ImportedFiles => Set<ImportedFileEntity>();
     public DbSet<BridgeOutboxEntity> BridgeOutbox => Set<BridgeOutboxEntity>();
+    public DbSet<ScheduledJobEntity> ScheduledJobs => Set<ScheduledJobEntity>();
+    public DbSet<JobRunEntity> JobRuns => Set<JobRunEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -153,6 +155,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasIndex(x => x.Status); // worker polls queued jobs
             b.HasIndex(x => x.MediaRequestId);
             b.HasIndex(x => new { x.MediaId, x.MediaType }); // cross-request in-flight job dedup
+            b.HasIndex(x => x.NextRetryAt); // scheduler scans deferred jobs whose backoff has elapsed
 
             b.HasOne(x => x.MediaRequest)
                 .WithMany()
@@ -181,6 +184,20 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(x => x.MediaRequestId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ScheduledJobEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.JobType).IsUnique(); // one schedule row per job type
+            b.HasIndex(x => x.NextRunAt);           // scheduler polls due jobs
+        });
+
+        modelBuilder.Entity<JobRunEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.JobType);
+            b.HasIndex(x => x.StartedAt); // history feed sorts newest-first
         });
     }
 }

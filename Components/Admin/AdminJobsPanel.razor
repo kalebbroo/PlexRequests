@@ -1,0 +1,332 @@
+@using PlexRequestsHosted.Shared
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@inject PlexRequestsHosted.Services.Abstractions.IJobAdminService Jobs
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
+
+@* Admin "Jobs" panel: recurring-job schedule, run history, the still-searching "Missing" list, and the
+   "Cutoff Unmet" upgrade list. This is a child component — the parent /admin page is already admin-gated,
+   so there is no @page or [Authorize] here. *@
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else
+{
+    <MudTabs Elevation="0" Rounded="true" Border="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+
+        @* ---------------- MISSING ---------------- *@
+        <MudTabPanel Text="Missing" BadgeData="@(_missing.Count == 0 ? null : _missing.Count)" BadgeColor="Color.Warning">
+            @if (_missing.Count == 0)
+            {
+                <div class="text-center py-6 text-muted">Nothing is being searched for — every request has found a release.</div>
+            }
+            else
+            {
+                <MudTable Items="_missing" Dense="true" Hover="true" Class="elevation-1">
+                    <HeaderContent>
+                        <MudTh>Title</MudTh>
+                        <MudTh>Requested by</MudTh>
+                        <MudTh>Target quality</MudTh>
+                        <MudTh>Attempts</MudTh>
+                        <MudTh>Next search</MudTh>
+                        <MudTh></MudTh>
+                        <MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Title">
+                            <div class="fw-bold">@context.Title @(context.Year is int y ? $"({y})" : "")</div>
+                        </MudTd>
+                        <MudTd DataLabel="Requested by">@context.RequestedBy</MudTd>
+                        <MudTd DataLabel="Target quality">@context.TargetQuality.Label()</MudTd>
+                        <MudTd DataLabel="Attempts">@context.DeferCount</MudTd>
+                        <MudTd DataLabel="Next search">@FormatWhen(context.NextRetryAt)</MudTd>
+                        <MudTd DataLabel="">
+                            @* "Needs attention" warning once the item has been deferred too many times. *@
+                            @if (context.Escalated)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Icon="@Icons.Material.Filled.Warning">Needs attention</MudChip>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(context.LastError))
+                            {
+                                <MudTooltip Text="@context.LastError">
+                                    <MudIcon Icon="@Icons.Material.Filled.Info" Color="Color.Info" Size="Size.Small" />
+                                </MudTooltip>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="Actions">
+                            <div class="d-flex gap-1">
+                                <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                                           OnClick="() => SearchMissing(context)">Search now</MudButton>
+                                <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text"
+                                           OnClick="() => GiveUp(context)">Give up</MudButton>
+                            </div>
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudTabPanel>
+
+        @* ---------------- CUTOFF UNMET ---------------- *@
+        <MudTabPanel Text="Cutoff Unmet" BadgeData="@(_cutoff.Count == 0 ? null : _cutoff.Count)" BadgeColor="Color.Info">
+            @if (_cutoff.Count == 0)
+            {
+                <div class="text-center py-6 text-muted">No quality upgrades pending — everything is at its preferred quality.</div>
+            }
+            else
+            {
+                <MudTable Items="_cutoff" Dense="true" Hover="true" Class="elevation-1">
+                    <HeaderContent>
+                        <MudTh>Title</MudTh>
+                        <MudTh>Requested by</MudTh>
+                        <MudTh>Quality</MudTh>
+                        <MudTh>Upgrade attempts</MudTh>
+                        <MudTh>Last searched</MudTh>
+                        <MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Title">
+                            <div class="fw-bold">@context.Title @(context.Year is int y ? $"({y})" : "")</div>
+                        </MudTd>
+                        <MudTd DataLabel="Requested by">@context.RequestedBy</MudTd>
+                        @* have → want, e.g. "720p → 1080p" *@
+                        <MudTd DataLabel="Quality">@context.HaveQuality.Label() → @context.WantQuality.Label()</MudTd>
+                        <MudTd DataLabel="Upgrade attempts">@context.UpgradeAttempts</MudTd>
+                        <MudTd DataLabel="Last searched">@FormatWhen(context.LastUpgradeSearchAt)</MudTd>
+                        <MudTd DataLabel="Actions">
+                            @if (context.UpgradeInProgress)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Info" Icon="@Icons.Material.Filled.HourglassTop">In progress</MudChip>
+                            }
+                            else
+                            {
+                                <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                                           OnClick="() => UpgradeNow(context)">Upgrade now</MudButton>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudTabPanel>
+
+        @* ---------------- SCHEDULE ---------------- *@
+        <MudTabPanel Text="Schedule">
+            @if (_scheduled.Count == 0)
+            {
+                <div class="text-center py-6 text-muted">No recurring jobs are configured.</div>
+            }
+            else
+            {
+                <MudTable Items="_scheduled" Dense="true" Hover="true" Class="elevation-1">
+                    <HeaderContent>
+                        <MudTh>Name</MudTh>
+                        <MudTh>Enabled</MudTh>
+                        <MudTh>Runs every</MudTh>
+                        <MudTh>Last run</MudTh>
+                        <MudTh>Message</MudTh>
+                        <MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Name">@context.Name</MudTd>
+                        <MudTd DataLabel="Enabled">
+                            <MudSwitch T="bool" Value="context.Enabled" Color="Color.Primary"
+                                       ValueChanged="@(v => ToggleEnabled(context, v))" />
+                        </MudTd>
+                        <MudTd DataLabel="Runs every">
+                            @* Editable friendly interval picker; common presets mapped to seconds. *@
+                            <MudSelect T="int" Value="context.IntervalSeconds" Dense="true" Variant="Variant.Outlined"
+                                       Style="min-width:140px;" ValueChanged="@(v => ChangeInterval(context, v))">
+                                @foreach (var opt in _intervalOptions)
+                                {
+                                    <MudSelectItem Value="opt.Seconds">@opt.Label</MudSelectItem>
+                                }
+                                @* Preserve a non-preset saved value so it still displays correctly. *@
+                                @if (_intervalOptions.All(o => o.Seconds != context.IntervalSeconds))
+                                {
+                                    <MudSelectItem Value="context.IntervalSeconds">@($"{context.IntervalSeconds}s")</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudTd>
+                        <MudTd DataLabel="Last run">
+                            <div class="d-flex align-items-center gap-2">
+                                <span>@(context.LastRunAt is DateTime lr ? lr.ToLocalTime().ToString("g") : "—")</span>
+                                @if (context.LastStatus is JobRunStatus st)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="StatusColor(st)">@st</MudChip>
+                                }
+                            </div>
+                        </MudTd>
+                        <MudTd DataLabel="Message">
+                            @if (!string.IsNullOrWhiteSpace(context.LastMessage))
+                            {
+                                <MudTooltip Text="@context.LastMessage">
+                                    <MudIcon Icon="@Icons.Material.Filled.Notes" Size="Size.Small" />
+                                </MudTooltip>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="Actions">
+                            @if (context.IsRunning)
+                            {
+                                <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
+                            }
+                            else
+                            {
+                                <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                                           StartIcon="@Icons.Material.Filled.PlayArrow"
+                                           OnClick="() => RunNow(context)">Run now</MudButton>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudTabPanel>
+
+        @* ---------------- ACTIVITY ---------------- *@
+        <MudTabPanel Text="Activity">
+            <div class="d-flex justify-content-end mb-2">
+                <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Filled.Refresh" OnClick="Reload">Refresh</MudButton>
+            </div>
+            @if (_runs.Count == 0)
+            {
+                <div class="text-center py-6 text-muted">No jobs have run yet.</div>
+            }
+            else
+            {
+                <MudTable Items="_runs" Dense="true" Hover="true" Class="elevation-1">
+                    <HeaderContent>
+                        <MudTh>Job</MudTh>
+                        <MudTh>Started</MudTh>
+                        <MudTh>Duration</MudTh>
+                        <MudTh>Status</MudTh>
+                        <MudTh>Items</MudTh>
+                        <MudTh>Message</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Job">@context.JobType</MudTd>
+                        <MudTd DataLabel="Started">@context.StartedAt.ToLocalTime().ToString("g")</MudTd>
+                        <MudTd DataLabel="Duration">@FormatDuration(context)</MudTd>
+                        <MudTd DataLabel="Status">
+                            <MudChip T="string" Size="Size.Small" Color="StatusColor(context.Status)">@context.Status</MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Items">@context.ItemsProcessed</MudTd>
+                        <MudTd DataLabel="Message" Style="max-width:280px;white-space:normal;">@context.Message</MudTd>
+                        <MudTd DataLabel="">
+                            @if (context.TriggeredManually)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Default">manual</MudChip>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudTabPanel>
+
+    </MudTabs>
+}
+
+@code {
+    private bool _loading = true;
+
+    private List<WantedItemDto> _missing = new();
+    private List<CutoffUnmetItemDto> _cutoff = new();
+    private List<ScheduledJobDto> _scheduled = new();
+    private List<JobRunDto> _runs = new();
+
+    // Friendly interval presets shown in the Schedule picker, mapped to seconds.
+    private readonly (string Label, int Seconds)[] _intervalOptions =
+    {
+        ("15 minutes", 900),
+        ("30 minutes", 1800),
+        ("1 hour", 3600),
+        ("2 hours", 7200),
+        ("6 hours", 21600),
+        ("12 hours", 43200),
+        ("1 day", 86400),
+        ("2 days", 172800),
+    };
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    // Reloads every dataset; called on init and after every action so the tables stay in sync.
+    private async Task Reload()
+    {
+        _loading = true;
+        StateHasChanged();
+        try
+        {
+            _missing = await Jobs.GetMissingAsync();
+            _cutoff = await Jobs.GetCutoffUnmetAsync();
+            _scheduled = await Jobs.GetScheduledJobsAsync();
+            _runs = await Jobs.GetRecentRunsAsync();
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    // --- Missing actions ---
+    private async Task SearchMissing(WantedItemDto item)
+    {
+        if (await Jobs.SearchMissingNowAsync(item.JobId)) await Toasts.ShowSuccessAsync($"Searching for {item.Title}…");
+        else await Toasts.ShowErrorAsync("Failed to start search.");
+        await Reload();
+    }
+
+    private async Task GiveUp(WantedItemDto item)
+    {
+        if (await Jobs.CancelMissingAsync(item.JobId)) await Toasts.ShowSuccessAsync($"Stopped searching for {item.Title}.");
+        else await Toasts.ShowErrorAsync("Failed to cancel.");
+        await Reload();
+    }
+
+    // --- Cutoff Unmet actions ---
+    private async Task UpgradeNow(CutoffUnmetItemDto item)
+    {
+        if (await Jobs.UpgradeNowAsync(item.RequestId)) await Toasts.ShowSuccessAsync($"Upgrade search queued for {item.Title}.");
+        else await Toasts.ShowErrorAsync("Failed to queue upgrade.");
+        await Reload();
+    }
+
+    // --- Schedule actions ---
+    private async Task ToggleEnabled(ScheduledJobDto job, bool enabled)
+    {
+        if (await Jobs.SetJobEnabledAsync(job.JobType, enabled)) await Toasts.ShowSuccessAsync($"{job.Name} {(enabled ? "enabled" : "disabled")}.");
+        else await Toasts.ShowErrorAsync("Failed to update job.");
+        await Reload();
+    }
+
+    private async Task ChangeInterval(ScheduledJobDto job, int seconds)
+    {
+        if (await Jobs.SetJobIntervalAsync(job.JobType, seconds)) await Toasts.ShowSuccessAsync($"{job.Name} interval updated.");
+        else await Toasts.ShowErrorAsync("Failed to update interval.");
+        await Reload();
+    }
+
+    private async Task RunNow(ScheduledJobDto job)
+    {
+        if (await Jobs.RunJobNowAsync(job.JobType)) await Toasts.ShowSuccessAsync($"{job.Name} will run shortly.");
+        else await Toasts.ShowErrorAsync("Failed to trigger job.");
+        await Reload();
+    }
+
+    // --- Formatting helpers ---
+    private static string FormatWhen(DateTime? when) => when is DateTime d ? d.ToLocalTime().ToString("g") : "—";
+
+    private static string FormatDuration(JobRunDto run)
+        => run.FinishedAt is DateTime f
+            ? (f - run.StartedAt).ToString(@"hh\:mm\:ss")
+            : "running…";
+
+    private static Color StatusColor(JobRunStatus status) => status switch
+    {
+        JobRunStatus.Succeeded => Color.Success,
+        JobRunStatus.Failed => Color.Error,
+        JobRunStatus.Running => Color.Info,
+        _ => Color.Default, // Skipped
+    };
+}

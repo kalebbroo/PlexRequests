@@ -20,6 +20,9 @@ public class ImportedFileEntity
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
     public long SizeBytes { get; set; }
+    /// <summary>Vertical resolution (pixel height, e.g. 1080) of the release this file came from, as ranked
+    /// by the downloader. 0 = unknown. Drives achieved-quality rollup and quality-upgrade (cutoff) detection.</summary>
+    public int ResolutionHeight { get; set; }
     public DateTime ImportedAt { get; set; } = DateTime.UtcNow;
 
     [ForeignKey(nameof(FulfillmentJobId))]

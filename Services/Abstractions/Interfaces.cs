@@ -43,6 +43,11 @@ public interface INotificationService
     Task RequestRejectedAsync(MediaRequestDto request);
     Task RequestAvailableAsync(MediaRequestDto request);
     Task RequestFailedAsync(MediaRequestDto request, string reason);
+    /// <summary>A request has been searching a long time with no findable release — notify admins so they
+    /// can intervene. The request keeps searching; it is never auto-failed.</summary>
+    Task RequestSearchStalledAsync(MediaRequestDto request, int attempts);
+    /// <summary>An available title was automatically upgraded to a better-quality release. Notify the requester.</summary>
+    Task RequestUpgradedAsync(MediaRequestDto request, Quality newQuality);
 
     // Persistence-backed reads for the notification bell (survive page refresh/restart).
     Task<List<NotificationDto>> GetForUserAsync(int userId, int take = 20);

@@ -20,6 +20,14 @@ public interface IPlexRequestsApiClient
     Task<bool> ReportProgressAsync(int jobId, int progress, IReadOnlyList<DownloadTorrentTelemetry>? torrents, CancellationToken ct);
     Task<bool> MarkFulfilledAsync(int requestId, CancellationToken ct);
     Task<bool> MarkFailedAsync(int requestId, string reason, CancellationToken ct);
+    /// <summary>Report "no release findable yet" for a normal job: the web app parks it on a retry backoff
+    /// (Deferred / request shows "Searching") instead of failing. Keyed by JOB id, not request id.</summary>
+    Task<bool> MarkDeferredAsync(int jobId, string reason, CancellationToken ct);
+    /// <summary>Report that an upgrade job found nothing better than what's already imported (terminal, non-failure).</summary>
+    Task<bool> MarkUpgradeExhaustedAsync(int jobId, CancellationToken ct);
+    /// <summary>Report a successful quality upgrade: the better release imported and old files were deleted on
+    /// disk. The web app drops the superseded audit rows, recomputes achieved quality, and notifies.</summary>
+    Task<bool> MarkUpgradedAsync(int jobId, CancellationToken ct);
     /// <summary>Some torrents in the job imported before another failed — distinct from a hard failure.</summary>
     Task<bool> MarkPartiallyCompletedAsync(int requestId, string reason, CancellationToken ct);
     /// <summary>Persist the durable audit trail of what got imported for a job.</summary>

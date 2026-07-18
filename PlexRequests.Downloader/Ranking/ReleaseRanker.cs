@@ -27,7 +27,7 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
     private readonly IDownloadPreferencesProvider _prefs = prefs;
     private readonly ILogger<ReleaseRanker> _logger = logger;
 
-    private sealed record Annotated(ReleaseCandidate C, int? Season, int? SeasonEnd, int? Episode, bool IsPack, bool LooksLikeCompleteSeries, double Score, bool Acceptable);
+    private sealed record Annotated(ReleaseCandidate C, int? Season, int? SeasonEnd, int? Episode, bool IsPack, bool LooksLikeCompleteSeries, double Score, bool Acceptable, int Resolution);
 
     // A pack matches a requested season if: it names that exact season, the season falls within its
     // parsed multi-season range (S01-S05), or it's an explicitly-labeled "complete series" pack. A release
@@ -55,8 +55,12 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
 
         if (acceptable.Count == 0)
         {
-            _logger.LogInformation("No acceptable release for \"{Title}\" (of {Total} candidate(s); floor={Floor}, minSeeders={Min})",
-                job.Title, candidates.Count, floor, p.MinSeeders);
+            // Summarize the candidates' resolutions so the "why nothing?" answer is visible without debug logs
+            // (e.g. "all candidates were 720p but the floor is 1080p" — the classic cause of a deferred request).
+            var resolutions = annotated.Select(a => a.Resolution).Where(r => r > 0).OrderByDescending(r => r).ToList();
+            var resSummary = resolutions.Count > 0 ? string.Join("/", resolutions.Distinct().Select(r => $"{r}p")) : "none parsed";
+            _logger.LogInformation("No acceptable release for \"{Title}\"{Upgrade} (of {Total} candidate(s); target floor={Floor}p, minSeeders={Min}; candidate resolutions: {Res})",
+                job.Title, job.IsUpgrade ? " [upgrade]" : "", candidates.Count, floor, p.MinSeeders, resSummary);
             return DownloadPlan.None;
         }
 
@@ -258,8 +262,13 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
 
         bool identityOk = idMatch || (!idMismatch && titleOk); // id wins; else fall back to the strict title gate
 
+        // An upgrade job enforces the quality floor unconditionally: replacing a file only ever makes sense
+        // with something at or above the preferred quality, never a downgrade/side-grade — even when the
+        // global EnforceQualityFloor is off for first-time grabs.
+        bool enforceFloor = p.EnforceQualityFloor || job.IsUpgrade;
+
         bool acceptable =
-            (!p.EnforceQualityFloor || floor == 0 || res >= floor) &&
+            (!enforceFloor || floor == 0 || res >= floor) &&
             c.Seeders >= p.MinSeeders &&
             c.SizeGb >= 0.05 &&               // reject 0-byte / fake entries
             c.SizeGb <= maxSize &&
@@ -267,13 +276,13 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
             !yearMismatch &&
             !mediaTypeMismatch;
 
-        if (!acceptable && (idMismatch || !titleOk))
-            _logger.LogDebug("Rejected \"{Name}\" for \"{Title}\": idMismatch={IdMismatch}, titleRecall={Recall:F2}, extraTokens={Extra} (coreTitle=\"{Core}\")",
-                c.ReleaseName, job.Title, idMismatch, titleRecall, extraTokens, parsed.Title);
+        if (!acceptable)
+            _logger.LogDebug("Rejected \"{Name}\" for \"{Title}\": res={Res} floor={Floor} enforceFloor={Enforce}, seeders={Seeders}/{MinSeeders}, sizeGb={Size:F1}/{MaxSize:F0}, idMismatch={IdMismatch}, titleRecall={Recall:F2}, extraTokens={Extra}, yearMismatch={YearMismatch}, mediaTypeMismatch={MediaMismatch} (coreTitle=\"{Core}\")",
+                c.ReleaseName, job.Title, res, floor, enforceFloor, c.Seeders, p.MinSeeders, c.SizeGb, maxSize, idMismatch, titleRecall, extraTokens, yearMismatch, mediaTypeMismatch, parsed.Title);
 
         // A confirmed id match is worth a big boost; otherwise reward title recall as before.
-        double score = Score(c, parsed, res, floor, isPack, p) + (idMatch ? 200 : titleRecall * 40);
-        return new Annotated(c, season, parsed.SeasonEnd, episode, isPack, parsed.LooksLikeCompleteSeries, score, acceptable);
+        double score = Score(c, parsed, res, floor, isPack, p, enforceFloor) + (idMatch ? 200 : titleRecall * 40);
+        return new Annotated(c, season, parsed.SeasonEnd, episode, isPack, parsed.LooksLikeCompleteSeries, score, acceptable, res);
     }
 
     private static readonly HashSet<string> StopTokens = new(StringComparer.OrdinalIgnoreCase)
@@ -339,10 +348,10 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
         return fromLabel > 0 ? fromLabel : parsed.Resolution;
     }
 
-    private static double Score(ReleaseCandidate c, ParsedRelease p, int res, int floor, bool isPack, EffectiveDownloadPreferences prefs)
+    private static double Score(ReleaseCandidate c, ParsedRelease p, int res, int floor, bool isPack, EffectiveDownloadPreferences prefs, bool enforceFloor)
     {
         double s = 0;
-        if (floor > 0) s += res >= floor ? 500 : (prefs.EnforceQualityFloor ? -1000 : -200);
+        if (floor > 0) s += res >= floor ? 500 : (enforceFloor ? -1000 : -200);
         s += Math.Min(res, 2160) / 10.0;                              // mild preference for higher resolution
         if (prefs.PreferHigherQualitySource) s += (int)p.Source * 60;  // BluRay/Remux > WebDl > WebRip > HDTV
         s += Math.Log10(Math.Max(1, c.Seeders)) * 80;                 // seeders, diminishing returns
@@ -354,9 +363,9 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
         return s;
     }
 
-    private static DownloadPlanItem ToItem(Annotated a) => new(a.C, a.Season, a.Episode, a.IsPack);
+    private static DownloadPlanItem ToItem(Annotated a) => new(a.C, a.Season, a.Episode, a.IsPack) { Resolution = a.Resolution };
 
     private void Log(string kind, Annotated a, FulfillmentJobDto job) =>
-        _logger.LogInformation("Selected [{Kind}] \"{Name}\" ({Seeders} seeders, {SizeGb:F1}GB, score {Score:F0}) for \"{Title}\"",
-            kind, a.C.ReleaseName, a.C.Seeders, a.C.SizeGb, a.Score, job.Title);
+        _logger.LogInformation("Selected [{Kind}]{Upgrade} \"{Name}\" ({Res}p, {Seeders} seeders, {SizeGb:F1}GB, score {Score:F0}) for \"{Title}\" (target {Floor}p)",
+            kind, job.IsUpgrade ? " UPGRADE" : "", a.C.ReleaseName, a.Resolution, a.C.Seeders, a.C.SizeGb, a.Score, job.Title, (int)job.Quality);
 }

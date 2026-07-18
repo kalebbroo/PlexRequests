@@ -332,6 +332,13 @@ public class FulfillmentJobDto
     public FulfillmentStatus Status { get; set; }
     public int Attempts { get; set; }
     public int Progress { get; set; }
+    /// <summary>True when this is an automatic quality-upgrade job: the downloader enforces the quality floor
+    /// unconditionally (never a downgrade) and, on success, replaces <see cref="ReplacePaths"/> instead of
+    /// treating the content as newly acquired.</summary>
+    public bool IsUpgrade { get; set; }
+    /// <summary>For an upgrade job: existing library file paths this upgrade supersedes. The downloader
+    /// deletes any of these NOT re-written by the new import; the web app clears their audit rows.</summary>
+    public List<string> ReplacePaths { get; set; } = new();
 }
 
 /// <summary>A single episode target for the downloader, e.g. season 2 episode 5.</summary>
@@ -511,6 +518,8 @@ public class ImportedFileDto
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
     public long SizeBytes { get; set; }
+    /// <summary>Vertical resolution (pixel height) of the release this file came from, per the ranker. 0 = unknown.</summary>
+    public int ResolutionHeight { get; set; }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -604,4 +613,80 @@ public class FolderBrowseResultDto
     public string? CurrentPath { get; set; }
     public string? ParentPath { get; set; }
     public List<FolderEntryDto> Directories { get; set; } = new();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Background Jobs — admin UI read/write models for the generic scheduler, the "Missing" (still-searching)
+// list, the "Cutoff Unmet" (quality-upgrade candidates) list, and the run-history feed.
+// ---------------------------------------------------------------------------------------------
+
+/// <summary>A recurring scheduled job as shown/edited in the admin Jobs panel.</summary>
+public class ScheduledJobDto
+{
+    public int Id { get; set; }
+    public JobType JobType { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool Enabled { get; set; }
+    public int IntervalSeconds { get; set; }
+    public DateTime? NextRunAt { get; set; }
+    public DateTime? LastRunAt { get; set; }
+    public JobRunStatus? LastStatus { get; set; }
+    public string? LastMessage { get; set; }
+    public bool IsRunning { get; set; }
+}
+
+/// <summary>One execution in the job-run history feed.</summary>
+public class JobRunDto
+{
+    public int Id { get; set; }
+    public JobType JobType { get; set; }
+    public DateTime StartedAt { get; set; }
+    public DateTime? FinishedAt { get; set; }
+    public JobRunStatus Status { get; set; }
+    public int ItemsProcessed { get; set; }
+    public string? Message { get; set; }
+    public bool TriggeredManually { get; set; }
+}
+
+/// <summary>A request the downloader couldn't find a release for yet — parked and being re-searched on a
+/// backoff (the "Missing" list). Never a hard failure.</summary>
+public class WantedItemDto
+{
+    public int JobId { get; set; }
+    public int RequestId { get; set; }
+    public int MediaId { get; set; }
+    public MediaType MediaType { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public int? Year { get; set; }
+    public string? PosterUrl { get; set; }
+    public string? RequestedBy { get; set; }
+    public Quality TargetQuality { get; set; }
+    /// <summary>How many times the search has come up empty so far.</summary>
+    public int DeferCount { get; set; }
+    /// <summary>When the next automatic re-search is due.</summary>
+    public DateTime? NextRetryAt { get; set; }
+    /// <summary>Last recorded reason nothing was found (for the admin to diagnose).</summary>
+    public string? LastError { get; set; }
+    /// <summary>True once escalated to admins after many empty searches — a "needs attention" flag.</summary>
+    public bool Escalated { get; set; }
+    public DateTime RequestedAt { get; set; }
+}
+
+/// <summary>An available request whose imported quality is below its preferred target — a candidate for an
+/// automatic quality upgrade (the "Cutoff Unmet" list).</summary>
+public class CutoffUnmetItemDto
+{
+    public int RequestId { get; set; }
+    public int MediaId { get; set; }
+    public MediaType MediaType { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public int? Year { get; set; }
+    public string? PosterUrl { get; set; }
+    public string? RequestedBy { get; set; }
+    public Quality HaveQuality { get; set; }
+    public Quality WantQuality { get; set; }
+    public DateTime? LastUpgradeSearchAt { get; set; }
+    public int UpgradeAttempts { get; set; }
+    /// <summary>True while an upgrade job for this request is currently queued/in-flight.</summary>
+    public bool UpgradeInProgress { get; set; }
 }
