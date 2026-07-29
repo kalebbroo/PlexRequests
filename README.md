@@ -218,7 +218,7 @@ built-in indexers (EZTV, YTS, 1337x, Nyaa, ext.to, The Pirate Bay, Torrents-CSV)
 quality/seeders, hands the best magnet to a torrent client, hardlinks the finished files into your
 library, and calls back so the app marks the request **Available** and reindexes Plex.
 
-Indexers are managed in **Admin → Indexers**: enable/disable each source, set its priority, and watch
+Indexers are managed in **Admin → Downloads → Indexers**: enable/disable each source, set its priority, and watch
 per-source health (result counts, failure streaks, latency) updated live from every search. If you also
 run **Jackett** or **Prowlarr**, point the downloader at it via `TORZNAB_URL`/`TORZNAB_API_KEY` (see
 `docker/.env.example`) and everything configured there joins the search too.
@@ -361,7 +361,7 @@ docker exec plexrequests-downloader ls -l /srv/media/downloads/<...>
 
 If your torrent client runs on a **different machine**, the downloader can't hardlink or move the files
 across the network on its own. Mount that machine's download share on the Docker host and pass it
-through at matching paths, or add it under **Admin → Network Drives**.
+through at matching paths, or add it under **Admin → Library → Network Drives**.
 
 ### Managed Deluge connects, but downloads stall at 0% / "no peers"
 

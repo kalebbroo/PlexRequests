@@ -14,7 +14,7 @@ RUN dotnet publish PlexRequests.Downloader/PlexRequests.Downloader.csproj -c Rel
 FROM mcr.microsoft.com/dotnet/runtime:10.0
 WORKDIR /app
 # cifs-utils / nfs-common: mount.cifs & mount.nfs helpers so the worker can mount admin-configured NAS
-# shares (Admin > Network Drives) read-write to place library files. Needs CAP_SYS_ADMIN at runtime
+# shares (Admin > Library > Network Drives) read-write to place library files. Needs CAP_SYS_ADMIN at runtime
 # (granted in docker-compose.yml); harmless if the feature is unused.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends cifs-utils nfs-common \

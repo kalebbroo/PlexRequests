@@ -4,59 +4,136 @@
 
 <PageTitle>Admin - Plex Requests</PageTitle>
 
+@* Admin is organized by what you're doing, not one tab per feature:
+   Overview   - is everything healthy right now (Plex, streams, live downloads, availability index)
+   Requests   - the two human queues: approvals + reported problems
+   Downloads  - everything that decides WHAT gets grabbed: preferences, quality rules, indexers
+   Library    - everything that decides WHERE files land: organization rules, network drives
+   Jobs       - background automation: still-searching list, upgrade queue, schedule, history
+   Users      - accounts & roles *@
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6">
     <MudTabs ActivePanelIndex="_activeIndex" ActivePanelIndexChanged="OnTabChanged" Elevation="0" Rounded="false" Color="Color.Primary" SliderColor="Color.Primary" Class="custom-tabs">
-        <MudTabPanel Text="Server Health">
+        <MudTabPanel Text="Overview">
             <div class="pt-4"><AdminServerHealthPanel /></div>
         </MudTabPanel>
-        <MudTabPanel Text="Approvals">
-            <div class="pt-4"><AdminApprovalsPanel /></div>
-        </MudTabPanel>
-        <MudTabPanel Text="Issues">
-            <div class="pt-4"><AdminIssuesPanel /></div>
-        </MudTabPanel>
-        <MudTabPanel Text="Quality">
-            <div class="pt-4"><AdminQualityPanel /></div>
+        <MudTabPanel Text="Requests">
+            <div class="pt-4">
+                <MudTabs ActivePanelIndex="_requestsSub" ActivePanelIndexChanged="OnRequestsSubChanged" Elevation="0" Rounded="false" Color="Color.Secondary">
+                    <MudTabPanel Text="Approvals">
+                        <div class="pt-4"><AdminApprovalsPanel /></div>
+                    </MudTabPanel>
+                    <MudTabPanel Text="Issues">
+                        <div class="pt-4"><AdminIssuesPanel /></div>
+                    </MudTabPanel>
+                </MudTabs>
+            </div>
         </MudTabPanel>
         <MudTabPanel Text="Downloads">
-            <div class="pt-4"><AdminDownloadsPanel /></div>
+            <div class="pt-4">
+                <MudTabs ActivePanelIndex="_downloadsSub" ActivePanelIndexChanged="OnDownloadsSubChanged" Elevation="0" Rounded="false" Color="Color.Secondary">
+                    <MudTabPanel Text="Preferences">
+                        <div class="pt-4"><AdminDownloadsPanel /></div>
+                    </MudTabPanel>
+                    <MudTabPanel Text="Quality Rules">
+                        <div class="pt-4"><AdminQualityPanel /></div>
+                    </MudTabPanel>
+                    <MudTabPanel Text="Indexers">
+                        <div class="pt-4"><AdminIndexersPanel /></div>
+                    </MudTabPanel>
+                </MudTabs>
+            </div>
         </MudTabPanel>
-        <MudTabPanel Text="Indexers">
-            <div class="pt-4"><AdminIndexersPanel /></div>
-        </MudTabPanel>
-        <MudTabPanel Text="Library Organization">
-            <div class="pt-4"><AdminLibraryOrganizationPanel /></div>
-        </MudTabPanel>
-        <MudTabPanel Text="Network Drives">
-            <div class="pt-4"><AdminNetworkSharesPanel /></div>
-        </MudTabPanel>
-        <MudTabPanel Text="Users &amp; Roles">
-            <div class="pt-4"><AdminUsersPanel /></div>
+        <MudTabPanel Text="Library">
+            <div class="pt-4">
+                <MudTabs ActivePanelIndex="_librarySub" ActivePanelIndexChanged="OnLibrarySubChanged" Elevation="0" Rounded="false" Color="Color.Secondary">
+                    <MudTabPanel Text="Organization">
+                        <div class="pt-4"><AdminLibraryOrganizationPanel /></div>
+                    </MudTabPanel>
+                    <MudTabPanel Text="Network Drives">
+                        <div class="pt-4"><AdminNetworkSharesPanel /></div>
+                    </MudTabPanel>
+                </MudTabs>
+            </div>
         </MudTabPanel>
         <MudTabPanel Text="Jobs">
             <div class="pt-4"><AdminJobsPanel /></div>
+        </MudTabPanel>
+        <MudTabPanel Text="Users">
+            <div class="pt-4"><AdminUsersPanel /></div>
         </MudTabPanel>
     </MudTabs>
 </MudContainer>
 
 @code {
-    // Must match the MudTabPanel order above — used for ?tab= deep links.
-    private static readonly string[] TabKeys = { "health", "approvals", "issues", "quality", "downloads", "indexers", "library", "network", "users", "jobs" };
+    // Top-level tab keys — must match the MudTabPanel order above. Used for ?tab= deep links.
+    private static readonly string[] TabKeys = { "overview", "requests", "downloads", "library", "jobs", "users" };
+    // Sub-tab keys per group — must match each nested MudTabPanel order. Used for ?sub= deep links.
+    private static readonly string[] RequestsSubKeys = { "approvals", "issues" };
+    private static readonly string[] DownloadsSubKeys = { "preferences", "quality", "indexers" };
+    private static readonly string[] LibrarySubKeys = { "organization", "network" };
+
+    // Pre-consolidation single-level keys: old bookmarks and cross-links (e.g. /admin?tab=quality)
+    // land on the right nested tab instead of falling back to Overview.
+    private static readonly Dictionary<string, (string Tab, string? Sub)> LegacyKeys = new()
+    {
+        ["health"] = ("overview", null),
+        ["approvals"] = ("requests", "approvals"),
+        ["issues"] = ("requests", "issues"),
+        ["quality"] = ("downloads", "quality"),
+        ["indexers"] = ("downloads", "indexers"),
+        ["network"] = ("library", "network"),
+    };
+
     private int _activeIndex;
+    private int _requestsSub;
+    private int _downloadsSub;
+    private int _librarySub;
 
     [SupplyParameterFromQuery(Name = "tab")]
     public string? Tab { get; set; }
 
+    [SupplyParameterFromQuery(Name = "sub")]
+    public string? Sub { get; set; }
+
     protected override void OnParametersSet()
     {
-        var idx = Array.IndexOf(TabKeys, Tab?.ToLowerInvariant() ?? string.Empty);
+        var tab = Tab?.ToLowerInvariant() ?? string.Empty;
+        var sub = Sub?.ToLowerInvariant();
+        if (LegacyKeys.TryGetValue(tab, out var mapped)) (tab, sub) = (mapped.Tab, mapped.Sub ?? sub);
+
+        var idx = Array.IndexOf(TabKeys, tab);
         if (idx >= 0) _activeIndex = idx;
+
+        if (sub is not null)
+        {
+            SetSub(RequestsSubKeys, sub, ref _requestsSub);
+            SetSub(DownloadsSubKeys, sub, ref _downloadsSub);
+            SetSub(LibrarySubKeys, sub, ref _librarySub);
+        }
     }
 
-    private void OnTabChanged(int index)
+    private static void SetSub(string[] keys, string sub, ref int field)
     {
-        _activeIndex = index;
-        // Keep the URL in sync so refresh/share lands on the same tab.
-        Nav.NavigateTo($"/admin?tab={TabKeys[index]}", forceLoad: false, replace: true);
+        var i = Array.IndexOf(keys, sub);
+        if (i >= 0) field = i;
+    }
+
+    private void OnTabChanged(int index) { _activeIndex = index; SyncUrl(); }
+    private void OnRequestsSubChanged(int index) { _requestsSub = index; SyncUrl(); }
+    private void OnDownloadsSubChanged(int index) { _downloadsSub = index; SyncUrl(); }
+    private void OnLibrarySubChanged(int index) { _librarySub = index; SyncUrl(); }
+
+    // Keep the URL in sync so refresh/share lands on the same (sub-)tab.
+    private void SyncUrl()
+    {
+        var tab = TabKeys[_activeIndex];
+        var sub = tab switch
+        {
+            "requests" => RequestsSubKeys[_requestsSub],
+            "downloads" => DownloadsSubKeys[_downloadsSub],
+            "library" => LibrarySubKeys[_librarySub],
+            _ => null
+        };
+        Nav.NavigateTo(sub is null ? $"/admin?tab={tab}" : $"/admin?tab={tab}&sub={sub}", forceLoad: false, replace: true);
     }
 }
