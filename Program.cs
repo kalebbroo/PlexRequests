@@ -176,6 +176,8 @@ builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexReq
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IJobAdminService, PlexRequestsHosted.Services.Jobs.JobAdminService>();
 // Per-indexer admin control (enable/priority) + rolling health from downloader search telemetry.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IIndexerAdminService, PlexRequestsHosted.Services.Implementations.IndexerAdminService>();
+// Database maintenance: overview/backup/targeted cleanup/factory reset (the System → Database panel).
+builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IDatabaseAdminService, PlexRequestsHosted.Services.Implementations.DatabaseAdminService>();
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.JobSchedulerService>();
 
 // AuthN/AuthZ
@@ -318,6 +320,14 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
 }
+
+// Admin-only: write a consistent point-in-time SQLite backup (VACUUM INTO) and stream it to the browser.
+// Cookie-authenticated (the button in Admin → System → Database links here), not part of the worker API.
+app.MapGet("/api/admin/db/backup", async (PlexRequestsHosted.Services.Abstractions.IDatabaseAdminService dbAdmin) =>
+{
+    var path = await dbAdmin.CreateBackupAsync();
+    return Results.File(path, "application/octet-stream", Path.GetFileName(path));
+}).RequireAuthorization("AdminOnly");
 
 // Simple health endpoint for Plex connectivity
 app.MapGet("/api/plex/health", async (IPlexApiService plex) =>

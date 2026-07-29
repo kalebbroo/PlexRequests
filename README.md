@@ -286,6 +286,10 @@ Everything the app owns lives in two Docker volumes:
   cookies are invalidated and everyone must sign in again.
 
 To back up, stop the stack and copy the `app.db` file and the `keys/` directory. That's the whole state.
+You can also grab a live, consistent snapshot of the database from **Admin → System → Database →
+Download backup** (no downtime needed); restoring is still "replace `app.db`, restart". The same panel
+has targeted cleanup tools (stale caches, availability index, broken requests) and a full factory reset
+for starting over on a fresh database.
 
 ---
 

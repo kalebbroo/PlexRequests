@@ -10,7 +10,8 @@
    Downloads  - everything that decides WHAT gets grabbed: preferences, quality rules, indexers
    Library    - everything that decides WHERE files land: organization rules, network drives
    Jobs       - background automation: still-searching list, upgrade queue, schedule, history
-   Users      - accounts & roles *@
+   Users      - accounts & roles
+   System     - database maintenance: overview, backup, targeted cleanup, factory reset *@
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6">
     <MudTabs ActivePanelIndex="_activeIndex" ActivePanelIndexChanged="OnTabChanged" Elevation="0" Rounded="false" Color="Color.Primary" SliderColor="Color.Primary" Class="custom-tabs">
         <MudTabPanel Text="Overview">
@@ -61,12 +62,15 @@
         <MudTabPanel Text="Users">
             <div class="pt-4"><AdminUsersPanel /></div>
         </MudTabPanel>
+        <MudTabPanel Text="System">
+            <div class="pt-4"><AdminDatabasePanel /></div>
+        </MudTabPanel>
     </MudTabs>
 </MudContainer>
 
 @code {
     // Top-level tab keys — must match the MudTabPanel order above. Used for ?tab= deep links.
-    private static readonly string[] TabKeys = { "overview", "requests", "downloads", "library", "jobs", "users" };
+    private static readonly string[] TabKeys = { "overview", "requests", "downloads", "library", "jobs", "users", "system" };
     // Sub-tab keys per group — must match each nested MudTabPanel order. Used for ?sub= deep links.
     private static readonly string[] RequestsSubKeys = { "approvals", "issues" };
     private static readonly string[] DownloadsSubKeys = { "preferences", "quality", "indexers" };
