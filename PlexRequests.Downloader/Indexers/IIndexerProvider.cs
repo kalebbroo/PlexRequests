@@ -15,10 +15,11 @@ public interface IIndexerProvider
     Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct);
 }
 
-/// <summary>Aggregates all applicable providers for a job and merges their results.</summary>
+/// <summary>Aggregates all applicable providers for a job and merges their results, with a per-provider
+/// outcome breakdown (see <see cref="IndexerSearchResult"/>).</summary>
 public interface IIndexerClient
 {
-    Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct);
+    Task<IndexerSearchResult> SearchAsync(FulfillmentJobDto job, CancellationToken ct);
 }
 
 /// <summary>Shared JSON options: snake_case (EZTV/YTS) + numbers that may arrive as strings (EZTV).</summary>

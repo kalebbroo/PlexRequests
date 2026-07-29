@@ -213,15 +213,15 @@ circuit. Caddy and Traefik do this automatically.
 
 ## 6. Optional: automatic downloading
 
-Approved requests can be fulfilled automatically by the out-of-process **downloader**: it searches
-indexers (EZTV, YTS, 1337x, Nyaa, ext.to), ranks releases by quality/seeders, hands the best magnet to
-a torrent client, hardlinks the finished files into your library, and calls back so the app marks the
-request **Available** and reindexes Plex.
+Approved requests can be fulfilled automatically by the out-of-process **downloader**: it searches its
+built-in indexers (EZTV, YTS, 1337x, Nyaa, ext.to, The Pirate Bay, Torrents-CSV), ranks releases by
+quality/seeders, hands the best magnet to a torrent client, hardlinks the finished files into your
+library, and calls back so the app marks the request **Available** and reindexes Plex.
 
-Coverage from the built-in public sources is uneven (EZTV skews scene TV; 1337x/ext.to sit behind
-Cloudflare) — niche content like kids'/preschool shows is often invisible to them. If you run
-**Jackett** or **Prowlarr**, point the downloader at it via `TORZNAB_URL`/`TORZNAB_API_KEY` (see
-`docker/.env.example`); every indexer configured there then joins the search through one Torznab API.
+Indexers are managed in **Admin → Indexers**: enable/disable each source, set its priority, and watch
+per-source health (result counts, failure streaks, latency) updated live from every search. If you also
+run **Jackett** or **Prowlarr**, point the downloader at it via `TORZNAB_URL`/`TORZNAB_API_KEY` (see
+`docker/.env.example`) and everything configured there joins the search too.
 
 Set `FULFILLMENT_API_KEY` (the same value on web + downloader) and pick a scenario:
 

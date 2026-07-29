@@ -419,6 +419,42 @@ public class SeasonTarget
     public List<int> MissingEpisodes { get; set; } = new();
 }
 
+/// <summary>Admin view of one indexer provider: control fields + rolling health (see IndexerSettingEntity).</summary>
+public class IndexerSettingDto
+{
+    public string Name { get; set; } = string.Empty;
+    public bool Enabled { get; set; } = true;
+    public int Priority { get; set; } = 25;
+    public DateTime? LastSearchAt { get; set; }
+    public int LastResultCount { get; set; }
+    public DateTime? LastSuccessAt { get; set; }
+    public string? LastError { get; set; }
+    public int ConsecutiveFailures { get; set; }
+    public long TotalSearches { get; set; }
+    public long TotalResults { get; set; }
+    public int LastLatencyMs { get; set; }
+}
+
+/// <summary>Slim per-indexer config served to the downloader (GET /api/fulfillment/indexers).</summary>
+public class IndexerConfigDto
+{
+    public string Name { get; set; } = string.Empty;
+    public bool Enabled { get; set; } = true;
+    public int Priority { get; set; } = 25;
+}
+
+/// <summary>One provider's outcome for one search, reported by the downloader
+/// (POST /api/fulfillment/indexer-status) to drive the admin Indexers panel's health columns.</summary>
+public class IndexerStatusReportDto
+{
+    public string Name { get; set; } = string.Empty;
+    public bool Success { get; set; }
+    public int ResultCount { get; set; }
+    public string? Error { get; set; }
+    public int LatencyMs { get; set; }
+    public DateTime SearchedAt { get; set; }
+}
+
 public class NotificationDto
 {
     public int Id { get; set; }

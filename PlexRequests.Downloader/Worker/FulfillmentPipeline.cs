@@ -53,14 +53,20 @@ public class FulfillmentPipeline(
             await prefs.RefreshAsync(ct); // pick up the latest admin config before ranking
             await libraryPrefs.RefreshAsync(ct); // and the latest library-organization config before importing
 
-            var candidates = await indexer.SearchAsync(job, ct);
+            var search = await indexer.SearchAsync(job, ct);
+            var candidates = search.Candidates;
             var plan = ranker.PlanDownload(candidates, job);
             if (plan.IsEmpty)
             {
                 // Never dead-end: a normal job is parked and re-searched on a backoff (request shows
                 // "Searching", not "Failed"); an upgrade job simply found nothing better and stops quietly.
+                // The deferral reason carries the per-indexer breakdown so the admin Missing panel answers
+                // "which indexers returned nothing?" without log archaeology.
+                var detail = candidates.Count == 0
+                    ? $"No indexer returned a release ({search.Summary})"
+                    : $"{candidates.Count} candidate(s) all rejected by quality/seeder/title filters ({search.Summary})";
                 if (job.IsUpgrade) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
-                else await api.MarkDeferredAsync(job.Id, "No acceptable release found yet", ct);
+                else await api.MarkDeferredAsync(job.Id, detail, ct);
                 return;
             }
 

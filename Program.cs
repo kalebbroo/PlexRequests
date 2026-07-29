@@ -174,6 +174,8 @@ builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.Availab
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.MissingSearchJob>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.UpgradeScanJob>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IJobAdminService, PlexRequestsHosted.Services.Jobs.JobAdminService>();
+// Per-indexer admin control (enable/priority) + rolling health from downloader search telemetry.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IIndexerAdminService, PlexRequestsHosted.Services.Implementations.IndexerAdminService>();
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.JobSchedulerService>();
 
 // AuthN/AuthZ
@@ -419,6 +421,23 @@ app.MapGet("/api/fulfillment/config", async (HttpContext ctx, IConfiguration cfg
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     return Results.Ok(await prefs.GetAsync());
+});
+
+// Worker fetches the per-indexer enable/priority config (the admin Indexers panel) — hot-reloadable,
+// same pattern as /config above. Providers the panel doesn't know yet default to enabled downloader-side.
+app.MapGet("/api/fulfillment/indexers", async (HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Abstractions.IIndexerAdminService indexers) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return Results.Ok(await indexers.GetWorkerConfigAsync());
+});
+
+// Worker reports each indexer's outcome for a search pass (result count / error / latency), which the
+// admin Indexers panel surfaces as per-provider health. Unknown provider names auto-register.
+app.MapPost("/api/fulfillment/indexer-status", async (List<PlexRequestsHosted.Shared.DTOs.IndexerStatusReportDto> body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Abstractions.IIndexerAdminService indexers) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    await indexers.ReportStatusAsync(body);
+    return Results.Ok();
 });
 
 // Worker fetches the admin-configured library organization settings (paths, naming templates, transfer

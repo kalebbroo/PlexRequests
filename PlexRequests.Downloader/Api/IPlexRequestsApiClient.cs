@@ -13,6 +13,10 @@ public interface IPlexRequestsApiClient
     Task<LibraryOrganizationPreferencesDto?> GetLibraryConfigAsync(CancellationToken ct);
     /// <summary>Fetch admin-configured network shares (with credentials) to mount, or null if unreachable.</summary>
     Task<IReadOnlyList<NetworkShareMountDto>?> GetNetworkSharesAsync(CancellationToken ct);
+    /// <summary>Fetch the admin per-indexer enable/priority config, or null if unreachable.</summary>
+    Task<List<IndexerConfigDto>?> GetIndexersAsync(CancellationToken ct);
+    /// <summary>Report per-indexer outcomes for one search pass (drives the admin Indexers panel's health).</summary>
+    Task<bool> ReportIndexerStatusAsync(IReadOnlyList<IndexerStatusReportDto> reports, CancellationToken ct);
     /// <summary>Fetch cached TMDB episode titles for a season (used to name files in a season pack).</summary>
     Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int tmdbId, int season, CancellationToken ct);
     /// <summary>Report aggregate 0-100 progress plus (optionally) the live per-torrent telemetry snapshot

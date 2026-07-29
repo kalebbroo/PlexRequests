@@ -22,11 +22,12 @@ public interface IReleaseRanker
 /// auto-upgraded by the QualityUpgradeScan). Season-scoped jobs prefer a full-season pack and fall back
 /// to the missing episodes. All knobs come from the admin <see cref="IDownloadPreferencesProvider"/>.
 /// </summary>
-public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider prefs, ILogger<ReleaseRanker> logger)
+public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider prefs, IIndexerSettingsProvider indexerSettings, ILogger<ReleaseRanker> logger)
     : IReleaseRanker
 {
     private readonly IReleaseParser _parser = parser;
     private readonly IDownloadPreferencesProvider _prefs = prefs;
+    private readonly IIndexerSettingsProvider _indexerSettings = indexerSettings;
     private readonly ILogger<ReleaseRanker> _logger = logger;
 
     private sealed record Annotated(ReleaseCandidate C, int? Season, int? SeasonEnd, int? Episode, bool IsPack, bool LooksLikeCompleteSeries, double Score, bool Acceptable, int Resolution);
@@ -297,8 +298,11 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
             _logger.LogDebug("Rejected \"{Name}\" for \"{Title}\": res={Res} floor={Floor} enforceFloor={Enforce}, seeders={Seeders}/{MinSeeders}, sizeGb={Size:F1}/{MaxSize:F0}, idMismatch={IdMismatch}, titleRecall={Recall:F2}, extraTokens={Extra}, yearMismatch={YearMismatch}, mediaTypeMismatch={MediaMismatch} (coreTitle=\"{Core}\")",
                 c.ReleaseName, job.Title, res, floor, enforceFloor, c.Seeders, p.MinSeeders, c.SizeGb, maxSize, idMismatch, titleRecall, extraTokens, yearMismatch, mediaTypeMismatch, parsed.Title);
 
-        // A confirmed id match is worth a big boost; otherwise reward title recall as before.
-        double score = Score(c, parsed, res, floor, isPack, p, enforceFloor) + (idMatch ? 200 : titleRecall * 40);
+        // A confirmed id match is worth a big boost; otherwise reward title recall as before. The admin
+        // per-indexer priority adds a small edge (0–49) so comparable releases prefer the trusted source —
+        // deliberately smaller than any quality/seeder signal so it only breaks near-ties.
+        double priorityBonus = Math.Clamp(50 - _indexerSettings.PriorityOf(c.Source), 0, 49);
+        double score = Score(c, parsed, res, floor, isPack, p, enforceFloor) + (idMatch ? 200 : titleRecall * 40) + priorityBonus;
         return new Annotated(c, season, parsed.SeasonEnd, episode, isPack, parsed.LooksLikeCompleteSeries, score, acceptable, res);
     }
 

@@ -59,6 +59,14 @@ public class IndexerOptions
     public string ExtToSearchPath { get; set; } = "/search/?q={query}&order=seeders&sort=desc";
     public int ExtToMaxDetail { get; set; } = 8;
 
+    // The Pirate Bay via its JSON API (apibay) — general movies + TV, no scraping/Cloudflare.
+    public string PirateBayBaseUrl { get; set; } = "https://apibay.org";
+    public bool PirateBayEnabled { get; set; } = true;
+
+    // torrents-csv.com — open JSON search API, general long-tail catalog, no key needed.
+    public string TorrentsCsvBaseUrl { get; set; } = "https://torrents-csv.com";
+    public bool TorrentsCsvEnabled { get; set; } = true;
+
     // Torznab endpoints (Jackett / Prowlarr). The supported way to widen coverage beyond the built-in
     // public sources: every tracker configured in the aggregator becomes searchable through its one API,
     // with the aggregator handling per-site auth/Cloudflare. Bind as Indexer__Torznab__0__Url etc.

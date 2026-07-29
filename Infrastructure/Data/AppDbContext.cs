@@ -24,6 +24,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<BridgeOutboxEntity> BridgeOutbox => Set<BridgeOutboxEntity>();
     public DbSet<ScheduledJobEntity> ScheduledJobs => Set<ScheduledJobEntity>();
     public DbSet<JobRunEntity> JobRuns => Set<JobRunEntity>();
+    public DbSet<IndexerSettingEntity> IndexerSettings => Set<IndexerSettingEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -198,6 +199,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasKey(x => x.Id);
             b.HasIndex(x => x.JobType);
             b.HasIndex(x => x.StartedAt); // history feed sorts newest-first
+        });
+
+        modelBuilder.Entity<IndexerSettingEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.Name).IsUnique(); // one row per provider
         });
     }
 }
