@@ -78,6 +78,10 @@ services:
       Library__MoviePath: /data/library/movies
       Library__TvPath: /data/library/tv
       Library__Hardlink: "true"
+      # Optional Torznab endpoint (Jackett/Prowlarr) — see .env.example. Empty = disabled.
+      Indexer__Torznab__0__Name: ${TORZNAB_NAME:-torznab}
+      Indexer__Torznab__0__Url: ${TORZNAB_URL:-}
+      Indexer__Torznab__0__ApiKey: ${TORZNAB_API_KEY:-}
       Vpn__Enabled: "true"                   # guard blocks work if the tunnel drops
       Vpn__HealthCheckUrl: https://api.ipify.org
     volumes:

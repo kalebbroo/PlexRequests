@@ -37,32 +37,50 @@ public partial class X1337xIndexerProvider(HttpClient http, IOptions<IndexerOpti
             _ => "TV"
         };
         var terms = job.MediaType == MediaType.Movie && job.Year is int y ? $"{job.Title} {y}" : job.Title;
-        var query = BuildQuery(terms);
-        if (string.IsNullOrWhiteSpace(query)) return Array.Empty<ReleaseCandidate>();
 
-        var searchUrl = $"/category-search/{query}/{category}/1/";
-        string html;
-        try
+        // Each search only sees page 1, so for a season-scoped TV job a title-only query can miss the
+        // wanted season entirely (a busy show's newest uploads push older seasons' packs off the page).
+        // Add a "title season N" query per requested season (bounded) so those packs surface too.
+        var termsList = new List<string> { terms };
+        if (job.MediaType != MediaType.Movie)
         {
-            html = await _http.GetStringAsync(searchUrl, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "1337x search request failed for \"{Title}\"", job.Title);
-            return Array.Empty<ReleaseCandidate>();
-        }
-
-        if (LooksLikeChallenge(html))
-        {
-            _logger.LogWarning("1337x returned a Cloudflare/anti-bot page; skipping (search for \"{Title}\")", job.Title);
-            return Array.Empty<ReleaseCandidate>();
+            var seasons = job.RequestedSeasons
+                .Concat(job.SeasonTargets.Select(t => t.Season))
+                .Concat(job.RequestedEpisodes.Select(e => e.Season))
+                .Distinct().OrderBy(s => s).Take(4);
+            termsList.AddRange(seasons.Select(s => $"{job.Title} season {s}"));
         }
 
-        var rows = ParseRows(html);
-        if (rows.Count == 0) return Array.Empty<ReleaseCandidate>();
+        var rowsByPath = new Dictionary<string, RowInfo>();
+        foreach (var t in termsList)
+        {
+            var query = BuildQuery(t);
+            if (string.IsNullOrWhiteSpace(query)) continue;
+
+            string html;
+            try
+            {
+                html = await _http.GetStringAsync($"/category-search/{query}/{category}/1/", ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "1337x search request failed for \"{Terms}\"", t);
+                continue;
+            }
+
+            if (LooksLikeChallenge(html))
+            {
+                _logger.LogWarning("1337x returned a Cloudflare/anti-bot page; skipping (search for \"{Title}\")", job.Title);
+                break; // every remaining query will hit the same wall
+            }
+
+            foreach (var row in ParseRows(html)) rowsByPath.TryAdd(row.DetailPath, row);
+        }
+
+        if (rowsByPath.Count == 0) return Array.Empty<ReleaseCandidate>();
 
         // Only open the strongest rows for magnets (each detail page is a separate request).
-        var topRows = rows.OrderByDescending(r => r.Seeders).Take(Math.Clamp(_opts.X1337xMaxDetail, 1, 25)).ToList();
+        var topRows = rowsByPath.Values.OrderByDescending(r => r.Seeders).Take(Math.Clamp(_opts.X1337xMaxDetail, 1, 25)).ToList();
         var candidates = new List<ReleaseCandidate>();
         var results = await Task.WhenAll(topRows.Select(r => ResolveMagnetAsync(r, ct)));
         foreach (var c in results) if (c is not null) candidates.Add(c);

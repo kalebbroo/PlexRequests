@@ -85,6 +85,11 @@ services:
       Library__MoviePath: /data/library/movies
       Library__TvPath: /data/library/tv
       Library__Hardlink: "true"
+      # Optional Torznab endpoint (Jackett/Prowlarr) — widens indexer coverage beyond the built-in
+      # public sources; set TORZNAB_URL/TORZNAB_API_KEY in .env (see .env.example). Empty = disabled.
+      Indexer__Torznab__0__Name: ${TORZNAB_NAME:-torznab}
+      Indexer__Torznab__0__Url: ${TORZNAB_URL:-}
+      Indexer__Torznab__0__ApiKey: ${TORZNAB_API_KEY:-}
       # No managed VPN in this file; the app-level guard stays off (it never blocks a normally
       # connected box anyway — it only matters when the downloader is inside the VPN namespace).
       Vpn__Enabled: ${VPN_ENABLED:-false}

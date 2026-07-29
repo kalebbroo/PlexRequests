@@ -71,6 +71,13 @@ builder.Services.AddHttpClient<ExtToIndexerProvider>(http =>
     http.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
     http.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
 });
+// Torznab (Jackett/Prowlarr) — endpoints are absolute per-config URLs, so no BaseAddress here.
+builder.Services.AddHttpClient<TorznabIndexerProvider>(http =>
+{
+    http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
+    http.DefaultRequestHeaders.Add("User-Agent", "PlexRequests.Downloader");
+});
+builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<TorznabIndexerProvider>());
 builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<EztvIndexerProvider>());
 builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<YtsIndexerProvider>());
 builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<X1337xIndexerProvider>());

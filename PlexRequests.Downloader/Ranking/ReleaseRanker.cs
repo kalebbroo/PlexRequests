@@ -314,6 +314,13 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
     private static int RawTokenCount(string s) =>
         System.Text.RegularExpressions.Regex.Matches(s.ToLowerInvariant(), @"[a-z0-9]+").Count(m => m.Value.Length > 1);
 
+    // Region/variant tags releasers append to the core title to disambiguate a country's edition of the
+    // same show ("Bluey AU", "The Office US", "Peppa Pig UK"). These are NOT evidence of a different,
+    // longer title, so they're exempt from the extra-token rejection below — without this, any 1-word
+    // title (maxExtra=0) could never match its own regional releases, a classic kids'-show failure.
+    private static readonly HashSet<string> RegionTokens = new(StringComparer.OrdinalIgnoreCase)
+        { "us", "uk", "au", "nz", "ca", "gb" };
+
     // Significant words in the release's core title that the requested title does NOT contain. This is what
     // separates "Lucky Star" (extra: "star") from "Lucky" — a strong signal it's a different, longer title.
     private static int ExtraTitleTokens(string releaseTitle, string jobTitle)
@@ -321,7 +328,7 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
         var rel = Tokenize(releaseTitle);
         var job = Tokenize(jobTitle);
         if (rel.Count == 0) return 0; // couldn't parse a core title — don't penalize (other gates still apply)
-        return rel.Except(job).Count();
+        return rel.Except(job).Count(t => !RegionTokens.Contains(t));
     }
 
     // Compare an optional job IMDb id with an optional candidate IMDb id. Returns (match, mismatch): both

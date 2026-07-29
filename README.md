@@ -218,6 +218,11 @@ indexers (EZTV, YTS, 1337x, Nyaa, ext.to), ranks releases by quality/seeders, ha
 a torrent client, hardlinks the finished files into your library, and calls back so the app marks the
 request **Available** and reindexes Plex.
 
+Coverage from the built-in public sources is uneven (EZTV skews scene TV; 1337x/ext.to sit behind
+Cloudflare) — niche content like kids'/preschool shows is often invisible to them. If you run
+**Jackett** or **Prowlarr**, point the downloader at it via `TORZNAB_URL`/`TORZNAB_API_KEY` (see
+`docker/.env.example`); every indexer configured there then joins the search through one Torznab API.
+
 Set `FULFILLMENT_API_KEY` (the same value on web + downloader) and pick a scenario:
 
 | Scenario | Command | What runs |
