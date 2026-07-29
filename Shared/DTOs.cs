@@ -259,7 +259,9 @@ public class DownloadPreferencesDto
     public bool PreferX265 { get; set; } = true;
     public bool PreferHdr { get; set; }
     public bool PreferHigherQualitySource { get; set; } = true;
-    /// <summary>Treat the job's Quality as a hard floor (reject lower) rather than a soft preference.</summary>
+    /// <summary>On: the first search accepts only the job's Quality or better; if nothing has appeared by the
+    /// next search pass the best available release is taken instead (and later auto-upgraded once the preferred
+    /// quality exists). Off: the best available release is taken immediately (preferred quality still ranks first).</summary>
     public bool EnforceQualityFloor { get; set; } = true;
 
     /// <summary>

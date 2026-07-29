@@ -17,8 +17,10 @@ public interface IReleaseRanker
 
 /// <summary>
 /// Enforces the quality floor + seeder/size thresholds, then scores survivors by resolution, source,
-/// seeders, codec efficiency, proper/repack and preferred groups. Season-scoped jobs prefer a full-season
-/// pack and fall back to the missing episodes. All knobs come from the admin <see cref="IDownloadPreferencesProvider"/>.
+/// seeders, codec efficiency, proper/repack and preferred groups. The floor is preferred, not absolute:
+/// after the first empty at-floor search, the best below-floor release is taken instead (and later
+/// auto-upgraded by the QualityUpgradeScan). Season-scoped jobs prefer a full-season pack and fall back
+/// to the missing episodes. All knobs come from the admin <see cref="IDownloadPreferencesProvider"/>.
 /// </summary>
 public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider prefs, ILogger<ReleaseRanker> logger)
     : IReleaseRanker
@@ -52,6 +54,21 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
 
         var annotated = candidates.Select(c => Annotate(c, job, p)).ToList();
         var acceptable = annotated.Where(a => a.Acceptable).ToList();
+
+        // The preferred quality is a preference, not a dead-end. With the floor enforced, the FIRST search
+        // holds out for it (the deferral backoff gives a not-yet-uploaded release time to appear); but once
+        // the request has already deferred (Attempts > 1) and there's still nothing at/above the floor,
+        // relax it and take the best release below — 480p beats searching forever. The import is recorded
+        // below cutoff, so the QualityUpgradeScan auto-replaces it when the preferred quality shows up.
+        // Upgrade jobs never relax: a below-floor "upgrade" is a downgrade (see Annotate).
+        if (acceptable.Count == 0 && p.EnforceQualityFloor && !job.IsUpgrade && floor > 0 && job.Attempts > 1)
+        {
+            annotated = candidates.Select(c => Annotate(c, job, p, relaxFloor: true)).ToList();
+            acceptable = annotated.Where(a => a.Acceptable).ToList();
+            if (acceptable.Count > 0)
+                _logger.LogInformation("\"{Title}\": nothing at the preferred {Floor}p+ after {Attempts} search(es) — settling for the best available release below it (the upgrade scan will revisit)",
+                    job.Title, floor, job.Attempts);
+        }
 
         if (acceptable.Count == 0)
         {
@@ -222,7 +239,7 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
 
     // ---- Scoring / filtering -----------------------------------------------------------------------
 
-    private Annotated Annotate(ReleaseCandidate c, FulfillmentJobDto job, EffectiveDownloadPreferences p)
+    private Annotated Annotate(ReleaseCandidate c, FulfillmentJobDto job, EffectiveDownloadPreferences p, bool relaxFloor = false)
     {
         var parsed = _parser.Parse(c.ReleaseName);
         int res = EffectiveResolution(c, parsed);
@@ -264,8 +281,8 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
 
         // An upgrade job enforces the quality floor unconditionally: replacing a file only ever makes sense
         // with something at or above the preferred quality, never a downgrade/side-grade — even when the
-        // global EnforceQualityFloor is off for first-time grabs.
-        bool enforceFloor = p.EnforceQualityFloor || job.IsUpgrade;
+        // global EnforceQualityFloor is off for first-time grabs, and even on the relaxed settle pass.
+        bool enforceFloor = (p.EnforceQualityFloor && !relaxFloor) || job.IsUpgrade;
 
         bool acceptable =
             (!enforceFloor || floor == 0 || res >= floor) &&
