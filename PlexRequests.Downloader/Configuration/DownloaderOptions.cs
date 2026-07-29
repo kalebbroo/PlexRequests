@@ -58,6 +58,31 @@ public class IndexerOptions
     public bool ExtToEnabled { get; set; } = true;
     public string ExtToSearchPath { get; set; } = "/search/?q={query}&order=seeders&sort=desc";
     public int ExtToMaxDetail { get; set; } = 8;
+
+    // The Pirate Bay via its JSON API (apibay) — general movies + TV, no scraping/Cloudflare.
+    public string PirateBayBaseUrl { get; set; } = "https://apibay.org";
+    public bool PirateBayEnabled { get; set; } = true;
+
+    // torrents-csv.com — open JSON search API, general long-tail catalog, no key needed.
+    public string TorrentsCsvBaseUrl { get; set; } = "https://torrents-csv.com";
+    public bool TorrentsCsvEnabled { get; set; } = true;
+
+    // Torznab endpoints (Jackett / Prowlarr). The supported way to widen coverage beyond the built-in
+    // public sources: every tracker configured in the aggregator becomes searchable through its one API,
+    // with the aggregator handling per-site auth/Cloudflare. Bind as Indexer__Torznab__0__Url etc.
+    public List<TorznabEndpointOptions> Torznab { get; set; } = new();
+}
+
+/// <summary>One Torznab-compatible search endpoint (a Jackett indexer/aggregate or a Prowlarr indexer).</summary>
+public class TorznabEndpointOptions
+{
+    /// <summary>Display name used in logs and as the candidate source tag.</summary>
+    public string Name { get; set; } = "torznab";
+    /// <summary>Full Torznab API URL, e.g. Jackett "http://jackett:9117/api/v2.0/indexers/all/results/torznab/api"
+    /// or Prowlarr "http://prowlarr:9696/1/api".</summary>
+    public string Url { get; set; } = string.Empty;
+    public string ApiKey { get; set; } = string.Empty;
+    public bool Enabled { get; set; } = true;
 }
 
 /// <summary>Deluge Web (JSON-RPC) connection + label routing.</summary>

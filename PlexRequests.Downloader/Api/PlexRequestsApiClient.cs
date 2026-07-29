@@ -145,6 +145,40 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         }
     }
 
+    public async Task<List<IndexerConfigDto>?> GetIndexersAsync(CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _http.GetAsync("/api/fulfillment/indexers", ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Indexer config fetch returned {Status}", (int)resp.StatusCode);
+                return null;
+            }
+            return await resp.Content.ReadFromJsonAsync<List<IndexerConfigDto>>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Indexer config request failed (web app unreachable?)");
+            return null;
+        }
+    }
+
+    public async Task<bool> ReportIndexerStatusAsync(IReadOnlyList<IndexerStatusReportDto> reports, CancellationToken ct)
+    {
+        if (reports.Count == 0) return true;
+        try
+        {
+            var resp = await _http.PostAsJsonAsync("/api/fulfillment/indexer-status", reports, ct);
+            return resp.IsSuccessStatusCode;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Indexer status report failed (web app unreachable?)");
+            return false;
+        }
+    }
+
     public async Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int tmdbId, int season, CancellationToken ct)
     {
         try

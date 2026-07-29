@@ -3,5 +3,5 @@
 @inject NavigationManager Navigation
 
 @code {
-    protected override void OnInitialized() => Navigation.NavigateTo("/admin?tab=approvals", replace: true);
+    protected override void OnInitialized() => Navigation.NavigateTo("/admin?tab=requests&sub=approvals", replace: true);
 }

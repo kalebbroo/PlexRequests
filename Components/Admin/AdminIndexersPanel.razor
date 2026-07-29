@@ -1,0 +1,126 @@
+@using PlexRequestsHosted.Shared.DTOs
+@inject PlexRequestsHosted.Services.Abstractions.IIndexerAdminService Indexers
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h2>Indexers</h2>
+    <MudButton Color="Color.Primary" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" OnClick="Load" Disabled="_loading">Refresh</MudButton>
+</div>
+<MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-4">
+    The torrent sources the downloader searches. Toggle a source off to skip it; priority (1 = highest)
+    gives its releases a small ranking edge when candidates are otherwise comparable. Health columns update
+    each time the downloader searches — a failure streak usually means the site is down or blocking.
+</MudText>
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else
+{
+    <MudPaper Class="pa-2" Elevation="1">
+        <MudTable T="IndexerSettingDto" Items="_items" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>Indexer</MudTh>
+                <MudTh>Enabled</MudTh>
+                <MudTh>Priority</MudTh>
+                <MudTh>Last search</MudTh>
+                <MudTh>Last results</MudTh>
+                <MudTh>Fail streak</MudTh>
+                <MudTh>Latency</MudTh>
+                <MudTh>Totals</MudTh>
+                <MudTh>Status</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Indexer"><b>@context.Name</b></MudTd>
+                <MudTd DataLabel="Enabled">
+                    <MudSwitch T="bool" Color="Color.Primary" Value="@context.Enabled"
+                               ValueChanged="@(v => SetEnabled(context, v))" />
+                </MudTd>
+                <MudTd DataLabel="Priority">
+                    <MudNumericField T="int" Value="@context.Priority" Min="1" Max="50" Dense="true"
+                                     Variant="Variant.Outlined" Style="max-width:90px;"
+                                     ValueChanged="@(v => SetPriority(context, v))" />
+                </MudTd>
+                <MudTd DataLabel="Last search">@Relative(context.LastSearchAt)</MudTd>
+                <MudTd DataLabel="Last results">@(context.LastSearchAt is null ? "—" : context.LastResultCount.ToString())</MudTd>
+                <MudTd DataLabel="Fail streak">
+                    @if (context.ConsecutiveFailures > 0)
+                    {
+                        <MudChip T="string" Color="Color.Error" Size="Size.Small">@context.ConsecutiveFailures</MudChip>
+                    }
+                    else
+                    {
+                        <span>0</span>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Latency">@(context.LastSearchAt is null ? "—" : $"{context.LastLatencyMs} ms")</MudTd>
+                <MudTd DataLabel="Totals">@context.TotalResults results / @context.TotalSearches searches</MudTd>
+                <MudTd DataLabel="Status">
+                    @if (!context.Enabled)
+                    {
+                        <MudChip T="string" Color="Color.Default" Size="Size.Small">disabled</MudChip>
+                    }
+                    else if (context.LastSearchAt is null)
+                    {
+                        <MudChip T="string" Color="Color.Info" Size="Size.Small">no searches yet</MudChip>
+                    }
+                    else if (context.ConsecutiveFailures > 0 && !string.IsNullOrWhiteSpace(context.LastError))
+                    {
+                        <MudTooltip Text="@context.LastError">
+                            <MudChip T="string" Color="Color.Error" Size="Size.Small">failing</MudChip>
+                        </MudTooltip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Success" Size="Size.Small">ok</MudChip>
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudPaper>
+    <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
+        Site URLs, mirrors, and optional Torznab (Jackett/Prowlarr) endpoints are configured on the downloader
+        (appsettings / environment). New sources added there appear here automatically after their first search.
+    </MudText>
+}
+
+@code {
+    private bool _loading = true;
+    private List<IndexerSettingDto> _items = new();
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _loading = true; StateHasChanged();
+        try { _items = await Indexers.GetAllAsync(); }
+        finally { _loading = false; StateHasChanged(); }
+    }
+
+    private async Task SetEnabled(IndexerSettingDto row, bool enabled)
+    {
+        row.Enabled = enabled;
+        if (await Indexers.SetEnabledAsync(row.Name, enabled))
+            await Toast.ShowSuccessAsync($"{row.Name} {(enabled ? "enabled" : "disabled")}.");
+        else
+            await Toast.ShowErrorAsync("Update failed.");
+    }
+
+    private async Task SetPriority(IndexerSettingDto row, int priority)
+    {
+        row.Priority = priority;
+        if (!await Indexers.SetPriorityAsync(row.Name, priority))
+            await Toast.ShowErrorAsync("Update failed.");
+    }
+
+    private static string Relative(DateTime? utc)
+    {
+        if (utc is null) return "never";
+        var span = DateTime.UtcNow - utc.Value;
+        if (span.TotalMinutes < 1) return "just now";
+        if (span.TotalHours < 1) return $"{(int)span.TotalMinutes}m ago";
+        if (span.TotalDays < 1) return $"{(int)span.TotalHours}h ago";
+        return $"{(int)span.TotalDays}d ago";
+    }
+}

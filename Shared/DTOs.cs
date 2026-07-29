@@ -259,7 +259,9 @@ public class DownloadPreferencesDto
     public bool PreferX265 { get; set; } = true;
     public bool PreferHdr { get; set; }
     public bool PreferHigherQualitySource { get; set; } = true;
-    /// <summary>Treat the job's Quality as a hard floor (reject lower) rather than a soft preference.</summary>
+    /// <summary>On: the first search accepts only the job's Quality or better; if nothing has appeared by the
+    /// next search pass the best available release is taken instead (and later auto-upgraded once the preferred
+    /// quality exists). Off: the best available release is taken immediately (preferred quality still ranks first).</summary>
     public bool EnforceQualityFloor { get; set; } = true;
 
     /// <summary>
@@ -415,6 +417,42 @@ public class SeasonTarget
     public int Season { get; set; }
     public int EpisodeCount { get; set; }
     public List<int> MissingEpisodes { get; set; } = new();
+}
+
+/// <summary>Admin view of one indexer provider: control fields + rolling health (see IndexerSettingEntity).</summary>
+public class IndexerSettingDto
+{
+    public string Name { get; set; } = string.Empty;
+    public bool Enabled { get; set; } = true;
+    public int Priority { get; set; } = 25;
+    public DateTime? LastSearchAt { get; set; }
+    public int LastResultCount { get; set; }
+    public DateTime? LastSuccessAt { get; set; }
+    public string? LastError { get; set; }
+    public int ConsecutiveFailures { get; set; }
+    public long TotalSearches { get; set; }
+    public long TotalResults { get; set; }
+    public int LastLatencyMs { get; set; }
+}
+
+/// <summary>Slim per-indexer config served to the downloader (GET /api/fulfillment/indexers).</summary>
+public class IndexerConfigDto
+{
+    public string Name { get; set; } = string.Empty;
+    public bool Enabled { get; set; } = true;
+    public int Priority { get; set; } = 25;
+}
+
+/// <summary>One provider's outcome for one search, reported by the downloader
+/// (POST /api/fulfillment/indexer-status) to drive the admin Indexers panel's health columns.</summary>
+public class IndexerStatusReportDto
+{
+    public string Name { get; set; } = string.Empty;
+    public bool Success { get; set; }
+    public int ResultCount { get; set; }
+    public string? Error { get; set; }
+    public int LatencyMs { get; set; }
+    public DateTime SearchedAt { get; set; }
 }
 
 public class NotificationDto

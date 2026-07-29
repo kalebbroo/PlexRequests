@@ -213,10 +213,15 @@ circuit. Caddy and Traefik do this automatically.
 
 ## 6. Optional: automatic downloading
 
-Approved requests can be fulfilled automatically by the out-of-process **downloader**: it searches
-indexers (EZTV, YTS, 1337x, Nyaa, ext.to), ranks releases by quality/seeders, hands the best magnet to
-a torrent client, hardlinks the finished files into your library, and calls back so the app marks the
-request **Available** and reindexes Plex.
+Approved requests can be fulfilled automatically by the out-of-process **downloader**: it searches its
+built-in indexers (EZTV, YTS, 1337x, Nyaa, ext.to, The Pirate Bay, Torrents-CSV), ranks releases by
+quality/seeders, hands the best magnet to a torrent client, hardlinks the finished files into your
+library, and calls back so the app marks the request **Available** and reindexes Plex.
+
+Indexers are managed in **Admin → Downloads → Indexers**: enable/disable each source, set its priority, and watch
+per-source health (result counts, failure streaks, latency) updated live from every search. If you also
+run **Jackett** or **Prowlarr**, point the downloader at it via `TORZNAB_URL`/`TORZNAB_API_KEY` (see
+`docker/.env.example`) and everything configured there joins the search too.
 
 Set `FULFILLMENT_API_KEY` (the same value on web + downloader) and pick a scenario:
 
@@ -281,6 +286,10 @@ Everything the app owns lives in two Docker volumes:
   cookies are invalidated and everyone must sign in again.
 
 To back up, stop the stack and copy the `app.db` file and the `keys/` directory. That's the whole state.
+You can also grab a live, consistent snapshot of the database from **Admin → System → Database →
+Download backup** (no downtime needed); restoring is still "replace `app.db`, restart". The same panel
+has targeted cleanup tools (stale caches, availability index, broken requests) and a full factory reset
+for starting over on a fresh database.
 
 ---
 
@@ -356,7 +365,7 @@ docker exec plexrequests-downloader ls -l /srv/media/downloads/<...>
 
 If your torrent client runs on a **different machine**, the downloader can't hardlink or move the files
 across the network on its own. Mount that machine's download share on the Docker host and pass it
-through at matching paths, or add it under **Admin → Network Drives**.
+through at matching paths, or add it under **Admin → Library → Network Drives**.
 
 ### Managed Deluge connects, but downloads stall at 0% / "no peers"
 

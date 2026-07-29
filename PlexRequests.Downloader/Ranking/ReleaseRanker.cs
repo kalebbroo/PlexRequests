@@ -17,14 +17,17 @@ public interface IReleaseRanker
 
 /// <summary>
 /// Enforces the quality floor + seeder/size thresholds, then scores survivors by resolution, source,
-/// seeders, codec efficiency, proper/repack and preferred groups. Season-scoped jobs prefer a full-season
-/// pack and fall back to the missing episodes. All knobs come from the admin <see cref="IDownloadPreferencesProvider"/>.
+/// seeders, codec efficiency, proper/repack and preferred groups. The floor is preferred, not absolute:
+/// after the first empty at-floor search, the best below-floor release is taken instead (and later
+/// auto-upgraded by the QualityUpgradeScan). Season-scoped jobs prefer a full-season pack and fall back
+/// to the missing episodes. All knobs come from the admin <see cref="IDownloadPreferencesProvider"/>.
 /// </summary>
-public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider prefs, ILogger<ReleaseRanker> logger)
+public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider prefs, IIndexerSettingsProvider indexerSettings, ILogger<ReleaseRanker> logger)
     : IReleaseRanker
 {
     private readonly IReleaseParser _parser = parser;
     private readonly IDownloadPreferencesProvider _prefs = prefs;
+    private readonly IIndexerSettingsProvider _indexerSettings = indexerSettings;
     private readonly ILogger<ReleaseRanker> _logger = logger;
 
     private sealed record Annotated(ReleaseCandidate C, int? Season, int? SeasonEnd, int? Episode, bool IsPack, bool LooksLikeCompleteSeries, double Score, bool Acceptable, int Resolution);
@@ -52,6 +55,21 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
 
         var annotated = candidates.Select(c => Annotate(c, job, p)).ToList();
         var acceptable = annotated.Where(a => a.Acceptable).ToList();
+
+        // The preferred quality is a preference, not a dead-end. With the floor enforced, the FIRST search
+        // holds out for it (the deferral backoff gives a not-yet-uploaded release time to appear); but once
+        // the request has already deferred (Attempts > 1) and there's still nothing at/above the floor,
+        // relax it and take the best release below — 480p beats searching forever. The import is recorded
+        // below cutoff, so the QualityUpgradeScan auto-replaces it when the preferred quality shows up.
+        // Upgrade jobs never relax: a below-floor "upgrade" is a downgrade (see Annotate).
+        if (acceptable.Count == 0 && p.EnforceQualityFloor && !job.IsUpgrade && floor > 0 && job.Attempts > 1)
+        {
+            annotated = candidates.Select(c => Annotate(c, job, p, relaxFloor: true)).ToList();
+            acceptable = annotated.Where(a => a.Acceptable).ToList();
+            if (acceptable.Count > 0)
+                _logger.LogInformation("\"{Title}\": nothing at the preferred {Floor}p+ after {Attempts} search(es) — settling for the best available release below it (the upgrade scan will revisit)",
+                    job.Title, floor, job.Attempts);
+        }
 
         if (acceptable.Count == 0)
         {
@@ -222,7 +240,7 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
 
     // ---- Scoring / filtering -----------------------------------------------------------------------
 
-    private Annotated Annotate(ReleaseCandidate c, FulfillmentJobDto job, EffectiveDownloadPreferences p)
+    private Annotated Annotate(ReleaseCandidate c, FulfillmentJobDto job, EffectiveDownloadPreferences p, bool relaxFloor = false)
     {
         var parsed = _parser.Parse(c.ReleaseName);
         int res = EffectiveResolution(c, parsed);
@@ -264,8 +282,8 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
 
         // An upgrade job enforces the quality floor unconditionally: replacing a file only ever makes sense
         // with something at or above the preferred quality, never a downgrade/side-grade — even when the
-        // global EnforceQualityFloor is off for first-time grabs.
-        bool enforceFloor = p.EnforceQualityFloor || job.IsUpgrade;
+        // global EnforceQualityFloor is off for first-time grabs, and even on the relaxed settle pass.
+        bool enforceFloor = (p.EnforceQualityFloor && !relaxFloor) || job.IsUpgrade;
 
         bool acceptable =
             (!enforceFloor || floor == 0 || res >= floor) &&
@@ -280,8 +298,11 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
             _logger.LogDebug("Rejected \"{Name}\" for \"{Title}\": res={Res} floor={Floor} enforceFloor={Enforce}, seeders={Seeders}/{MinSeeders}, sizeGb={Size:F1}/{MaxSize:F0}, idMismatch={IdMismatch}, titleRecall={Recall:F2}, extraTokens={Extra}, yearMismatch={YearMismatch}, mediaTypeMismatch={MediaMismatch} (coreTitle=\"{Core}\")",
                 c.ReleaseName, job.Title, res, floor, enforceFloor, c.Seeders, p.MinSeeders, c.SizeGb, maxSize, idMismatch, titleRecall, extraTokens, yearMismatch, mediaTypeMismatch, parsed.Title);
 
-        // A confirmed id match is worth a big boost; otherwise reward title recall as before.
-        double score = Score(c, parsed, res, floor, isPack, p, enforceFloor) + (idMatch ? 200 : titleRecall * 40);
+        // A confirmed id match is worth a big boost; otherwise reward title recall as before. The admin
+        // per-indexer priority adds a small edge (0–49) so comparable releases prefer the trusted source —
+        // deliberately smaller than any quality/seeder signal so it only breaks near-ties.
+        double priorityBonus = Math.Clamp(50 - _indexerSettings.PriorityOf(c.Source), 0, 49);
+        double score = Score(c, parsed, res, floor, isPack, p, enforceFloor) + (idMatch ? 200 : titleRecall * 40) + priorityBonus;
         return new Annotated(c, season, parsed.SeasonEnd, episode, isPack, parsed.LooksLikeCompleteSeries, score, acceptable, res);
     }
 
@@ -314,6 +335,13 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
     private static int RawTokenCount(string s) =>
         System.Text.RegularExpressions.Regex.Matches(s.ToLowerInvariant(), @"[a-z0-9]+").Count(m => m.Value.Length > 1);
 
+    // Region/variant tags releasers append to the core title to disambiguate a country's edition of the
+    // same show ("Bluey AU", "The Office US", "Peppa Pig UK"). These are NOT evidence of a different,
+    // longer title, so they're exempt from the extra-token rejection below — without this, any 1-word
+    // title (maxExtra=0) could never match its own regional releases, a classic kids'-show failure.
+    private static readonly HashSet<string> RegionTokens = new(StringComparer.OrdinalIgnoreCase)
+        { "us", "uk", "au", "nz", "ca", "gb" };
+
     // Significant words in the release's core title that the requested title does NOT contain. This is what
     // separates "Lucky Star" (extra: "star") from "Lucky" — a strong signal it's a different, longer title.
     private static int ExtraTitleTokens(string releaseTitle, string jobTitle)
@@ -321,7 +349,7 @@ public class ReleaseRanker(IReleaseParser parser, IDownloadPreferencesProvider p
         var rel = Tokenize(releaseTitle);
         var job = Tokenize(jobTitle);
         if (rel.Count == 0) return 0; // couldn't parse a core title — don't penalize (other gates still apply)
-        return rel.Except(job).Count();
+        return rel.Except(job).Count(t => !RegionTokens.Contains(t));
     }
 
     // Compare an optional job IMDb id with an optional candidate IMDb id. Returns (match, mismatch): both

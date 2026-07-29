@@ -1,0 +1,198 @@
+@using PlexRequestsHosted.Services.Abstractions
+@using PlexRequestsHosted.Shared.Enums
+@inject IDatabaseAdminService DbAdmin
+@inject IToastService Toast
+@inject IDialogService Dialog
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h2>Database</h2>
+    <MudButton Color="Color.Primary" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" OnClick="Load" Disabled="_busy">Refresh</MudButton>
+</div>
+<MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-4">
+    Everything the app knows lives in one local SQLite file. Take a backup before anything destructive —
+    restoring is just replacing the file and restarting. Cleanup actions here only touch database rows;
+    files in your media library are never deleted.
+</MudText>
+
+@if (_overview is null)
+{
+    <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else
+{
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudText Typo="Typo.h6" Class="mb-3">Overview</MudText>
+        <div class="d-flex gap-3 flex-wrap align-items-center mb-3">
+            <MudText Typo="Typo.body2"><b>File:</b> <code>@_overview.Path</code></MudText>
+            <MudText Typo="Typo.body2"><b>Size:</b> @FormatSize(_overview.SizeBytes)</MudText>
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Download"
+                       Href="/api/admin/db/backup" Target="_blank">Download backup</MudButton>
+            <MudButton Color="Color.Secondary" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Compress"
+                       OnClick="Compact" Disabled="_busy">Compact file</MudButton>
+        </div>
+        <MudTable T="DbTableCountDto" Items="_overview.Tables" Dense="true" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>Table</MudTh>
+                <MudTh>Rows</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Table">@context.Table</MudTd>
+                <MudTd DataLabel="Rows">@context.Rows</MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudText Typo="Typo.h6" Class="mb-1">Targeted cleanup</MudText>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-3 d-block">
+            Fixes for "something's stuck / stale" without touching anything else. All of these are safe to
+            run — cached data rebuilds itself.
+        </MudText>
+        <div class="d-flex flex-column gap-2">
+            <div class="d-flex gap-3 align-items-center flex-wrap">
+                <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="@(() => Run("Clear metadata caches?", "Cached TMDB metadata and episode lists are deleted and re-fetched on demand. Fixes stale titles/posters/episode counts.", DbAdmin.ClearMetadataCachesAsync))">Clear metadata caches</MudButton>
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">Stale titles, posters, or wrong episode counts.</MudText>
+            </div>
+            <div class="d-flex gap-3 align-items-center flex-wrap">
+                <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="@(() => Run("Clear and rebuild the availability index?", "The Plex availability index is wiped and rebuilt from your live Plex library. Fixes titles wrongly shown as available/missing.", DbAdmin.ClearAndRebuildAvailabilityIndexAsync))">Rebuild availability index</MudButton>
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">Titles wrongly shown as available or missing.</MudText>
+            </div>
+            <div class="d-flex gap-3 align-items-center flex-wrap">
+                <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="@(() => Run("Clear job run history?", "The Jobs → Activity feed is emptied. Schedules and live jobs are untouched.", DbAdmin.ClearJobHistoryAsync))">Clear job history</MudButton>
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">Just the activity feed; schedules stay.</MudText>
+            </div>
+            <div class="d-flex gap-3 align-items-center flex-wrap">
+                <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="@(() => Run("Clear all notifications?", "Every user's in-app notifications are deleted.", DbAdmin.ClearNotificationsAsync))">Clear notifications</MudButton>
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">All users' in-app notifications.</MudText>
+            </div>
+            <div class="d-flex gap-3 align-items-center flex-wrap">
+                <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="@(() => Run("Clear closed issues?", "Resolved and dismissed issue reports are deleted; open ones are kept.", DbAdmin.ClearClosedIssuesAsync))">Clear closed issues</MudButton>
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">Resolved/dismissed reports; open ones stay.</MudText>
+            </div>
+            <div class="d-flex gap-3 align-items-center flex-wrap">
+                <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="@(() => Run("Clear the Discord outbox?", "Queued/delivered Discord bridge events are deleted.", DbAdmin.ClearBridgeOutboxAsync))">Clear Discord outbox</MudButton>
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">Bridge event queue.</MudText>
+            </div>
+        </div>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudText Typo="Typo.h6" Class="mb-1">Delete requests</MudText>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-3 d-block">
+            Removes requests and their download jobs / import audit rows from the database. Library files
+            on disk are never touched. Use a status filter to clear out broken ones (e.g. Failed), or
+            "All statuses" to empty the whole request list.
+        </MudText>
+        <div class="d-flex gap-3 align-items-center flex-wrap">
+            <MudSelect T="RequestStatus?" @bind-Value="_deleteStatus" Label="Status" Dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
+                <MudSelectItem T="RequestStatus?" Value="@((RequestStatus?)null)">All statuses</MudSelectItem>
+                <MudSelectItem T="RequestStatus?" Value="@((RequestStatus?)RequestStatus.Failed)">Failed</MudSelectItem>
+                <MudSelectItem T="RequestStatus?" Value="@((RequestStatus?)RequestStatus.Cancelled)">Cancelled</MudSelectItem>
+                <MudSelectItem T="RequestStatus?" Value="@((RequestStatus?)RequestStatus.Rejected)">Rejected</MudSelectItem>
+                <MudSelectItem T="RequestStatus?" Value="@((RequestStatus?)RequestStatus.Searching)">Searching</MudSelectItem>
+                <MudSelectItem T="RequestStatus?" Value="@((RequestStatus?)RequestStatus.Pending)">Pending</MudSelectItem>
+                <MudSelectItem T="RequestStatus?" Value="@((RequestStatus?)RequestStatus.Available)">Available</MudSelectItem>
+                <MudSelectItem T="RequestStatus?" Value="@((RequestStatus?)RequestStatus.PartiallyAvailable)">Partially available</MudSelectItem>
+            </MudSelect>
+            <MudButton Color="Color.Error" Variant="Variant.Outlined" Disabled="_busy" OnClick="DeleteRequests">Delete matching requests</MudButton>
+        </div>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1" Style="border: 1px solid var(--mud-palette-error);">
+        <MudText Typo="Typo.h6" Color="Color.Error" Class="mb-1">Danger zone — start over fresh</MudText>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-3 d-block">
+            Empties <b>every</b> table and compacts the file — requests, jobs, caches, settings, the lot.
+            Settings, the job schedule, and indexer rows re-seed themselves; admins get their role back from
+            ADMIN_USERNAMES at next sign-in. Media files on disk are untouched. Download a backup first, and
+            restart the containers afterwards. Type <b>RESET</b> to arm the button.
+        </MudText>
+        <div class="d-flex gap-3 align-items-center flex-wrap">
+            <MudSwitch T="bool" @bind-Value="_keepUsers" Color="Color.Primary" Label="Keep user accounts" />
+            <MudTextField T="string" @bind-Value="_resetConfirm" Immediate="true" Label="Type RESET to confirm" Variant="Variant.Outlined" Dense="true" Style="max-width:220px;" />
+            <MudButton Color="Color.Error" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.DeleteForever"
+                       Disabled="@(_busy || _resetConfirm != "RESET")" OnClick="FactoryReset">Factory reset database</MudButton>
+        </div>
+    </MudPaper>
+}
+
+@code {
+    private DbOverviewDto? _overview;
+    private bool _busy;
+    private RequestStatus? _deleteStatus = RequestStatus.Failed;
+    private bool _keepUsers = true;
+    private string _resetConfirm = string.Empty;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        try { _overview = await DbAdmin.GetOverviewAsync(); }
+        catch (Exception ex) { await Toast.ShowErrorAsync($"Could not load database overview: {ex.Message}"); }
+        StateHasChanged();
+    }
+
+    // Confirm → run → report rows removed → refresh counts. Shared by every targeted-cleanup button.
+    private async Task Run(string title, string message, Func<Task<int>> action)
+    {
+        var ok = await Dialog.ShowMessageBox(title, message, yesText: "Do it", cancelText: "Cancel");
+        if (ok != true) return;
+        _busy = true; StateHasChanged();
+        try
+        {
+            var rows = await action();
+            await Toast.ShowSuccessAsync($"Done — {rows} row(s) removed.");
+        }
+        catch (Exception ex) { await Toast.ShowErrorAsync($"Failed: {ex.Message}"); }
+        finally { _busy = false; await Load(); }
+    }
+
+    private async Task Compact()
+    {
+        _busy = true; StateHasChanged();
+        try { await DbAdmin.CompactAsync(); await Toast.ShowSuccessAsync("Database compacted."); }
+        catch (Exception ex) { await Toast.ShowErrorAsync($"Compact failed: {ex.Message}"); }
+        finally { _busy = false; await Load(); }
+    }
+
+    private async Task DeleteRequests()
+    {
+        var scope = _deleteStatus is null ? "ALL requests" : $"all {_deleteStatus} requests";
+        var ok = await Dialog.ShowMessageBox("Delete requests?",
+            $"This permanently deletes {scope} plus their download jobs and import history from the database. Library files on disk are not touched.",
+            yesText: "Delete", cancelText: "Cancel");
+        if (ok != true) return;
+        _busy = true; StateHasChanged();
+        try
+        {
+            var rows = await DbAdmin.DeleteRequestsAsync(_deleteStatus);
+            await Toast.ShowSuccessAsync($"Deleted {rows} request(s).");
+        }
+        catch (Exception ex) { await Toast.ShowErrorAsync($"Delete failed: {ex.Message}"); }
+        finally { _busy = false; await Load(); }
+    }
+
+    private async Task FactoryReset()
+    {
+        var ok = await Dialog.ShowMessageBox("Factory reset the database?",
+            $"Every table is emptied{(_keepUsers ? " except user accounts" : ", including user accounts")}. This cannot be undone without a backup.",
+            yesText: "Reset everything", cancelText: "Cancel");
+        if (ok != true) return;
+        _busy = true; StateHasChanged();
+        try
+        {
+            await DbAdmin.FactoryResetAsync(_keepUsers);
+            _resetConfirm = string.Empty;
+            await Toast.ShowSuccessAsync("Database reset. Restart the containers to re-seed background schedules.");
+        }
+        catch (Exception ex) { await Toast.ShowErrorAsync($"Reset failed: {ex.Message}"); }
+        finally { _busy = false; await Load(); }
+    }
+
+    private static string FormatSize(long bytes) => bytes switch
+    {
+        >= 1024 * 1024 * 1024 => $"{bytes / 1024.0 / 1024 / 1024:0.##} GB",
+        >= 1024 * 1024 => $"{bytes / 1024.0 / 1024:0.##} MB",
+        >= 1024 => $"{bytes / 1024.0:0.#} KB",
+        _ => $"{bytes} B"
+    };
+}

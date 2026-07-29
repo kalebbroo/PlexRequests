@@ -50,11 +50,18 @@ else
             <MudNumericField T="int" @bind-Value="_p.MinSeeders" Label="Min seeders" Variant="Variant.Outlined" Dense="true" Min="0" Style="max-width:160px;" />
             <MudNumericField T="double" @bind-Value="_p.MaxSizeGb" Label="Max size (GB)" Variant="Variant.Outlined" Dense="true" Min="0.05" Style="max-width:180px;" />
             <MudNumericField T="double" @bind-Value="_p.MaxSeasonPackSizeGb" Label="Max season-pack size (GB)" Variant="Variant.Outlined" Dense="true" Min="0.05" Style="max-width:220px;" />
-            <MudSwitch T="bool" @bind-Value="_p.EnforceQualityFloor" Color="Color.Primary" Label="Enforce quality as a hard floor" />
+            <MudSwitch T="bool" @bind-Value="_p.EnforceQualityFloor" Color="Color.Primary" Label="Hold out for preferred quality first" />
             <MudNumericField T="double" @bind-Value="_p.MinTitleSimilarity" Label="Min title match (0-1)" Variant="Variant.Outlined" Dense="true" Min="0" Max="1" Step="0.05" Style="max-width:200px;" />
         </div>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
-            Rejects a release whose name doesn't sufficiently match the requested title — guards free-text-search indexers against wrong-show or spam results. 0 disables the check; 1 requires every word of the title to appear in the release name.
+            <b>Hold out for preferred quality:</b> on, the first search only accepts the preferred quality or better;
+            if nothing has appeared by the next search pass, the best available release (even 480p) is taken and the
+            quality-upgrade scan automatically replaces it once the preferred quality shows up. Off, the best available
+            release is taken immediately (the preferred quality still wins whenever it exists).
+            <br />
+            <b>Min title match</b> rejects a release whose name doesn't sufficiently match the requested title — guards
+            free-text-search indexers against wrong-show or spam results. 0 disables the check; 1 requires every word of
+            the title to appear in the release name.
         </MudText>
     </MudPaper>
 

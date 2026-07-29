@@ -53,14 +53,20 @@ public class FulfillmentPipeline(
             await prefs.RefreshAsync(ct); // pick up the latest admin config before ranking
             await libraryPrefs.RefreshAsync(ct); // and the latest library-organization config before importing
 
-            var candidates = await indexer.SearchAsync(job, ct);
+            var search = await indexer.SearchAsync(job, ct);
+            var candidates = search.Candidates;
             var plan = ranker.PlanDownload(candidates, job);
             if (plan.IsEmpty)
             {
                 // Never dead-end: a normal job is parked and re-searched on a backoff (request shows
                 // "Searching", not "Failed"); an upgrade job simply found nothing better and stops quietly.
+                // The deferral reason carries the per-indexer breakdown so the admin Missing panel answers
+                // "which indexers returned nothing?" without log archaeology.
+                var detail = candidates.Count == 0
+                    ? $"No indexer returned a release ({search.Summary})"
+                    : $"{candidates.Count} candidate(s) all rejected by quality/seeder/title filters ({search.Summary})";
                 if (job.IsUpgrade) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
-                else await api.MarkDeferredAsync(job.Id, "No acceptable release found yet", ct);
+                else await api.MarkDeferredAsync(job.Id, detail, ct);
                 return;
             }
 
@@ -96,9 +102,12 @@ public class FulfillmentPipeline(
         catch (Exception ex)
         {
             logger.LogError(ex, "Pipeline error for job {JobId}", job.Id);
-            // An upgrade job's request is already Available — never flip it to Failed; just stop this attempt.
+            // Never dead-end on an exception either: errors that reach here are overwhelmingly transient
+            // (Deluge/VPN/indexer/web-API hiccups), so park the job for re-search on the same backoff as
+            // an empty search — permanently failing the request meant a single blip ended its retries.
+            // An upgrade job's request is already Available; just stop this attempt.
             if (job.IsUpgrade) await SafeMarkUpgradeExhausted(job.Id);
-            else await SafeFail(job.MediaRequestId, $"Downloader error: {ex.Message}");
+            else await SafeDefer(job.Id, $"Downloader error: {ex.Message}");
             await SafeRemoveState(job.Id);
         }
     }
@@ -115,7 +124,7 @@ public class FulfillmentPipeline(
         {
             logger.LogError(ex, "Resume error for job {JobId}", record.Job.Id);
             if (record.Job.IsUpgrade) await SafeMarkUpgradeExhausted(record.Job.Id);
-            else await SafeFail(record.Job.MediaRequestId, $"Downloader error on resume: {ex.Message}");
+            else await SafeDefer(record.Job.Id, $"Downloader error on resume: {ex.Message}");
             await SafeRemoveState(record.Job.Id);
         }
     }
@@ -454,12 +463,6 @@ public class FulfillmentPipeline(
     {
         try { return Directory.Exists(path) ? Directory.GetLastWriteTimeUtc(path) : File.GetLastWriteTimeUtc(path); }
         catch { return DateTime.MinValue; }
-    }
-
-    private async Task SafeFail(int requestId, string reason)
-    {
-        try { await api.MarkFailedAsync(requestId, reason, CancellationToken.None); }
-        catch (Exception ex) { logger.LogWarning(ex, "Could not report failure for request {RequestId}", requestId); }
     }
 
     private async Task SafePartiallyComplete(int requestId, string reason)

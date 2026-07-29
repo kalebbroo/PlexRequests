@@ -199,8 +199,9 @@ requests page shows these states; a failed request is re-approvable to re-enqueu
 ## Recommended follow-ups (not yet built)
 
 - **Stale-claim reaper:** a background sweep that returns `Claimed`/`Downloading` jobs with no
-  progress past a timeout back to `Queued` (or `Failed` after M attempts), so a dead worker doesn't
-  strand requests.
+  progress past a timeout back to `Queued`, so a dead worker doesn't strand requests. (Built:
+  after M attempts a normal job is parked `Deferred` on the re-search backoff — never hard-failed,
+  since attempts accrue on every re-search of a hard-to-find title; upgrade jobs close quietly.)
 - **Admin job view:** a page listing `FulfillmentJobs` with status/progress/attempts and a manual
   requeue/cancel action.
 - **Per-request quality:** persist the requester's preferred `Quality` on the request so

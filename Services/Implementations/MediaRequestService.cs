@@ -29,9 +29,10 @@ public class MediaRequestService(
 
     // Statuses that still legitimately block a duplicate request/re-request; Failed/Cancelled/Rejected
     // don't (a failed download should be retryable), and Available is checked separately/live so its
-    // message can be specific rather than folded into "you've already requested this".
+    // message can be specific rather than folded into "you've already requested this". Searching counts
+    // as active: the downloader is still re-trying it on a backoff, so a re-request would only duplicate.
     private static bool IsActiveStatus(RequestStatus s) =>
-        s is RequestStatus.Pending or RequestStatus.Approved or RequestStatus.Processing;
+        s is RequestStatus.Pending or RequestStatus.Approved or RequestStatus.Processing or RequestStatus.Searching;
 
     private async Task<(string username, bool isAdmin)> GetUserAsync()
     {

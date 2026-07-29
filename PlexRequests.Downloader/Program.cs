@@ -71,15 +71,39 @@ builder.Services.AddHttpClient<ExtToIndexerProvider>(http =>
     http.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
     http.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
 });
+// Pirate Bay JSON API (apibay) + torrents-csv — plain JSON endpoints, normal UA is fine.
+builder.Services.AddHttpClient<PirateBayIndexerProvider>(http =>
+{
+    http.BaseAddress = new Uri(indexerCfg.PirateBayBaseUrl);
+    http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
+    http.DefaultRequestHeaders.Add("User-Agent", "PlexRequests.Downloader");
+});
+builder.Services.AddHttpClient<TorrentsCsvIndexerProvider>(http =>
+{
+    http.BaseAddress = new Uri(indexerCfg.TorrentsCsvBaseUrl);
+    http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
+    http.DefaultRequestHeaders.Add("User-Agent", "PlexRequests.Downloader");
+});
+// Torznab (Jackett/Prowlarr) — endpoints are absolute per-config URLs, so no BaseAddress here.
+builder.Services.AddHttpClient<TorznabIndexerProvider>(http =>
+{
+    http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
+    http.DefaultRequestHeaders.Add("User-Agent", "PlexRequests.Downloader");
+});
+builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<TorznabIndexerProvider>());
 builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<EztvIndexerProvider>());
 builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<YtsIndexerProvider>());
 builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<X1337xIndexerProvider>());
 builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<NyaaIndexerProvider>());
 builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<ExtToIndexerProvider>());
+builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<PirateBayIndexerProvider>());
+builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<TorrentsCsvIndexerProvider>());
 builder.Services.AddTransient<IIndexerClient, IndexerClient>();
 
 // Admin-configured download preferences, fetched from the web app (appsettings QualityOptions fallback).
 builder.Services.AddSingleton<IDownloadPreferencesProvider, DownloadPreferencesProvider>();
+// Admin per-indexer enable/priority (the web Indexers panel); unknown/unreachable defaults to enabled.
+builder.Services.AddSingleton<IIndexerSettingsProvider, IndexerSettingsProvider>();
 // Admin-configured library organization (paths, naming templates, transfer mode), same fetch/fallback pattern.
 builder.Services.AddSingleton<ILibraryOrganizationProvider, LibraryOrganizationPreferencesProvider>();
 
