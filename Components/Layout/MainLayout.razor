@@ -174,7 +174,18 @@
     }
 </div>
 
-
+@* Blazor writes the unhandled-circuit-error message into this element and unhides it. It was dropped when
+   this layout was rewritten, while its stylesheet rule in MainLayout.razor.css survived — so the rule
+   styled nothing and a circuit that threw showed the user NOTHING AT ALL: the page simply stopped
+   responding to clicks, with no message and no hint that reloading would fix it. There is an ErrorBoundary
+   above for render exceptions, but it cannot catch a dead circuit, which is the case this covers. *@
+<div id="blazor-error-ui" data-nosnippet>
+    Something went wrong on the server and this page has stopped responding.
+    <a href="." class="reload">Reload</a>
+    @* Plain multiplication sign, not the template's 🗙 (U+1F5D9) — that codepoint has no glyph in a lot of
+       font stacks and renders as a tofu box. *@
+    <span class="dismiss" title="Dismiss" role="button" aria-label="Dismiss">&#215;</span>
+</div>
 
 @code {
     private bool _scrolled = false;

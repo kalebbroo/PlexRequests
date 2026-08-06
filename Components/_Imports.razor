@@ -18,6 +18,10 @@
 @using PlexRequestsHosted.Services.Abstractions
 @using PlexRequestsHosted.Components.Shared
 @using PlexRequestsHosted.Components.Media
+@* Without this, <ReconnectModal /> in App.razor compiles fine and ships as a literal
+   <ReconnectModal></ReconnectModal> tag in the HTML — an unknown capitalised element is passed through as
+   markup rather than raising an error, so the build stays green and the component silently never runs. *@
+@using PlexRequestsHosted.Components.Layout
 
 @* Secure-by-default: every routable page requires authentication unless it opts out with [AllowAnonymous]. *@
 @attribute [Authorize]

@@ -76,25 +76,45 @@ main {
     }
 }
 
+/* Carried over from the Blazor template, which paints this bar lightyellow under `color-scheme: light only`
+   — a white slab across the bottom of a dark app. Repainted in the app's own palette, keeping the warning
+   accent so it still reads as something being wrong. `display` is toggled by the framework, so it must stay
+   `none` here and the layout has to be flex-when-shown; hence the separate display rule below. */
 #blazor-error-ui {
-    color-scheme: light only;
-    background: lightyellow;
+    background: var(--bg-tertiary, #2F2F2F);
+    border-top: 3px solid var(--color-error, #f44336);
+    color: var(--text-primary, #FFFFFF);
     bottom: 0;
-    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.6);
     box-sizing: border-box;
     display: none;
+    font-size: 0.9375rem;
     left: 0;
-    padding: 0.6rem 1.25rem 0.7rem 1.25rem;
+    padding: 0.85rem 3rem 0.85rem 1.25rem;
     position: fixed;
     width: 100%;
-    z-index: 1000;
+    z-index: 2000;   /* above MudBlazor overlays (1300) — a dead circuit is the most important thing on screen */
 }
+
+    #blazor-error-ui .reload {
+        color: var(--plex-orange, #E5A00D);
+        font-weight: 600;
+        margin-left: 0.5rem;
+        text-decoration: underline;
+    }
 
     #blazor-error-ui .dismiss {
         cursor: pointer;
+        color: var(--text-secondary, #B3B3B3);
+        font-size: 1.1rem;
+        line-height: 1;
         position: absolute;
-        right: 0.75rem;
-        top: 0.5rem;
+        right: 1rem;
+        top: 0.85rem;
+    }
+
+    #blazor-error-ui .dismiss:hover {
+        color: var(--text-primary, #FFFFFF);
     }
 
 * {

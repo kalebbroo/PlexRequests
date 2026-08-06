@@ -19,6 +19,10 @@
 
 <body>
     <Routes @rendermode="PageRenderMode" />
+    @* Static (no rendermode): the circuit is exactly what's broken when this needs to appear, so it must
+       not depend on one. Lives here rather than in MainLayout because a dropped connection has to be
+       reported on every page, including those that render outside the layout. *@
+    <ReconnectModal />
     <script src="_content/MudBlazor/MudBlazor.min.js"></script>
     <script src="_framework/blazor.web.js"></script>
     <script src="@Assets["app.js"]"></script>
