@@ -5,17 +5,21 @@ using PlexRequestsHosted.Shared.DTOs;
 namespace PlexRequests.Downloader.Configuration;
 
 /// <summary>
-/// Per-indexer enable/priority state from the web app's admin Indexers panel, refreshed on the same
-/// throttled-fetch pattern as <see cref="DownloadPreferencesProvider"/>. Providers the panel doesn't know
-/// yet (or when the web app is unreachable) default to enabled at normal priority, so a config outage
-/// never silently disables searching.
+/// The downloader's view of the admin-configured indexers, refreshed on the same throttled-fetch pattern as
+/// <see cref="DownloadPreferencesProvider"/>. Each row is a full definition (URL, key, categories, limits),
+/// not just an enable flag — which is what lets several Torznab endpoints exist independently.
+///
+/// The previous version keyed everything on a provider NAME and normalised "Torznab:jackett" down to
+/// "Torznab", so every configured endpoint shared one enable toggle, one priority and one health record.
 /// </summary>
 public interface IIndexerSettingsProvider
 {
-    bool IsEnabled(string providerName);
-    /// <summary>1 (highest) – 50 (lowest); 25 when unknown. Accepts a candidate Source value, which for
-    /// Torznab is "Torznab:{endpoint}" — resolved by the prefix before the colon.</summary>
-    int PriorityOf(string sourceName);
+    /// <summary>Every configured indexer, enabled or not. Empty until the first successful fetch.</summary>
+    IReadOnlyList<IndexerConfigDto> All { get; }
+
+    /// <summary>Priority for a specific indexer row: 1 (highest) – 50 (lowest); 25 when unknown.</summary>
+    int PriorityOf(int indexerId);
+
     Task RefreshAsync(CancellationToken ct);
 }
 
@@ -26,21 +30,13 @@ public class IndexerSettingsProvider(IServiceProvider services, ILogger<IndexerS
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(2);
 
     private readonly SemaphoreSlim _lock = new(1, 1);
-    private volatile Dictionary<string, (bool Enabled, int Priority)> _byName = new(StringComparer.OrdinalIgnoreCase);
+    private volatile IReadOnlyList<IndexerConfigDto> _all = Array.Empty<IndexerConfigDto>();
     private DateTime _lastFetch = DateTime.MinValue;
 
-    public bool IsEnabled(string providerName) =>
-        !_byName.TryGetValue(Normalize(providerName), out var s) || s.Enabled;
+    public IReadOnlyList<IndexerConfigDto> All => _all;
 
-    public int PriorityOf(string sourceName) =>
-        _byName.TryGetValue(Normalize(sourceName), out var s) ? s.Priority : DefaultPriority;
-
-    // "Torznab:jackett" → "Torznab": endpoints roll up under the one Torznab row.
-    private static string Normalize(string name)
-    {
-        var idx = name.IndexOf(':');
-        return idx > 0 ? name[..idx] : name;
-    }
+    public int PriorityOf(int indexerId) =>
+        _all.FirstOrDefault(i => i.Id == indexerId)?.Priority ?? DefaultPriority;
 
     public async Task RefreshAsync(CancellationToken ct)
     {
@@ -54,19 +50,20 @@ public class IndexerSettingsProvider(IServiceProvider services, ILogger<IndexerS
             var list = await api.GetIndexersAsync(ct);
             if (list is not null)
             {
-                _byName = list
-                    .Where(i => !string.IsNullOrWhiteSpace(i.Name))
-                    .GroupBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
-                    .ToDictionary(g => g.Key, g => (g.First().Enabled, g.First().Priority), StringComparer.OrdinalIgnoreCase);
-                var disabled = _byName.Where(kv => !kv.Value.Enabled).Select(kv => kv.Key).ToList();
-                if (disabled.Count > 0)
-                    logger.LogInformation("Indexer settings refreshed; disabled: {Disabled}", string.Join(", ", disabled));
+                _all = list;
+                _lastFetch = DateTime.UtcNow;
+                logger.LogInformation("Indexer definitions refreshed ({Enabled} of {Total} enabled)",
+                    list.Count(i => i.Enabled), list.Count);
             }
-            _lastFetch = DateTime.UtcNow; // also on null: keep last-good, retry next interval
+            else
+            {
+                // Keep last-good and retry next interval rather than hammering a web app that's down.
+                _lastFetch = DateTime.UtcNow;
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning(ex, "Could not refresh indexer settings; using last-known values");
+            logger.LogWarning(ex, "Could not refresh indexer definitions; using last-known values");
         }
         finally { _lock.Release(); }
     }

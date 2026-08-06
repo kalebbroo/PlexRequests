@@ -79,6 +79,28 @@ public class FulfillmentJobEntity
     /// <summary>How many times this job has been deferred (no release found yet) — drives the retry backoff
     /// and is shown in the UI. Reset when a real download attempt begins.</summary>
     public int DeferCount { get; set; }
+
+    /// <summary>
+    /// The quality profile this job searches against, snapshotted from the request at enqueue so a mid-flight
+    /// profile edit can't change what an in-progress job is hunting for. Nullable during the transition.
+    /// </summary>
+    public int? QualityProfileId { get; set; }
+
+    /// <summary>
+    /// Searches that returned candidates but nothing acceptable. Distinct from <see cref="Attempts"/>, which
+    /// counts every claim including re-searches of an already-deferred job — using that to decide when to
+    /// relax the quality floor meant a single deferral dropped the floor permanently. This counter only moves
+    /// when a search genuinely found nothing good enough.
+    /// </summary>
+    public int EmptySearchCount { get; set; }
+
+    // --- Manual grab ---------------------------------------------------------------------------------
+    /// <summary>An admin picked this exact release from an interactive search. The downloader skips
+    /// searching and ranking entirely — the whole point of forcing a grab is to override that judgement.</summary>
+    public bool IsManualGrab { get; set; }
+    [MaxLength(2048)] public string? ForcedMagnet { get; set; }
+    [MaxLength(512)] public string? ForcedReleaseName { get; set; }
+    public int? ForcedIndexerId { get; set; }
     /// <summary>Movie release / show first-air date, snapshotted at enqueue. Lets the retry cadence back off
     /// to ~daily while the title isn't out yet instead of hammering indexers.</summary>
     public DateTime? ReleaseDate { get; set; }

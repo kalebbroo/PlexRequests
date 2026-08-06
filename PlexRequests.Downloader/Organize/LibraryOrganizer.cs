@@ -3,6 +3,7 @@ using PlexRequests.Downloader.Ranking;
 using PlexRequests.Downloader.Worker;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Organize;
 

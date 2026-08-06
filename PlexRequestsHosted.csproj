@@ -14,10 +14,14 @@
     <!-- Sibling projects live under this root; keep them out of the web project's default globs. -->
     <Compile Remove="Shared/**/*.cs" />
     <Compile Remove="PlexRequests.Downloader/**/*.cs" />
+    <Compile Remove="Tests/**/*.cs" />
     <Content Remove="Shared/**" />
     <Content Remove="PlexRequests.Downloader/**" />
+    <Content Remove="Tests/**" />
     <None Remove="PlexRequests.Downloader/**" />
+    <None Remove="Tests/**" />
     <EmbeddedResource Remove="PlexRequests.Downloader/**" />
+    <EmbeddedResource Remove="Tests/**" />
   </ItemGroup>
 
   <ItemGroup>

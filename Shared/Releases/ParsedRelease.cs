@@ -1,6 +1,6 @@
-namespace PlexRequests.Downloader.Ranking;
+using PlexRequestsHosted.Shared.Enums;
 
-public enum ReleaseSource { Unknown = 0, Cam = 1, Hdtv = 2, WebRip = 3, WebDl = 4, BluRay = 5, Remux = 6 }
+namespace PlexRequestsHosted.Shared.Releases;
 
 /// <summary>Structured metadata parsed from a scene/p2p release name.</summary>
 public record ParsedRelease
@@ -13,7 +13,31 @@ public record ParsedRelease
     public int Resolution { get; init; }        // 480/720/1080/2160, 0 = unknown
     public ReleaseSource Source { get; init; }
     public string? Codec { get; init; }         // x264 / x265 / av1
+    /// <summary>Any HDR variant present. Derived from <see cref="HdrFormat"/>; kept so existing scoring
+    /// and preferences keep working unchanged.</summary>
     public bool Hdr { get; init; }
+    public HdrFormat HdrFormat { get; init; }
+
+    // ---- Audio / language / edition, for custom-format scoring ------------------------------------
+    /// <summary>Spoken or subtitle languages mentioned in the name, lower-cased.</summary>
+    public IReadOnlyList<string> Languages { get; init; } = Array.Empty<string>();
+    /// <summary>True when the name advertises several audio languages (MULTi/DUAL).</summary>
+    public bool MultiLanguage { get; init; }
+    public bool Subbed { get; init; }
+    public bool Dubbed { get; init; }
+
+    /// <summary>Audio codec, normalised ("DTS-HD MA", "TrueHD", "EAC3"). Null when absent.</summary>
+    public string? AudioCodec { get; init; }
+    /// <summary>Channel layout such as "5.1". Null when absent.</summary>
+    public string? AudioChannels { get; init; }
+    /// <summary>Object-based audio (Atmos / DTS-X).</summary>
+    public bool ObjectBasedAudio { get; init; }
+
+    /// <summary>Cut/edition marker such as "Extended" or "Director's Cut".</summary>
+    public string? Edition { get; init; }
+
+    /// <summary>Lower-cased provenance flags present in the name (repack, internal, 10bit, ...).</summary>
+    public IReadOnlySet<string> Flags { get; init; } = new HashSet<string>();
     public bool ProperOrRepack { get; init; }
     public string? Group { get; init; }
 
@@ -21,6 +45,10 @@ public record ParsedRelease
     public int? Season { get; init; }           // season number when detectable (start season for a range)
     public int? SeasonEnd { get; init; }        // end season for a multi-season range pack (e.g. S01-S05), else null
     public int? Episode { get; init; }          // episode number for a single-episode release
+    // Episode span when the name declares a range (S01E01-E06, "Part 1"). Lets a partial pack be told
+    // apart from a full season, which is what the pack-completeness check needs.
+    public int? EpisodeStart { get; init; }
+    public int? EpisodeEnd { get; init; }
     public bool IsSeasonPack { get; init; }     // whole-season / complete-series / multi-season release
     // True only when the name explicitly said "complete"/"complete series" — as opposed to simply
     // failing to parse any season at all. Only releases with this set are pack-eligible for an

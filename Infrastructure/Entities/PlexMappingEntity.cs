@@ -42,4 +42,9 @@ public class PlexMappingEntity
     public int VersionCount { get; set; } = 1;
 
     public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Consecutive availability scans that did NOT see this row, reset to 0 whenever it is seen.
+    /// A row is only pruned after several consecutive misses, so one flaky Plex response can't wipe the index
+    /// (which would make every request look missing and mass-requeue downloads).</summary>
+    public int MissedScans { get; set; }
 }

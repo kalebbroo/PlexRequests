@@ -1,4 +1,5 @@
 using PlexRequests.Downloader.Ranking;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Organize;
 

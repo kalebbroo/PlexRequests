@@ -70,6 +70,11 @@ public class IndexerOptions
     // Torznab endpoints (Jackett / Prowlarr). The supported way to widen coverage beyond the built-in
     // public sources: every tracker configured in the aggregator becomes searchable through its one API,
     // with the aggregator handling per-site auth/Cloudflare. Bind as Indexer__Torznab__0__Url etc.
+    /// <summary>
+    /// DEPRECATED. Torznab endpoints are now rows in the admin Indexers panel, one per endpoint, each with
+    /// its own enable flag, priority, categories and health. Anything set here is imported into that table
+    /// once on startup and can then be removed from the environment.
+    /// </summary>
     public List<TorznabEndpointOptions> Torznab { get; set; } = new();
 }
 

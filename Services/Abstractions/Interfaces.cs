@@ -7,10 +7,12 @@ public interface IMediaRequestService
 {
     Task<PagedResult<MediaRequestDto>> GetRequestsAsync(MediaFilterDto filter);
     Task<MediaRequestDto?> GetRequestByIdAsync(int id);
-    Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType);
-    Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons);
-    Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes);
-    Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType);
+    // qualityProfileId is the requester's chosen profile; null means "decide for me" (assignment rules, then
+    // the default). It's validated against what that user may actually select before it's honoured.
+    Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null);
+    Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons, int? qualityProfileId = null);
+    Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes, int? qualityProfileId = null);
+    Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null);
     Task<MediaRequestResult> CreateMonitoredEpisodesAsync(int anchorRequestId, IReadOnlyList<(int season, int episode)> episodes);
     // Music (scaffold): request an album/artist by its provider id (MusicBrainz MBID or Plex ratingKey).
     Task<MediaRequestResult> RequestMusicAsync(string externalId, string source, string title, string? posterUrl = null);
@@ -97,7 +99,7 @@ public interface IPlexApiService
     Task<List<object>> SearchServerAsync(string query, MediaType? mediaType);
     Task<List<object>> ResolveByTitleAsync(string title, int? year, MediaType mediaType, int maxResults = 5);
     Task<object> RebuildAvailabilityIndexAsync();
-    Task<object> RebuildAvailabilityFromPlexAsync();
+    Task<object> RebuildAvailabilityFromPlexAsync(CancellationToken ct = default);
     // Admin server health extras
     Task<List<PlexSessionInfo>> GetActiveSessionsAsync();
     Task RefreshLibraryAsync(string sectionKey);
@@ -116,6 +118,15 @@ public interface IPlexApiService
 /// </summary>
 public interface ISeasonAvailabilityEvaluator
 {
+    /// <summary>
+    /// The Plex ratingKey for a show, resolved through every external id we might have for it. The
+    /// availability index is keyed on Plex's own guids, and Plex tags a show with whichever provider its
+    /// agent used — so a tmdb-only lookup silently returns nothing for a show Plex knows by an IMDb id,
+    /// leaving it with an empty season map, permanently "incomplete", and therefore never monitorable.
+    /// Null when the show isn't in the index at all.
+    /// </summary>
+    Task<string?> ResolveRatingKeyAsync(int tmdbShowId, CancellationToken ct = default);
+
     /// <summary>season -> set of episode numbers already on Plex, from the DB availability index.</summary>
     Task<Dictionary<int, HashSet<int>>> GetPlexEpisodesAsync(int tmdbShowId, CancellationToken ct = default);
 
@@ -129,7 +140,14 @@ public interface ISeasonAvailabilityEvaluator
     Task<bool> IsWholeSeriesSatisfiedAsync(int tmdbShowId, CancellationToken ct = default);
 }
 
-public record SeasonCompleteness(int SeasonNumber, int PlexCount, int ExpectedCount, bool Complete, bool Aired, List<int> MissingEpisodes);
+/// <param name="CountUnknown">
+/// TMDB didn't report how many episodes this season has, so <paramref name="Complete"/> is necessarily false
+/// and <paramref name="MissingEpisodes"/> is necessarily empty — we know neither what to expect nor what's
+/// absent. Callers must decide what that means for them: fetching treats it as "target the whole season as a
+/// pack", while satisfaction treats a season with episodes present as good enough, because otherwise the
+/// request could never complete.
+/// </param>
+public record SeasonCompleteness(int SeasonNumber, int PlexCount, int ExpectedCount, bool Complete, bool Aired, List<int> MissingEpisodes, bool CountUnknown = false);
 
 public interface IAuthService
 {

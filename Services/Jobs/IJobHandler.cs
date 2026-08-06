@@ -21,11 +21,21 @@ public interface IJobHandler
 public record JobContext(ScheduledJobEntity? Schedule, bool Manual);
 
 /// <summary>The outcome of a single job execution, persisted to the run history.</summary>
-public record JobResult(JobRunStatus Status, int ItemsProcessed, string? Message)
+/// <param name="NextRunAtOverride">
+/// When set, the scheduler reschedules to this instant instead of <c>now + IntervalSeconds</c>. This turns the
+/// fixed-interval ticker into a due-time queue: a handler that knows when its next piece of work actually falls
+/// due (the air-date monitor being the motivating case) returns that instant and the scheduler wakes then.
+/// The scheduler clamps it to at least 60s out and no later than one normal interval, so a handler can pull its
+/// next run in but can't disable itself or busy-loop. Null keeps the plain interval behaviour.
+/// </param>
+public record JobResult(JobRunStatus Status, int ItemsProcessed, string? Message, DateTime? NextRunAtOverride = null)
 {
     public static JobResult Ok(int itemsProcessed, string? message = null) =>
         new(JobRunStatus.Succeeded, itemsProcessed, message);
     /// <summary>Ran but there was nothing to do (nothing due, or the feature is disabled) — not an error.</summary>
     public static JobResult Skipped(string? message = null) => new(JobRunStatus.Skipped, 0, message);
     public static JobResult Failed(string message) => new(JobRunStatus.Failed, 0, message);
+
+    /// <summary>Ask the scheduler to wake at <paramref name="at"/> rather than after the normal interval.</summary>
+    public JobResult WithNextRun(DateTime? at) => this with { NextRunAtOverride = at };
 }

@@ -25,6 +25,25 @@ public class EffectiveDownloadPreferences
     public bool PreferHigherQualitySource { get; init; } = true;
     public bool EnforceQualityFloor { get; init; } = true;
     public double MinTitleSimilarity { get; init; } = 0.5;
+    public int RelaxFloorAfterEmptySearches { get; init; } = 3;
+
+    /// <summary>Project back to the DTO shape the shared evaluator consumes.</summary>
+    public DownloadPreferencesDto ToDto() => new()
+    {
+        SeasonPackStrategy = SeasonPackStrategy,
+        AllowEpisodeFallback = AllowEpisodeFallback,
+        MaxEpisodesForFanout = MaxEpisodesForFanout,
+        MinSeeders = MinSeeders,
+        MaxSizeGb = MaxSizeGb,
+        MaxSeasonPackSizeGb = MaxSeasonPackSizeGb,
+        PreferredGroupsCsv = PreferredGroups.Length > 0 ? string.Join(",", PreferredGroups) : null,
+        PreferX265 = PreferX265,
+        PreferHdr = PreferHdr,
+        PreferHigherQualitySource = PreferHigherQualitySource,
+        EnforceQualityFloor = EnforceQualityFloor,
+        MinTitleSimilarity = MinTitleSimilarity,
+        RelaxFloorAfterEmptySearches = RelaxFloorAfterEmptySearches
+    };
 }
 
 public interface IDownloadPreferencesProvider
@@ -113,6 +132,7 @@ public class DownloadPreferencesProvider : IDownloadPreferencesProvider
         PreferHdr = d.PreferHdr,
         PreferHigherQualitySource = d.PreferHigherQualitySource,
         EnforceQualityFloor = d.EnforceQualityFloor,
-        MinTitleSimilarity = d.MinTitleSimilarity
+        MinTitleSimilarity = d.MinTitleSimilarity,
+        RelaxFloorAfterEmptySearches = d.RelaxFloorAfterEmptySearches
     };
 }

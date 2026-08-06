@@ -1,0 +1,226 @@
+@using PlexRequestsHosted.Shared
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@inject PlexRequestsHosted.Services.Implementations.IQualityProfileService Profiles
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
+@inject PlexRequestsHosted.Services.Implementations.ICustomFormatService Formats
+
+@* Admin "Quality profiles" panel. Replaces the old Quality Rules panel, which could only express a single
+   target quality per title. A profile is an ordered list of quality tiers with an allowed flag plus a
+   cutoff: everything allowed is grabbable, and anything below the cutoff keeps getting upgraded until
+   something at or above it appears. Child component — /admin is already admin-gated. *@
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else
+{
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <MudText Typo="Typo.body2" Class="text-muted">
+            A request is bound to one profile. Tiers are ordered worst to best — allow the ones you'd accept,
+            then set the cutoff to the point where you'd stop looking for something better.
+        </MudText>
+        <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Add" OnClick="AddProfile">New profile</MudButton>
+    </div>
+
+    @foreach (var p in _profiles)
+    {
+        <MudExpansionPanel Class="mb-2">
+            <TitleContent>
+                <div class="d-flex align-items-center gap-2">
+                    <MudText Typo="Typo.subtitle1"><b>@p.Name</b></MudText>
+                    @if (p.IsDefault)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary">Default</MudChip>
+                    }
+                    @if (!p.IsUserSelectable)
+                    {
+                        <MudTooltip Text="Users can't pick this profile themselves; only assignment rules apply it.">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default">Admin only</MudChip>
+                        </MudTooltip>
+                    }
+                    <MudText Typo="Typo.caption" Class="text-muted">
+                        cutoff @CutoffName(p) · @p.Items.Count(i => i.Allowed) of @p.Items.Count tiers allowed
+                    </MudText>
+                </div>
+            </TitleContent>
+            <ChildContent>
+                <div class="d-flex flex-wrap gap-3 mb-3">
+                    <MudTextField T="string" Label="Name" Value="p.Name" Variant="Variant.Outlined"
+                                  Style="min-width:220px;" ValueChanged="@(v => Rename(p, v))" />
+                    <MudSelect T="int" Label="Cutoff (stop upgrading at)" Value="p.CutoffQualityDefinitionId"
+                               Variant="Variant.Outlined" Style="min-width:240px;"
+                               ValueChanged="@(v => SetCutoff(p, v))">
+                        @* Only allowed tiers can be a cutoff — an unreachable cutoff means the upgrade scan
+                           hunts forever for something the profile would never accept. *@
+                        @foreach (var item in p.Items.Where(i => i.Allowed).Reverse())
+                        {
+                            <MudSelectItem Value="@CutoffIdOf(item)">@item.N</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSwitch T="bool" Label="Allow upgrades" Value="p.UpgradeAllowed" Color="Color.Primary"
+                               ValueChanged="@(v => SetUpgrade(p, v))" />
+                    <MudSwitch T="bool" Label="Users can select" Value="p.IsUserSelectable" Color="Color.Primary"
+                               ValueChanged="@(v => SetSelectable(p, v))" />
+                </div>
+
+                <div class="d-flex flex-wrap gap-3 mb-3">
+                    <MudNumericField T="double?" Label="Max size (GB)" Value="p.MaxSizeGb" Clearable="true"
+                                     Variant="Variant.Outlined" Style="max-width:170px;"
+                                     ValueChanged="@(v => SetSize(p, v, season: false))" />
+                    <MudNumericField T="double?" Label="Max season pack (GB)" Value="p.MaxSeasonPackSizeGb" Clearable="true"
+                                     Variant="Variant.Outlined" Style="max-width:190px;"
+                                     ValueChanged="@(v => SetSize(p, v, season: true))" />
+                    <MudNumericField T="int?" Label="Min seeders" Value="p.MinSeeders" Clearable="true"
+                                     Variant="Variant.Outlined" Style="max-width:150px;"
+                                     ValueChanged="@(v => SetSeeders(p, v))" />
+                    <MudText Typo="Typo.caption" Class="text-muted align-self-center">Blank = use the global download preferences.</MudText>
+                </div>
+
+                <MudTable Items="@p.Items.AsEnumerable().Reverse()" Dense="true" Hover="true" Class="elevation-1">
+                    <HeaderContent>
+                        <MudTh>Quality tier</MudTh>
+                        <MudTh Style="width:120px;">Allowed</MudTh>
+                        <MudTh Style="width:120px;">Cutoff</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Quality tier">@context.N</MudTd>
+                        <MudTd DataLabel="Allowed">
+                            <MudSwitch T="bool" Value="context.Allowed" Color="Color.Primary"
+                                       ValueChanged="@(v => SetAllowed(p, context, v))" />
+                        </MudTd>
+                        <MudTd DataLabel="Cutoff">
+                            @if (CutoffIdOf(context) == p.CutoffQualityDefinitionId)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Primary">Cutoff</MudChip>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+
+                @* Scores live here rather than on the format, so the same rule can be worth having in one
+                   profile and disqualifying in another. *@
+                @if (_formatsByProfile.TryGetValue(p.Id, out var formats) && formats.Count > 0)
+                {
+                    <MudText Typo="Typo.subtitle2" Class="mt-4 mb-1">Custom format scores</MudText>
+                    <div class="d-flex flex-wrap gap-2">
+                        @foreach (var f in formats.Where(f => f.Enabled))
+                        {
+                            <MudNumericField T="int" Label="@f.Name" Value="f.Score" Variant="Variant.Outlined"
+                                             Margin="Margin.Dense" Style="max-width:180px;"
+                                             ValueChanged="@(v => SetScore(p, f, v))" />
+                        }
+                    </div>
+                    <div class="d-flex flex-wrap gap-3 mt-2">
+                        <MudNumericField T="int" Label="Minimum score" Value="p.MinCustomFormatScore"
+                                         Variant="Variant.Outlined" Style="max-width:170px;"
+                                         ValueChanged="@(v => { p.MinCustomFormatScore = v; return Save(p, "minimum score"); })" />
+                        <MudText Typo="Typo.caption" Class="text-muted align-self-center">
+                            Releases scoring below this are rejected outright.
+                        </MudText>
+                    </div>
+                }
+
+                <div class="d-flex justify-content-end gap-2 mt-3">
+                    @if (!p.IsDefault)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => MakeDefault(p)">Make default</MudButton>
+                        <MudTooltip Text="@(p.InUse ? "In use by requests or assignment rules." : "Delete this profile.")">
+                            <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined"
+                                       Disabled="p.InUse" OnClick="() => Delete(p)">Delete</MudButton>
+                        </MudTooltip>
+                    }
+                </div>
+            </ChildContent>
+        </MudExpansionPanel>
+    }
+}
+
+@code {
+    private bool _loading = true;
+    private List<QualityProfileDto> _profiles = new();
+    private List<QualityDefinitionDto> _definitions = new();
+    private Dictionary<int, List<CustomFormatDto>> _formatsByProfile = new();
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _loading = true;
+        _definitions = await Profiles.GetDefinitionsAsync();
+        _profiles = await Profiles.GetProfilesAsync();
+        _formatsByProfile = new();
+        foreach (var p in _profiles) _formatsByProfile[p.Id] = await Formats.GetForProfileAsync(p.Id);
+        _loading = false;
+    }
+
+    // A group's cutoff id is its best member; a single tier's is its own definition id.
+    private int CutoffIdOf(QualityProfileItemDto item) =>
+        item.Members is { Length: > 0 } m
+            ? m.OrderByDescending(id => _definitions.FirstOrDefault(d => d.Id == id)?.SortWeight ?? 0).First()
+            : (int.TryParse(item.K.AsSpan(2), out var id) ? id : 0);
+
+    private string CutoffName(QualityProfileDto p) =>
+        _definitions.FirstOrDefault(d => d.Id == p.CutoffQualityDefinitionId)?.Name ?? "—";
+
+    private async Task Save(QualityProfileDto p, string what)
+    {
+        if (await Profiles.UpdateProfileAsync(p)) await Toasts.ShowSuccessAsync($"{p.Name}: {what} saved.");
+        else await Toasts.ShowErrorAsync("Save failed.");
+        await Load();
+    }
+
+    private async Task Rename(QualityProfileDto p, string name) { p.Name = name; await Save(p, "name"); }
+    private async Task SetCutoff(QualityProfileDto p, int defId) { p.CutoffQualityDefinitionId = defId; await Save(p, "cutoff"); }
+    private async Task SetUpgrade(QualityProfileDto p, bool v) { p.UpgradeAllowed = v; await Save(p, "upgrade setting"); }
+    private async Task SetSelectable(QualityProfileDto p, bool v) { p.IsUserSelectable = v; await Save(p, "visibility"); }
+    private async Task SetSeeders(QualityProfileDto p, int? v) { p.MinSeeders = v; await Save(p, "min seeders"); }
+
+    private async Task SetSize(QualityProfileDto p, double? v, bool season)
+    {
+        if (season) p.MaxSeasonPackSizeGb = v; else p.MaxSizeGb = v;
+        await Save(p, "size limit");
+    }
+
+    private async Task SetAllowed(QualityProfileDto p, QualityProfileItemDto item, bool allowed)
+    {
+        item.Allowed = allowed;
+        // Disallowing the cutoff tier would leave the profile chasing something it won't accept, so move the
+        // cutoff down to the best tier that's still allowed.
+        if (!allowed && CutoffIdOf(item) == p.CutoffQualityDefinitionId)
+        {
+            var fallback = p.Items.Where(i => i.Allowed).Select(CutoffIdOf).LastOrDefault();
+            if (fallback > 0) p.CutoffQualityDefinitionId = fallback;
+        }
+        await Save(p, item.N);
+    }
+
+    private async Task SetScore(QualityProfileDto profile, CustomFormatDto format, int score)
+    {
+        await Formats.SetScoreAsync(profile.Id, format.Id, score);
+        await Load();
+    }
+
+    private async Task MakeDefault(QualityProfileDto p)
+    {
+        if (await Profiles.SetDefaultProfileAsync(p.Id)) await Toasts.ShowSuccessAsync($"{p.Name} is now the default.");
+        await Load();
+    }
+
+    private async Task AddProfile()
+    {
+        await Profiles.CreateProfileAsync("New profile");
+        await Toasts.ShowInfoAsync("Profile created from the default's tiers — adjust it below.");
+        await Load();
+    }
+
+    private async Task Delete(QualityProfileDto p)
+    {
+        var (ok, error) = await Profiles.DeleteProfileAsync(p.Id);
+        if (ok) await Toasts.ShowSuccessAsync($"Deleted {p.Name}.");
+        else await Toasts.ShowErrorAsync(error ?? "Could not delete this profile.");
+        await Load();
+    }
+}

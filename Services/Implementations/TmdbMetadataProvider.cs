@@ -443,6 +443,11 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
             Rating = (decimal?)tvShow.VoteAverage,
             MediaType = PlexRequestsHosted.Shared.Enums.MediaType.TvShow,
             Genres = tvShow.Genres?.Select(g => g.Name).ToList() ?? new List<string>(),
+            // Free: these arrive in the same response body as everything else here.
+            NextEpisodeAirDate = tvShow.NextEpisodeToAir?.AirDate,
+            NextEpisodeSeason = tvShow.NextEpisodeToAir?.SeasonNumber,
+            NextEpisodeNumber = tvShow.NextEpisodeToAir?.EpisodeNumber,
+            LastEpisodeAirDate = tvShow.LastEpisodeToAir?.AirDate,
             Cast = tvShow.Credits?.Cast?.Take(10).Select(c => c.Name).ToList() ?? new List<string>(),
             Directors = tvShow.CreatedBy?.Select(c => c.Name).ToList() ?? new List<string>(),
             Tagline = null,

@@ -3,6 +3,7 @@
 @using PlexRequestsHosted.Shared.Enums
 @inject PlexRequestsHosted.Services.Abstractions.IJobAdminService Jobs
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
+@inject IDialogService Dialogs
 
 @* Admin "Jobs" panel: recurring-job schedule, run history, the still-searching "Missing" list, and the
    "Cutoff Unmet" upgrade list. This is a child component — the parent /admin page is already admin-gated,
@@ -14,7 +15,9 @@
 }
 else
 {
-    <MudTabs Elevation="0" Rounded="true" Border="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+    @* Same treatment as the other admin sub-tab rows so Jobs doesn't read as a different kind of page. *@
+    <MudTabs Elevation="0" Rounded="true" Border="true" ApplyEffectsToContainer="true" PanelClass="pa-4"
+             SliderColor="Color.Primary" Class="custom-tabs custom-subtabs">
 
         @* ---------------- MISSING ---------------- *@
         <MudTabPanel Text="Missing" BadgeData="@(_missing.Count == 0 ? null : _missing.Count)" BadgeColor="Color.Warning">
@@ -59,6 +62,11 @@ else
                             <div class="d-flex gap-1">
                                 <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
                                            OnClick="() => SearchMissing(context)">Search now</MudButton>
+                                @* Shows every release the indexers return, accepted or not, with the reason
+                                   each was rejected — the fastest way to answer "why didn't it pick X?". *@
+                                <MudButton Size="Size.Small" Color="Color.Secondary" Variant="Variant.Outlined"
+                                           StartIcon="@Icons.Material.Filled.ManageSearch"
+                                           OnClick="() => BrowseReleases(context)">Browse releases</MudButton>
                                 <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text"
                                            OnClick="() => GiveUp(context)">Give up</MudButton>
                             </div>
@@ -66,6 +74,16 @@ else
                     </RowTemplate>
                 </MudTable>
             }
+        </MudTabPanel>
+
+        @* ---------------- CALENDAR ---------------- *@
+        <MudTabPanel Text="Calendar">
+            <AdminCalendarPanel />
+        </MudTabPanel>
+
+        @* ---------------- BLOCKLIST ---------------- *@
+        <MudTabPanel Text="Blocklist">
+            <AdminBlocklistPanel />
         </MudTabPanel>
 
         @* ---------------- CUTOFF UNMET ---------------- *@
@@ -155,6 +173,16 @@ else
                                 {
                                     <MudChip T="string" Size="Size.Small" Color="StatusColor(st)">@st</MudChip>
                                 }
+                                @if (context.LastRunDurationMs > 0)
+                                {
+                                    <span class="text-muted small">@FormatMs(context.LastRunDurationMs)</span>
+                                }
+                                @if (context.ConsecutiveFailures > 1)
+                                {
+                                    <MudTooltip Text="@($"{context.ConsecutiveFailures} consecutive failures")">
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Error">@($"×{context.ConsecutiveFailures}")</MudChip>
+                                    </MudTooltip>
+                                }
                             </div>
                         </MudTd>
                         <MudTd DataLabel="Message">
@@ -166,7 +194,21 @@ else
                             }
                         </MudTd>
                         <MudTd DataLabel="Actions">
-                            @if (context.IsRunning)
+                            @* A set "running" flag blocks this job type from ever being dispatched again, so
+                               when it has outlived the job's own timeout we offer a way out rather than
+                               leaving the admin with a permanently spinning row and no recourse. *@
+                            @if (context.LooksStuck)
+                            {
+                                <div class="d-flex align-items-center gap-2">
+                                    <MudTooltip Text="@($"Marked running since {context.RunningSince?.ToLocalTime():g}, longer than its {context.TimeoutSeconds}s limit. Usually means the app restarted mid-run.")">
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Icon="@Icons.Material.Filled.Warning">Stuck</MudChip>
+                                    </MudTooltip>
+                                    <MudButton Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled"
+                                               StartIcon="@Icons.Material.Filled.LockOpen"
+                                               OnClick="() => ClearStuck(context)">Clear</MudButton>
+                                </div>
+                            }
+                            else if (context.IsRunning)
                             {
                                 <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
                             }
@@ -314,8 +356,40 @@ else
         await Reload();
     }
 
+    private async Task BrowseReleases(WantedItemDto item)
+    {
+        var parameters = new DialogParameters<InteractiveSearchDialog>
+        {
+            { x => x.MediaRequestId, item.RequestId },
+            { x => x.MediaType, item.MediaType },
+            { x => x.MediaId, item.MediaId },
+            { x => x.Title, item.Title },
+            { x => x.Year, item.Year }
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
+        var dialog = await Dialogs.ShowAsync<InteractiveSearchDialog>($"Releases for {item.Title}", parameters, options);
+        var result = await dialog.Result;
+        if (result is { Canceled: false }) await Reload();
+    }
+
+    private async Task ClearStuck(ScheduledJobDto job)
+    {
+        if (await Jobs.ClearRunningFlagAsync(job.JobType))
+            await Toasts.ShowSuccessAsync($"{job.Name} unblocked; it will run shortly.");
+        else
+            await Toasts.ShowErrorAsync("Could not clear the running flag.");
+        await Reload();
+    }
+
     // --- Formatting helpers ---
     private static string FormatWhen(DateTime? when) => when is DateTime d ? d.ToLocalTime().ToString("g") : "—";
+
+    private static string FormatMs(int ms) => ms switch
+    {
+        < 1000 => $"{ms}ms",
+        < 60_000 => $"{ms / 1000.0:0.#}s",
+        _ => $"{ms / 60000}m {ms % 60000 / 1000}s"
+    };
 
     private static string FormatDuration(JobRunDto run)
         => run.FinishedAt is DateTime f

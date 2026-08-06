@@ -1,0 +1,74 @@
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@inject PlexRequestsHosted.Services.Implementations.ISeriesMonitoringService Monitoring
+
+@* What the monitor is going to do, and when. This is the same table the air-date job drives off, so it's a
+   direct view of upcoming work rather than a separate estimate. *@
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else if (_entries.Count == 0)
+{
+    <div class="text-center py-6 text-muted">
+        Nothing scheduled. Monitor a series from its page and the calendar fills in on the next refresh.
+    </div>
+}
+else
+{
+    <MudText Typo="Typo.body2" Class="text-muted mb-3">
+        The next 30 days across every monitored series. Air times are estimated from the broadcast date —
+        the metadata source reports a date, not a time — so a release sweep runs every 15 minutes to catch
+        anything the estimate misses.
+    </MudText>
+
+    @foreach (var day in _entries.GroupBy(e => e.AirDate!.Value.Date).OrderBy(g => g.Key))
+    {
+        <MudText Typo="Typo.subtitle2" Class="mt-3 mb-1">
+            @day.Key.ToLocalTime().ToString("dddd, d MMMM")
+            @if (day.Key.Date == DateTime.UtcNow.Date) { <MudChip T="string" Size="Size.Small" Color="Color.Primary">today</MudChip> }
+        </MudText>
+        <MudTable Items="day" Dense="true" Hover="true" Class="elevation-1">
+            <ColGroup><col style="width:38%" /><col style="width:12%" /><col /><col style="width:16%" /></ColGroup>
+            <RowTemplate>
+                <MudTd>@context.Title</MudTd>
+                <MudTd>S@(context.Season.ToString("00"))E@(context.Episode.ToString("00"))</MudTd>
+                <MudTd>@context.EpisodeTitle</MudTd>
+                <MudTd>
+                    <MudChip T="string" Size="Size.Small" Color="@StateColor(context.State)">@Describe(context.State)</MudChip>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+}
+
+@code {
+    private bool _loading = true;
+    private List<AirScheduleEntryDto> _entries = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _entries = (await Monitoring.GetUpcomingAsync(30)).Where(e => e.AirDate is not null).ToList();
+        _loading = false;
+    }
+
+    private static string Describe(AirSearchState s) => s switch
+    {
+        AirSearchState.NotDue => "scheduled",
+        AirSearchState.Due => "due now",
+        AirSearchState.Searching => "searching",
+        AirSearchState.Acquired => "on Plex",
+        AirSearchState.Skipped => "not wanted",
+        AirSearchState.AirDateUnknown => "no air date",
+        _ => s.ToString()
+    };
+
+    private static Color StateColor(AirSearchState s) => s switch
+    {
+        AirSearchState.Acquired => Color.Success,
+        AirSearchState.Searching => Color.Info,
+        AirSearchState.Due => Color.Warning,
+        _ => Color.Default
+    };
+}

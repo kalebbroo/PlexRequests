@@ -8,6 +8,7 @@ using PlexRequests.Downloader.Ranking;
 using PlexRequests.Downloader.Vpn;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Worker;
 
@@ -53,9 +54,24 @@ public class FulfillmentPipeline(
             await prefs.RefreshAsync(ct); // pick up the latest admin config before ranking
             await libraryPrefs.RefreshAsync(ct); // and the latest library-organization config before importing
 
-            var search = await indexer.SearchAsync(job, ct);
-            var candidates = search.Candidates;
-            var plan = ranker.PlanDownload(candidates, job);
+            // A manually grabbed release skips searching and ranking outright. Forcing a grab is precisely
+            // an override of that judgement, so re-deriving it would either waste a search or quietly
+            // substitute a different release than the admin picked.
+            DownloadPlan plan;
+            IndexerSearchResult search = IndexerSearchResult.Empty;
+            IReadOnlyList<ReleaseCandidate> candidates = Array.Empty<ReleaseCandidate>();
+            if (job.IsManualGrab && !string.IsNullOrWhiteSpace(job.ForcedMagnet))
+            {
+                logger.LogInformation("Job {JobId} \"{Title}\": manual grab of \"{Release}\" — skipping search",
+                    job.Id, job.Title, job.ForcedReleaseName);
+                plan = BuildForcedPlan(job);
+            }
+            else
+            {
+                search = await indexer.SearchAsync(job, ct);
+                candidates = search.Candidates;
+                plan = ranker.PlanDownload(candidates, job);
+            }
             if (plan.IsEmpty)
             {
                 // Never dead-end: a normal job is parked and re-searched on a backoff (request shows
@@ -66,7 +82,9 @@ public class FulfillmentPipeline(
                     ? $"No indexer returned a release ({search.Summary})"
                     : $"{candidates.Count} candidate(s) all rejected by quality/seeder/title filters ({search.Summary})";
                 if (job.IsUpgrade) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
-                else await api.MarkDeferredAsync(job.Id, detail, ct);
+                // Flag whether the search had anything to reject. Only that case counts toward relaxing the
+                // quality target — a title that simply isn't out yet gains nothing from lowering the bar.
+                else await api.MarkDeferredAsync(job.Id, detail, candidates.Count > 0, ct);
                 return;
             }
 
@@ -88,7 +106,7 @@ public class FulfillmentPipeline(
                 // Adding to the download client failed for everything (usually a transient Deluge/VPN blip).
                 // Defer with a backoff rather than failing so it's retried automatically.
                 if (job.IsUpgrade) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
-                else await api.MarkDeferredAsync(job.Id, "Could not add torrent(s) to the download client", ct);
+                else await api.MarkDeferredAsync(job.Id, "Could not add torrent(s) to the download client", false, ct);
                 return;
             }
 
@@ -199,12 +217,25 @@ public class FulfillmentPipeline(
 
         // Mark a single torrent as failed: record the reason, wipe its partial data (healthy siblings keep
         // going), and remember it so it's excluded from further polling and from the final "all imported" check.
-        async Task FailTorrentAsync(TorrentItem it, string reason)
+        async Task FailTorrentAsync(TorrentItem it, string reason, BlocklistReason blocklistReason = BlocklistReason.DownloadFailed)
         {
             if (!failed.Add(it.TorrentId)) return;
             failReasons.Add(reason);
             logger.LogWarning("Job {JobId} torrent {TorrentId} (S{Season}E{Episode}) failed: {Reason}",
                 job.Id, it.TorrentId, it.Season, it.Episode, reason);
+
+            // Remember the release so a re-search can't rank the same broken torrent top again and fail
+            // identically on every backoff tick. Best-effort — this must never change the job's outcome.
+            latest.TryGetValue(it.TorrentId, out var status);
+            await SafeBlocklist(job.Id, new BlocklistRequestDto
+            {
+                InfoHash = it.TorrentId,
+                ReleaseName = status?.Name ?? job.ForcedReleaseName ?? job.Title,
+                Reason = blocklistReason,
+                Detail = reason,
+                Season = it.Season,
+                Episode = it.Episode
+            });
             try { await downloadClient.RemoveAsync(it.TorrentId, removeData: true, ct); }
             catch (Exception ex) { logger.LogDebug(ex, "Cleanup of failed torrent {TorrentId} skipped", it.TorrentId); }
         }
@@ -232,11 +263,11 @@ public class FulfillmentPipeline(
                 if (failed.Contains(it.TorrentId)) continue; // dropped; excluded from the average
 
                 var status = await downloadClient.GetStatusAsync(it.TorrentId, ct);
-                if (status is null) { await FailTorrentAsync(it, "A torrent disappeared from the download client"); continue; }
+                if (status is null) { await FailTorrentAsync(it, "A torrent disappeared from the download client", BlocklistReason.TorrentError); continue; }
                 latest[it.TorrentId] = status;
                 if (string.Equals(status.State, "Error", StringComparison.OrdinalIgnoreCase))
                 {
-                    await FailTorrentAsync(it, "A torrent entered an error state"); continue;
+                    await FailTorrentAsync(it, "A torrent entered an error state", BlocklistReason.TorrentError); continue;
                 }
 
                 var nowTick = DateTime.UtcNow;
@@ -244,7 +275,7 @@ public class FulfillmentPipeline(
                     lastProgress[it.TorrentId] = (status.Progress, nowTick);
                 else if (lastProgress.TryGetValue(it.TorrentId, out var stuck) && nowTick - stuck.ChangedAt > stallTimeout)
                 {
-                    await FailTorrentAsync(it, $"Torrent stalled at {status.Progress:F0}% for over {stallTimeout.TotalMinutes:F0}m (no seeders?)");
+                    await FailTorrentAsync(it, $"Torrent stalled at {status.Progress:F0}% for over {stallTimeout.TotalMinutes:F0}m (no seeders?)", BlocklistReason.Stalled);
                     continue;
                 }
 
@@ -261,11 +292,19 @@ public class FulfillmentPipeline(
                         return ep is null || keepSet.Contains(ep.Value); // keep unmappable files (subs/extras) to be safe
                     }).ToList();
                     // Safety valve for a numbering mismatch (TMDB vs the pack's internal episode numbers,
-                    // classic for kids'/preschool shows): if trimming would leave NOTHING to download, don't
-                    // trim — take the whole pack rather than end up with an empty result.
-                    if (!keep.Any(k => k))
-                        logger.LogWarning("Job {JobId} torrent {TorrentId}: trimming to episode(s) {Needed} would skip every file (numbering mismatch?) — keeping the whole pack",
-                            job.Id, it.TorrentId, string.Join(",", needed));
+                    // classic for kids'/preschool shows). This used to fire only when trimming would keep
+                    // NOTHING, which missed the far more common partial mismatch: needing 13 episodes but
+                    // matching only 1 left the other 12 deselected and the request silently short. Bail out
+                    // whenever we'd keep fewer files than episodes we're supposed to be fetching.
+                    int wouldKeep = keep.Count(k => k);
+                    if (wouldKeep < needed.Count)
+                    {
+                        logger.LogWarning("Job {JobId} torrent {TorrentId}: trimming to episode(s) {Needed} would keep only {Kept} file(s) (numbering mismatch?) — keeping the whole pack",
+                            job.Id, it.TorrentId, string.Join(",", needed), wouldKeep);
+                        // Clear the restriction so the importer's own NeededEpisodes filter also stands down;
+                        // otherwise it would re-apply the same partial match at import time.
+                        items[i] = it with { NeededEpisodes = null };
+                    }
                     else if (keep.Any(k => !k) && await downloadClient.SetWantedFilesAsync(it.TorrentId, keep, ct))
                         logger.LogInformation("Job {JobId} torrent {TorrentId}: season pack trimmed to episode(s) {Needed} — downloading {Kept}/{Total} file(s)",
                             job.Id, it.TorrentId, string.Join(",", needed), keep.Count(k => k), keep.Count);
@@ -287,14 +326,14 @@ public class FulfillmentPipeline(
                                 job.Id, it.TorrentId, (nowTick - firstFinished).TotalSeconds, finishSettle.TotalSeconds);
                             continue;
                         }
-                        await FailTorrentAsync(it, $"Could not resolve an on-disk path for the finished torrent after {finishSettle.TotalSeconds:F0}s (save_path={status.SavePath}, reported name=\"{status.Name}\")");
+                        await FailTorrentAsync(it, $"Could not resolve an on-disk path for the finished torrent after {finishSettle.TotalSeconds:F0}s (save_path={status.SavePath}, reported name=\"{status.Name}\")", BlocklistReason.PathUnresolvable);
                         continue;
                     }
                     // Surface the "renaming & moving" phase in the admin panel before the (potentially slow,
                     // blocking) import so it doesn't look stuck at 100% while files are being transferred.
                     await SafeReportProgress(job.Id, (int)Math.Round(progressSum / Math.Max(1, items.Count)), BuildTelemetry(importingId: it.TorrentId));
                     var result = await importer.ImportAsync(job, it, sourcePath, ct);
-                    if (!result.Success) { await FailTorrentAsync(it, result.FailReason ?? "A download completed but import failed"); continue; }
+                    if (!result.Success) { await FailTorrentAsync(it, result.FailReason ?? "A download completed but import failed", BlocklistReason.ImportFailed); continue; }
 
                     try
                     {
@@ -488,10 +527,43 @@ public class FulfillmentPipeline(
         catch (Exception ex) { logger.LogWarning(ex, "Could not report fulfillment for request {RequestId}; will retry next reconciliation pass", requestId); }
     }
 
-    // Park a normal job for re-search instead of failing it (the never-dead-end path).
-    private async Task SafeDefer(int jobId, string reason)
+    /// <summary>
+    /// A one-item plan from the release an admin explicitly chose. Season/episode come from the job's own
+    /// targets rather than being re-parsed from the name — the admin already told us what this is for.
+    /// </summary>
+    private static DownloadPlan BuildForcedPlan(FulfillmentJobDto job)
     {
-        try { await api.MarkDeferredAsync(jobId, reason, CancellationToken.None); }
+        var episode = job.RequestedEpisodes.FirstOrDefault();
+        var season = episode?.Season ?? job.RequestedSeasons.FirstOrDefault();
+        var target = job.SeasonTargets.FirstOrDefault();
+        bool isPack = episode is null;
+
+        var candidate = new ReleaseCandidate
+        {
+            ReleaseName = job.ForcedReleaseName ?? job.Title,
+            Magnet = job.ForcedMagnet!,
+            InfoHash = MagnetUtil.InfoHashFromMagnet(job.ForcedMagnet),
+            IndexerId = job.ForcedIndexerId ?? 0,
+            Source = "manual"
+        };
+
+        var item = new DownloadPlanItem(candidate, season == 0 ? null : season, episode?.Episode, isPack)
+        {
+            NeededEpisodes = isPack && target is { MissingEpisodes.Count: > 0 } ? target.MissingEpisodes : null
+        };
+        return new DownloadPlan(isPack ? DownloadPlanKind.SeasonPack : DownloadPlanKind.Episodes, new[] { item });
+    }
+
+    private async Task SafeBlocklist(int jobId, BlocklistRequestDto request)
+    {
+        try { await api.BlocklistAsync(jobId, request, CancellationToken.None); }
+        catch (Exception ex) { logger.LogDebug(ex, "Blocklist entry skipped for job {JobId}", jobId); }
+    }
+
+    // Park a normal job for re-search instead of failing it (the never-dead-end path).
+    private async Task SafeDefer(int jobId, string reason, bool candidatesRejected = false)
+    {
+        try { await api.MarkDeferredAsync(jobId, reason, candidatesRejected, CancellationToken.None); }
         catch (Exception ex) { logger.LogWarning(ex, "Could not report deferral for job {JobId}", jobId); }
     }
 

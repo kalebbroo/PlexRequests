@@ -4,6 +4,7 @@
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject PlexRequestsHosted.Services.Implementations.IMediaIssueService IssueService
+@inject PlexRequestsHosted.Services.Implementations.IQualityProfileService QualityProfiles
 @inject NavigationManager Navigation
 @inject IJSRuntime JSRuntime
 
@@ -283,6 +284,20 @@ else
                                         <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RequestSelectedSeasons" Disabled="@(_selectedSeasons.Count == 0)">
                                             Request @_selectedSeasons.Count Season@(_selectedSeasons.Count == 1 ? "" : "s")
                                         </MudButton>
+                                        @* Only worth showing when there's an actual choice; with one option
+                                           the answer is already the default. *@
+                                        @if (_profileOptions.Count > 1)
+                                        {
+                                            <MudSelect T="int?" Value="_selectedProfileId" Label="Quality"
+                                                       Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                       Style="min-width:170px;"
+                                                       ValueChanged="@(v => _selectedProfileId = v)">
+                                                @foreach (var p in _profileOptions)
+                                                {
+                                                    <MudSelectItem T="int?" Value="@((int?)p.Id)">@p.Name</MudSelectItem>
+                                                }
+                                            </MudSelect>
+                                        }
                                         @if (!SeriesFullyOnPlex)
                                         {
                                             <MudTooltip Text="New episodes may be auto-downloaded as they air, depending on server settings">
@@ -301,8 +316,16 @@ else
                                 }
                             </div>
                         </MudTabPanel>
+
+                        @* Monitoring is per-series, so it belongs beside the seasons rather than in admin:
+                           the panel self-hides its controls when the series hasn't been requested yet. *@
+                        <MudTabPanel Text="Monitoring">
+                            <div class="episodes-section">
+                                <SeriesMonitoringPanel ShowTmdbId="@Id" />
+                            </div>
+                        </MudTabPanel>
                     }
-                    
+
                     <MudTabPanel Text="More Details">
                         <div class="more-details-grid">
                             @if (_media.Cast?.Any() == true)
@@ -471,6 +494,7 @@ else
                     _media.Quality ??= best.Resolution;
                 }
             }
+            await LoadProfileOptionsAsync();
             await InvokeAsync(StateHasChanged);
 
             _similarMedia = (await similarTask)?.Where(m => m.Id != _media.Id).Take(12).ToList();
@@ -507,7 +531,7 @@ else
     {
         if (_media == null) return;
         
-        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(_media.Id, _media.MediaType);
+        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(_media.Id, _media.MediaType, _selectedProfileId);
         if (result.Success)
         {
             _media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
@@ -521,6 +545,22 @@ else
     }
 
     private readonly HashSet<int> _selectedSeasons = new();
+
+    // Quality profile the requester picked. Null = "decide for me", which lets the assignment rules and the
+    // default profile apply. Only shown when there's an actual choice to make.
+    private int? _selectedProfileId;
+    private List<PlexRequestsHosted.Shared.DTOs.QualityProfileSummaryDto> _profileOptions = new();
+
+    private async Task LoadProfileOptionsAsync()
+    {
+        if (_media is null) return;
+        try
+        {
+            _profileOptions = await QualityProfiles.GetSelectableProfilesAsync(null, _media.MediaType);
+            _selectedProfileId ??= _profileOptions.FirstOrDefault(p => p.IsDefault)?.Id;
+        }
+        catch { _profileOptions = new(); } // never block requesting on the picker failing to load
+    }
     private readonly HashSet<(int season, int episode)> _selectedEpisodes = new();
     private readonly HashSet<int> _expanded = new();
     private readonly Dictionary<int, List<PlexRequestsHosted.Shared.DTOs.EpisodeDto>> _episodes = new();
@@ -588,7 +628,7 @@ else
     private async Task RequestSelectedSeasons()
     {
         if (_media is null || _selectedSeasons.Count == 0) return;
-        var result = await MediaRequestService.RequestSeasonsAsync(_media.Id, _media.MediaType, _selectedSeasons.ToList());
+        var result = await MediaRequestService.RequestSeasonsAsync(_media.Id, _media.MediaType, _selectedSeasons.ToList(), _selectedProfileId);
         await AfterTvRequest(result, $"Requested {_selectedSeasons.Count} season(s) of {_media.Title}!");
         if (result.Success) _selectedSeasons.Clear();
     }
@@ -596,7 +636,7 @@ else
     private async Task RequestSelectedEpisodes()
     {
         if (_media is null || _selectedEpisodes.Count == 0) return;
-        var result = await MediaRequestService.RequestEpisodesAsync(_media.Id, _media.MediaType, _selectedEpisodes.ToList());
+        var result = await MediaRequestService.RequestEpisodesAsync(_media.Id, _media.MediaType, _selectedEpisodes.ToList(), _selectedProfileId);
         await AfterTvRequest(result, $"Requested {_selectedEpisodes.Count} episode(s) of {_media.Title}!");
         if (result.Success) _selectedEpisodes.Clear();
     }
@@ -604,7 +644,7 @@ else
     private async Task RequestEntireSeries()
     {
         if (_media is null) return;
-        var result = await MediaRequestService.RequestSeriesAsync(_media.Id, _media.MediaType);
+        var result = await MediaRequestService.RequestSeriesAsync(_media.Id, _media.MediaType, _selectedProfileId);
         await AfterTvRequest(result, $"{_media.Title} (entire series) has been requested!");
     }
 

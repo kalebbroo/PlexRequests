@@ -15,6 +15,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<SeasonEpisodesCacheEntity> SeasonEpisodesCache => Set<SeasonEpisodesCacheEntity>();
     public DbSet<MediaIssueEntity> MediaIssues => Set<MediaIssueEntity>();
     public DbSet<QualityRuleEntity> QualityRules => Set<QualityRuleEntity>();
+    public DbSet<QualityDefinitionEntity> QualityDefinitions => Set<QualityDefinitionEntity>();
+    public DbSet<QualityProfileEntity> QualityProfiles => Set<QualityProfileEntity>();
+    public DbSet<ProfileAssignmentRuleEntity> ProfileAssignmentRules => Set<ProfileAssignmentRuleEntity>();
     public DbSet<DownloadPreferencesEntity> DownloadPreferences => Set<DownloadPreferencesEntity>();
     public DbSet<LibraryOrganizationPreferencesEntity> LibraryOrganizationPreferences => Set<LibraryOrganizationPreferencesEntity>();
     public DbSet<NetworkShareEntity> NetworkShares => Set<NetworkShareEntity>();
@@ -24,7 +27,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<BridgeOutboxEntity> BridgeOutbox => Set<BridgeOutboxEntity>();
     public DbSet<ScheduledJobEntity> ScheduledJobs => Set<ScheduledJobEntity>();
     public DbSet<JobRunEntity> JobRuns => Set<JobRunEntity>();
-    public DbSet<IndexerSettingEntity> IndexerSettings => Set<IndexerSettingEntity>();
+    public DbSet<IndexerEntity> Indexers => Set<IndexerEntity>();
+    public DbSet<SearchTaskEntity> SearchTasks => Set<SearchTaskEntity>();
+    public DbSet<ReleaseBlocklistEntity> ReleaseBlocklist => Set<ReleaseBlocklistEntity>();
+    public DbSet<RecommendedItemEntity> RecommendedItems => Set<RecommendedItemEntity>();
+    public DbSet<AirScheduleEntity> AirSchedule => Set<AirScheduleEntity>();
+    public DbSet<CustomFormatEntity> CustomFormats => Set<CustomFormatEntity>();
+    public DbSet<CustomFormatScoreEntity> CustomFormatScores => Set<CustomFormatScoreEntity>();
+    public DbSet<MonitoringPreferencesEntity> MonitoringPreferences => Set<MonitoringPreferencesEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -33,6 +43,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasKey(x => x.Id);
             b.Property(x => x.Title).HasMaxLength(512);
             b.HasIndex(x => new { x.MediaId, x.MediaType });
+            // Status-scoped scans are the hot path for the background jobs (reconciliation walks the open
+            // statuses, the upgrade scan and series monitor filter Available), and they had no index.
+            b.HasIndex(x => new { x.Status, x.MediaType });
+            b.HasIndex(x => new { x.Monitored, x.MediaType, x.Status }); // the monitor's anchor scan
             b.HasIndex(x => x.RequestedBy); // Index for querying by username
             b.HasIndex(x => x.RequestedByUserId); // Index for querying by user ID
             b.HasIndex(x => x.Status); // Index for filtering by status
@@ -111,6 +125,32 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             b.HasKey(x => x.Id);
             b.HasIndex(x => x.Order);
+        });
+
+        modelBuilder.Entity<QualityDefinitionEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            // One row per tier; the seeder relies on this to stay idempotent.
+            b.HasIndex(x => new { x.Resolution, x.Source }).IsUnique();
+            b.HasIndex(x => x.SortWeight);
+        });
+
+        modelBuilder.Entity<QualityProfileEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.Name).IsUnique();
+            b.HasIndex(x => x.IsDefault);
+        });
+
+        modelBuilder.Entity<ProfileAssignmentRuleEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.Order);
+            b.Ignore(x => x.IsUnconditional); // computed guard, not persisted
+            // Restrict: a profile that rules still point at must not be deletable out from under them.
+            b.HasOne<QualityProfileEntity>().WithMany()
+                .HasForeignKey(x => x.QualityProfileId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<DownloadPreferencesEntity>(b =>
@@ -201,10 +241,72 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasIndex(x => x.StartedAt); // history feed sorts newest-first
         });
 
-        modelBuilder.Entity<IndexerSettingEntity>(b =>
+        modelBuilder.Entity<SearchTaskEntity>(b =>
         {
             b.HasKey(x => x.Id);
-            b.HasIndex(x => x.Name).IsUnique(); // one row per provider
+            b.HasIndex(x => new { x.Status, x.CreatedAt }); // the worker's claim query
+            b.HasIndex(x => x.ExpiresAt);                   // the cleanup job
+            b.HasIndex(x => x.MediaRequestId);
+        });
+
+        modelBuilder.Entity<ReleaseBlocklistEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.InfoHash);
+            b.HasIndex(x => x.NormalizedReleaseName);
+            b.HasIndex(x => new { x.MediaId, x.MediaType });
+            // One block per release per request; re-failing the same torrent must not pile up rows.
+            b.HasIndex(x => new { x.InfoHash, x.MediaRequestId }).IsUnique();
+        });
+
+        modelBuilder.Entity<CustomFormatEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.Name).IsUnique();
+        });
+
+        modelBuilder.Entity<CustomFormatScoreEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            // One score per format per profile.
+            b.HasIndex(x => new { x.QualityProfileId, x.CustomFormatId }).IsUnique();
+            b.HasOne<QualityProfileEntity>().WithMany().HasForeignKey(x => x.QualityProfileId)
+                .OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<CustomFormatEntity>().WithMany().HasForeignKey(x => x.CustomFormatId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AirScheduleEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => new { x.ShowTmdbId, x.SeasonNumber, x.EpisodeNumber }).IsUnique();
+            // The due scan — the scheduler reads the minimum of these to decide when to wake.
+            b.HasIndex(x => x.NextSearchAt);
+            b.HasIndex(x => x.MediaRequestId);
+            b.HasIndex(x => new { x.Monitored, x.SearchState });
+        });
+
+        modelBuilder.Entity<MonitoringPreferencesEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.IsSingleton).IsUnique(); // enforce the single settings row
+        });
+
+        modelBuilder.Entity<RecommendedItemEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            // One row per resolved title; the feed refresh upserts rather than appending.
+            b.HasIndex(x => new { x.TmdbId, x.MediaType }).IsUnique();
+            b.HasIndex(x => x.Rank);
+            b.HasIndex(x => x.SeenAt);
+        });
+
+        modelBuilder.Entity<IndexerEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.Name).IsUnique();          // display names are the admin's handle on a row
+            b.HasIndex(x => new { x.Enabled, x.Priority }); // the downloader's fan-out query
+            b.HasIndex(x => x.Implementation);
         });
     }
 }

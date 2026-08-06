@@ -107,6 +107,14 @@ public class MediaDetailDto : MediaCardDto
     public DateTime? LastAired { get; set; }
     public string? Status { get; set; }
     public List<SeasonDto> Seasons { get; set; } = new();
+
+    // The next/last episode TMDB already returns in the base /tv/{id} body. These were being discarded,
+    // which is a shame: knowing which season the next episode is in lets the calendar refresh only that
+    // season instead of walking every one, and that's what makes a frequent refresh affordable.
+    public DateTime? NextEpisodeAirDate { get; set; }
+    public int? NextEpisodeSeason { get; set; }
+    public int? NextEpisodeNumber { get; set; }
+    public DateTime? LastEpisodeAirDate { get; set; }
     public string? TrailerUrl { get; set; }
     public List<string> Languages { get; set; } = new();
     public List<string> Countries { get; set; } = new();
@@ -156,7 +164,15 @@ public class MediaRequestDto : BaseDto
     public string RequestedByUsername { get; set; } = string.Empty;
     public int? ApprovedByUserId { get; set; }
     public string? ApprovedByUsername { get; set; }
-    public Quality PreferredQuality { get; set; }
+    /// <summary>
+    /// The quality profile the requester chose, when they were offered a choice. Null means "decide for me"
+    /// — the assignment rules and then the default profile apply. This replaces a <c>PreferredQuality</c>
+    /// field that was declared but never persisted or read, so the quality a user picked genuinely had no
+    /// effect on anything.
+    /// </summary>
+    public int? QualityProfileId { get; set; }
+    /// <summary>Display name of the resolved profile, for the requests list.</summary>
+    public string? QualityProfileName { get; set; }
     public string? RequestNote { get; set; }
     public string? DenialReason { get; set; }
     public List<int> RequestedSeasons { get; set; } = new();
@@ -272,6 +288,10 @@ public class DownloadPreferencesDto
     /// </summary>
     public double MinTitleSimilarity { get; set; } = 0.5;
 
+    /// <summary>Empty searches to tolerate before relaxing the quality target. See the entity for why this
+    /// isn't keyed off raw attempt count.</summary>
+    public int RelaxFloorAfterEmptySearches { get; set; } = 3;
+
     /// <summary>When a user requests an entire series, automatically monitor it for new episodes.</summary>
     public bool AutoMonitorEntireSeriesRequests { get; set; } = true;
 }
@@ -299,7 +319,12 @@ public class UserDto : BaseDto
 // Wire types for the fulfillment worker API — shared by the web app (endpoints) and the downloader (client).
 public record ClaimRequest(string? WorkerId, int? Max);
 public record ProgressRequest(int Progress, string? WorkerId, List<DownloadTorrentTelemetry>? Torrents = null);
-public record FailRequest(string? Reason);
+/// <param name="CandidatesRejected">
+/// True when the search DID return releases but none were acceptable. That is the only situation in which
+/// holding out for the preferred quality is costing anything, so it's the counter that decides when to
+/// relax the quality floor — as opposed to "the title isn't out yet", where relaxing would achieve nothing.
+/// </param>
+public record FailRequest(string? Reason, bool CandidatesRejected = false);
 
 /// <summary>
 /// Live, per-torrent download telemetry the downloader worker samples from the download client each
@@ -388,6 +413,39 @@ public class FulfillmentJobDto
     /// </summary>
     public List<SeasonTarget> SeasonTargets { get; set; } = new();
     public Quality Quality { get; set; }
+
+    /// <summary>
+    /// The full quality profile governing this job, embedded rather than referenced by id: the downloader
+    /// must be able to rank without a second round-trip mid-search, and embedding it also freezes the
+    /// profile for the life of the job so an admin edit can't change what an in-flight search is hunting.
+    /// Null for a job enqueued before profiles existed — the flat <see cref="Quality"/> floor applies then.
+    /// </summary>
+    public QualityProfileDto? QualityProfile { get; set; }
+
+    /// <summary>The quality-tier catalog, needed to resolve a release's (resolution, source) to a tier.</summary>
+    public List<QualityDefinitionDto> QualityDefinitions { get; set; } = new();
+
+    /// <summary>Enabled custom formats, each carrying its score in THIS job's profile.</summary>
+    public List<CustomFormatDto> CustomFormats { get; set; } = new();
+
+    /// <summary>
+    /// Searches that returned candidates but nothing acceptable. Drives when the quality floor is relaxed —
+    /// deliberately not <see cref="Attempts"/>, which counts every claim including re-searches, so using it
+    /// meant a single deferral dropped the floor permanently.
+    /// </summary>
+    public int EmptySearchCount { get; set; }
+
+    /// <summary>Info hashes that already failed for this request and must never be grabbed again.
+    /// Delivered with the job so a search needs no extra round-trip to find out.</summary>
+    public List<string> BlocklistedHashes { get; set; } = new();
+
+    /// <summary>An admin chose this exact release. The downloader skips searching and ranking entirely —
+    /// forcing a grab is an override of that judgement, so re-deriving it would defeat the point.</summary>
+    public bool IsManualGrab { get; set; }
+    public string? ForcedMagnet { get; set; }
+    public string? ForcedReleaseName { get; set; }
+    public int? ForcedIndexerId { get; set; }
+
     /// <summary>Genres snapshotted at enqueue time (for admin-configured library-routing rules).</summary>
     public List<string> Genres { get; set; } = new();
     /// <summary>Animation+Japanese-origin heuristic result, snapshotted at enqueue time (see <see cref="PlexRequestsHosted.Shared.AnimeClassifier"/>).</summary>
@@ -419,12 +477,126 @@ public class SeasonTarget
     public List<int> MissingEpisodes { get; set; } = new();
 }
 
+/// <summary>One quality tier in the catalog: a (resolution, source) pair such as "WEBDL-1080p".</summary>
+public class QualityDefinitionDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int Resolution { get; set; }
+    public ReleaseSource Source { get; set; }
+    /// <summary>Total ordering across the catalog; higher is better.</summary>
+    public int SortWeight { get; set; }
+}
+
+/// <summary>
+/// One entry in a profile's ordered tier list — either a single quality definition or a named group of
+/// definitions treated as equivalent. Index in the list is the rank, ascending from worst.
+/// </summary>
+public class QualityProfileItemDto
+{
+    /// <summary>Stable key: "q:{definitionId}" for a single tier, "g:{slug}" for a group.</summary>
+    public string K { get; set; } = string.Empty;
+    /// <summary>Display name.</summary>
+    public string N { get; set; } = string.Empty;
+    /// <summary>Whether releases matching this tier may be grabbed at all.</summary>
+    public bool Allowed { get; set; }
+    /// <summary>Definition ids in this group; null for a single-tier entry.</summary>
+    public int[]? Members { get; set; }
+}
+
+/// <summary>A named quality target: which tiers are acceptable, in what order, and where to stop upgrading.</summary>
+public class QualityProfileDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsDefault { get; set; }
+    public bool IsUserSelectable { get; set; } = true;
+    public int AppliesToMediaTypes { get; set; }
+    public int SortOrder { get; set; }
+    public List<QualityProfileItemDto> Items { get; set; } = new();
+    public int CutoffQualityDefinitionId { get; set; }
+    public bool UpgradeAllowed { get; set; } = true;
+    public int MinCustomFormatScore { get; set; }
+    public int CutoffFormatScore { get; set; }
+    public double? MinSizeGb { get; set; }
+    public double? MaxSizeGb { get; set; }
+    public double? MaxSeasonPackSizeGb { get; set; }
+    public int? MinSeeders { get; set; }
+    /// <summary>Comma-separated language codes a release must offer. Null/empty = any.</summary>
+    public string? AllowedLanguagesCsv { get; set; }
+    /// <summary>True when a request or assignment rule references this profile, so deletion is blocked.</summary>
+    public bool InUse { get; set; }
+}
+
+/// <summary>Id + name only, for the requester's profile picker.</summary>
+public class QualityProfileSummaryDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsDefault { get; set; }
+}
+
+/// <summary>Condition-based assignment of a quality profile to a title.</summary>
+public class ProfileAssignmentRuleDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int Order { get; set; }
+    public bool Enabled { get; set; }
+    public MediaType? MatchMediaType { get; set; }
+    public string? MatchGenre { get; set; }
+    public int? MatchTmdbId { get; set; }
+    public string? MatchLibrary { get; set; }
+    public int QualityProfileId { get; set; }
+    public string QualityProfileName { get; set; } = string.Empty;
+
+    /// <summary>No condition set, so this rule would match every title. Enabling it is rejected.</summary>
+    public bool IsUnconditional =>
+        MatchMediaType is null && MatchTmdbId is null
+        && string.IsNullOrWhiteSpace(MatchGenre) && string.IsNullOrWhiteSpace(MatchLibrary);
+}
+
 /// <summary>Admin view of one indexer provider: control fields + rolling health (see IndexerSettingEntity).</summary>
 public class IndexerSettingDto
 {
+    public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    /// <summary>Which code path searches this row ("Torznab", "EZTV", "1337x", ...).</summary>
+    public string Implementation { get; set; } = string.Empty;
+    /// <summary>Seeded by the app: disableable but not deletable.</summary>
+    public bool IsBuiltIn { get; set; }
     public bool Enabled { get; set; } = true;
     public int Priority { get; set; } = 25;
+
+    public string? Url { get; set; }
+    /// <summary>Whether a key is stored. The key itself is never sent to the browser; an empty
+    /// <see cref="ApiKey"/> on save means "leave the stored one alone".</summary>
+    public bool HasApiKey { get; set; }
+    /// <summary>Write-only: a new key being set. Null/blank leaves the existing one untouched.</summary>
+    public string? ApiKey { get; set; }
+    public string? BaseUrlOverride { get; set; }
+
+    public string? MovieCategoriesCsv { get; set; }
+    public string? TvCategoriesCsv { get; set; }
+    public string? AnimeCategoriesCsv { get; set; }
+    public bool SupportsMovie { get; set; } = true;
+    public bool SupportsTv { get; set; } = true;
+    public bool SupportsAnime { get; set; } = true;
+    public bool AnimeOnly { get; set; }
+
+    public bool EnableRss { get; set; } = true;
+    public bool EnableAutomaticSearch { get; set; } = true;
+    public bool EnableInteractiveSearch { get; set; } = true;
+    public bool EnableRecommendedFeed { get; set; }
+
+    public int? MinSeeders { get; set; }
+    public int? TimeoutSeconds { get; set; }
+    public int RateLimitPerMinute { get; set; } = 30;
+    public int CacheSeconds { get; set; } = 300;
+    public int MaxDetailFetches { get; set; } = 25;
+    public int? MaxAgeDays { get; set; }
+    public string? Notes { get; set; }
+
     public DateTime? LastSearchAt { get; set; }
     public int LastResultCount { get; set; }
     public DateTime? LastSuccessAt { get; set; }
@@ -435,18 +607,75 @@ public class IndexerSettingDto
     public int LastLatencyMs { get; set; }
 }
 
-/// <summary>Slim per-indexer config served to the downloader (GET /api/fulfillment/indexers).</summary>
+/// <summary>
+/// Full per-indexer definition served to the downloader (GET /api/fulfillment/indexers). Unlike the admin
+/// DTO this carries the DECRYPTED API key — it crosses only the authenticated worker API, the same boundary
+/// that already ships network-share credentials.
+/// </summary>
 public class IndexerConfigDto
 {
+    public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    public string Implementation { get; set; } = string.Empty;
     public bool Enabled { get; set; } = true;
     public int Priority { get; set; } = 25;
+
+    public string? Url { get; set; }
+    public string? ApiKey { get; set; }
+    public string? BaseUrlOverride { get; set; }
+
+    public string? MovieCategoriesCsv { get; set; }
+    public string? TvCategoriesCsv { get; set; }
+    public string? AnimeCategoriesCsv { get; set; }
+    public bool SupportsMovie { get; set; } = true;
+    public bool SupportsTv { get; set; } = true;
+    public bool SupportsAnime { get; set; } = true;
+    public bool AnimeOnly { get; set; }
+
+    public bool EnableRss { get; set; } = true;
+    public bool EnableAutomaticSearch { get; set; } = true;
+    public bool EnableInteractiveSearch { get; set; } = true;
+    public bool EnableRecommendedFeed { get; set; }
+
+    public int? MinSeeders { get; set; }
+    public int? TimeoutSeconds { get; set; }
+    public int RateLimitPerMinute { get; set; } = 30;
+    public int CacheSeconds { get; set; } = 300;
+    public int MaxDetailFetches { get; set; } = 25;
+    public int? MaxAgeDays { get; set; }
+
+    /// <summary>Category ids for a media type, falling back to the Torznab standards when unset.</summary>
+    public string CategoriesFor(MediaType mediaType) => mediaType switch
+    {
+        MediaType.Movie => string.IsNullOrWhiteSpace(MovieCategoriesCsv) ? "2000" : MovieCategoriesCsv,
+        MediaType.Anime => string.IsNullOrWhiteSpace(AnimeCategoriesCsv) ? "5000,5070" : AnimeCategoriesCsv,
+        _ => string.IsNullOrWhiteSpace(TvCategoriesCsv) ? "5000" : TvCategoriesCsv
+    };
+
+    public bool Supports(MediaType mediaType) => mediaType switch
+    {
+        MediaType.Movie => SupportsMovie,
+        MediaType.TvShow => SupportsTv,
+        MediaType.Anime => SupportsAnime,
+        _ => false
+    };
+}
+
+/// <summary>A Torznab endpoint the downloader found in its own environment, pushed once for import.</summary>
+public class LegacyTorznabEndpointDto
+{
+    public string Name { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+    public string? ApiKey { get; set; }
+    public bool Enabled { get; set; } = true;
 }
 
 /// <summary>One provider's outcome for one search, reported by the downloader
 /// (POST /api/fulfillment/indexer-status) to drive the admin Indexers panel's health columns.</summary>
 public class IndexerStatusReportDto
 {
+    /// <summary>Row id. Preferred over the name, which admins can now rename.</summary>
+    public int IndexerId { get; set; }
     public string Name { get; set; } = string.Empty;
     public bool Success { get; set; }
     public int ResultCount { get; set; }
@@ -732,6 +961,20 @@ public class ScheduledJobDto
     public JobRunStatus? LastStatus { get; set; }
     public string? LastMessage { get; set; }
     public bool IsRunning { get; set; }
+
+    /// <summary>When the in-flight run started; null when idle.</summary>
+    public DateTime? RunningSince { get; set; }
+    /// <summary>Hard cap on one run, in seconds. Past this the panel treats the job as stuck.</summary>
+    public int TimeoutSeconds { get; set; }
+    /// <summary>Wall-clock duration of the last completed run.</summary>
+    public int LastRunDurationMs { get; set; }
+    /// <summary>Consecutive failed runs; 0 after any success.</summary>
+    public int ConsecutiveFailures { get; set; }
+
+    /// <summary>Running for longer than its own timeout allows — i.e. the flag is almost certainly stale
+    /// (a process died mid-run) rather than the job genuinely still working. Surfaces the Clear action.</summary>
+    public bool LooksStuck => IsRunning && RunningSince is DateTime since
+        && DateTime.UtcNow - since > TimeSpan.FromSeconds(Math.Max(60, TimeoutSeconds));
 }
 
 /// <summary>One execution in the job-run history feed.</summary>
@@ -788,4 +1031,232 @@ public class CutoffUnmetItemDto
     public int UpgradeAttempts { get; set; }
     /// <summary>True while an upgrade job for this request is currently queued/in-flight.</summary>
     public bool UpgradeInProgress { get; set; }
+}
+
+// ---- Interactive search + blocklist -----------------------------------------------------------------
+
+/// <summary>A search task handed to the downloader. The worker polls for these; the web app can't call it.</summary>
+public class SearchTaskDto
+{
+    public int Id { get; set; }
+    public SearchTaskKind Kind { get; set; }
+    public int? MediaRequestId { get; set; }
+    public MediaType MediaType { get; set; }
+    public int MediaId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public int? Year { get; set; }
+    public string? ImdbId { get; set; }
+    public int? Season { get; set; }
+    public int? Episode { get; set; }
+    public int? IndexerId { get; set; }
+    public bool IncludeRejected { get; set; } = true;
+
+    /// <summary>Profile to evaluate against, so an interactive search shows the same accept/reject calls
+    /// the automatic search would make.</summary>
+    public QualityProfileDto? QualityProfile { get; set; }
+    public List<QualityDefinitionDto> QualityDefinitions { get; set; } = new();
+    public List<string> BlocklistedHashes { get; set; } = new();
+}
+
+/// <summary>One release from an interactive search, with the verdict and the reasoning behind it.</summary>
+public class SearchResultDto
+{
+    public string ReleaseName { get; set; } = string.Empty;
+    public string Magnet { get; set; } = string.Empty;
+    public string? InfoHash { get; set; }
+    public int IndexerId { get; set; }
+    public string IndexerName { get; set; } = string.Empty;
+    public int Seeders { get; set; }
+    public bool SeedersKnown { get; set; } = true;
+    public double SizeGb { get; set; }
+    public bool SizeKnown { get; set; } = true;
+    public DateTime? PublishDate { get; set; }
+    public int Resolution { get; set; }
+    public string? QualityTier { get; set; }
+    public int? Season { get; set; }
+    public int? Episode { get; set; }
+    public bool IsPack { get; set; }
+
+    public bool Accepted { get; set; }
+    /// <summary>Every reason this was rejected, human-readable. Empty when accepted.</summary>
+    public List<string> Rejections { get; set; } = new();
+    public double Score { get; set; }
+    /// <summary>Score contributions, so "why did that one win" is answerable.</summary>
+    public Dictionary<string, double> ScoreBreakdown { get; set; } = new();
+}
+
+/// <summary>Worker → web: the outcome of a search task.</summary>
+public class SearchTaskResultDto
+{
+    public List<SearchResultDto> Results { get; set; } = new();
+    /// <summary>Per-indexer breakdown, e.g. "EZTV: 0, PirateBay: 12, 1337x: error".</summary>
+    public string? IndexerSummary { get; set; }
+    public string? Error { get; set; }
+    /// <summary>Set only for a <see cref="SearchTaskKind.CapabilitiesTest"/>.</summary>
+    public IndexerCapabilitiesDto? Capabilities { get; set; }
+}
+
+/// <summary>
+/// What an indexer says it can do, from a Torznab <c>t=caps</c> probe (scrapers answer with a fixed
+/// self-description plus a live reachability check).
+///
+/// This exists because indexer categories are the single most common misconfiguration: a tracker that
+/// numbers its categories privately returns nothing for the Torznab standards, and an empty result set is
+/// indistinguishable from "nothing matched". Reading the real category list off the endpoint turns that
+/// into a picker instead of a guess.
+/// </summary>
+public class IndexerCapabilitiesDto
+{
+    public bool Reachable { get; set; }
+    /// <summary>Human-readable outcome, shown verbatim next to the Test button.</summary>
+    public string Message { get; set; } = string.Empty;
+    public int? ResponseMs { get; set; }
+    public bool SupportsMovieSearch { get; set; }
+    public bool SupportsTvSearch { get; set; }
+    /// <summary>Search params the endpoint advertises (imdbid, season, ep, …) — informational.</summary>
+    public List<string> SupportedParams { get; set; } = new();
+    public List<IndexerCategoryDto> Categories { get; set; } = new();
+}
+
+public class IndexerCategoryDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    /// <summary>Null for a top-level category; otherwise the parent's id.</summary>
+    public int? ParentId { get; set; }
+}
+
+/// <summary>Admin view of the search task while it's running or once it's done.</summary>
+public class SearchTaskStatusDto
+{
+    public int Id { get; set; }
+    public SearchTaskStatus Status { get; set; }
+    public string? Error { get; set; }
+    public string? IndexerSummary { get; set; }
+    public List<SearchResultDto> Results { get; set; } = new();
+    public IndexerCapabilitiesDto? Capabilities { get; set; }
+}
+
+/// <summary>Worker → web: a release that failed and must not be grabbed again.</summary>
+public class BlocklistRequestDto
+{
+    public string? InfoHash { get; set; }
+    public string? ReleaseName { get; set; }
+    public BlocklistReason Reason { get; set; }
+    public string? Detail { get; set; }
+    public int? Season { get; set; }
+    public int? Episode { get; set; }
+    public int? IndexerId { get; set; }
+}
+
+public class BlocklistEntryDto
+{
+    public int Id { get; set; }
+    public string? InfoHash { get; set; }
+    public string? ReleaseName { get; set; }
+    public BlocklistScope Scope { get; set; }
+    public BlocklistReason Reason { get; set; }
+    public string? Detail { get; set; }
+    public int? MediaRequestId { get; set; }
+    public string? RequestTitle { get; set; }
+    public int MediaId { get; set; }
+    public MediaType MediaType { get; set; }
+    public DateTime BlockedAt { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+}
+
+
+/// <summary>One title the downloader saw trending on an indexer, before metadata resolution.</summary>
+public class RecommendedFeedItemDto
+{
+    /// <summary>Title parsed out of the release name.</summary>
+    public string Title { get; set; } = string.Empty;
+    public int? Year { get; set; }
+    public MediaType MediaType { get; set; }
+    /// <summary>Position in the newest-first listing; lower is newer.</summary>
+    public int Rank { get; set; }
+    public int IndexerId { get; set; }
+}
+
+/// <summary>One episode the RSS sweep should be watching for.</summary>
+public class WantedEpisodeDto
+{
+    public int MediaRequestId { get; set; }
+    public int ShowTmdbId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string? ImdbId { get; set; }
+    public int Season { get; set; }
+    public int Episode { get; set; }
+    public int? QualityProfileId { get; set; }
+}
+
+/// <summary>A release the RSS sweep matched against something wanted.</summary>
+public class RssGrabDto
+{
+    public int MediaRequestId { get; set; }
+    public int Season { get; set; }
+    public int Episode { get; set; }
+    public string ReleaseName { get; set; } = string.Empty;
+    public string Magnet { get; set; } = string.Empty;
+    public string? InfoHash { get; set; }
+    public int IndexerId { get; set; }
+}
+
+/// <summary>Per-series monitoring state, for the media page's monitoring panel.</summary>
+public class SeriesMonitoringDto
+{
+    public int RequestId { get; set; }
+    public int ShowTmdbId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public MonitorMode MonitorMode { get; set; }
+    public bool AutoMonitorNewSeasons { get; set; }
+    public bool SearchForCutoffUpgrades { get; set; }
+    public int? QualityProfileId { get; set; }
+    public DateTime? MonitoredSince { get; set; }
+    public DateTime? LastCheckedAt { get; set; }
+}
+
+/// <summary>One row of the air-date calendar.</summary>
+public class AirScheduleEntryDto
+{
+    public int Id { get; set; }
+    public int ShowTmdbId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public int? MediaRequestId { get; set; }
+    public int Season { get; set; }
+    public int Episode { get; set; }
+    public string? EpisodeTitle { get; set; }
+    public DateTime? AirDate { get; set; }
+    /// <summary>Estimated moment to start looking — the air date plus an assumed broadcast time.</summary>
+    public DateTime? AirsAtUtc { get; set; }
+    public AirSearchState State { get; set; }
+    public bool Monitored { get; set; }
+    public bool HasFile { get; set; }
+    public DateTime? NextSearchAt { get; set; }
+    public int SearchAttempts { get; set; }
+}
+
+/// <summary>One condition inside a custom format.</summary>
+public class FormatSpecificationDto
+{
+    public PlexRequestsHosted.Shared.Releases.FormatField Field { get; set; }
+    public PlexRequestsHosted.Shared.Releases.FormatOp Op { get; set; }
+    public string? Value { get; set; }
+    /// <summary>Invert this condition.</summary>
+    public bool Negate { get; set; }
+    /// <summary>Must match for the format to apply at all. Non-required specs are an "any of" set.</summary>
+    public bool Required { get; set; }
+}
+
+/// <summary>A user-defined scoring rule matched against release names and parsed attributes.</summary>
+public class CustomFormatDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool Enabled { get; set; } = true;
+    public bool IsSystem { get; set; }
+    public List<FormatSpecificationDto> Specifications { get; set; } = new();
+    /// <summary>Score this format carries in the profile currently being edited. Not persisted here —
+    /// scores live per (profile, format).</summary>
+    public int Score { get; set; }
 }

@@ -89,9 +89,9 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         return resp.IsSuccessStatusCode;
     }
 
-    public async Task<bool> MarkDeferredAsync(int jobId, string reason, CancellationToken ct)
+    public async Task<bool> MarkDeferredAsync(int jobId, string reason, bool candidatesRejected, CancellationToken ct)
     {
-        var resp = await _http.PostAsJsonAsync($"/api/fulfillment/{jobId}/deferred", new FailRequest(reason), ct);
+        var resp = await _http.PostAsJsonAsync($"/api/fulfillment/{jobId}/deferred", new FailRequest(reason, candidatesRejected), ct);
         return resp.IsSuccessStatusCode;
     }
 
@@ -161,6 +161,109 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         {
             _logger.LogWarning(ex, "Indexer config request failed (web app unreachable?)");
             return null;
+        }
+    }
+
+    public async Task<List<WantedEpisodeDto>> GetWantedAsync(CancellationToken ct)
+    {
+        try
+        {
+            return await _http.GetFromJsonAsync<List<WantedEpisodeDto>>("/api/fulfillment/wanted", ct) ?? new();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Wanted-episode fetch failed");
+            return new();
+        }
+    }
+
+    public async Task<int> ReportRssGrabsAsync(IReadOnlyList<RssGrabDto> grabs, CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _http.PostAsJsonAsync("/api/fulfillment/rss-grab", grabs, ct);
+            if (!resp.IsSuccessStatusCode) return 0;
+            return await resp.Content.ReadFromJsonAsync<int>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not report RSS grabs");
+            return 0;
+        }
+    }
+
+    public async Task<int> PushRecommendedAsync(IReadOnlyList<RecommendedFeedItemDto> items, CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _http.PostAsJsonAsync("/api/fulfillment/recommended", items, ct);
+            if (!resp.IsSuccessStatusCode) return 0;
+            return await resp.Content.ReadFromJsonAsync<int>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Recommended feed push failed");
+            return 0;
+        }
+    }
+
+    public async Task<SearchTaskDto?> ClaimSearchTaskAsync(string workerId, CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _http.PostAsJsonAsync("/api/fulfillment/search/claim", new ClaimRequest(workerId, 1), ct);
+            // NoContent is the normal "nothing queued" answer and must not be logged as a problem.
+            if (resp.StatusCode == System.Net.HttpStatusCode.NoContent || !resp.IsSuccessStatusCode) return null;
+            return await resp.Content.ReadFromJsonAsync<SearchTaskDto>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Search-task claim failed");
+            return null;
+        }
+    }
+
+    public async Task<bool> CompleteSearchTaskAsync(int taskId, SearchTaskResultDto result, CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _http.PostAsJsonAsync($"/api/fulfillment/search/{taskId}/results", result, ct);
+            return resp.IsSuccessStatusCode;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not report interactive search results for task {TaskId}", taskId);
+            return false;
+        }
+    }
+
+    public async Task<bool> BlocklistAsync(int jobId, BlocklistRequestDto request, CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _http.PostAsJsonAsync($"/api/fulfillment/{jobId}/blocklist", request, ct);
+            return resp.IsSuccessStatusCode;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Best-effort: failing to record a blocklist entry must not change the job's outcome.
+            _logger.LogWarning(ex, "Could not blocklist a failed release for job {JobId}", jobId);
+            return false;
+        }
+    }
+
+    public async Task<int> ImportLegacyTorznabAsync(IReadOnlyList<LegacyTorznabEndpointDto> endpoints, CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _http.PostAsJsonAsync("/api/fulfillment/indexers/import-legacy", endpoints, ct);
+            if (!resp.IsSuccessStatusCode) return 0;
+            return await resp.Content.ReadFromJsonAsync<int>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not import legacy Torznab endpoints; will retry on the next start");
+            return 0;
         }
     }
 

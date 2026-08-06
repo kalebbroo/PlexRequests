@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Indexers;
 
@@ -13,7 +14,7 @@ namespace PlexRequests.Downloader.Indexers;
 /// domain has a history of going dark/changing, and previously a single hardcoded dead domain meant
 /// silent zero movie coverage with no fallback.
 /// </summary>
-public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> options, ILogger<YtsIndexerProvider> logger) : IIndexerProvider
+public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> options, ILogger<YtsIndexerProvider> logger) : IIndexerImplementation
 {
     private readonly HttpClient _http = http;
     private readonly IndexerOptions _opts = options.Value;
@@ -31,10 +32,9 @@ public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> option
         "udp://9.rarbg.to:2710/announce"
     };
 
-    public string Name => "YTS";
-    public bool Supports(MediaType mediaType) => mediaType is MediaType.Movie;
+    public string Key => "YTS";
 
-    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct)
+    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(IndexerConfigDto indexer, FulfillmentJobDto job, CancellationToken ct)
     {
         var term = string.IsNullOrWhiteSpace(job.ImdbId) ? job.Title : job.ImdbId!;
         var mirrors = (_opts.YtsBaseUrlsCsv ?? string.Empty)
@@ -77,7 +77,8 @@ public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> option
                     Seeders = tor.Seeds,
                     Leechers = tor.Peers,
                     SizeBytes = tor.SizeBytes,
-                    Source = Name,
+                    IndexerId = indexer.Id,
+                    Source = indexer.Name,
                     QualityLabel = tor.Quality
                 });
             }

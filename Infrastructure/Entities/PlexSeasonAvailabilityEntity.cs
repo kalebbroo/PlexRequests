@@ -38,4 +38,9 @@ public class PlexSeasonAvailabilityEntity
     public string? EpisodeQualityJson { get; set; }
 
     public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Consecutive availability scans that did NOT see this row, reset to 0 whenever it is seen.
+    /// See <see cref="PlexMappingEntity.MissedScans"/> — a row survives a transient scan until it has been
+    /// missing several passes running.</summary>
+    public int MissedScans { get; set; }
 }

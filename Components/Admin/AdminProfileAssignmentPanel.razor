@@ -1,0 +1,149 @@
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@inject PlexRequestsHosted.Services.Implementations.IQualityProfileService Profiles
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
+
+@* Condition-based assignment of a quality profile to a title. First enabled rule whose conditions all match
+   wins; otherwise the requester's own pick or the default profile applies. A rule with no conditions matches
+   everything, so enabling one is rejected — that exact shape (enabled, no conditions, 720p) is what silently
+   capped every download in this deployment. Child component — /admin is already admin-gated. *@
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else
+{
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <MudText Typo="Typo.body2" Class="text-muted">
+            Rules are evaluated top to bottom; the first match wins. Leave a condition blank to mean "any" —
+            but at least one condition is required before a rule can be enabled.
+        </MudText>
+        <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Add" OnClick="AddRule">New rule</MudButton>
+    </div>
+
+    @if (_rules.Count == 0)
+    {
+        <div class="text-center py-6 text-muted">
+            No assignment rules. Every request uses the requester's chosen profile, or the default profile.
+        </div>
+    }
+    else
+    {
+        <MudTable Items="_rules" Dense="true" Hover="true" Class="elevation-1">
+            <HeaderContent>
+                <MudTh Style="width:60px;">Order</MudTh>
+                <MudTh>Name</MudTh>
+                <MudTh>Media type</MudTh>
+                <MudTh>Genre</MudTh>
+                <MudTh>TMDb id</MudTh>
+                <MudTh>Profile</MudTh>
+                <MudTh Style="width:110px;">Enabled</MudTh>
+                <MudTh Style="width:120px;"></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Order">
+                    <div class="d-flex">
+                        <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small"
+                                       OnClick="() => Move(context, true)" />
+                        <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small"
+                                       OnClick="() => Move(context, false)" />
+                    </div>
+                </MudTd>
+                <MudTd DataLabel="Name">
+                    <MudTextField T="string" Value="context.Name" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  Style="min-width:150px;" ValueChanged="@(v => { context.Name = v; return Save(context); })" />
+                </MudTd>
+                <MudTd DataLabel="Media type">
+                    <MudSelect T="MediaType?" Value="context.MatchMediaType" Clearable="true" Variant="Variant.Outlined"
+                               Margin="Margin.Dense" Style="min-width:130px;"
+                               ValueChanged="@(v => { context.MatchMediaType = v; return Save(context); })">
+                        <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.Movie)">Movie</MudSelectItem>
+                        <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.TvShow)">TV show</MudSelectItem>
+                        <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.Anime)">Anime</MudSelectItem>
+                    </MudSelect>
+                </MudTd>
+                <MudTd DataLabel="Genre">
+                    <MudTextField T="string" Value="context.MatchGenre" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  Placeholder="any" Style="min-width:130px;"
+                                  ValueChanged="@(v => { context.MatchGenre = v; return Save(context); })" />
+                </MudTd>
+                <MudTd DataLabel="TMDb id">
+                    <MudNumericField T="int?" Value="context.MatchTmdbId" Clearable="true" Variant="Variant.Outlined"
+                                     Margin="Margin.Dense" Style="max-width:120px;"
+                                     ValueChanged="@(v => { context.MatchTmdbId = v; return Save(context); })" />
+                </MudTd>
+                <MudTd DataLabel="Profile">
+                    <MudSelect T="int" Value="context.QualityProfileId" Variant="Variant.Outlined" Margin="Margin.Dense"
+                               Style="min-width:150px;"
+                               ValueChanged="@(v => { context.QualityProfileId = v; return Save(context); })">
+                        @foreach (var p in _profiles)
+                        {
+                            <MudSelectItem Value="p.Id">@p.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudTd>
+                <MudTd DataLabel="Enabled">
+                    @if (context.IsUnconditional)
+                    {
+                        <MudTooltip Text="Add a condition first — with none set this rule would apply to every title in the library.">
+                            <MudSwitch T="bool" Value="false" Disabled="true" Color="Color.Primary" />
+                        </MudTooltip>
+                    }
+                    else
+                    {
+                        <MudSwitch T="bool" Value="context.Enabled" Color="Color.Primary"
+                                   ValueChanged="@(v => { context.Enabled = v; return Save(context); })" />
+                    }
+                </MudTd>
+                <MudTd>
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                   OnClick="() => Delete(context)" />
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+}
+
+@code {
+    private bool _loading = true;
+    private List<ProfileAssignmentRuleDto> _rules = new();
+    private List<QualityProfileDto> _profiles = new();
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _loading = true;
+        _profiles = await Profiles.GetProfilesAsync();
+        _rules = await Profiles.GetAssignmentRulesAsync();
+        _loading = false;
+    }
+
+    private async Task Save(ProfileAssignmentRuleDto rule)
+    {
+        var (ok, error) = await Profiles.UpdateAssignmentRuleAsync(rule);
+        if (!ok) await Toasts.ShowErrorAsync(error ?? "Save failed.");
+        await Load();
+    }
+
+    private async Task AddRule()
+    {
+        await Profiles.CreateAssignmentRuleAsync();
+        await Toasts.ShowInfoAsync("Rule created disabled — add a condition, then enable it.");
+        await Load();
+    }
+
+    private async Task Move(ProfileAssignmentRuleDto rule, bool up)
+    {
+        await Profiles.MoveAssignmentRuleAsync(rule.Id, up);
+        await Load();
+    }
+
+    private async Task Delete(ProfileAssignmentRuleDto rule)
+    {
+        if (await Profiles.DeleteAssignmentRuleAsync(rule.Id)) await Toasts.ShowSuccessAsync($"Deleted '{rule.Name}'.");
+        await Load();
+    }
+}

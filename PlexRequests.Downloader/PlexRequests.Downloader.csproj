@@ -13,6 +13,12 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.7" />
+    <!-- Result caching per (indexer, query), so a re-search or an admin hammering the search button
+         doesn't re-hit every site. -->
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.7" />
+    <!-- Retry/circuit-breaking for indexer HTTP calls. There was none: a single transient 503 or DNS
+         blip was a hard per-indexer failure for that whole search pass. -->
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.0.0" />
     <PackageReference Include="HtmlAgilityPack" Version="1.11.72" />
     <PackageReference Include="SharpCompress" Version="0.50.0" />
   </ItemGroup>

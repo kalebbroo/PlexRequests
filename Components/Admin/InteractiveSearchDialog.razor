@@ -1,0 +1,175 @@
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@implements IDisposable
+@inject PlexRequestsHosted.Services.Implementations.IInteractiveSearchService Search
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
+
+@* Every release the indexers returned for a title, with the verdict and the reasoning.
+   Rejected rows are shown BY DEFAULT and greyed rather than hidden — seeing why the release you expected
+   wasn't chosen is the entire reason to run one of these by hand. Grab is available on rejected rows too;
+   that is what "force" means. *@
+
+<MudDialog>
+    <DialogContent>
+        @if (_status is null || _status.Status is SearchTaskStatus.Pending or SearchTaskStatus.Claimed)
+        {
+            <div class="d-flex flex-column align-items-center py-8 gap-3">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+                <MudText Typo="Typo.body2" Class="text-muted">Searching your indexers…</MudText>
+            </div>
+        }
+        else if (_status.Status == SearchTaskStatus.Expired)
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true">
+                The downloader never picked this search up. Check that it's running and connected.
+            </MudAlert>
+        }
+        else if (_status.Results.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true">
+                No indexer returned anything for this title.
+                @if (!string.IsNullOrWhiteSpace(_status.IndexerSummary)) { <span> (@_status.IndexerSummary)</span> }
+            </MudAlert>
+        }
+        else
+        {
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <MudText Typo="Typo.body2" Class="text-muted">
+                    @_status.Results.Count(r => r.Accepted) acceptable of @_status.Results.Count found.
+                    @if (!string.IsNullOrWhiteSpace(_status.IndexerSummary)) { <span>@_status.IndexerSummary</span> }
+                </MudText>
+                <MudSwitch T="bool" Label="Show rejected" Value="_showRejected" Color="Color.Primary"
+                           ValueChanged="@(v => _showRejected = v)" />
+            </div>
+
+            <MudTable Items="Visible" Dense="true" Hover="true" Height="440px" FixedHeader="true" Class="elevation-1">
+                <HeaderContent>
+                    <MudTh>Release</MudTh>
+                    <MudTh>Indexer</MudTh>
+                    <MudTh>Age</MudTh>
+                    <MudTh>Size</MudTh>
+                    <MudTh>Seeders</MudTh>
+                    <MudTh>Quality</MudTh>
+                    <MudTh>Score</MudTh>
+                    <MudTh Style="width:90px;"></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Release" Style="@(context.Accepted ? "" : "opacity:.55;")">
+                        <div class="d-flex align-items-center gap-1">
+                            @if (!context.Accepted)
+                            {
+                                <MudTooltip Text="@string.Join(" · ", context.Rejections)">
+                                    <MudIcon Icon="@Icons.Material.Filled.Block" Color="Color.Error" Size="Size.Small" />
+                                </MudTooltip>
+                            }
+                            <span style="word-break:break-all;">@context.ReleaseName</span>
+                        </div>
+                        @if (!context.Accepted && context.Rejections.Count > 0)
+                        {
+                            <div class="text-muted small">@string.Join(" · ", context.Rejections)</div>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Indexer">@context.IndexerName</MudTd>
+                    <MudTd DataLabel="Age">@Age(context)</MudTd>
+                    <MudTd DataLabel="Size">@(context.SizeKnown ? $"{context.SizeGb:0.##} GB" : "—")</MudTd>
+                    <MudTd DataLabel="Seeders">@(context.SeedersKnown ? context.Seeders.ToString() : "—")</MudTd>
+                    <MudTd DataLabel="Quality">@(context.Resolution > 0 ? $"{context.Resolution}p" : "—")</MudTd>
+                    <MudTd DataLabel="Score">
+                        <MudTooltip Text="@Breakdown(context)">
+                            <span>@context.Score.ToString("0")</span>
+                        </MudTooltip>
+                    </MudTd>
+                    <MudTd>
+                        <MudButton Size="Size.Small" Variant="@(context.Accepted ? Variant.Filled : Variant.Outlined)"
+                                   Color="@(context.Accepted ? Color.Primary : Color.Warning)"
+                                   Disabled="_grabbing" OnClick="() => Grab(context)">
+                            @(context.Accepted ? "Grab" : "Force")
+                        </MudButton>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public int? MediaRequestId { get; set; }
+    [Parameter] public MediaType MediaType { get; set; }
+    [Parameter] public int MediaId { get; set; }
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public int? Year { get; set; }
+    [Parameter] public string? ImdbId { get; set; }
+    [Parameter] public int? Season { get; set; }
+    [Parameter] public int? Episode { get; set; }
+
+    private int _taskId;
+    private SearchTaskStatusDto? _status;
+    private bool _showRejected = true;
+    private bool _grabbing;
+    private CancellationTokenSource? _poll;
+
+    private IEnumerable<SearchResultDto> Visible =>
+        (_showRejected ? _status!.Results : _status!.Results.Where(r => r.Accepted))
+            .OrderByDescending(r => r.Accepted).ThenByDescending(r => r.Score);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _taskId = await Search.CreateAsync(MediaRequestId, MediaType, MediaId, Title, Year, ImdbId, Season, Episode, null);
+        _poll = new CancellationTokenSource();
+        _ = PollAsync(_poll.Token);
+    }
+
+    /// <summary>
+    /// Poll for the worker's answer. The result arrives via the database because the web app can't call the
+    /// downloader directly, so this is the read side of that handoff.
+    /// </summary>
+    private async Task PollAsync(CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow.AddMinutes(3);
+        while (!ct.IsCancellationRequested && DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                _status = await Search.GetAsync(_taskId);
+                await InvokeAsync(StateHasChanged);
+                if (_status is not null && _status.Status is not (SearchTaskStatus.Pending or SearchTaskStatus.Claimed))
+                    return;
+                await Task.Delay(TimeSpan.FromSeconds(1), ct);
+            }
+            catch (OperationCanceledException) { return; }
+            catch { return; }
+        }
+    }
+
+    private async Task Grab(SearchResultDto result)
+    {
+        _grabbing = true;
+        var (ok, error) = await Search.GrabAsync(_taskId, result.Magnet, result.ReleaseName, result.IndexerId, null);
+        _grabbing = false;
+
+        if (!ok) { await Toasts.ShowErrorAsync(error ?? "Could not grab that release."); return; }
+        await Toasts.ShowSuccessAsync($"Grabbing \"{result.ReleaseName}\".");
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    private static string Age(SearchResultDto r)
+    {
+        if (r.PublishDate is not DateTime d) return "—";
+        var days = (DateTime.UtcNow - d).TotalDays;
+        return days < 1 ? "today" : days < 30 ? $"{(int)days}d" : $"{(int)(days / 30)}mo";
+    }
+
+    private static string Breakdown(SearchResultDto r) =>
+        r.ScoreBreakdown.Count == 0
+            ? "No score breakdown"
+            : string.Join("\n", r.ScoreBreakdown.OrderByDescending(x => Math.Abs(x.Value)).Select(x => $"{x.Key}: {x.Value:+0.#;-0.#;0}"));
+
+    private void Close() => MudDialog.Cancel();
+
+    public void Dispose() { _poll?.Cancel(); _poll?.Dispose(); }
+}

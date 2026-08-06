@@ -347,3 +347,53 @@ a:hover { color: var(--plex-orange); text-decoration: none; }
 .animate-slide-left {
     animation: slideInLeft var(--transition-slow);
 }
+
+/* Bootstrap's .text-muted resolves to a near-black light-mode value, which is effectively invisible on
+   this dark surface — secondary captions and empty-state messages across the admin panels were unreadable.
+   The palette already defines a text colour intended for exactly this; wire the class to it. */
+.text-muted {
+    color: var(--text-secondary) !important;
+}
+
+/* Same problem one step further down: MudBlazor's caption typography inherits a muted colour tuned for a
+   light theme. */
+.mud-typography-caption.text-muted,
+.mud-typography-body2.text-muted {
+    color: var(--text-secondary) !important;
+}
+
+/* Tab bars.
+   ---------------------------------------------------------------------------------------------------
+   These rules used to live only in MediaDetails.razor.css, which is Blazor-scoped — so /admin carried
+   Class="custom-tabs" and got none of it. Falling back to MudBlazor's Color.Primary toolbar painted the
+   whole bar solid accent with dark text, which made the ACTIVE tab indistinguishable from the six
+   inactive ones: you could not tell which admin section you were on. Global now, so both hosts share
+   one look; ::deep is dropped because it only compiles under scoping. */
+.custom-tabs {
+    background: transparent !important;
+}
+
+.custom-tabs .mud-tabs-toolbar {
+    background: transparent !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.custom-tabs .mud-tab {
+    color: var(--text-secondary);
+}
+
+.custom-tabs .mud-tab.mud-tab-active {
+    color: var(--text-primary);
+}
+
+/* Second-level admin tabs. Without a size/weight difference the two rows read as one eight-item bar and
+   the nesting is invisible — the accent slider alone can't carry that. */
+.custom-subtabs .mud-tabs-toolbar {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    min-height: 40px;
+}
+
+.custom-subtabs .mud-tab {
+    font-size: 0.8125rem;
+    min-height: 40px;
+}

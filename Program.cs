@@ -159,21 +159,44 @@ builder.Services.AddSingleton<PlexRequestsHosted.Services.Background.INetworkMou
 builder.Services.AddSingleton<PlexRequestsHosted.Services.Background.WebNetworkMountService>();
 builder.Services.AddSingleton<PlexRequestsHosted.Services.Background.INetworkMountController>(sp => sp.GetRequiredService<PlexRequestsHosted.Services.Background.WebNetworkMountService>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PlexRequestsHosted.Services.Background.WebNetworkMountService>());
-// Backstop that requeues/fails jobs stranded by a dead downloader.
-builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.FulfillmentReaperService>();
-// Keeps the DB-backed Plex availability index fresh (per-season episode presence + prune removals).
-builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.AvailabilityRefreshService>();
-// Ongoing-series monitor: auto-downloads newly-aired episodes of monitored series.
-builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.SeriesMonitorService>();
-// Safety net: auto-mark requests Available when their content appears on Plex by ANY means.
-builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.AvailabilityReconciliationService>();
-
 // Generic background-job engine + its handlers. The scheduler ticks, dispatches due jobs to the matching
-// IJobHandler, and records run history. MissingSearch re-queues deferred requests (never-dead-end);
-// QualityUpgradeScan enqueues auto-upgrades for below-preferred-quality content.
+// IJobHandler, and records run history. Every recurring job lives here — the four below used to be
+// self-timing BackgroundServices with hardcoded Task.Delay loops, which meant no run history, no
+// enable/disable, no "Run now" and no visibility in the admin Jobs panel. Their cadence now lives in
+// their ScheduledJobEntity row.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.MissingSearchJob>();
-builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.UpgradeScanJob>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.SearchTaskCleanupJob>();
+// Re-derives tier + format score for already-imported files from their stored release names, so editing a
+// custom format reaches the library you already have and not only the next download.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.RecomputeFormatScoresJob>();
+// Air-date calendar: one job keeps it current from live metadata, the other queues searches when an
+// episode's window opens and tells the scheduler when the next one is due.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.CalendarRefreshJob>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.AirDateMonitorJob>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IMonitoringPreferencesService, PlexRequestsHosted.Services.Implementations.MonitoringPreferencesService>();
+// Per-series monitoring controls — the first way anything can change Monitored after a request is created.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.ISeriesMonitoringService, PlexRequestsHosted.Services.Implementations.SeriesMonitoringService>();
+// User-defined release scoring rules, scored per quality profile.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.ICustomFormatService, PlexRequestsHosted.Services.Implementations.CustomFormatService>();
+// Registered concretely as well as via IJobHandler: the admin "Upgrade now" action calls straight into it
+// rather than keeping a second copy of the same logic.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.UpgradeScanJob>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler>(sp => sp.GetRequiredService<PlexRequestsHosted.Services.Jobs.UpgradeScanJob>());
+// Backstop that requeues/parks jobs stranded by a dead downloader.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Background.FulfillmentReaperService>();
+// Keeps the DB-backed Plex availability index fresh (per-season episode presence + aged-out removals).
+builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Background.AvailabilityRefreshService>();
+// Safety net: auto-mark requests Available when their content appears on Plex by ANY means.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Background.AvailabilityReconciliationService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IJobAdminService, PlexRequestsHosted.Services.Jobs.JobAdminService>();
+// Quality tiers/profiles: seeds the catalog + stock profiles and converts the legacy quality rules.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.QualityProfileSeeder>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IQualityProfileService, PlexRequestsHosted.Services.Implementations.QualityProfileService>();
+// Interactive search + the failure blocklist that stops a retry re-grabbing the same broken torrent.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IInteractiveSearchService, PlexRequestsHosted.Services.Implementations.InteractiveSearchService>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IReleaseBlocklistService, PlexRequestsHosted.Services.Implementations.ReleaseBlocklistService>();
+// Resolves the downloader's trending-title feed to real metadata for the home page's Recommended row.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IRecommendedFeedService, PlexRequestsHosted.Services.Implementations.RecommendedFeedService>();
 // Per-indexer admin control (enable/priority) + rolling health from downloader search telemetry.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IIndexerAdminService, PlexRequestsHosted.Services.Implementations.IndexerAdminService>();
 // Database maintenance: overview/backup/targeted cleanup/factory reset (the System → Database panel).
@@ -319,6 +342,27 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
+
+    // Seed the quality-tier catalog, the stock profiles, and (first run only) convert the legacy quality
+    // rules into profiles + assignment rules, backfilling everything that needs a profile. Idempotent, so
+    // it runs on every boot and does nothing once complete. Must follow Migrate() — it writes to the tables
+    // that migration creates. A failure here is logged and swallowed: a seeding problem shouldn't stop the
+    // app from starting, and the next boot retries.
+    try
+    {
+        await scope.ServiceProvider.GetRequiredService<PlexRequestsHosted.Services.Implementations.QualityProfileSeeder>()
+            .SeedAsync();
+        // Stock custom formats, so the panel is populated and the feature is usable on first boot rather
+        // than only after something happens to touch the service.
+        await scope.ServiceProvider.GetRequiredService<PlexRequestsHosted.Services.Implementations.ICustomFormatService>()
+            .SeedAsync();
+    }
+    catch (Exception ex)
+    {
+        app.Services.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("QualityProfileSeeder")
+            .LogError(ex, "Quality profile seeding failed; it will be retried on the next start");
+    }
 }
 
 // Admin-only: write a consistent point-in-time SQLite backup (VACUUM INTO) and stream it to the browser.
@@ -448,6 +492,103 @@ app.MapPost("/api/fulfillment/indexer-status", async (List<PlexRequestsHosted.Sh
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     await indexers.ReportStatusAsync(body);
     return Results.Ok();
+});
+
+// ---- Interactive search -------------------------------------------------------------------------
+// The worker polls for admin-initiated searches. This is a pull, not a push, because the web app has no
+// route to the downloader: it has no listening port and, under the VPN compose file, shares gluetun's
+// network namespace. A short poll interval is what keeps the admin-perceived latency to a couple of seconds.
+app.MapPost("/api/fulfillment/search/claim", async (ClaimRequest body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IInteractiveSearchService search) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var task = await search.ClaimAsync(body.WorkerId ?? "worker");
+    return task is null ? Results.NoContent() : Results.Ok(task);
+});
+
+app.MapPost("/api/fulfillment/search/{taskId:int}/results", async (int taskId, PlexRequestsHosted.Shared.DTOs.SearchTaskResultDto body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IInteractiveSearchService search) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return await search.CompleteAsync(taskId, body) ? Results.Ok() : Results.NotFound();
+});
+
+// The worker reports a release that failed, so it is never grabbed for this request again. Called from the
+// pipeline's single failure funnel, so every failure path (stall, error, unresolvable path, failed import)
+// records one.
+app.MapPost("/api/fulfillment/{jobId:int}/blocklist", async (int jobId, PlexRequestsHosted.Shared.DTOs.BlocklistRequestDto body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IReleaseBlocklistService blocklist) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return await blocklist.BlockAsync(jobId, body) ? Results.Ok() : Results.NotFound();
+});
+
+// Episodes the RSS sweep should watch for: monitored, aired (or undated), and not yet on Plex.
+app.MapGet("/api/fulfillment/wanted", async (HttpContext ctx, IConfiguration cfg, AppDbContext db) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var now = DateTime.UtcNow;
+    var wanted = await (from a in db.AirSchedule
+                        join r in db.MediaRequests on a.MediaRequestId equals r.Id
+                        where a.Monitored && !a.HasFile && a.MediaRequestId != null
+                              && (a.SearchState == PlexRequestsHosted.Shared.Enums.AirSearchState.Due
+                                  || a.SearchState == PlexRequestsHosted.Shared.Enums.AirSearchState.Searching
+                                  || a.SearchState == PlexRequestsHosted.Shared.Enums.AirSearchState.AirDateUnknown)
+                              && (a.AirsAtUtc == null || a.AirsAtUtc <= now)
+                        select new PlexRequestsHosted.Shared.DTOs.WantedEpisodeDto
+                        {
+                            MediaRequestId = a.MediaRequestId!.Value,
+                            ShowTmdbId = a.ShowTmdbId,
+                            Title = r.Title,
+                            Season = a.SeasonNumber,
+                            Episode = a.EpisodeNumber,
+                            QualityProfileId = r.QualityProfileId
+                        }).Take(500).ToListAsync();
+    return Results.Ok(wanted);
+});
+
+// The sweep found a wanted episode. Route it through the normal monitored-episode path so it gets the same
+// ranking, blocklist and import treatment as anything else — the sweep only changes WHEN we notice.
+app.MapPost("/api/fulfillment/rss-grab", async (List<PlexRequestsHosted.Shared.DTOs.RssGrabDto> body, HttpContext ctx, IConfiguration cfg, AppDbContext db, IMediaRequestService requests) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    int queued = 0;
+    foreach (var group in body.GroupBy(g => g.MediaRequestId))
+    {
+        var episodes = group.Select(g => (g.Season, g.Episode)).Distinct().ToList();
+        var result = await requests.CreateMonitoredEpisodesAsync(group.Key, episodes);
+        if (!result.Success) continue;
+        queued += episodes.Count;
+
+        // Mark them searching so the calendar job doesn't queue the same episodes again.
+        foreach (var g in group)
+        {
+            var row = await db.AirSchedule.FirstOrDefaultAsync(a =>
+                a.MediaRequestId == g.MediaRequestId && a.SeasonNumber == g.Season && a.EpisodeNumber == g.Episode);
+            if (row is null) continue;
+            row.SearchState = PlexRequestsHosted.Shared.Enums.AirSearchState.Searching;
+            row.NextSearchAt = null;
+            row.LastSearchedAt = DateTime.UtcNow;
+        }
+    }
+    await db.SaveChangesAsync();
+    return Results.Ok(queued);
+});
+
+// The worker pushes the titles it saw trending. It browses rather than the web app doing so because the
+// web container is outside the VPN tunnel — scraping from there would egress on the user's real IP.
+app.MapPost("/api/fulfillment/recommended", async (List<PlexRequestsHosted.Shared.DTOs.RecommendedFeedItemDto> body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IRecommendedFeedService feed) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return Results.Ok(await feed.IngestAsync(body));
+});
+
+// The worker pushes any Torznab endpoints configured in ITS environment so they become admin-managed rows.
+// This direction is forced: those variables live in the downloader's container, which the web app can't
+// read, and the downloader is the only side that can initiate a connection anyway (it sits behind the VPN).
+// Idempotent by URL, so a restart or a lost marker file can't duplicate rows.
+app.MapPost("/api/fulfillment/indexers/import-legacy", async (List<PlexRequestsHosted.Shared.DTOs.LegacyTorznabEndpointDto> body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Abstractions.IIndexerAdminService indexers) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var imported = await indexers.ImportLegacyTorznabAsync(body);
+    return Results.Ok(imported);
 });
 
 // Worker fetches the admin-configured library organization settings (paths, naming templates, transfer
@@ -610,7 +751,7 @@ app.MapPost("/api/fulfillment/{jobId:int}/deferred", async (int jobId, FailReque
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     var reason = string.IsNullOrWhiteSpace(body.Reason) ? "No release found yet" : body.Reason!;
-    var result = await queue.MarkDeferredAsync(jobId, reason);
+    var result = await queue.MarkDeferredAsync(jobId, reason, body.CandidatesRejected);
     if (!result.Found) return Results.NotFound();
 
     var job = await db.FulfillmentJobs.FirstOrDefaultAsync(j => j.Id == jobId);
