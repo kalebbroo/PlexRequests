@@ -15,11 +15,12 @@ namespace PlexRequestsHosted.Services.Implementations;
 /// Database-backed <see cref="IFulfillmentQueue"/>. SQLite is single-writer, so claims are safe
 /// without extra locking at our scale; swap for Redis/RabbitMQ later without touching callers.
 /// </summary>
-public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, IQualityRuleService quality, ISeasonAvailabilityEvaluator seasonEvaluator) : IFulfillmentQueue
+public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, IQualityProfileService profiles, ICustomFormatService formats, ISeasonAvailabilityEvaluator seasonEvaluator) : IFulfillmentQueue
 {
     private readonly AppDbContext _db = db;
     private readonly IMediaMetadataProvider _metadata = metadata;
-    private readonly IQualityRuleService _quality = quality;
+    private readonly IQualityProfileService _profiles = profiles;
+    private readonly ICustomFormatService _formats = formats;
     private readonly ISeasonAvailabilityEvaluator _seasonEvaluator = seasonEvaluator;
 
     public async Task EnqueueAsync(MediaRequestDto request, bool force = false)
@@ -116,9 +117,26 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         }
         catch { /* best-effort; downloader can still try by title/year */ }
 
-        // Apply the admin quality rules (first matching override, else the default) instead of the
-        // request's own preference, so quality is centrally controlled.
-        var resolvedQuality = await _quality.ResolveQualityAsync(request.MediaType, request.MediaId, genres);
+        // Resolve the quality profile: the requester's pick when they're entitled to it, else the first
+        // matching assignment rule, else the default. Previously the requester's choice was discarded
+        // outright and a single admin rule decided everything.
+        var reqEntity = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == request.Id);
+        var profileId = await _profiles.ResolveProfileIdAsync(
+            request.MediaType, request.MediaId, genres,
+            requesterChoiceId: reqEntity?.QualityProfileId,
+            userId: request.RequestedByUserId == 0 ? null : request.RequestedByUserId);
+
+        // Persist the resolution back onto the request so the UI, the upgrade scan and any later re-enqueue
+        // all agree on which profile governs it.
+        if (reqEntity is not null && reqEntity.QualityProfileId != profileId)
+        {
+            reqEntity.QualityProfileId = profileId;
+            await _db.SaveChangesAsync();
+        }
+
+        // The job still carries a flat resolution floor: the downloader ranks against Quality until the
+        // shared ranker lands, at which point it consumes the profile's full tier list instead.
+        var resolvedQuality = await _profiles.GetCutoffQualityAsync(profileId);
 
         _db.FulfillmentJobs.Add(new FulfillmentJobEntity
         {
@@ -135,6 +153,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             RequestedEpisodesCsv = episodesCsv,
             SeasonTargetsJson = seasonTargets.Count > 0 ? JsonSerializer.Serialize(seasonTargets) : null,
             Quality = resolvedQuality,
+            QualityProfileId = profileId,
             GenresCsv = genres is { Count: > 0 } ? string.Join(",", genres) : null,
             IsAnime = isAnime,
             Status = FulfillmentStatus.Queued,
@@ -218,7 +237,64 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             j.Attempts++;
         }
         if (jobs.Count > 0) await _db.SaveChangesAsync();
-        return jobs.Select(Map).ToList();
+
+        var dtos = jobs.Select(Map).ToList();
+        await AttachRankingContextAsync(dtos, jobs);
+        return dtos;
+    }
+
+    /// <summary>
+    /// Attach the quality profile and tier catalog to each claimed job. Embedded in the payload rather than
+    /// fetched separately by the downloader so a search can't be ranked against a profile that changed
+    /// halfway through it, and so ranking needs no extra round-trip.
+    /// </summary>
+    private async Task AttachRankingContextAsync(List<FulfillmentJobDto> dtos, List<FulfillmentJobEntity> entities)
+    {
+        if (dtos.Count == 0) return;
+
+        var definitions = await _db.QualityDefinitions.AsNoTracking().OrderBy(d => d.SortWeight)
+            .Select(d => new QualityDefinitionDto
+            {
+                Id = d.Id, Name = d.Name, Resolution = d.Resolution, Source = d.Source, SortWeight = d.SortWeight
+            }).ToListAsync();
+
+        var profileIds = entities.Where(e => e.QualityProfileId.HasValue)
+            .Select(e => e.QualityProfileId!.Value).Distinct().ToList();
+        var profiles = new Dictionary<int, QualityProfileDto>();
+        var formatsByProfile = new Dictionary<int, List<CustomFormatDto>>();
+        foreach (var id in profileIds)
+        {
+            var dto = await _profiles.GetProfileAsync(id);
+            if (dto is not null) profiles[id] = dto;
+            // Scores are per profile, so each job carries the formats already priced for its own profile.
+            formatsByProfile[id] = await _formats.GetForProfileAsync(id);
+        }
+
+        var now = DateTime.UtcNow;
+        var requestIds = entities.Select(e => e.MediaRequestId).Distinct().ToList();
+        var blocked = await _db.ReleaseBlocklist
+            .Where(b => b.InfoHash != null && (b.ExpiresAt == null || b.ExpiresAt > now))
+            .Where(b => (b.MediaRequestId != null && requestIds.Contains(b.MediaRequestId.Value))
+                        || b.Scope != BlocklistScope.Request)
+            .Select(b => new { b.MediaRequestId, b.Scope, b.MediaId, b.MediaType, Hash = b.InfoHash! })
+            .ToListAsync();
+
+        foreach (var (dto, entity) in dtos.Zip(entities))
+        {
+            dto.QualityDefinitions = definitions;
+            if (entity.QualityProfileId is int pid && profiles.TryGetValue(pid, out var profile))
+            {
+                dto.QualityProfile = profile;
+                if (formatsByProfile.TryGetValue(pid, out var formats))
+                    dto.CustomFormats = formats.Where(f => f.Enabled).ToList();
+            }
+
+            dto.BlocklistedHashes = blocked
+                .Where(b => b.MediaRequestId == entity.MediaRequestId
+                            || (b.Scope == BlocklistScope.Media && b.MediaId == entity.MediaId && b.MediaType == entity.MediaType)
+                            || b.Scope == BlocklistScope.Global)
+                .Select(b => b.Hash).Distinct().ToList();
+        }
     }
 
     public async Task<bool> ReportProgressAsync(int jobId, int progress)
@@ -228,6 +304,25 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         j.Status = FulfillmentStatus.Downloading;
         j.Progress = Math.Clamp(progress, 0, 100);
         j.LastUpdatedAt = DateTime.UtcNow;
+
+        // Real bytes are moving, so this job found a release: clear the "couldn't find anything" state.
+        // FulfillmentJobEntity documents DeferCount as "reset when a real download attempt begins" but
+        // nothing ever did it, so the backoff ratcheted 15m -> 30m -> ... -> 24h and never came back, and
+        // Escalated stuck on permanently. Gated on progress > 0 because the pipeline also reports 0 right
+        // after claiming, before it has searched — that isn't evidence of anything yet.
+        if (j.Progress > 0 && (j.DeferCount > 0 || j.Escalated || j.NextRetryAt is not null))
+        {
+            j.DeferCount = 0;
+            j.Escalated = false;
+            j.NextRetryAt = null;
+        }
+
+        // Move the request out of Searching. The reaper and the deferral endpoint both park requests there
+        // and nothing used to move them back, which left them invisible to availability reconciliation.
+        var req = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == j.MediaRequestId);
+        if (req is not null && req.Status is RequestStatus.Searching or RequestStatus.Approved)
+            req.Status = RequestStatus.Processing;
+
         await _db.SaveChangesAsync();
         return true;
     }
@@ -262,13 +357,15 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         await _db.SaveChangesAsync();
     }
 
-    public async Task<DeferResult> MarkDeferredAsync(int jobId, string reason)
+    public async Task<DeferResult> MarkDeferredAsync(int jobId, string reason, bool candidatesRejected = false)
     {
         var j = await _db.FulfillmentJobs.FirstOrDefaultAsync(x => x.Id == jobId);
         if (j is null) return new DeferResult(false, false, 0, null, false);
 
         var now = DateTime.UtcNow;
         j.DeferCount++;
+        // Only an empty-handed search against a real candidate pool counts toward relaxing the quality floor.
+        if (candidatesRejected) j.EmptySearchCount++;
         j.NextRetryAt = RetryBackoff.ComputeNextRetry(j.DeferCount, j.ReleaseDate, now);
         j.Status = FulfillmentStatus.Deferred;
         j.LastError = reason.Length > 2000 ? reason[..2000] : reason;
@@ -359,15 +456,43 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         var achieved = heights.Count == 0 ? Quality.Any : QualityHelper.FromHeight(heights.Min());
         req.AchievedQuality = achieved;
 
-        // Target: re-resolve current admin rules so a later rule change re-flags cutoff correctly. Genres come
-        // from the enqueue-time snapshot on the latest job (so genre-based override rules still apply). Only
-        // mark cutoff unmet when we actually know the achieved quality (heights present).
-        var genresCsv = await _db.FulfillmentJobs.Where(j => j.MediaRequestId == mediaRequestId)
-            .OrderByDescending(j => j.Id).Select(j => j.GenresCsv).FirstOrDefaultAsync();
-        var genres = string.IsNullOrWhiteSpace(genresCsv) ? null
-            : genresCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-        var target = await _quality.ResolveQualityAsync(req.MediaType, req.MediaId, genres);
-        req.CutoffMet = heights.Count == 0 || target == Quality.Any || (int)achieved >= (int)target;
+        // Target: the cutoff of the request's profile, re-read each time so an edit to the profile re-flags
+        // the cutoff correctly. Falls back to re-resolving (genres from the enqueue-time job snapshot) for a
+        // request that predates profiles and hasn't been assigned one yet.
+        int profileId = req.QualityProfileId ?? 0;
+        if (profileId == 0)
+        {
+            var genresCsv = await _db.FulfillmentJobs.Where(j => j.MediaRequestId == mediaRequestId)
+                .OrderByDescending(j => j.Id).Select(j => j.GenresCsv).FirstOrDefaultAsync();
+            var genres = string.IsNullOrWhiteSpace(genresCsv) ? null
+                : genresCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            profileId = await _profiles.ResolveProfileIdAsync(req.MediaType, req.MediaId, genres,
+                requesterChoiceId: null, userId: req.RequestedByUserId);
+            req.QualityProfileId = profileId;
+        }
+        var target = await _profiles.GetCutoffQualityAsync(profileId);
+
+        // Record the finest-grained tier we can for the worst file. Source isn't known here (it lives in the
+        // release name, which the importer only started storing alongside these rows), so this lands on the
+        // Unknown-source tier for that resolution — accurate rather than guessed.
+        if (heights.Count > 0)
+        {
+            var worstTier = (int)achieved;
+            req.AchievedQualityDefinitionId = await _db.QualityDefinitions
+                .Where(d => d.Resolution == worstTier && d.Source == ReleaseSource.Unknown)
+                .Select(d => (int?)d.Id).FirstOrDefaultAsync();
+        }
+
+        // No file with a parsed resolution means we can't judge — say so rather than claiming the cutoff is
+        // met. The old boolean forced that case to "met", which silently made the request ineligible for an
+        // upgrade forever, and unparsed resolutions are common (plenty of release names carry no 1080p token).
+        req.CutoffState =
+            heights.Count == 0 ? CutoffState.Unknown
+            : target == Quality.Any ? CutoffState.Met
+            : (int)achieved >= (int)target ? CutoffState.Met
+            : CutoffState.Unmet;
+        req.CutoffMet = req.CutoffState == CutoffState.Met; // legacy mirror, see MediaRequestEntity
+
         await _db.SaveChangesAsync();
         return achieved;
     }
@@ -442,6 +567,11 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             ? new List<SeasonTarget>()
             : (JsonSerializer.Deserialize<List<SeasonTarget>>(j.SeasonTargetsJson) ?? new List<SeasonTarget>()),
         Quality = j.Quality,
+        EmptySearchCount = j.EmptySearchCount,
+        IsManualGrab = j.IsManualGrab,
+        ForcedMagnet = j.ForcedMagnet,
+        ForcedReleaseName = j.ForcedReleaseName,
+        ForcedIndexerId = j.ForcedIndexerId,
         Genres = string.IsNullOrWhiteSpace(j.GenresCsv)
             ? new List<string>()
             : j.GenresCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(),

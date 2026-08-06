@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
+using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.Implementations;
 using PlexRequestsHosted.Shared.DTOs;
@@ -17,7 +18,7 @@ namespace PlexRequestsHosted.Services.Jobs;
 public class UpgradeScanJob(
     AppDbContext db,
     IFulfillmentQueue queue,
-    IQualityRuleService quality,
+    IQualityProfileService profiles,
     IConfiguration config,
     ILogger<UpgradeScanJob> logger) : IJobHandler
 {
@@ -35,10 +36,10 @@ public class UpgradeScanJob(
         var maxAttempts = Math.Max(1, config.GetValue("Upgrades:MaxAttempts", 5));
         var cutoff = now - cooldown;
 
-        // Candidates: available requests flagged below their preferred quality, off cooldown, under the
-        // attempt cap. The CutoffMet flag is maintained by RecomputeAchievedQualityAsync at each fulfillment.
+        // Candidates: available requests known to be below their preferred quality, off cooldown, under the
+        // attempt cap. CutoffState is maintained by RecomputeAchievedQualityAsync at each fulfillment.
         var candidates = await db.MediaRequests
-            .Where(r => r.Status == RequestStatus.Available && !r.CutoffMet
+            .Where(r => r.Status == RequestStatus.Available && r.CutoffState == CutoffState.Unmet
                         && r.UpgradeAttempts < maxAttempts
                         && (r.LastUpgradeSearchAt == null || r.LastUpgradeSearchAt <= cutoff))
             .OrderBy(r => r.LastUpgradeSearchAt)
@@ -51,59 +52,91 @@ public class UpgradeScanJob(
         foreach (var req in candidates)
         {
             if (ct.IsCancellationRequested) break;
-
-            // Re-resolve the preferred quality against current admin rules (genres from the enqueue snapshot).
-            var genresCsv = await db.FulfillmentJobs.Where(j => j.MediaRequestId == req.Id)
-                .OrderByDescending(j => j.Id).Select(j => j.GenresCsv).FirstOrDefaultAsync(ct);
-            var genres = string.IsNullOrWhiteSpace(genresCsv) ? null
-                : genresCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-            var target = await quality.ResolveQualityAsync(req.MediaType, req.MediaId, genres);
-            int targetHeight = (int)target;
-
-            // Current library files below that target (known resolution only).
-            var jobIds = await db.FulfillmentJobs.Where(j => j.MediaRequestId == req.Id)
-                .Select(j => j.Id).ToListAsync(ct);
-            var belowTarget = await db.ImportedFiles
-                .Where(f => jobIds.Contains(f.FulfillmentJobId) && f.FileType == "video"
-                            && f.ResolutionHeight > 0 && f.ResolutionHeight < targetHeight)
-                .ToListAsync(ct);
-
-            if (belowTarget.Count == 0)
-            {
-                // Nothing actually below target (e.g. rules changed, or already upgraded) — clear the flag.
-                req.CutoffMet = true;
-                continue;
-            }
-
-            var episodes = belowTarget
-                .Where(f => f.SeasonNumber is not null && f.EpisodeNumber is not null)
-                .Select(f => (f.SeasonNumber!.Value, f.EpisodeNumber!.Value))
-                .Distinct().ToList();
-            var replacePaths = belowTarget.Select(f => f.DestinationPath)
-                .Where(p => !string.IsNullOrWhiteSpace(p)).Distinct().ToList();
-
-            var dto = new MediaRequestDto
-            {
-                Id = req.Id, MediaId = req.MediaId, MediaType = req.MediaType, Title = req.Title,
-                ExternalId = req.ExternalId, ExternalSource = req.ExternalSource
-            };
-            var ok = await queue.EnqueueUpgradeAsync(dto, target, replacePaths, episodes);
-
-            // Always advance the cooldown/attempt counter so a request that can't be enqueued (e.g. an
-            // upgrade already in flight) isn't reconsidered every single pass.
-            req.LastUpgradeSearchAt = now;
-            if (ok)
-            {
-                req.UpgradeAttempts++;
-                enqueued++;
-                logger.LogInformation("Upgrade queued for \"{Title}\" (#{Id}): have {Have}, want {Want}, {Files} file(s) below target",
-                    req.Title, req.Id, req.AchievedQuality, target, belowTarget.Count);
-            }
+            if (await TryEnqueueUpgradeAsync(req, now, ct)) enqueued++;
         }
         await db.SaveChangesAsync(ct);
 
         return enqueued > 0
             ? JobResult.Ok(enqueued, $"Enqueued {enqueued} quality upgrade(s)")
             : JobResult.Skipped("No upgrades enqueued this pass");
+    }
+
+    /// <summary>
+    /// Consider one request for an upgrade and enqueue it if there's genuinely something below target.
+    /// Mutates <paramref name="req"/> but does not save — callers batch that. Shared with the admin
+    /// "Upgrade now" action, which used to carry a near-verbatim copy of this logic with subtly different
+    /// guards (it ignored the attempt cap and never resolved the cutoff state), so the two could disagree
+    /// about the same request.
+    /// </summary>
+    public async Task<bool> TryEnqueueUpgradeAsync(MediaRequestEntity req, DateTime now, CancellationToken ct)
+    {
+        // Target = the cutoff of the request's profile, re-read every scan so editing the profile re-flags
+        // what needs upgrading. A request predating profiles gets one resolved for it now.
+        int profileId = req.QualityProfileId ?? 0;
+        if (profileId == 0)
+        {
+            var genresCsv = await db.FulfillmentJobs.Where(j => j.MediaRequestId == req.Id)
+                .OrderByDescending(j => j.Id).Select(j => j.GenresCsv).FirstOrDefaultAsync(ct);
+            var genres = string.IsNullOrWhiteSpace(genresCsv) ? null
+                : genresCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            profileId = await profiles.ResolveProfileIdAsync(req.MediaType, req.MediaId, genres,
+                requesterChoiceId: null, userId: req.RequestedByUserId);
+            req.QualityProfileId = profileId;
+        }
+
+        // A profile with upgrades switched off means "take what you got and stop" — respect that before
+        // doing any work.
+        var profile = await profiles.GetProfileAsync(profileId);
+        if (profile is { UpgradeAllowed: false }) return false;
+
+        var target = await profiles.GetCutoffQualityAsync(profileId);
+        int targetHeight = (int)target;
+
+        var jobIds = await db.FulfillmentJobs.Where(j => j.MediaRequestId == req.Id)
+            .Select(j => j.Id).ToListAsync(ct);
+        var videoFiles = await db.ImportedFiles
+            .Where(f => jobIds.Contains(f.FulfillmentJobId) && f.FileType == "video")
+            .ToListAsync(ct);
+        var belowTarget = videoFiles.Where(f => f.ResolutionHeight > 0 && f.ResolutionHeight < targetHeight).ToList();
+
+        if (belowTarget.Count == 0)
+        {
+            // Nothing is *known* to be below target — but that's two very different situations, and the old
+            // code collapsed them by setting CutoffMet = true for both. If no file has a parsed resolution we
+            // simply don't know, and declaring the cutoff met there permanently disqualified the request from
+            // ever being upgraded. Only claim Met when we actually have resolutions to judge.
+            bool anyKnownResolution = videoFiles.Any(f => f.ResolutionHeight > 0);
+            req.CutoffState = anyKnownResolution ? CutoffState.Met : CutoffState.Unknown;
+            req.CutoffMet = req.CutoffState == CutoffState.Met;
+            if (!anyKnownResolution)
+                logger.LogDebug("Upgrade scan: \"{Title}\" (#{Id}) has {Count} imported file(s) with no known resolution; leaving the cutoff state Unknown",
+                    req.Title, req.Id, videoFiles.Count);
+            return false;
+        }
+
+        var episodes = belowTarget
+            .Where(f => f.SeasonNumber is not null && f.EpisodeNumber is not null)
+            .Select(f => (f.SeasonNumber!.Value, f.EpisodeNumber!.Value))
+            .Distinct().ToList();
+        var replacePaths = belowTarget.Select(f => f.DestinationPath)
+            .Where(p => !string.IsNullOrWhiteSpace(p)).Distinct().ToList();
+
+        var dto = new MediaRequestDto
+        {
+            Id = req.Id, MediaId = req.MediaId, MediaType = req.MediaType, Title = req.Title,
+            ExternalId = req.ExternalId, ExternalSource = req.ExternalSource
+        };
+        var ok = await queue.EnqueueUpgradeAsync(dto, target, replacePaths, episodes);
+
+        // Always advance the cooldown/attempt counter so a request that can't be enqueued (e.g. an
+        // upgrade already in flight) isn't reconsidered every single pass.
+        req.LastUpgradeSearchAt = now;
+        if (ok)
+        {
+            req.UpgradeAttempts++;
+            logger.LogInformation("Upgrade queued for \"{Title}\" (#{Id}): have {Have}, want {Want}, {Files} file(s) below target",
+                req.Title, req.Id, req.AchievedQuality, target, belowTarget.Count);
+        }
+        return ok;
     }
 }

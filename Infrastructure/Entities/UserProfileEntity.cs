@@ -39,6 +39,15 @@ public class UserProfileEntity
     public int DefaultSort { get; set; } = 0; // maps to Shared.Enums.SortOrder
     public int DefaultQualityMovie { get; set; } = 1080; // maps to Shared.Enums.Quality
     public int DefaultQualityTV { get; set; } = 1080;   // maps to Shared.Enums.Quality
+
+    /// <summary>This user's pre-selected quality profile per media type; null falls back to the system
+    /// default profile. The two raw quality ints above are what the seeder uses to guess these.</summary>
+    public int? DefaultQualityProfileIdMovie { get; set; }
+    public int? DefaultQualityProfileIdTv { get; set; }
+
+    /// <summary>Comma-separated profile ids this user may choose from. Null/empty means "any profile marked
+    /// user-selectable" — this narrows that further, so a member can be capped below what admins can pick.</summary>
+    [MaxLength(256)] public string? AllowedQualityProfileIdsCsv { get; set; }
     public bool AutoplayTrailers { get; set; } = false;
     public bool WatchedBadges { get; set; } = true;
 

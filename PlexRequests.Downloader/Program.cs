@@ -7,6 +7,7 @@ using PlexRequests.Downloader.Organize;
 using PlexRequests.Downloader.Ranking;
 using PlexRequests.Downloader.Vpn;
 using PlexRequests.Downloader.Worker;
+using PlexRequestsHosted.Shared.Releases;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -31,21 +32,35 @@ builder.Services.AddHttpClient<IPlexRequestsApiClient, PlexRequestsApiClient>((s
 
 // Indexer providers (typed HttpClients) + aggregator.
 var indexerCfg = builder.Configuration.GetSection(IndexerOptions.Section).Get<IndexerOptions>() ?? new IndexerOptions();
-builder.Services.AddHttpClient<EztvIndexerProvider>(http =>
+
+// Retry policy shared by every indexer client. There was none at all before, so a single transient 503,
+// timeout or DNS blip counted as a hard failure for that indexer for the whole search pass.
+// Deliberately does NOT retry 4xx: on a scraped site those mean blocked or rate-limited, and retrying
+// makes that strictly worse.
+void AddIndexerResilience(IHttpClientBuilder b) => b.AddStandardResilienceHandler(o =>
+{
+    o.Retry.MaxRetryAttempts = 3;
+    o.Retry.UseJitter = true;
+    o.Retry.BackoffType = Polly.DelayBackoffType.Exponential;
+    o.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(60);
+    o.AttemptTimeout.Timeout = TimeSpan.FromSeconds(Math.Max(5, indexerCfg.TimeoutSeconds));
+    o.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(Math.Max(20, indexerCfg.TimeoutSeconds * 3));
+});
+AddIndexerResilience(builder.Services.AddHttpClient<EztvIndexerProvider>(http =>
 {
     http.BaseAddress = new Uri(indexerCfg.EztvBaseUrl);
     http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
     http.DefaultRequestHeaders.Add("User-Agent", "PlexRequests.Downloader");
-});
-builder.Services.AddHttpClient<YtsIndexerProvider>(http =>
+}));
+AddIndexerResilience(builder.Services.AddHttpClient<YtsIndexerProvider>(http =>
 {
     // No fixed BaseAddress: YtsIndexerProvider tries each configured mirror (YtsBaseUrlsCsv) as an
     // absolute URL in turn, so one dead domain doesn't take movie search out entirely.
     http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
     http.DefaultRequestHeaders.Add("User-Agent", "PlexRequests.Downloader");
-});
+}));
 // 1337x is scraped, so present a real browser User-Agent + Accept headers.
-builder.Services.AddHttpClient<X1337xIndexerProvider>(http =>
+AddIndexerResilience(builder.Services.AddHttpClient<X1337xIndexerProvider>(http =>
 {
     http.BaseAddress = new Uri(indexerCfg.X1337xBaseUrl);
     http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
@@ -53,16 +68,16 @@ builder.Services.AddHttpClient<X1337xIndexerProvider>(http =>
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
     http.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
     http.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
-});
+}));
 // Nyaa uses a plain RSS feed (a normal UA is fine).
-builder.Services.AddHttpClient<NyaaIndexerProvider>(http =>
+AddIndexerResilience(builder.Services.AddHttpClient<NyaaIndexerProvider>(http =>
 {
     http.BaseAddress = new Uri(indexerCfg.NyaaBaseUrl);
     http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
     http.DefaultRequestHeaders.Add("User-Agent", "PlexRequests.Downloader");
-});
+}));
 // ext.to is scraped — present a real browser User-Agent.
-builder.Services.AddHttpClient<ExtToIndexerProvider>(http =>
+AddIndexerResilience(builder.Services.AddHttpClient<ExtToIndexerProvider>(http =>
 {
     http.BaseAddress = new Uri(indexerCfg.ExtToBaseUrl);
     http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
@@ -70,35 +85,47 @@ builder.Services.AddHttpClient<ExtToIndexerProvider>(http =>
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
     http.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
     http.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
-});
+}));
 // Pirate Bay JSON API (apibay) + torrents-csv — plain JSON endpoints, normal UA is fine.
-builder.Services.AddHttpClient<PirateBayIndexerProvider>(http =>
+AddIndexerResilience(builder.Services.AddHttpClient<PirateBayIndexerProvider>(http =>
 {
     http.BaseAddress = new Uri(indexerCfg.PirateBayBaseUrl);
     http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
     http.DefaultRequestHeaders.Add("User-Agent", "PlexRequests.Downloader");
-});
-builder.Services.AddHttpClient<TorrentsCsvIndexerProvider>(http =>
+}));
+AddIndexerResilience(builder.Services.AddHttpClient<TorrentsCsvIndexerProvider>(http =>
 {
     http.BaseAddress = new Uri(indexerCfg.TorrentsCsvBaseUrl);
     http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
     http.DefaultRequestHeaders.Add("User-Agent", "PlexRequests.Downloader");
-});
+}));
 // Torznab (Jackett/Prowlarr) — endpoints are absolute per-config URLs, so no BaseAddress here.
-builder.Services.AddHttpClient<TorznabIndexerProvider>(http =>
+AddIndexerResilience(builder.Services.AddHttpClient<TorznabIndexerProvider>(http =>
 {
     http.Timeout = TimeSpan.FromSeconds(indexerCfg.TimeoutSeconds);
     http.DefaultRequestHeaders.Add("User-Agent", "PlexRequests.Downloader");
-});
-builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<TorznabIndexerProvider>());
-builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<EztvIndexerProvider>());
-builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<YtsIndexerProvider>());
-builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<X1337xIndexerProvider>());
-builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<NyaaIndexerProvider>());
-builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<ExtToIndexerProvider>());
-builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<PirateBayIndexerProvider>());
-builder.Services.AddTransient<IIndexerProvider>(sp => sp.GetRequiredService<TorrentsCsvIndexerProvider>());
+}));
+builder.Services.AddTransient<IIndexerImplementation>(sp => sp.GetRequiredService<TorznabIndexerProvider>());
+builder.Services.AddTransient<IIndexerImplementation>(sp => sp.GetRequiredService<EztvIndexerProvider>());
+builder.Services.AddTransient<IIndexerImplementation>(sp => sp.GetRequiredService<YtsIndexerProvider>());
+builder.Services.AddTransient<IIndexerImplementation>(sp => sp.GetRequiredService<X1337xIndexerProvider>());
+builder.Services.AddTransient<IIndexerImplementation>(sp => sp.GetRequiredService<NyaaIndexerProvider>());
+builder.Services.AddTransient<IIndexerImplementation>(sp => sp.GetRequiredService<ExtToIndexerProvider>());
+builder.Services.AddTransient<IIndexerImplementation>(sp => sp.GetRequiredService<PirateBayIndexerProvider>());
+builder.Services.AddTransient<IIndexerImplementation>(sp => sp.GetRequiredService<TorrentsCsvIndexerProvider>());
 builder.Services.AddTransient<IIndexerClient, IndexerClient>();
+// Per-(indexer, query) result cache and the per-indexer request throttle the client sits on top of.
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<IIndexerRateLimiter, IndexerRateLimiter>();
+// One-time migration of Indexer__Torznab__* env config into the admin-managed Indexers table.
+builder.Services.AddHostedService<PlexRequests.Downloader.Worker.LegacyTorznabImporter>();
+// Serves admin-initiated searches on a short poll, separate from the fulfillment loop — someone is waiting.
+builder.Services.AddHostedService<PlexRequests.Downloader.Worker.InteractiveSearchWorker>();
+// Browses enabled indexers' newest uploads to feed the home page's "Recommended" row. Runs here rather
+// than in the web app so torrent-site traffic stays inside the VPN tunnel.
+builder.Services.AddHostedService<PlexRequests.Downloader.Worker.RecommendedFeedWorker>();
+// Watches indexers for anything currently wanted — the low-latency safety net behind the air-date estimate.
+builder.Services.AddHostedService<PlexRequests.Downloader.Worker.RssSweepWorker>();
 
 // Admin-configured download preferences, fetched from the web app (appsettings QualityOptions fallback).
 builder.Services.AddSingleton<IDownloadPreferencesProvider, DownloadPreferencesProvider>();
@@ -109,7 +136,11 @@ builder.Services.AddSingleton<ILibraryOrganizationProvider, LibraryOrganizationP
 
 // Release parsing + ranking.
 builder.Services.AddSingleton<IReleaseParser, ReleaseParser>();
-builder.Services.AddSingleton<IReleaseRanker, ReleaseRanker>();
+// Ranking logic lives in Shared so the web app can run the identical evaluation for interactive search;
+// the adapter binds it to this process's config and logging.
+builder.Services.AddSingleton<IReleaseEvaluator, ReleaseEvaluator>();
+builder.Services.AddSingleton<IDownloadPlanner, DownloadPlanner>();
+builder.Services.AddSingleton<IReleaseRanker, ReleaseRankerAdapter>();
 
 // Deluge client — shared CookieContainer keeps the session across handler rotations.
 var delugeCfg = builder.Configuration.GetSection(DelugeOptions.Section).Get<DelugeOptions>() ?? new DelugeOptions();

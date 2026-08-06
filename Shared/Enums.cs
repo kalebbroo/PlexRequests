@@ -99,7 +99,130 @@ public enum JobType
     MissingSearch = 0,
     /// <summary>Find already-available titles downloaded below their preferred quality and enqueue an upgrade
     /// search to auto-replace them with a better release.</summary>
-    QualityUpgradeScan = 1
+    QualityUpgradeScan = 1,
+
+    /// <summary>Check monitored series for episodes that have aired but aren't on Plex, and enqueue them.</summary>
+    SeriesMonitor = 2,
+
+    /// <summary>Rebuild the DB-backed Plex availability index (item id-maps + per-season episode presence).</summary>
+    AvailabilityRefresh = 3,
+
+    /// <summary>Safety net: mark open requests Available when their content shows up on Plex by any route.</summary>
+    AvailabilityReconcile = 4,
+
+    /// <summary>Requeue or park fulfillment jobs stranded by a downloader that died mid-work.</summary>
+    StaleClaimReaper = 5,
+
+    /// <summary>Delete expired interactive-search tasks and lapsed blocklist entries.</summary>
+    SearchTaskCleanup = 6,
+
+    /// <summary>Refresh the air-date calendar for monitored series from live metadata.</summary>
+    CalendarRefresh = 7,
+
+    /// <summary>Queue searches for episodes whose air window has opened.</summary>
+    AirDateMonitor = 8,
+
+    /// <summary>Re-derive quality tier and custom-format score for already-imported files from their stored
+    /// release names, so a scoring-rule change applies to the existing library and not just to new grabs.</summary>
+    RecomputeFormatScores = 9
+}
+
+/// <summary>
+/// Whether a request's imported files meet its preferred quality. This is deliberately three-valued: the old
+/// boolean had no way to say "we can't tell", so an import whose resolution never parsed (a release name with
+/// no 1080p/720p token) was indistinguishable from one that genuinely met the target — and the upgrade scanner
+/// resolved that ambiguity by marking it met, permanently excluding the request from ever being upgraded.
+/// </summary>
+public enum CutoffState
+{
+    /// <summary>Nothing imported yet, or nothing imported with a known resolution. Not a claim either way —
+    /// eligible for a re-derive pass rather than being treated as satisfied.</summary>
+    Unknown = 0,
+    /// <summary>Every imported video file is at or above the preferred quality.</summary>
+    Met = 1,
+    /// <summary>At least one imported video file is below the preferred quality — an upgrade candidate.</summary>
+    Unmet = 2
+}
+
+/// <summary>Where an episode stands in the monitor's pipeline.</summary>
+public enum AirSearchState
+{
+    /// <summary>Hasn't aired yet (or its window hasn't opened).</summary>
+    NotDue = 0,
+    /// <summary>Aired and wanted; the monitor should queue it.</summary>
+    Due = 1,
+    /// <summary>A request has been created and is being worked.</summary>
+    Searching = 2,
+    /// <summary>On Plex.</summary>
+    Acquired = 3,
+    /// <summary>Deliberately not wanted (monitor mode excludes it, or attempts exhausted).</summary>
+    Skipped = 4,
+    /// <summary>
+    /// The metadata source has no air date. Previously these were invisible: HasAired is false without a
+    /// date, and the monitor only queued episodes where it was true — so an undated episode was never
+    /// fetched, ever. They now get a slow periodic sweep instead of being silently dropped.
+    /// </summary>
+    AirDateUnknown = 5
+}
+
+/// <summary>Which episodes of a series the monitor should keep chasing.</summary>
+public enum MonitorMode
+{
+    /// <summary>Nothing — the request is a one-off.</summary>
+    None = 0,
+    /// <summary>Everything, past and future.</summary>
+    AllEpisodes = 1,
+    /// <summary>Only episodes that air from now on.</summary>
+    FutureEpisodes = 2,
+    /// <summary>Only what's missing from Plex today; nothing new.</summary>
+    MissingEpisodes = 3,
+    /// <summary>Only episodes already on Plex (upgrades only).</summary>
+    ExistingEpisodes = 4,
+    FirstSeason = 5,
+    LatestSeason = 6
+}
+
+/// <summary>What a queued search task is for.</summary>
+public enum SearchTaskKind
+{
+    /// <summary>An admin asked to see every release for a title, accepted or not.</summary>
+    InteractiveSearch = 0,
+    /// <summary>Ask one indexer what categories it supports, so the admin can pick from a real list.</summary>
+    CapabilitiesTest = 1
+}
+
+public enum SearchTaskStatus
+{
+    Pending = 0,
+    Claimed = 1,
+    Completed = 2,
+    Failed = 3,
+    /// <summary>Nobody picked it up before it aged out — usually means the downloader isn't running.</summary>
+    Expired = 4
+}
+
+/// <summary>How widely a blocklist entry applies.</summary>
+public enum BlocklistScope
+{
+    /// <summary>Only this request. The default: a release that failed here may be fine elsewhere.</summary>
+    Request = 0,
+    /// <summary>Every request for this title.</summary>
+    Media = 1,
+    /// <summary>Everywhere. For releases that are simply bad (fake, malware, mislabelled).</summary>
+    Global = 2
+}
+
+public enum BlocklistReason
+{
+    DownloadFailed = 0,
+    ImportFailed = 1,
+    Stalled = 2,
+    TorrentError = 3,
+    /// <summary>Finished but nothing usable could be found on disk.</summary>
+    PathUnresolvable = 4,
+    /// <summary>Downloaded the wrong thing.</summary>
+    WrongContent = 5,
+    ManualBlock = 6
 }
 
 /// <summary>Outcome of a single scheduled-job execution, recorded in the job-run history.</summary>
@@ -110,6 +233,34 @@ public enum JobRunStatus
     Failed = 2,
     /// <summary>Ran but did nothing meaningful (nothing due, feature disabled) — not an error.</summary>
     Skipped = 3
+}
+
+/// <summary>Which HDR variant a release carries, if any. Ordered by desirability, so a comparison picks
+/// the better one. <c>ParsedRelease.Hdr</c> is derived from this, so existing preferences keep working.</summary>
+public enum HdrFormat
+{
+    None = 0,
+    Sdr = 1,
+    Hlg = 2,
+    Hdr10 = 3,
+    Hdr10Plus = 4,
+    DolbyVision = 5
+}
+
+/// <summary>
+/// Where a release was sourced from, ordered worst-to-best so the integer value doubles as a ranking weight.
+/// Lives here rather than in the downloader because it is one half of a quality tier (resolution x source):
+/// the web app defines and orders those tiers, the downloader matches releases against them.
+/// </summary>
+public enum ReleaseSource
+{
+    Unknown = 0,
+    Cam = 1,
+    Hdtv = 2,
+    WebRip = 3,
+    WebDl = 4,
+    BluRay = 5,
+    Remux = 6
 }
 
 public enum Quality

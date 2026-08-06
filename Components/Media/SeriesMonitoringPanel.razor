@@ -1,0 +1,152 @@
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@inject PlexRequestsHosted.Services.Implementations.ISeriesMonitoringService Monitoring
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
+
+@* Per-series monitoring. Until now the Monitored flag was written once when the request was created and
+   could never be changed by anyone — so a show you wanted followed, or wanted to stop following, needed a
+   database edit. The schedule below is the air-date calendar the monitor actually drives off, so what you
+   see here is what it will do. *@
+
+@if (_state is null)
+{
+    @if (_loaded)
+    {
+        <MudAlert Severity="Severity.Info" Dense="true">
+            Request this series to start monitoring it for new episodes.
+        </MudAlert>
+    }
+}
+else
+{
+    <MudPaper Class="pa-4 mb-3" Elevation="1">
+        <div class="d-flex flex-wrap align-items-center gap-4">
+            <MudSelect T="MonitorMode" Label="Monitor" Value="_state.MonitorMode" Variant="Variant.Outlined"
+                       Style="min-width:220px;" ValueChanged="SetMode">
+                <MudSelectItem Value="MonitorMode.AllEpisodes">All episodes</MudSelectItem>
+                <MudSelectItem Value="MonitorMode.FutureEpisodes">Future episodes only</MudSelectItem>
+                <MudSelectItem Value="MonitorMode.MissingEpisodes">Missing episodes only</MudSelectItem>
+                <MudSelectItem Value="MonitorMode.ExistingEpisodes">Existing episodes (upgrades only)</MudSelectItem>
+                <MudSelectItem Value="MonitorMode.FirstSeason">First season</MudSelectItem>
+                <MudSelectItem Value="MonitorMode.LatestSeason">Latest season</MudSelectItem>
+                <MudSelectItem Value="MonitorMode.None">None</MudSelectItem>
+            </MudSelect>
+
+            <MudSwitch T="bool" Label="Automatically monitor new seasons" Value="_state.AutoMonitorNewSeasons"
+                       Color="Color.Primary" Disabled="@(_state.MonitorMode == MonitorMode.None)"
+                       ValueChanged="@(v => SetFlags(v, _state.SearchForCutoffUpgrades))" />
+
+            <MudSwitch T="bool" Label="Search for quality upgrades" Value="_state.SearchForCutoffUpgrades"
+                       Color="Color.Primary"
+                       ValueChanged="@(v => SetFlags(_state.AutoMonitorNewSeasons, v))" />
+        </div>
+
+        <MudText Typo="Typo.caption" Class="text-muted mt-2 d-block">
+            @if (_state.MonitorMode == MonitorMode.None)
+            {
+                <span>Not monitored — nothing new will be fetched for this series.</span>
+            }
+            else
+            {
+                <span>
+                    Monitored@(_state.MonitoredSince is DateTime s ? $" since {s.ToLocalTime():d}" : "").
+                    @if (_state.LastCheckedAt is DateTime c) { <span>Calendar last refreshed @c.ToLocalTime().ToString("g").</span> }
+                    Air times are estimated from the broadcast date, so a release sweep runs every 15 minutes as a backstop.
+                </span>
+            }
+        </MudText>
+    </MudPaper>
+
+    @if (_schedule.Count > 0)
+    {
+        <MudExpansionPanel Text="@($"Episode schedule ({_schedule.Count})")">
+            <MudTable Items="_schedule" Dense="true" Hover="true" Height="380px" FixedHeader="true">
+                <HeaderContent>
+                    <MudTh>Episode</MudTh>
+                    <MudTh>Title</MudTh>
+                    <MudTh>Airs</MudTh>
+                    <MudTh>State</MudTh>
+                    <MudTh>Next check</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Episode">S@(context.Season.ToString("00"))E@(context.Episode.ToString("00"))</MudTd>
+                    <MudTd DataLabel="Title">@context.EpisodeTitle</MudTd>
+                    <MudTd DataLabel="Airs">@(context.AirDate is DateTime d ? d.ToLocalTime().ToString("d") : "unknown")</MudTd>
+                    <MudTd DataLabel="State">
+                        <MudChip T="string" Size="Size.Small" Color="@StateColor(context.State)">@Describe(context.State)</MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Next check">
+                        @(context.NextSearchAt is DateTime n ? n.ToLocalTime().ToString("g") : "—")
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudExpansionPanel>
+    }
+}
+
+@code {
+    /// <summary>TMDb id of the show whose monitoring state this panel controls.</summary>
+    [Parameter] public int ShowTmdbId { get; set; }
+
+    private SeriesMonitoringDto? _state;
+    private List<AirScheduleEntryDto> _schedule = new();
+    private bool _loaded;
+
+    protected override async Task OnParametersSetAsync() => await Load();
+
+    private async Task Load()
+    {
+        _state = await Monitoring.GetAsync(ShowTmdbId);
+        _schedule = _state is null ? new() : await Monitoring.GetScheduleAsync(ShowTmdbId);
+        _loaded = true;
+    }
+
+    private async Task SetMode(MonitorMode mode)
+    {
+        if (_state is null) return;
+        if (await Monitoring.SetModeAsync(_state.RequestId, mode))
+            await Toasts.ShowSuccessAsync(mode == MonitorMode.None
+                ? $"Stopped monitoring {_state.Title}."
+                : $"Monitoring {_state.Title}: {Describe(mode)}.");
+        await Load();
+    }
+
+    private async Task SetFlags(bool autoSeasons, bool upgrades)
+    {
+        if (_state is null) return;
+        await Monitoring.SetFlagsAsync(_state.RequestId, autoSeasons, upgrades);
+        await Load();
+    }
+
+    private static string Describe(MonitorMode m) => m switch
+    {
+        MonitorMode.AllEpisodes => "all episodes",
+        MonitorMode.FutureEpisodes => "future episodes only",
+        MonitorMode.MissingEpisodes => "missing episodes only",
+        MonitorMode.ExistingEpisodes => "upgrades only",
+        MonitorMode.FirstSeason => "first season",
+        MonitorMode.LatestSeason => "latest season",
+        _ => "none"
+    };
+
+    private static string Describe(AirSearchState s) => s switch
+    {
+        AirSearchState.NotDue => "scheduled",
+        AirSearchState.Due => "due now",
+        AirSearchState.Searching => "searching",
+        AirSearchState.Acquired => "on Plex",
+        AirSearchState.Skipped => "not wanted",
+        AirSearchState.AirDateUnknown => "no air date",
+        _ => s.ToString()
+    };
+
+    private static Color StateColor(AirSearchState s) => s switch
+    {
+        AirSearchState.Acquired => Color.Success,
+        AirSearchState.Searching => Color.Info,
+        AirSearchState.Due => Color.Warning,
+        AirSearchState.AirDateUnknown => Color.Default,
+        AirSearchState.Skipped => Color.Default,
+        _ => Color.Default
+    };
+}

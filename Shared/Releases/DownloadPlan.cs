@@ -1,6 +1,4 @@
-using PlexRequests.Downloader.Indexers;
-
-namespace PlexRequests.Downloader.Ranking;
+namespace PlexRequestsHosted.Shared.Releases;
 
 public enum DownloadPlanKind
 {

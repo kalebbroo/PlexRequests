@@ -17,6 +17,74 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.7");
 
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.AirScheduleEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("AirDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("AirsAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("EpisodeNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("EpisodeTitle")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("HasFile")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("LastSearchedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("MediaRequestId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Monitored")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("NextSearchAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SearchAttempts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SearchState")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SeasonNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ShowTmdbId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SourceProvider")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaRequestId");
+
+                    b.HasIndex("NextSearchAt");
+
+                    b.HasIndex("Monitored", "SearchState");
+
+                    b.HasIndex("ShowTmdbId", "SeasonNumber", "EpisodeNumber")
+                        .IsUnique();
+
+                    b.ToTable("AirSchedule", (string)null);
+                });
+
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.BridgeOutboxEntity", b =>
                 {
                     b.Property<long>("Id")
@@ -67,7 +135,70 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.HasIndex("MediaRequestId");
 
-                    b.ToTable("BridgeOutbox");
+                    b.ToTable("BridgeOutbox", (string)null);
+                });
+
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.CustomFormatEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IncludeWhenRenaming")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsSystem")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SpecificationsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("CustomFormats", (string)null);
+                });
+
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.CustomFormatScoreEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CustomFormatId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("QualityProfileId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Score")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomFormatId");
+
+                    b.HasIndex("QualityProfileId", "CustomFormatId")
+                        .IsUnique();
+
+                    b.ToTable("CustomFormatScores", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.DownloadPreferencesEntity", b =>
@@ -116,6 +247,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .HasMaxLength(1024)
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("RelaxFloorAfterEmptySearches")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("SeasonPackStrategy")
                         .HasColumnType("INTEGER");
 
@@ -127,7 +261,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.HasIndex("IsSingleton")
                         .IsUnique();
 
-                    b.ToTable("DownloadPreferences");
+                    b.ToTable("DownloadPreferences", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.FulfillmentJobEntity", b =>
@@ -155,6 +289,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Property<int>("DeferCount")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("EmptySearchCount")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("Escalated")
                         .HasColumnType("INTEGER");
 
@@ -166,6 +303,17 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("ForcedIndexerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ForcedMagnet")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ForcedReleaseName")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("GenresCsv")
                         .HasMaxLength(512)
                         .HasColumnType("TEXT");
@@ -175,6 +323,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("IsAnime")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsManualGrab")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("IsUpgrade")
@@ -203,6 +354,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("Quality")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("QualityProfileId")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("ReleaseDate")
@@ -249,13 +403,16 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.HasIndex("MediaId", "MediaType");
 
-                    b.ToTable("FulfillmentJobs");
+                    b.ToTable("FulfillmentJobs", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.ImportedFileEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CustomFormatScore")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("DestinationPath")
@@ -275,6 +432,17 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("ImportedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InfoHash")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("QualityDefinitionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ReleaseName")
+                        .HasMaxLength(512)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("ResolutionHeight")
@@ -299,13 +467,31 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.HasIndex("FulfillmentJobId");
 
-                    b.ToTable("ImportedFiles");
+                    b.ToTable("ImportedFiles", (string)null);
                 });
 
-            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.IndexerSettingEntity", b =>
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.IndexerEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AnimeCategoriesCsv")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("AnimeOnly")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ApiKeyEncrypted")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BaseUrlOverride")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CacheSeconds")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("ConsecutiveFailures")
@@ -314,7 +500,27 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("EnableAutomaticSearch")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("EnableInteractiveSearch")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("EnableRecommendedFeed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("EnableRss")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Implementation")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsBuiltIn")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("LastError")
@@ -333,12 +539,53 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Property<DateTime?>("LastSuccessAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("MaxAgeDays")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MaxDetailFetches")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("MinSeeders")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MovieCategoriesCsv")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Notes")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("Priority")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("RateLimitPerMinute")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("SeasonPackSeedTimeMinutes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("SeedRatio")
+                        .HasColumnType("REAL");
+
+                    b.Property<int?>("SeedTimeMinutes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("SupportsAnime")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("SupportsMovie")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("SupportsTv")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("TimeoutSeconds")
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("TotalResults")
@@ -347,15 +594,27 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Property<long>("TotalSearches")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("TvCategoriesCsv")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Url")
+                        .HasMaxLength(2048)
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
+                    b.HasIndex("Implementation");
+
                     b.HasIndex("Name")
                         .IsUnique();
 
-                    b.ToTable("IndexerSettings");
+                    b.HasIndex("Enabled", "Priority");
+
+                    b.ToTable("Indexers", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.JobRunEntity", b =>
@@ -395,7 +654,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.HasIndex("StartedAt");
 
-                    b.ToTable("JobRuns");
+                    b.ToTable("JobRuns", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.LibraryOrganizationPreferencesEntity", b =>
@@ -471,7 +730,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.HasIndex("IsSingleton")
                         .IsUnique();
 
-                    b.ToTable("LibraryOrganizationPreferences");
+                    b.ToTable("LibraryOrganizationPreferences", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.MediaIssueEntity", b =>
@@ -535,7 +794,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.HasIndex("Status");
 
-                    b.ToTable("MediaIssues");
+                    b.ToTable("MediaIssues", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.MediaMetadataCacheEntity", b =>
@@ -603,7 +862,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.HasIndex("MediaType", "TmdbId")
                         .IsUnique();
 
-                    b.ToTable("MediaMetadataCache");
+                    b.ToTable("MediaMetadataCache", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.MediaRequestEntity", b =>
@@ -612,16 +871,31 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("AchievedFormatScore")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("AchievedQuality")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AchievedQualityDefinitionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AirTimeOverrideMinutes")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("ApprovedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("AutoMonitorNewSeasons")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime?>("AvailableAt")
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("CutoffMet")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CutoffState")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("DenialReason")
@@ -636,6 +910,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("LastMonitorCheckAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("LastUpgradeSearchAt")
                         .HasColumnType("TEXT");
 
@@ -645,12 +922,21 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Property<int>("MediaType")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("MonitorMode")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("Monitored")
                         .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("MonitoredSince")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PosterUrl")
                         .HasMaxLength(512)
                         .HasColumnType("TEXT");
+
+                    b.Property<int?>("QualityProfileId")
+                        .HasColumnType("INTEGER");
 
                     b.Property<bool>("RequestAllSeasons")
                         .HasColumnType("INTEGER");
@@ -677,6 +963,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("SearchForCutoffUpgrades")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("Status")
                         .HasColumnType("INTEGER");
 
@@ -700,7 +989,56 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.HasIndex("MediaId", "MediaType");
 
-                    b.ToTable("MediaRequests");
+                    b.HasIndex("Status", "MediaType");
+
+                    b.HasIndex("Monitored", "MediaType", "Status");
+
+                    b.ToTable("MediaRequests", (string)null);
+                });
+
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.MonitoringPreferencesEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AirTimeZoneId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AssumedAirTimeLocal")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CalendarBackfillDays")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CalendarHorizonDays")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsSingleton")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MaxSearchAttemptsPerEpisode")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("PostAirDelayMinutes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("RssSweepIntervalSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsSingleton")
+                        .IsUnique();
+
+                    b.ToTable("MonitoringPreferences", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.NetworkShareEntity", b =>
@@ -757,7 +1095,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.HasIndex("MountSlug")
                         .IsUnique();
 
-                    b.ToTable("NetworkShares");
+                    b.ToTable("NetworkShares", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.NotificationEntity", b =>
@@ -799,7 +1137,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.HasIndex("UserId", "IsRead");
 
-                    b.ToTable("Notifications");
+                    b.ToTable("Notifications", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.PlexMappingEntity", b =>
@@ -827,6 +1165,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("MediaType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MissedScans")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("RatingKey")
@@ -859,7 +1200,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.HasIndex("RatingKey");
 
-                    b.ToTable("PlexMappings");
+                    b.ToTable("PlexMappings", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.PlexSeasonAvailabilityEntity", b =>
@@ -883,6 +1224,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Property<DateTime>("LastSeenAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("MissedScans")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("SeasonNumber")
                         .HasColumnType("INTEGER");
 
@@ -898,7 +1242,166 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.HasIndex("ShowRatingKey", "SeasonNumber")
                         .IsUnique();
 
-                    b.ToTable("PlexSeasonAvailability");
+                    b.ToTable("PlexSeasonAvailability", (string)null);
+                });
+
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.ProfileAssignmentRuleEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MatchGenre")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MatchLibrary")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("MatchMediaType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("MatchTmdbId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Order")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("QualityProfileId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Order");
+
+                    b.HasIndex("QualityProfileId");
+
+                    b.ToTable("ProfileAssignmentRules", (string)null);
+                });
+
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.QualityDefinitionEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsSystem")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("MaxSizeGb")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("MinSizeGb")
+                        .HasColumnType("REAL");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Resolution")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SortWeight")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Source")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SortWeight");
+
+                    b.HasIndex("Resolution", "Source")
+                        .IsUnique();
+
+                    b.ToTable("QualityDefinitions", (string)null);
+                });
+
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.QualityProfileEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AllowedLanguagesCsv")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("AppliesToMediaTypes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CutoffFormatScore")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CutoffQualityDefinitionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsUserSelectable")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ItemsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("MaxSeasonPackSizeGb")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("MaxSizeGb")
+                        .HasColumnType("REAL");
+
+                    b.Property<int>("MinCustomFormatScore")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("MinSeeders")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("MinSizeGb")
+                        .HasColumnType("REAL");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("UpgradeAllowed")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsDefault");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("QualityProfiles", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.QualityRuleEntity", b =>
@@ -945,13 +1448,138 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.HasIndex("Order");
 
-                    b.ToTable("QualityRules");
+                    b.ToTable("QualityRules", (string)null);
+                });
+
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.RecommendedItemEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MediaType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PosterUrl")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Rank")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("SeenAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SourceIndexerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SourceTitle")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("SourceYear")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TmdbId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Year")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Rank");
+
+                    b.HasIndex("SeenAt");
+
+                    b.HasIndex("TmdbId", "MediaType")
+                        .IsUnique();
+
+                    b.ToTable("RecommendedItems", (string)null);
+                });
+
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.ReleaseBlocklistEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("BlockedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("BlockedByUserId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Detail")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("Episode")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("IndexerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("InfoHash")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MediaId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("MediaRequestId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MediaType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("NormalizedReleaseName")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Reason")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ReleaseName")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Scope")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Season")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InfoHash");
+
+                    b.HasIndex("NormalizedReleaseName");
+
+                    b.HasIndex("InfoHash", "MediaRequestId")
+                        .IsUnique();
+
+                    b.HasIndex("MediaId", "MediaType");
+
+                    b.ToTable("ReleaseBlocklist", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.ScheduledJobEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ConsecutiveFailures")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("CreatedAt")
@@ -976,6 +1604,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Property<DateTime?>("LastRunAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("LastRunDurationMs")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int?>("LastStatus")
                         .HasColumnType("INTEGER");
 
@@ -993,6 +1624,12 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Property<string>("PayloadJson")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("RunningSince")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TimeoutSeconds")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.HasIndex("JobType")
@@ -1000,7 +1637,98 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.HasIndex("NextRunAt");
 
-                    b.ToTable("ScheduledJobs");
+                    b.ToTable("ScheduledJobs", (string)null);
+                });
+
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.SearchTaskEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CapabilitiesJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ClaimedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ClaimedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("Episode")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ImdbId")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IncludeRejected")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("IndexerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("IndexerOutcomesJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MediaId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("MediaRequestId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MediaType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("QualityProfileId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("RequestedByUserId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ResultsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("Season")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("Year")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("MediaRequestId");
+
+                    b.HasIndex("Status", "CreatedAt");
+
+                    b.ToTable("SearchTasks", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.SeasonEpisodesCacheEntity", b =>
@@ -1027,7 +1755,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.HasIndex("ShowTmdbId", "SeasonNumber")
                         .IsUnique();
 
-                    b.ToTable("SeasonEpisodesCache");
+                    b.ToTable("SeasonEpisodesCache", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.UserEntity", b =>
@@ -1054,7 +1782,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.HasIndex("Username")
                         .IsUnique();
 
-                    b.ToTable("Users");
+                    b.ToTable("Users", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.UserProfileEntity", b =>
@@ -1062,6 +1790,10 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("AllowedQualityProfileIdsCsv")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
 
                     b.Property<bool>("AutoApprove")
                         .HasColumnType("INTEGER");
@@ -1073,6 +1805,12 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<int>("DefaultQualityMovie")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("DefaultQualityProfileIdMovie")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("DefaultQualityProfileIdTv")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("DefaultQualityTV")
@@ -1164,7 +1902,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.HasIndex("UserId")
                         .IsUnique();
 
-                    b.ToTable("UserProfiles");
+                    b.ToTable("UserProfiles", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.WatchlistItemEntity", b =>
@@ -1198,7 +1936,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.HasIndex("UserId", "MediaId", "MediaType");
 
-                    b.ToTable("Watchlist");
+                    b.ToTable("Watchlist", (string)null);
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.BridgeOutboxEntity", b =>
@@ -1210,6 +1948,21 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("MediaRequest");
+                });
+
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.CustomFormatScoreEntity", b =>
+                {
+                    b.HasOne("PlexRequestsHosted.Infrastructure.Entities.CustomFormatEntity", null)
+                        .WithMany()
+                        .HasForeignKey("CustomFormatId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PlexRequestsHosted.Infrastructure.Entities.QualityProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("QualityProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.FulfillmentJobEntity", b =>
@@ -1260,6 +2013,15 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Navigation("RelatedRequest");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.ProfileAssignmentRuleEntity", b =>
+                {
+                    b.HasOne("PlexRequestsHosted.Infrastructure.Entities.QualityProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("QualityProfileId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.UserProfileEntity", b =>

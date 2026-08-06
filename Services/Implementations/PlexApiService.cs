@@ -265,7 +265,7 @@ public class PlexApiService : IPlexApiService
     {
         var episodes = await _metadata.GetSeasonEpisodesAsync(showId, seasonNumber);
         if (episodes.Count == 0) return episodes;
-        var ratingKey = await _db.PlexMappings.Where(m => m.ExternalKey == $"tmdb:{showId}").Select(m => m.RatingKey).FirstOrDefaultAsync();
+        var ratingKey = await _seasonEvaluator.ResolveRatingKeyAsync(showId);
         if (!string.IsNullOrEmpty(ratingKey))
         {
             var row = await _db.PlexSeasonAvailability
@@ -298,7 +298,7 @@ public class PlexApiService : IPlexApiService
     public async Task<Dictionary<int, MediaQualityDto>> GetSeasonQualitySummariesAsync(int tvShowId)
     {
         var result = new Dictionary<int, MediaQualityDto>();
-        var ratingKey = await _db.PlexMappings.Where(m => m.ExternalKey == $"tmdb:{tvShowId}").Select(m => m.RatingKey).FirstOrDefaultAsync();
+        var ratingKey = await _seasonEvaluator.ResolveRatingKeyAsync(tvShowId);
         if (string.IsNullOrEmpty(ratingKey)) return result;
         var rows = await _db.PlexSeasonAvailability.AsNoTracking()
             .Where(s => s.ShowRatingKey == ratingKey)
@@ -487,7 +487,7 @@ public class PlexApiService : IPlexApiService
     // Expensive write path: scan Plex and upsert the availability tables (item id-maps + per-season
     // episode presence), then prune anything not seen this pass (removed from the server). Called by
     // the background refresh service and the manual rebuild endpoint.
-    public async Task<object> RebuildAvailabilityFromPlexAsync()
+    public async Task<object> RebuildAvailabilityFromPlexAsync(CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(_cfg.PrimaryServerUrl) || string.IsNullOrWhiteSpace(_cfg.ServerToken))
             return new { skipped = true, reason = "Plex not configured" };
@@ -499,8 +499,8 @@ public class PlexApiService : IPlexApiService
 
         // Preload existing rows ONCE into dictionaries (tracked) so the loop matches in memory instead
         // of a SELECT per guid/season. New rows are Added; existing rows are mutated in-place.
-        var mapByKey = await _db.PlexMappings.ToDictionaryAsync(m => m.ExternalKey);
-        var seasonRows = await _db.PlexSeasonAvailability.ToListAsync();
+        var mapByKey = await _db.PlexMappings.ToDictionaryAsync(m => m.ExternalKey, ct);
+        var seasonRows = await _db.PlexSeasonAvailability.ToListAsync(ct);
         var seasonByKey = seasonRows.ToDictionary(s => (s.ShowRatingKey, s.SeasonNumber));
 
         foreach (var lib in libraries)
@@ -510,6 +510,7 @@ public class PlexApiService : IPlexApiService
             // Items (movies + shows) -> external id -> ratingKey mappings.
             await foreach (var item in EnumerateLibraryItemsAsync(lib.Key))
             {
+                ct.ThrowIfCancellationRequested();
                 foreach (var guid in item.guids)
                 {
                     var (type, id) = ParseGuid(guid);
@@ -521,7 +522,7 @@ public class PlexApiService : IPlexApiService
                         _db.PlexMappings.Add(existing);
                         mapByKey[key] = existing;
                     }
-                    existing.RatingKey = item.ratingKey; existing.MediaType = lib.Type; existing.Title = item.title; existing.Year = item.year; existing.LastSeenAt = scanStart;
+                    existing.RatingKey = item.ratingKey; existing.MediaType = lib.Type; existing.Title = item.title; existing.Year = item.year; existing.LastSeenAt = scanStart; existing.MissedScans = 0;
                     // Quality columns apply to movies (a show container item has no media file of its own).
                     existing.VideoResolution = item.quality?.Resolution;
                     existing.VideoCodec = item.quality?.VideoCodec;
@@ -541,6 +542,7 @@ public class PlexApiService : IPlexApiService
                 var perSeasonQuality = new Dictionary<(string show, int season), Dictionary<int, MediaQualityDto>>();
                 await foreach (var ep in EnumerateEpisodesAsync(lib.Key))
                 {
+                    ct.ThrowIfCancellationRequested();
                     var k = (ep.showRatingKey, ep.season);
                     if (!perSeason.TryGetValue(k, out var set)) { set = new SortedSet<int>(); perSeason[k] = set; }
                     if (ep.episode > 0) set.Add(ep.episode);
@@ -560,7 +562,7 @@ public class PlexApiService : IPlexApiService
                         _db.PlexSeasonAvailability.Add(row);
                         seasonByKey[(k.show, k.season)] = row;
                     }
-                    row.AvailableEpisodesCsv = csv; row.EpisodeCount = set.Count; row.LastSeenAt = scanStart;
+                    row.AvailableEpisodesCsv = csv; row.EpisodeCount = set.Count; row.LastSeenAt = scanStart; row.MissedScans = 0;
                     row.EpisodeQualityJson = perSeasonQuality.TryGetValue(k, out var qmap) && qmap.Count > 0
                         ? JsonSerializer.Serialize(qmap, QualityJsonOpts)
                         : null;
@@ -568,21 +570,60 @@ public class PlexApiService : IPlexApiService
                 }
             }
         }
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(ct);
 
-        // Prune rows not touched this pass: they were removed from the server.
-        var staleMaps = await _db.PlexMappings.Where(m => m.LastSeenAt < scanStart).ToListAsync();
-        var staleSeasons = await _db.PlexSeasonAvailability.Where(s => s.LastSeenAt < scanStart).ToListAsync();
-        if (staleMaps.Count > 0) _db.PlexMappings.RemoveRange(staleMaps);
-        if (staleSeasons.Count > 0) _db.PlexSeasonAvailability.RemoveRange(staleSeasons);
-        await _db.SaveChangesAsync();
+        // ---- Prune, defensively -------------------------------------------------------------------
+        // Rows not touched this pass *might* mean "removed from the server" — or the scan itself might have
+        // been partial (Plex restarting, a section timing out, a token blip). Deleting unconditionally on the
+        // second reading was catastrophic: the index emptied, every season looked missing, and the next
+        // monitor/enqueue pass mass-requeued downloads of content already on disk. So: refuse to prune at all
+        // when the scan looks untrustworthy, and otherwise require a row to be missing several passes running.
+        var prior = _cache.Get<LastRebuildResult>(LastRebuildCacheKey);
+        var suspicious =
+            libraries.Count == 0 ? "Plex returned no libraries"
+            : maps == 0 ? "the scan matched no library items"
+            : prior is not null && prior.Maps > 0 && maps < prior.Maps * (1 - MaxItemDropFractionBeforeSkippingPrune)
+                ? $"item count fell from {prior.Maps} to {maps} (>{MaxItemDropFractionBeforeSkippingPrune:P0} drop)"
+                : null;
+
+        int prunedMaps = 0, prunedSeasons = 0, agedMaps = 0, agedSeasons = 0;
+        if (suspicious is not null)
+        {
+            _logger.LogWarning("Plex availability scan looks partial ({Reason}); keeping every existing row rather than pruning", suspicious);
+        }
+        else
+        {
+            var staleMaps = await _db.PlexMappings.Where(m => m.LastSeenAt < scanStart).ToListAsync(ct);
+            var staleSeasons = await _db.PlexSeasonAvailability.Where(s => s.LastSeenAt < scanStart).ToListAsync(ct);
+
+            foreach (var m in staleMaps)
+            {
+                if (++m.MissedScans >= MissedScansBeforePrune) { _db.PlexMappings.Remove(m); prunedMaps++; }
+                else agedMaps++;
+            }
+            foreach (var s in staleSeasons)
+            {
+                if (++s.MissedScans >= MissedScansBeforePrune) { _db.PlexSeasonAvailability.Remove(s); prunedSeasons++; }
+                else agedSeasons++;
+            }
+            await _db.SaveChangesAsync(ct);
+            if (agedMaps > 0 || agedSeasons > 0)
+                _logger.LogInformation("Availability prune: {AgedMaps} map(s) / {AgedSeasons} season(s) missing this pass but kept (need {Needed} consecutive misses)",
+                    agedMaps, agedSeasons, MissedScansBeforePrune);
+        }
 
         _cache.Remove(AvailabilityCacheKey); // force the read projection to rebuild from fresh DB
-        _cache.Set(LastRebuildCacheKey, new LastRebuildResult(maps, seasons, episodes, staleMaps.Count, staleSeasons.Count, scanStart), TimeSpan.FromDays(30));
+        _cache.Set(LastRebuildCacheKey, new LastRebuildResult(maps, seasons, episodes, prunedMaps, prunedSeasons, scanStart), TimeSpan.FromDays(30));
         _logger.LogInformation("Plex availability rebuilt: {Maps} id-maps, {Seasons} seasons, {Eps} episodes; pruned {PMaps} maps / {PSeasons} seasons",
-            maps, seasons, episodes, staleMaps.Count, staleSeasons.Count);
-        return new { maps, seasons, episodes, prunedMaps = staleMaps.Count, prunedSeasons = staleSeasons.Count, at = scanStart };
+            maps, seasons, episodes, prunedMaps, prunedSeasons);
+        return new { maps, seasons, episodes, prunedMaps, prunedSeasons, prunePolicy = suspicious ?? "normal", at = scanStart };
     }
+
+    // A row must be absent from this many consecutive scans before it's deleted, and a scan that loses more
+    // than this fraction of its item count versus the previous one is treated as partial and prunes nothing.
+    // Constants for now; these become admin-configurable alongside the other monitoring knobs.
+    private const int MissedScansBeforePrune = 3;
+    private const double MaxItemDropFractionBeforeSkippingPrune = 0.30;
 
     // Enumerate every episode in a TV library section via a single paged type=4 query.
     private async IAsyncEnumerable<(string showRatingKey, int season, int episode, MediaQualityDto? quality)> EnumerateEpisodesAsync(string sectionKey)

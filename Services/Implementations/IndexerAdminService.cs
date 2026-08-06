@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
@@ -7,35 +8,45 @@ using PlexRequestsHosted.Shared.DTOs;
 namespace PlexRequestsHosted.Services.Implementations;
 
 /// <summary>
-/// Database-backed <see cref="IIndexerAdminService"/>. Rows are seeded for the built-in providers so the
-/// panel isn't empty before the downloader's first search, and any provider name the downloader reports
-/// that isn't known yet is auto-registered — adding a new indexer to the downloader needs no web change.
+/// Database-backed <see cref="IIndexerAdminService"/>. Rows are seeded for the built-in implementations so
+/// the panel isn't empty before the downloader's first search; admins add Torznab endpoints on top, each as
+/// its own row with its own URL, key, categories, priority and health.
+///
+/// API keys are encrypted at rest with the app's data-protection keyring — the same treatment network-share
+/// passwords get — and only decrypted when handed to the downloader over the authenticated worker API.
 /// </summary>
-public class IndexerAdminService(AppDbContext db, ILogger<IndexerAdminService> logger) : IIndexerAdminService
+public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, ILogger<IndexerAdminService> logger)
+    : IIndexerAdminService
 {
-    // Pre-seeded so admins can configure providers before any search has run. Must match the
-    // downloader providers' Name values; Torznab endpoints report as "Torznab" (rolled up).
-    private static readonly string[] BuiltIns = { "EZTV", "YTS", "1337x", "Nyaa", "ext.to", "PirateBay", "TorrentsCSV", "Torznab" };
+    private readonly IDataProtector _protector = dp.CreateProtector("IndexerCredentials.v1");
+
+    /// <summary>
+    /// The built-in implementations, with the capabilities that used to be hardcoded in each provider class.
+    /// Seeded once; afterwards these are ordinary rows an admin can disable, re-prioritise or re-scope.
+    /// </summary>
+    private static readonly (string Name, bool Movie, bool Tv, bool Anime, bool AnimeOnly)[] BuiltIns =
+    {
+        ("EZTV",        false, true,  true,  false),
+        ("YTS",         true,  false, false, false),
+        ("1337x",       true,  true,  true,  false),
+        ("Nyaa",        true,  true,  true,  true),   // anime-only: skipped unless the job is classified anime
+        ("ext.to",      true,  true,  true,  false),
+        ("PirateBay",   true,  true,  true,  false),
+        ("TorrentsCSV", true,  true,  true,  false),
+    };
 
     public async Task<List<IndexerSettingDto>> GetAllAsync()
     {
         await SeedAsync();
-        return await db.IndexerSettings
+        return await db.Indexers
             .OrderBy(i => i.Priority).ThenBy(i => i.Name)
-            .Select(i => new IndexerSettingDto
-            {
-                Name = i.Name, Enabled = i.Enabled, Priority = i.Priority,
-                LastSearchAt = i.LastSearchAt, LastResultCount = i.LastResultCount,
-                LastSuccessAt = i.LastSuccessAt, LastError = i.LastError,
-                ConsecutiveFailures = i.ConsecutiveFailures,
-                TotalSearches = i.TotalSearches, TotalResults = i.TotalResults,
-                LastLatencyMs = i.LastLatencyMs
-            }).ToListAsync();
+            .Select(i => ToDto(i))
+            .ToListAsync();
     }
 
     public async Task<bool> SetEnabledAsync(string name, bool enabled)
     {
-        var row = await db.IndexerSettings.FirstOrDefaultAsync(i => i.Name == name);
+        var row = await db.Indexers.FirstOrDefaultAsync(i => i.Name == name);
         if (row is null) return false;
         row.Enabled = enabled;
         row.UpdatedAt = DateTime.UtcNow;
@@ -46,7 +57,7 @@ public class IndexerAdminService(AppDbContext db, ILogger<IndexerAdminService> l
 
     public async Task<bool> SetPriorityAsync(string name, int priority)
     {
-        var row = await db.IndexerSettings.FirstOrDefaultAsync(i => i.Name == name);
+        var row = await db.Indexers.FirstOrDefaultAsync(i => i.Name == name);
         if (row is null) return false;
         row.Priority = Math.Clamp(priority, 1, 50);
         row.UpdatedAt = DateTime.UtcNow;
@@ -54,29 +65,191 @@ public class IndexerAdminService(AppDbContext db, ILogger<IndexerAdminService> l
         return true;
     }
 
+    // ---- CRUD ---------------------------------------------------------------------------------------
+
+    public async Task<(bool ok, string? error)> SaveAsync(IndexerSettingDto dto)
+    {
+        var isNew = dto.Id == 0;
+        var row = isNew ? new IndexerEntity() : await db.Indexers.FirstOrDefaultAsync(i => i.Id == dto.Id);
+        if (row is null) return (false, "Indexer not found.");
+
+        var name = (dto.Name ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(name)) return (false, "A name is required.");
+        if (await db.Indexers.AnyAsync(i => i.Name == name && i.Id != dto.Id))
+            return (false, $"An indexer named \"{name}\" already exists.");
+
+        // Only built-ins may omit a URL — they know their own endpoints.
+        var implementation = string.IsNullOrWhiteSpace(dto.Implementation) ? "Torznab" : dto.Implementation.Trim();
+        var isBuiltIn = isNew ? false : row.IsBuiltIn;
+        if (!isBuiltIn && string.IsNullOrWhiteSpace(dto.Url))
+            return (false, "A Torznab/Newznab indexer needs its API URL.");
+
+        row.Name = name;
+        if (!isBuiltIn)
+        {
+            row.Implementation = implementation;
+            row.Url = dto.Url?.Trim();
+        }
+        row.Enabled = dto.Enabled;
+        row.Priority = Math.Clamp(dto.Priority, 1, 50);
+        row.MovieCategoriesCsv = Blank(dto.MovieCategoriesCsv);
+        row.TvCategoriesCsv = Blank(dto.TvCategoriesCsv);
+        row.AnimeCategoriesCsv = Blank(dto.AnimeCategoriesCsv);
+        row.SupportsMovie = dto.SupportsMovie;
+        row.SupportsTv = dto.SupportsTv;
+        row.SupportsAnime = dto.SupportsAnime;
+        row.AnimeOnly = dto.AnimeOnly;
+        row.EnableRss = dto.EnableRss;
+        row.EnableAutomaticSearch = dto.EnableAutomaticSearch;
+        row.EnableInteractiveSearch = dto.EnableInteractiveSearch;
+        row.EnableRecommendedFeed = dto.EnableRecommendedFeed;
+        row.MinSeeders = dto.MinSeeders;
+        row.TimeoutSeconds = dto.TimeoutSeconds;
+        row.RateLimitPerMinute = Math.Clamp(dto.RateLimitPerMinute <= 0 ? 30 : dto.RateLimitPerMinute, 1, 600);
+        row.CacheSeconds = Math.Clamp(dto.CacheSeconds, 0, 3600);
+        row.MaxDetailFetches = Math.Clamp(dto.MaxDetailFetches <= 0 ? 25 : dto.MaxDetailFetches, 1, 100);
+        row.MaxAgeDays = dto.MaxAgeDays;
+        row.BaseUrlOverride = Blank(dto.BaseUrlOverride);
+        row.Notes = Blank(dto.Notes);
+
+        // An empty key on an edit means "leave it alone" — the UI never round-trips the real value, so
+        // treating blank as "clear it" would silently wipe the key every time anything else was saved.
+        if (!string.IsNullOrWhiteSpace(dto.ApiKey))
+            row.ApiKeyEncrypted = _protector.Protect(dto.ApiKey.Trim());
+
+        row.UpdatedAt = DateTime.UtcNow;
+        if (isNew)
+        {
+            row.IsBuiltIn = false;
+            row.CreatedAt = DateTime.UtcNow;
+            db.Indexers.Add(row);
+        }
+        await db.SaveChangesAsync();
+        logger.LogInformation("Indexer \"{Name}\" ({Impl}) {Action} by admin", row.Name, row.Implementation, isNew ? "added" : "updated");
+        return (true, null);
+    }
+
+    public async Task<(bool ok, string? error)> DeleteAsync(int id)
+    {
+        var row = await db.Indexers.FirstOrDefaultAsync(i => i.Id == id);
+        if (row is null) return (false, "Indexer not found.");
+        // Built-ins are re-seeded on the next panel load, so deleting one is at best a no-op and at worst
+        // loses its accumulated health history. Disabling is the supported way to take one out of rotation.
+        if (row.IsBuiltIn) return (false, "Built-in indexers can't be deleted — disable it instead.");
+        db.Indexers.Remove(row);
+        await db.SaveChangesAsync();
+        logger.LogInformation("Indexer \"{Name}\" deleted by admin", row.Name);
+        return (true, null);
+    }
+
+    /// <summary>
+    /// One-time import of Torznab endpoints configured in the downloader's environment. The downloader has to
+    /// push these because they live in ITS environment (Indexer__Torznab__0__Url and friends) and the web
+    /// container can't read them. Idempotent by normalized URL so a restart can't duplicate rows.
+    /// </summary>
+    public async Task<int> ImportLegacyTorznabAsync(List<LegacyTorznabEndpointDto> endpoints)
+    {
+        if (endpoints.Count == 0) return 0;
+        await SeedAsync();
+
+        var existing = await db.Indexers.Where(i => i.Url != null)
+            .Select(i => new { i.Id, i.Url }).ToListAsync();
+        var known = existing.Select(e => Normalize(e.Url!)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        int added = 0;
+        var now = DateTime.UtcNow;
+        foreach (var e in endpoints)
+        {
+            if (string.IsNullOrWhiteSpace(e.Url) || !known.Add(Normalize(e.Url))) continue;
+
+            var name = string.IsNullOrWhiteSpace(e.Name) ? "Torznab" : e.Name.Trim();
+            // Keep names unique without failing the whole import over a collision.
+            var candidate = name;
+            for (int n = 2; await db.Indexers.AnyAsync(i => i.Name == candidate); n++) candidate = $"{name} ({n})";
+
+            db.Indexers.Add(new IndexerEntity
+            {
+                Name = candidate,
+                Implementation = "Torznab",
+                IsBuiltIn = false,
+                Enabled = e.Enabled,
+                Priority = 10, // ahead of the public built-ins: an aggregator is the better source
+                Url = e.Url.Trim(),
+                ApiKeyEncrypted = string.IsNullOrWhiteSpace(e.ApiKey) ? null : _protector.Protect(e.ApiKey.Trim()),
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            added++;
+        }
+
+        if (added > 0)
+        {
+            await db.SaveChangesAsync();
+            logger.LogInformation("Imported {Count} Torznab endpoint(s) from the downloader's configuration", added);
+        }
+        return added;
+    }
+
+    // ---- Worker config + telemetry ------------------------------------------------------------------
+
     public async Task<List<IndexerConfigDto>> GetWorkerConfigAsync()
     {
         await SeedAsync();
-        return await db.IndexerSettings
-            .Select(i => new IndexerConfigDto { Name = i.Name, Enabled = i.Enabled, Priority = i.Priority })
-            .ToListAsync();
+        var rows = await db.Indexers.AsNoTracking().OrderBy(i => i.Priority).ToListAsync();
+        return rows.Select(i => new IndexerConfigDto
+        {
+            Id = i.Id,
+            Name = i.Name,
+            Implementation = i.Implementation,
+            Enabled = i.Enabled,
+            Priority = i.Priority,
+            Url = i.Url,
+            ApiKey = Unprotect(i.ApiKeyEncrypted),
+            BaseUrlOverride = i.BaseUrlOverride,
+            MovieCategoriesCsv = i.MovieCategoriesCsv,
+            TvCategoriesCsv = i.TvCategoriesCsv,
+            AnimeCategoriesCsv = i.AnimeCategoriesCsv,
+            SupportsMovie = i.SupportsMovie,
+            SupportsTv = i.SupportsTv,
+            SupportsAnime = i.SupportsAnime,
+            AnimeOnly = i.AnimeOnly,
+            EnableRss = i.EnableRss,
+            EnableAutomaticSearch = i.EnableAutomaticSearch,
+            EnableInteractiveSearch = i.EnableInteractiveSearch,
+            EnableRecommendedFeed = i.EnableRecommendedFeed,
+            MinSeeders = i.MinSeeders,
+            TimeoutSeconds = i.TimeoutSeconds,
+            RateLimitPerMinute = i.RateLimitPerMinute,
+            CacheSeconds = i.CacheSeconds,
+            MaxDetailFetches = i.MaxDetailFetches,
+            MaxAgeDays = i.MaxAgeDays
+        }).ToList();
     }
 
     public async Task ReportStatusAsync(List<IndexerStatusReportDto> reports)
     {
         if (reports.Count == 0) return;
         var now = DateTime.UtcNow;
+
+        // Prefer the id — names are now admin-editable, so keying on them alone would orphan a row's history
+        // the moment someone renamed it.
+        var ids = reports.Where(r => r.IndexerId > 0).Select(r => r.IndexerId).Distinct().ToList();
         var names = reports.Select(r => r.Name).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
-        var rows = await db.IndexerSettings.Where(i => names.Contains(i.Name)).ToDictionaryAsync(i => i.Name);
+        var rows = await db.Indexers.Where(i => ids.Contains(i.Id) || names.Contains(i.Name)).ToListAsync();
+        var byId = rows.ToDictionary(i => i.Id);
+        var byName = rows.GroupBy(i => i.Name).ToDictionary(g => g.Key, g => g.First());
 
         foreach (var r in reports)
         {
-            if (string.IsNullOrWhiteSpace(r.Name)) continue;
-            if (!rows.TryGetValue(r.Name, out var row))
+            IndexerEntity? row = null;
+            if (r.IndexerId > 0) byId.TryGetValue(r.IndexerId, out row);
+            if (row is null && !string.IsNullOrWhiteSpace(r.Name)) byName.TryGetValue(r.Name, out row);
+            if (row is null)
             {
-                row = new IndexerSettingEntity { Name = r.Name, CreatedAt = now };
-                db.IndexerSettings.Add(row);
-                rows[r.Name] = row;
+                if (string.IsNullOrWhiteSpace(r.Name)) continue;
+                row = new IndexerEntity { Name = r.Name, Implementation = r.Name, IsBuiltIn = true, CreatedAt = now };
+                db.Indexers.Add(row);
+                byName[r.Name] = row;
             }
 
             row.LastSearchAt = r.SearchedAt == default ? now : r.SearchedAt;
@@ -100,20 +273,75 @@ public class IndexerAdminService(AppDbContext db, ILogger<IndexerAdminService> l
         await db.SaveChangesAsync();
     }
 
+    // ---- Seeding ------------------------------------------------------------------------------------
+
     private async Task SeedAsync()
     {
-        var existing = await db.IndexerSettings.Select(i => i.Name).ToListAsync();
+        var existing = await db.Indexers.Select(i => i.Name).ToListAsync();
         var now = DateTime.UtcNow;
-        foreach (var name in BuiltIns.Where(n => !existing.Contains(n)))
-            db.IndexerSettings.Add(new IndexerSettingEntity { Name = name, CreatedAt = now, UpdatedAt = now });
+        foreach (var b in BuiltIns.Where(b => !existing.Contains(b.Name)))
+        {
+            db.Indexers.Add(new IndexerEntity
+            {
+                Name = b.Name,
+                Implementation = b.Name,
+                IsBuiltIn = true,
+                SupportsMovie = b.Movie,
+                SupportsTv = b.Tv,
+                SupportsAnime = b.Anime,
+                AnimeOnly = b.AnimeOnly,
+                Priority = 30, // behind admin-added aggregators by default
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        }
         if (!db.ChangeTracker.HasChanges()) return;
         try { await db.SaveChangesAsync(); }
         catch (DbUpdateException)
         {
             // Two callers seeded concurrently and the unique Name index rejected the duplicate — the rows
             // exist either way, so drop ours and carry on.
-            foreach (var entry in db.ChangeTracker.Entries<IndexerSettingEntity>().Where(e => e.State == EntityState.Added).ToList())
+            foreach (var entry in db.ChangeTracker.Entries<IndexerEntity>().Where(e => e.State == EntityState.Added).ToList())
                 entry.State = EntityState.Detached;
         }
     }
+
+    // ---- Helpers ------------------------------------------------------------------------------------
+
+    private static IndexerSettingDto ToDto(IndexerEntity i) => new()
+    {
+        Id = i.Id, Name = i.Name, Implementation = i.Implementation, IsBuiltIn = i.IsBuiltIn,
+        Enabled = i.Enabled, Priority = i.Priority, Url = i.Url,
+        // The stored key is never round-tripped to the browser — only whether one is set.
+        HasApiKey = !string.IsNullOrWhiteSpace(i.ApiKeyEncrypted),
+        BaseUrlOverride = i.BaseUrlOverride,
+        MovieCategoriesCsv = i.MovieCategoriesCsv, TvCategoriesCsv = i.TvCategoriesCsv,
+        AnimeCategoriesCsv = i.AnimeCategoriesCsv,
+        SupportsMovie = i.SupportsMovie, SupportsTv = i.SupportsTv, SupportsAnime = i.SupportsAnime,
+        AnimeOnly = i.AnimeOnly,
+        EnableRss = i.EnableRss, EnableAutomaticSearch = i.EnableAutomaticSearch,
+        EnableInteractiveSearch = i.EnableInteractiveSearch, EnableRecommendedFeed = i.EnableRecommendedFeed,
+        MinSeeders = i.MinSeeders, TimeoutSeconds = i.TimeoutSeconds,
+        RateLimitPerMinute = i.RateLimitPerMinute, CacheSeconds = i.CacheSeconds,
+        MaxDetailFetches = i.MaxDetailFetches, MaxAgeDays = i.MaxAgeDays, Notes = i.Notes,
+        LastSearchAt = i.LastSearchAt, LastResultCount = i.LastResultCount,
+        LastSuccessAt = i.LastSuccessAt, LastError = i.LastError,
+        ConsecutiveFailures = i.ConsecutiveFailures,
+        TotalSearches = i.TotalSearches, TotalResults = i.TotalResults, LastLatencyMs = i.LastLatencyMs
+    };
+
+    private string? Unprotect(string? encrypted)
+    {
+        if (string.IsNullOrWhiteSpace(encrypted)) return null;
+        // A rotated/lost keyring shouldn't take the whole worker config down — the indexer just searches
+        // unauthenticated and fails visibly in its own health row.
+        try { return _protector.Unprotect(encrypted); }
+        catch (Exception ex) { logger.LogWarning(ex, "Could not decrypt an indexer API key; it will need re-entering"); return null; }
+    }
+
+    private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    /// <summary>Compare endpoint URLs ignoring trailing slashes and case, so the legacy import can't
+    /// re-add an endpoint that's already present under a cosmetically different URL.</summary>
+    private static string Normalize(string url) => url.Trim().TrimEnd('/').ToLowerInvariant();
 }

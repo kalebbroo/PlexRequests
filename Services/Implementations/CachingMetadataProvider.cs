@@ -220,6 +220,57 @@ public sealed class MetadataRefreshCoordinator(
         });
     }
 
+    /// <summary>Awaitable counterpart to <see cref="QueueDetail"/> — fetch now, write through, return it.</summary>
+    public async Task<MediaDetailDto?> RefreshDetailNowAsync(MediaType mediaType, int tmdbId)
+    {
+        var key = $"d:{mediaType}:{tmdbId}";
+        _inFlight.TryAdd(key, 0);
+        try
+        {
+            using var scope = scopes.CreateScope();
+            var innerProvider = scope.ServiceProvider.GetRequiredService<IMetadataProviderFactory>().GetDefaultProvider();
+            var dbf = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AppDbContext>>();
+            var dto = await innerProvider.GetDetailsAsync(tmdbId, mediaType);
+            if (dto is not null && !string.IsNullOrWhiteSpace(dto.Title))
+            {
+                await using var db = await dbf.CreateDbContextAsync();
+                await CachingMetadataProvider.UpsertDetailAsync(db, mediaType, tmdbId, dto);
+            }
+            return dto;
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Forced detail refresh failed for {Type} {Id}", mediaType, tmdbId);
+            return null;
+        }
+        finally { _inFlight.TryRemove(key, out _); }
+    }
+
+    public async Task<List<EpisodeDto>> RefreshEpisodesNowAsync(int showTmdbId, int seasonNumber)
+    {
+        var key = $"e:{showTmdbId}:{seasonNumber}";
+        _inFlight.TryAdd(key, 0);
+        try
+        {
+            using var scope = scopes.CreateScope();
+            var innerProvider = scope.ServiceProvider.GetRequiredService<IMetadataProviderFactory>().GetDefaultProvider();
+            var dbf = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AppDbContext>>();
+            var eps = await innerProvider.GetSeasonEpisodesAsync(showTmdbId, seasonNumber);
+            if (eps.Count > 0)
+            {
+                await using var db = await dbf.CreateDbContextAsync();
+                await CachingMetadataProvider.UpsertEpisodesAsync(db, showTmdbId, seasonNumber, eps);
+            }
+            return eps;
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Forced episode refresh failed for {Show} S{Season}", showTmdbId, seasonNumber);
+            return new List<EpisodeDto>();
+        }
+        finally { _inFlight.TryRemove(key, out _); }
+    }
+
     public void QueueEpisodes(int showTmdbId, int seasonNumber)
     {
         var key = $"e:{showTmdbId}:{seasonNumber}";

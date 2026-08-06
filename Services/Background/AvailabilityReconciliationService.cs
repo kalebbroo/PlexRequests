@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Abstractions;
+using PlexRequestsHosted.Services.Jobs;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 
@@ -15,49 +16,43 @@ namespace PlexRequestsHosted.Services.Background;
 /// safety net that complements the downloader's /fulfilled callback.
 /// </summary>
 public class AvailabilityReconciliationService(
-    IServiceScopeFactory scopeFactory,
+    AppDbContext db,
+    IPlexApiService plex,
+    ISeasonAvailabilityEvaluator seasonEvaluator,
+    INotificationService notify,
     IConfiguration config,
-    ILogger<AvailabilityReconciliationService> logger) : BackgroundService
+    ILogger<AvailabilityReconciliationService> logger) : IJobHandler
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    // Every status a request can sit in while its content might still show up by some other route. Searching
+    // and PartiallyAvailable belong here and were missing: the reaper and the downloader's defer callback both
+    // park requests in Searching, nothing moved them back out, and this query skipped them — so the requests
+    // most likely to be satisfied another way were precisely the ones the safety net ignored.
+    private static readonly RequestStatus[] OpenStatuses =
+    {
+        RequestStatus.Pending, RequestStatus.Approved, RequestStatus.Processing,
+        RequestStatus.Searching, RequestStatus.PartiallyAvailable
+    };
+
+    public JobType Type => JobType.AvailabilityReconcile;
+
+    public async Task<JobResult> ExecuteAsync(JobContext context, CancellationToken ct)
     {
         var plexConfigured = !string.IsNullOrWhiteSpace(config["Plex:PrimaryServerUrl"])
                              && !string.IsNullOrWhiteSpace(config["Plex:ServerToken"]);
-        if (!config.GetValue("Reconciliation:Enabled", true) || !plexConfigured)
-        {
-            logger.LogInformation("Availability reconciliation idle (Reconciliation:Enabled + Plex config required)");
-            return;
-        }
+        if (!config.GetValue("Reconciliation:Enabled", true)) return JobResult.Skipped("Reconciliation is disabled");
+        if (!plexConfigured) return JobResult.Skipped("Plex is not configured");
 
-        var interval = TimeSpan.FromMinutes(Math.Max(5, config.GetValue("Reconciliation:IntervalMinutes", 30)));
-        // Start a bit after the availability scan (startup +20s) so the index is populated first.
-        try { await Task.Delay(TimeSpan.FromSeconds(70), stoppingToken); }
-        catch (OperationCanceledException) { return; }
-
-        logger.LogInformation("Availability reconciliation started (every {Interval}m)", interval.TotalMinutes);
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try { await RunOnceAsync(stoppingToken); }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex) { logger.LogError(ex, "Availability reconciliation pass failed"); }
-
-            try { await Task.Delay(interval, stoppingToken); }
-            catch (OperationCanceledException) { break; }
-        }
+        var marked = await RunOnceAsync(ct);
+        return marked > 0
+            ? JobResult.Ok(marked, $"Marked {marked} request(s) Available")
+            : JobResult.Skipped("No open request was satisfied by the Plex library");
     }
 
     /// <summary>One reconciliation pass. Returns how many requests were newly marked Available.</summary>
     public async Task<int> RunOnceAsync(CancellationToken ct)
     {
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var plex = scope.ServiceProvider.GetRequiredService<IPlexApiService>();
-        var seasonEvaluator = scope.ServiceProvider.GetRequiredService<ISeasonAvailabilityEvaluator>();
-        var notify = scope.ServiceProvider.GetRequiredService<INotificationService>();
-
         var open = await db.MediaRequests
-            .Where(r => r.Status == RequestStatus.Pending || r.Status == RequestStatus.Approved || r.Status == RequestStatus.Processing)
+            .Where(r => OpenStatuses.Contains(r.Status))
             .ToListAsync(ct);
         if (open.Count == 0) return 0;
 
@@ -70,7 +65,7 @@ public class AvailabilityReconciliationService(
         foreach (var req in open)
         {
             if (ct.IsCancellationRequested) break;
-            if (!await IsSatisfiedAsync(req, titleAvailable, db, plex, seasonEvaluator, ct)) continue;
+            if (!await IsSatisfiedAsync(req, titleAvailable, plex, seasonEvaluator, ct)) continue;
 
             req.Status = RequestStatus.Available;
             req.AvailableAt = DateTime.UtcNow;
@@ -92,7 +87,7 @@ public class AvailabilityReconciliationService(
     }
 
     private static async Task<bool> IsSatisfiedAsync(MediaRequestEntity req, Dictionary<(MediaType, int), bool> titleAvailable,
-        AppDbContext db, IPlexApiService plex, ISeasonAvailabilityEvaluator seasonEvaluator, CancellationToken ct)
+        IPlexApiService plex, ISeasonAvailabilityEvaluator seasonEvaluator, CancellationToken ct)
     {
         // Movies: available when the title is on Plex.
         if (req.MediaType != MediaType.TvShow)

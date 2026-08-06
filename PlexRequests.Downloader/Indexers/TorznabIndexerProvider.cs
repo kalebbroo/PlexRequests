@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Indexers;
 
@@ -17,8 +18,8 @@ namespace PlexRequests.Downloader.Indexers;
 /// Only results that yield a magnet (magneturl attr, magnet link, or an info hash to build one from)
 /// are returned — the download client is magnet-only.
 /// </summary>
-public class TorznabIndexerProvider(HttpClient http, IOptions<IndexerOptions> options, ILogger<TorznabIndexerProvider> logger)
-    : IIndexerProvider
+public class TorznabIndexerProvider(HttpClient http, ILogger<TorznabIndexerProvider> logger)
+    : IIndexerImplementation
 {
     private static readonly XNamespace TorznabNs = "http://torznab.com/schemas/2015/feed";
 
@@ -33,62 +34,61 @@ public class TorznabIndexerProvider(HttpClient http, IOptions<IndexerOptions> op
     };
 
     private readonly HttpClient _http = http;
-    private readonly IndexerOptions _opts = options.Value;
     private readonly ILogger<TorznabIndexerProvider> _logger = logger;
 
-    public string Name => "Torznab";
-    public bool Supports(MediaType mediaType) => mediaType is MediaType.Movie or MediaType.TvShow or MediaType.Anime;
+    public string Key => "Torznab";
 
-    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct)
+    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(IndexerConfigDto indexer, FulfillmentJobDto job, CancellationToken ct)
     {
-        var endpoints = _opts.Torznab.Where(e => e.Enabled && !string.IsNullOrWhiteSpace(e.Url)).ToList();
-        if (endpoints.Count == 0 || string.IsNullOrWhiteSpace(job.Title)) return Array.Empty<ReleaseCandidate>();
+        if (string.IsNullOrWhiteSpace(indexer.Url) || string.IsNullOrWhiteSpace(job.Title))
+            return Array.Empty<ReleaseCandidate>();
 
-        // Dedup across endpoints/queries by info hash (falling back to the magnet URI itself).
+        // One configured endpoint = one call here. This used to loop over every endpoint in the downloader's
+        // appsettings, which is why they all shared a single identity, enable flag and health record.
         var byKey = new Dictionary<string, ReleaseCandidate>(StringComparer.OrdinalIgnoreCase);
-        foreach (var endpoint in endpoints)
+        foreach (var url in BuildQueryUrls(indexer, job))
         {
-            foreach (var url in BuildQueryUrls(endpoint, job))
+            if (ct.IsCancellationRequested) break;
+            string xml;
+            try
             {
-                if (ct.IsCancellationRequested) break;
-                string xml;
-                try
-                {
-                    xml = await _http.GetStringAsync(url, ct);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(ex, "Torznab endpoint \"{Endpoint}\" failed for \"{Title}\"; skipping its remaining queries",
-                        endpoint.Name, job.Title);
-                    break; // endpoint unreachable — its other queries will fail the same way
-                }
-
-                foreach (var c in ParseFeed(xml, endpoint.Name, job.Title))
-                    byKey.TryAdd(c.InfoHash ?? c.Magnet, c);
+                xml = await _http.GetStringAsync(url, ct);
             }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Torznab endpoint \"{Endpoint}\" failed for \"{Title}\"; skipping its remaining queries",
+                    indexer.Name, job.Title);
+                break; // endpoint unreachable — its other queries will fail the same way
+            }
+
+            foreach (var c in ParseFeed(xml, indexer, job.Title))
+                byKey.TryAdd(c.InfoHash ?? c.Magnet, c);
         }
         return byKey.Values.ToList();
     }
 
-    private static IEnumerable<string> BuildQueryUrls(TorznabEndpointOptions endpoint, FulfillmentJobDto job)
+    private static IEnumerable<string> BuildQueryUrls(IndexerConfigDto indexer, FulfillmentJobDto job)
     {
-        var sep = endpoint.Url.Contains('?') ? "&" : "?";
-        string Base(string t, string cat) =>
-            $"{endpoint.Url.TrimEnd('/')}{sep}apikey={Uri.EscapeDataString(endpoint.ApiKey)}&t={t}&cat={cat}";
+        var endpointUrl = indexer.Url!;
+        var sep = endpointUrl.Contains('?') ? "&" : "?";
+        // Categories come from the row now. They were hardcoded to the Torznab standards, which are simply
+        // wrong for trackers that use their own numbering — those returned nothing and looked "empty".
+        var cat = indexer.CategoriesFor(job.MediaType);
+        string Base(string t, string c) =>
+            $"{endpointUrl.TrimEnd('/')}{sep}apikey={Uri.EscapeDataString(indexer.ApiKey ?? string.Empty)}&t={t}&cat={c}";
 
         if (job.MediaType == MediaType.Movie)
         {
             // An id search beats fuzzy text wherever the indexer supports it; the text query still runs
             // as a second net (imdbid support varies per tracker and the aggregator merges either way).
             var imdbDigits = DigitsOf(job.ImdbId);
-            if (imdbDigits is not null) yield return Base("movie", "2000") + $"&imdbid={imdbDigits}";
-            var q = Base("movie", "2000") + $"&q={Uri.EscapeDataString(job.Title)}";
+            if (imdbDigits is not null) yield return Base("movie", cat) + $"&imdbid={imdbDigits}";
+            var q = Base("movie", cat) + $"&q={Uri.EscapeDataString(job.Title)}";
             if (job.Year is int y) q += $"&year={y}";
             yield return q;
             yield break;
         }
 
-        var cat = job.IsAnime ? "5000,5070" : "5000";
         var text = $"&q={Uri.EscapeDataString(job.Title)}";
         yield return Base("tvsearch", cat) + text; // unscoped — catches complete-series/multi-season packs
         var seasons = job.RequestedSeasons
@@ -99,7 +99,7 @@ public class TorznabIndexerProvider(HttpClient http, IOptions<IndexerOptions> op
             yield return Base("tvsearch", cat) + text + $"&season={s}";
     }
 
-    private List<ReleaseCandidate> ParseFeed(string xml, string endpointName, string jobTitle)
+    private List<ReleaseCandidate> ParseFeed(string xml, IndexerConfigDto indexer, string jobTitle)
     {
         var candidates = new List<ReleaseCandidate>();
         try
@@ -123,7 +123,11 @@ public class TorznabIndexerProvider(HttpClient http, IOptions<IndexerOptions> op
                     magnet = IndexerParsing.BuildMagnet(infoHash!, title!, Trackers);
                 if (string.IsNullOrWhiteSpace(magnet)) continue; // .torrent-file-only result; client is magnet-only
 
-                long size = long.TryParse(Attr("size") ?? (string?)item.Element("size"), out var sz) ? sz : 0;
+                var sizeRaw = Attr("size") ?? (string?)item.Element("size");
+                bool sizeKnown = long.TryParse(sizeRaw, out var sz);
+                long size = sizeKnown ? sz : 0;
+                var seedersRaw = Attr("seeders");
+                DateTime? published = DateTime.TryParse((string?)item.Element("pubDate"), out var pd) ? pd.ToUniversalTime() : null;
                 int? season = int.TryParse(Attr("season"), out var sn) && sn > 0 ? sn : null;
                 int? episode = int.TryParse(Attr("episode"), out var ep) && ep > 0 ? ep : null;
 
@@ -133,10 +137,14 @@ public class TorznabIndexerProvider(HttpClient http, IOptions<IndexerOptions> op
                     Magnet = magnet!,
                     InfoHash = infoHash,
                     ImdbId = Attr("imdbid") ?? Attr("imdb"),
-                    Seeders = IndexerParsing.ParseInt(Attr("seeders")),
+                    Seeders = IndexerParsing.ParseInt(seedersRaw),
                     Leechers = IndexerParsing.ParseInt(Attr("peers") ?? Attr("leechers")),
                     SizeBytes = size,
-                    Source = $"Torznab:{endpointName}",
+                    SeedersKnown = !string.IsNullOrWhiteSpace(seedersRaw),
+                    SizeKnown = sizeKnown,
+                    IndexerId = indexer.Id,
+                    Source = indexer.Name,
+                    PublishDate = published,
                     Season = season,
                     Episode = episode
                 });
@@ -144,7 +152,7 @@ public class TorznabIndexerProvider(HttpClient http, IOptions<IndexerOptions> op
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Torznab feed parse failed for endpoint \"{Endpoint}\" (search for \"{Title}\")", endpointName, jobTitle);
+            _logger.LogWarning(ex, "Torznab feed parse failed for endpoint \"{Endpoint}\" (search for \"{Title}\")", indexer.Name, jobTitle);
         }
         return candidates;
     }
@@ -154,5 +162,83 @@ public class TorznabIndexerProvider(HttpClient http, IOptions<IndexerOptions> op
         if (string.IsNullOrWhiteSpace(imdbId)) return null;
         var digits = new string(imdbId.Where(char.IsDigit).ToArray()).TrimStart('0');
         return digits.Length == 0 ? null : digits;
+    }
+
+    /// <summary>
+    /// The real thing: <c>t=caps</c> returns the endpoint's own category tree and the search params it
+    /// supports. That tree is the answer to the most common way an indexer is misconfigured — a tracker
+    /// numbering its categories privately returns nothing for the Torznab standards, and "nothing" reads
+    /// exactly like "no matches".
+    /// </summary>
+    public async Task<IndexerCapabilitiesDto> TestAsync(IndexerConfigDto indexer, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(indexer.Url))
+            return new IndexerCapabilitiesDto { Reachable = false, Message = "No API URL is configured for this indexer." };
+
+        var sep = indexer.Url.Contains('?') ? "&" : "?";
+        var url = $"{indexer.Url.TrimEnd('/')}{sep}apikey={Uri.EscapeDataString(indexer.ApiKey ?? string.Empty)}&t=caps";
+
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        string xml;
+        try
+        {
+            xml = await _http.GetStringAsync(url, ct);
+            started.Stop();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            started.Stop();
+            _logger.LogWarning(ex, "Torznab caps probe failed for \"{Endpoint}\"", indexer.Name);
+            return new IndexerCapabilitiesDto { Reachable = false, Message = ex.Message };
+        }
+
+        var caps = new IndexerCapabilitiesDto { Reachable = true, ResponseMs = (int)started.ElapsedMilliseconds };
+        try
+        {
+            var doc = XDocument.Parse(xml);
+
+            // Jackett answers an auth failure with a 200 and an <error> body, so a parse alone isn't proof.
+            var error = doc.Descendants("error").FirstOrDefault();
+            if (error is not null)
+            {
+                caps.Reachable = false;
+                caps.Message = (string?)error.Attribute("description") ?? "The endpoint returned an error.";
+                return caps;
+            }
+
+            foreach (var s in doc.Descendants("searching").Elements())
+            {
+                var available = string.Equals((string?)s.Attribute("available"), "yes", StringComparison.OrdinalIgnoreCase);
+                if (!available) continue;
+                if (s.Name.LocalName is "movie-search") caps.SupportsMovieSearch = true;
+                if (s.Name.LocalName is "tv-search") caps.SupportsTvSearch = true;
+                var supported = (string?)s.Attribute("supportedParams");
+                if (!string.IsNullOrWhiteSpace(supported))
+                    caps.SupportedParams.AddRange(supported.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+            }
+            caps.SupportedParams = caps.SupportedParams.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+            foreach (var cat in doc.Descendants("categories").Elements("category"))
+            {
+                if (!int.TryParse((string?)cat.Attribute("id"), out var id)) continue;
+                caps.Categories.Add(new IndexerCategoryDto { Id = id, Name = (string?)cat.Attribute("name") ?? id.ToString() });
+                foreach (var sub in cat.Elements("subcat"))
+                    if (int.TryParse((string?)sub.Attribute("id"), out var subId))
+                        caps.Categories.Add(new IndexerCategoryDto
+                        {
+                            Id = subId, ParentId = id, Name = (string?)sub.Attribute("name") ?? subId.ToString()
+                        });
+            }
+
+            caps.Message = caps.Categories.Count > 0
+                ? $"Connected in {caps.ResponseMs} ms — {caps.Categories.Count} categories available."
+                : $"Connected in {caps.ResponseMs} ms, but the endpoint advertised no categories.";
+        }
+        catch (Exception ex)
+        {
+            caps.Reachable = false;
+            caps.Message = $"The endpoint answered but the response wasn't a Torznab caps document ({ex.Message}).";
+        }
+        return caps;
     }
 }

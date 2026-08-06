@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Indexers;
 
@@ -8,15 +9,14 @@ namespace PlexRequests.Downloader.Indexers;
 /// EZTV public JSON API (TV/anime), keyed by IMDb id: GET /api/get-torrents?imdb_id={digits}.
 /// Returns magnet links + seeds/peers + size directly.
 /// </summary>
-public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> logger) : IIndexerProvider
+public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> logger) : IIndexerImplementation
 {
     private readonly HttpClient _http = http;
     private readonly ILogger<EztvIndexerProvider> _logger = logger;
 
-    public string Name => "EZTV";
-    public bool Supports(MediaType mediaType) => mediaType is MediaType.TvShow or MediaType.Anime;
+    public string Key => "EZTV";
 
-    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct)
+    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(IndexerConfigDto indexer, FulfillmentJobDto job, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(job.ImdbId))
         {
@@ -49,7 +49,8 @@ public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> l
                     Seeders = t.Seeds,
                     Leechers = t.Peers,
                     SizeBytes = t.SizeBytes,
-                    Source = Name,
+                    IndexerId = indexer.Id,
+                    Source = indexer.Name,
                     Season = t.Season > 0 ? t.Season : null,
                     Episode = t.Episode > 0 ? t.Episode : null
                 });

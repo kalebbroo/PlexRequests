@@ -1,51 +1,33 @@
 using PlexRequestsHosted.Services.Abstractions;
+using PlexRequestsHosted.Services.Jobs;
+using PlexRequestsHosted.Shared.Enums;
 
 namespace PlexRequestsHosted.Services.Background;
 
 /// <summary>
-/// Keeps the DB-backed Plex availability index fresh. Runs a full Plex scan shortly after startup and
-/// then on an interval (default 30 min), upserting item id-maps + per-season episode presence and
-/// pruning anything no longer on the server. All availability reads (badges, per-season dedup) come
-/// from the DB this fills, so nothing user-facing has to touch Plex live.
+/// Keeps the DB-backed Plex availability index fresh: a full Plex scan that upserts item id-maps +
+/// per-season episode presence and ages out anything no longer on the server. All availability reads
+/// (badges, per-season dedup) come from the DB this fills, so nothing user-facing has to touch Plex live.
+///
+/// This used to be a <c>BackgroundService</c> with its own <c>Task.Delay</c> loop, invisible to the admin
+/// Jobs panel. It's now an <see cref="IJobHandler"/> so it gets run history, enable/disable, an adjustable
+/// interval and "Run now" like every other job. The cadence lives in its schedule row, not here.
 /// </summary>
 public class AvailabilityRefreshService(
-    IServiceScopeFactory scopeFactory,
+    IPlexApiService plex,
     IConfiguration config,
-    ILogger<AvailabilityRefreshService> logger) : BackgroundService
+    ILogger<AvailabilityRefreshService> logger) : IJobHandler
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public JobType Type => JobType.AvailabilityRefresh;
+
+    public async Task<JobResult> ExecuteAsync(JobContext context, CancellationToken ct)
     {
         var plexConfigured = !string.IsNullOrWhiteSpace(config["Plex:PrimaryServerUrl"])
                              && !string.IsNullOrWhiteSpace(config["Plex:ServerToken"]);
-        if (!plexConfigured)
-        {
-            logger.LogInformation("Plex not configured; availability refresh service idle");
-            return;
-        }
+        if (!plexConfigured) return JobResult.Skipped("Plex is not configured");
 
-        var interval = TimeSpan.FromMinutes(Math.Max(5, config.GetValue("Plex:AvailabilityRefreshMinutes", 30)));
-        // Small startup delay so the app finishes booting before the first (heavy) scan.
-        try { await Task.Delay(TimeSpan.FromSeconds(20), stoppingToken); }
-        catch (OperationCanceledException) { return; }
-
-        logger.LogInformation("Availability refresh started (every {Interval}m)", interval.TotalMinutes);
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try { await RunOnceAsync(); }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex) { logger.LogError(ex, "Availability refresh pass failed"); }
-
-            try { await Task.Delay(interval, stoppingToken); }
-            catch (OperationCanceledException) { break; }
-        }
-    }
-
-    private async Task RunOnceAsync()
-    {
-        using var scope = scopeFactory.CreateScope();
-        var plex = scope.ServiceProvider.GetRequiredService<IPlexApiService>();
-        var result = await plex.RebuildAvailabilityFromPlexAsync();
+        var result = await plex.RebuildAvailabilityFromPlexAsync(ct);
         logger.LogInformation("Availability refresh pass complete: {@Result}", result);
+        return JobResult.Ok(0, result.ToString());
     }
 }

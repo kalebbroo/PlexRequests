@@ -1,0 +1,100 @@
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@inject PlexRequestsHosted.Services.Implementations.IReleaseBlocklistService Blocklist
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
+
+@* Releases that failed and won't be grabbed again. Without this list a request whose download failed would
+   re-search, rank the identical broken torrent top, and fail again on every backoff tick. Unblocking is
+   here for the case where the failure was environmental rather than the release's fault. *@
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else if (_entries.Count == 0)
+{
+    <div class="text-center py-6 text-muted">
+        Nothing is blocklisted. Releases land here automatically when a download stalls, errors or fails to import.
+    </div>
+}
+else
+{
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <MudText Typo="Typo.body2" Class="text-muted">
+            @_entries.Count release(s) excluded from future searches. Unblock one if the failure was a
+            temporary problem at your end rather than a bad release.
+        </MudText>
+        <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined"
+                   StartIcon="@Icons.Material.Filled.Refresh" OnClick="Load">Refresh</MudButton>
+    </div>
+
+    <MudTable Items="_entries" Dense="true" Hover="true" Class="elevation-1">
+        <HeaderContent>
+            <MudTh>Release</MudTh>
+            <MudTh>For</MudTh>
+            <MudTh>Reason</MudTh>
+            <MudTh>Scope</MudTh>
+            <MudTh>Blocked</MudTh>
+            <MudTh Style="width:60px;"></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Release" Style="word-break:break-all;">
+                @(string.IsNullOrWhiteSpace(context.ReleaseName) ? context.InfoHash : context.ReleaseName)
+            </MudTd>
+            <MudTd DataLabel="For">@(context.RequestTitle ?? "—")</MudTd>
+            <MudTd DataLabel="Reason">
+                <MudTooltip Text="@context.Detail">
+                    <MudChip T="string" Size="Size.Small" Color="@ReasonColor(context.Reason)">@Describe(context.Reason)</MudChip>
+                </MudTooltip>
+            </MudTd>
+            <MudTd DataLabel="Scope">@context.Scope</MudTd>
+            <MudTd DataLabel="Blocked">@context.BlockedAt.ToLocalTime().ToString("g")</MudTd>
+            <MudTd>
+                <MudTooltip Text="Allow this release to be considered again">
+                    <MudIconButton Icon="@Icons.Material.Filled.LockOpen" Size="Size.Small" Color="Color.Warning"
+                                   OnClick="() => Unblock(context)" />
+                </MudTooltip>
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+}
+
+@code {
+    private bool _loading = true;
+    private List<BlocklistEntryDto> _entries = new();
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _loading = true;
+        _entries = await Blocklist.ListAsync();
+        _loading = false;
+    }
+
+    private async Task Unblock(BlocklistEntryDto entry)
+    {
+        if (await Blocklist.UnblockAsync(entry.Id))
+            await Toasts.ShowSuccessAsync("Unblocked — it can be selected again.");
+        await Load();
+    }
+
+    private static string Describe(BlocklistReason r) => r switch
+    {
+        BlocklistReason.DownloadFailed => "download failed",
+        BlocklistReason.ImportFailed => "import failed",
+        BlocklistReason.Stalled => "stalled",
+        BlocklistReason.TorrentError => "torrent error",
+        BlocklistReason.PathUnresolvable => "no files on disk",
+        BlocklistReason.WrongContent => "wrong content",
+        BlocklistReason.ManualBlock => "blocked by admin",
+        _ => r.ToString()
+    };
+
+    private static Color ReasonColor(BlocklistReason r) => r switch
+    {
+        BlocklistReason.Stalled => Color.Warning,
+        BlocklistReason.ManualBlock => Color.Default,
+        _ => Color.Error
+    };
+}

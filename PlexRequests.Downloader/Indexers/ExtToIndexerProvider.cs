@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Indexers;
 
@@ -18,16 +19,15 @@ namespace PlexRequests.Downloader.Indexers;
 /// selectors/URL can be tuned against a live page without code changes.
 /// </summary>
 public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptions> options, ILogger<ExtToIndexerProvider> logger)
-    : IIndexerProvider
+    : IIndexerImplementation
 {
     private readonly HttpClient _http = http;
     private readonly IndexerOptions _opts = options.Value;
     private readonly ILogger<ExtToIndexerProvider> _logger = logger;
 
-    public string Name => "ext.to";
-    public bool Supports(MediaType mediaType) => mediaType is MediaType.Movie or MediaType.TvShow or MediaType.Anime;
+    public string Key => "ext.to";
 
-    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct)
+    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(IndexerConfigDto indexer, FulfillmentJobDto job, CancellationToken ct)
     {
         if (!_opts.ExtToEnabled || string.IsNullOrWhiteSpace(job.Title)) return Array.Empty<ReleaseCandidate>();
 
@@ -53,7 +53,7 @@ public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptio
         doc.LoadHtml(html);
 
         // Strategy 1: magnets present directly on the search results page.
-        var inline = ParseInlineMagnets(doc);
+        var inline = ParseInlineMagnets(doc, indexer);
         if (inline.Count > 0) return inline;
 
         // Strategy 2: follow the top detail pages and pull magnet + labelled seeders/size from each.
@@ -61,16 +61,16 @@ public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptio
             .Select(a => a.GetAttributeValue("href", null))
             .Where(h => !string.IsNullOrWhiteSpace(h))
             .Distinct()
-            .Take(Math.Clamp(_opts.ExtToMaxDetail, 1, 25))
+            .Take(Math.Clamp(indexer.MaxDetailFetches, 1, 100))
             .ToList() ?? new();
 
         if (detailPaths.Count == 0) return Array.Empty<ReleaseCandidate>();
 
-        var results = await Task.WhenAll(detailPaths.Select(p => FromDetailAsync(p!, ct)));
+        var results = await Task.WhenAll(detailPaths.Select(p => FromDetailAsync(p!, indexer, ct)));
         return results.Where(c => c is not null).Select(c => c!).ToList();
     }
 
-    private List<ReleaseCandidate> ParseInlineMagnets(HtmlDocument doc)
+    private List<ReleaseCandidate> ParseInlineMagnets(HtmlDocument doc, IndexerConfigDto indexer)
     {
         var magnets = doc.DocumentNode.SelectNodes("//a[starts-with(@href,'magnet:')]");
         var list = new List<ReleaseCandidate>();
@@ -92,13 +92,16 @@ public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptio
                 Seeders = Labelled(rowText, "seed"),
                 Leechers = Labelled(rowText, "leech"),
                 SizeBytes = IndexerParsing.ParseSize(SizeNear(rowText)),
-                Source = Name
+                IndexerId = indexer.Id,
+                Source = indexer.Name,
+                SeedersKnown = Labelled(rowText, "seed") > 0,
+                SizeKnown = IndexerParsing.ParseSize(SizeNear(rowText)) > 0
             });
         }
         return list;
     }
 
-    private async Task<ReleaseCandidate?> FromDetailAsync(string path, CancellationToken ct)
+    private async Task<ReleaseCandidate?> FromDetailAsync(string path, IndexerConfigDto indexer, CancellationToken ct)
     {
         try
         {
@@ -122,7 +125,10 @@ public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptio
                 Seeders = Labelled(text, "seed"),
                 Leechers = Labelled(text, "leech"),
                 SizeBytes = IndexerParsing.ParseSize(SizeNear(text)),
-                Source = Name
+                IndexerId = indexer.Id,
+                Source = indexer.Name,
+                SeedersKnown = Labelled(text, "seed") > 0,
+                SizeKnown = IndexerParsing.ParseSize(SizeNear(text)) > 0
             };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

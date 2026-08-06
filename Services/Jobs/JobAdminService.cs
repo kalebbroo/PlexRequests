@@ -16,7 +16,8 @@ namespace PlexRequestsHosted.Services.Jobs;
 public class JobAdminService(
     AppDbContext db,
     IFulfillmentQueue queue,
-    IQualityRuleService quality,
+    IQualityProfileService profiles,
+    UpgradeScanJob upgradeScan,
     ILogger<JobAdminService> logger) : IJobAdminService
 {
     // ---- Scheduled jobs -----------------------------------------------------------------------------
@@ -26,8 +27,27 @@ public class JobAdminService(
         {
             Id = j.Id, JobType = j.JobType, Name = j.Name, Enabled = j.Enabled,
             IntervalSeconds = j.IntervalSeconds, NextRunAt = j.NextRunAt, LastRunAt = j.LastRunAt,
-            LastStatus = j.LastStatus, LastMessage = j.LastMessage, IsRunning = j.IsRunning
+            LastStatus = j.LastStatus, LastMessage = j.LastMessage, IsRunning = j.IsRunning,
+            RunningSince = j.RunningSince, TimeoutSeconds = j.TimeoutSeconds,
+            LastRunDurationMs = j.LastRunDurationMs, ConsecutiveFailures = j.ConsecutiveFailures
         }).ToListAsync();
+
+    /// <summary>
+    /// Manually clear a stuck <c>IsRunning</c> flag. The scheduler clears it in a finally and again at
+    /// startup, so this is a last resort for a flag left by something neither path covered — without it the
+    /// only recovery was editing the database by hand, and a set flag stops that job type running at all.
+    /// </summary>
+    public async Task<bool> ClearRunningFlagAsync(JobType jobType)
+    {
+        var job = await db.ScheduledJobs.FirstOrDefaultAsync(j => j.JobType == jobType);
+        if (job is null || !job.IsRunning) return false;
+        job.IsRunning = false;
+        job.RunningSince = null;
+        job.NextRunAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        logger.LogWarning("Admin cleared a stuck running flag on job {JobType}", jobType);
+        return true;
+    }
 
     public async Task<bool> SetJobEnabledAsync(JobType type, bool enabled)
     {
@@ -121,7 +141,7 @@ public class JobAdminService(
     public async Task<List<CutoffUnmetItemDto>> GetCutoffUnmetAsync()
     {
         var requests = await db.MediaRequests
-            .Where(r => r.Status == RequestStatus.Available && !r.CutoffMet)
+            .Where(r => r.Status == RequestStatus.Available && r.CutoffState == CutoffState.Unmet)
             .OrderBy(r => r.LastUpgradeSearchAt)
             .ToListAsync();
         if (requests.Count == 0) return new();
@@ -140,7 +160,9 @@ public class JobAdminService(
             var genresCsv = jobs.OrderByDescending(j => j.Id).Select(j => j.GenresCsv).FirstOrDefault();
             var genres = string.IsNullOrWhiteSpace(genresCsv) ? null
                 : genresCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-            var want = await quality.ResolveQualityAsync(r.MediaType, r.MediaId, genres);
+            var profileId = r.QualityProfileId
+                ?? await profiles.ResolveProfileIdAsync(r.MediaType, r.MediaId, genres, null, r.RequestedByUserId);
+            var want = await profiles.GetCutoffQualityAsync(profileId);
             var inProgress = jobs.Any(j => j.IsUpgrade
                 && j.Status != FulfillmentStatus.Completed && j.Status != FulfillmentStatus.Failed && j.Status != FulfillmentStatus.Cancelled);
 
@@ -156,43 +178,19 @@ public class JobAdminService(
         return result;
     }
 
+    /// <summary>
+    /// Admin "Upgrade now" for a single request. Delegates to the same routine the scheduled scan uses so the
+    /// two can't drift — this method previously carried its own copy, which had diverged (no attempt cap, and
+    /// it never resolved the cutoff state, so a stale entry stayed in the panel until the scan happened to
+    /// clear it). The cooldown is deliberately bypassed here: an admin pressing the button means "now".
+    /// </summary>
     public async Task<bool> UpgradeNowAsync(int requestId)
     {
         var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == requestId);
         if (req is null || req.Status != RequestStatus.Available) return false;
 
-        var genresCsv = await db.FulfillmentJobs.Where(j => j.MediaRequestId == requestId)
-            .OrderByDescending(j => j.Id).Select(j => j.GenresCsv).FirstOrDefaultAsync();
-        var genres = string.IsNullOrWhiteSpace(genresCsv) ? null
-            : genresCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-        var target = await quality.ResolveQualityAsync(req.MediaType, req.MediaId, genres);
-        int targetHeight = (int)target;
-
-        var jobIds = await db.FulfillmentJobs.Where(j => j.MediaRequestId == requestId).Select(j => j.Id).ToListAsync();
-        var belowTarget = await db.ImportedFiles
-            .Where(f => jobIds.Contains(f.FulfillmentJobId) && f.FileType == "video"
-                        && f.ResolutionHeight > 0 && f.ResolutionHeight < targetHeight)
-            .ToListAsync();
-        if (belowTarget.Count == 0) return false;
-
-        var episodes = belowTarget
-            .Where(f => f.SeasonNumber is not null && f.EpisodeNumber is not null)
-            .Select(f => (f.SeasonNumber!.Value, f.EpisodeNumber!.Value)).Distinct().ToList();
-        var replacePaths = belowTarget.Select(f => f.DestinationPath)
-            .Where(p => !string.IsNullOrWhiteSpace(p)).Distinct().ToList();
-
-        var dto = new MediaRequestDto
-        {
-            Id = req.Id, MediaId = req.MediaId, MediaType = req.MediaType, Title = req.Title,
-            ExternalId = req.ExternalId, ExternalSource = req.ExternalSource
-        };
-        var ok = await queue.EnqueueUpgradeAsync(dto, target, replacePaths, episodes);
-        if (ok)
-        {
-            req.LastUpgradeSearchAt = DateTime.UtcNow;
-            req.UpgradeAttempts++;
-            await db.SaveChangesAsync();
-        }
+        var ok = await upgradeScan.TryEnqueueUpgradeAsync(req, DateTime.UtcNow, CancellationToken.None);
+        await db.SaveChangesAsync();
         return ok;
     }
 }

@@ -16,7 +16,8 @@ public class MediaRequestService(
     IFulfillmentQueue fulfillmentQueue,
     IConfiguration configuration,
     IDownloadPreferencesService downloadPreferences,
-    ISeasonAvailabilityEvaluator seasonAvailability) : IMediaRequestService
+    ISeasonAvailabilityEvaluator seasonAvailability,
+    IQualityProfileService qualityProfiles) : IMediaRequestService
 {
     private readonly AppDbContext _db = db;
     private readonly AuthenticationStateProvider _auth = authStateProvider;
@@ -26,6 +27,7 @@ public class MediaRequestService(
     private readonly IConfiguration _config = configuration;
     private readonly IDownloadPreferencesService _downloadPreferences = downloadPreferences;
     private readonly ISeasonAvailabilityEvaluator _seasonAvailability = seasonAvailability;
+    private readonly IQualityProfileService _qualityProfiles = qualityProfiles;
 
     // Statuses that still legitimately block a duplicate request/re-request; Failed/Cancelled/Rejected
     // don't (a failed download should be retryable), and Available is checked separately/live so its
@@ -227,35 +229,35 @@ public class MediaRequestService(
         return await _db.Watchlist.AnyAsync(w => w.MediaId == mediaId && w.MediaType == mediaType && w.Username == username);
     }
 
-    public async Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType)
+    public async Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null)
     {
         var (username, isAdmin) = await GetUserAsync();
         if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
         var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
         if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
-        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType);
+        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, qualityProfileId: qualityProfileId);
     }
 
     /// <summary>Request specific seasons of a TV show (empty list ⇒ the whole series).</summary>
-    public async Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons)
+    public async Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons, int? qualityProfileId = null)
     {
         var (username, isAdmin) = await GetUserAsync();
         if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
         var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
         if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
         var allSeasons = seasons is not { Count: > 0 };
-        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons, seasons);
+        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons, seasons, qualityProfileId: qualityProfileId);
     }
 
     /// <summary>Request specific episodes of a TV show, e.g. [(1,1),(1,2),(2,5)].</summary>
-    public async Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes)
+    public async Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes, int? qualityProfileId = null)
     {
         var (username, isAdmin) = await GetUserAsync();
         if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
         if (episodes is not { Count: > 0 }) return new MediaRequestResult { Success = false, ErrorMessage = "No episodes selected" };
         var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
         if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
-        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons: false, seasons: null, episodes: episodes);
+        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons: false, seasons: null, episodes: episodes, qualityProfileId: qualityProfileId);
     }
 
     /// <summary>
@@ -287,7 +289,13 @@ public class MediaRequestService(
             RequestedByUserId = anchor.RequestedByUserId,
             RequestAllSeasons = false,
             RequestedEpisodesCsv = csv,
-            Monitored = false
+            Monitored = false,
+            // Inherit the anchor's profile rather than re-resolving. A newly-aired episode of a series the
+            // user asked for in 1080p has to arrive in 1080p; re-resolving would silently apply whatever the
+            // assignment rules say today, which is not what was agreed when the series was requested.
+            QualityProfileId = anchor.QualityProfileId
+                ?? await _qualityProfiles.ResolveProfileIdAsync(anchor.MediaType, anchor.MediaId, null,
+                    requesterChoiceId: null, userId: anchor.RequestedByUserId)
         };
         _db.MediaRequests.Add(child);
         await _db.SaveChangesAsync();
@@ -325,7 +333,11 @@ public class MediaRequestService(
             RequestedAt = DateTime.UtcNow,
             ApprovedAt = autoApprove ? DateTime.UtcNow : null,
             RequestedBy = username,
-            RequestedByUserId = userId
+            RequestedByUserId = userId,
+            // Music has no quality tiers of its own yet, but every request is bound to a profile — so this
+            // takes whatever the rules resolve to rather than being the one row in the table without one.
+            QualityProfileId = await _qualityProfiles.ResolveProfileIdAsync(MediaType.Music, 0, null,
+                requesterChoiceId: null, userId: userId)
         };
         _db.MediaRequests.Add(entity);
         var saved = await _db.SaveChangesAsync() > 0;
@@ -341,14 +353,14 @@ public class MediaRequestService(
     /// <summary>Request an entire series. Whether it's then monitored for new episodes as they air is an
     /// admin-configured default (<see cref="DownloadPreferencesDto.AutoMonitorEntireSeriesRequests"/>), not
     /// a per-request user choice.</summary>
-    public async Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType)
+    public async Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null)
     {
         var (username, isAdmin) = await GetUserAsync();
         if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
         var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
         if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
         var monitor = (await _downloadPreferences.GetAsync()).AutoMonitorEntireSeriesRequests;
-        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons: true, seasons: null, episodes: null, monitored: monitor);
+        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons: true, seasons: null, episodes: null, monitored: monitor, qualityProfileId: qualityProfileId);
     }
 
     /// <summary>Create a request on behalf of an explicit user (used by the Discord bridge, which has no cookie session).</summary>
@@ -363,7 +375,7 @@ public class MediaRequestService(
         return await CreateRequestCoreAsync(userId, user.Username, isAdmin, mediaId, mediaType);
     }
 
-    private async Task<MediaRequestResult> CreateRequestCoreAsync(int userId, string username, bool isAdmin, int mediaId, MediaType mediaType, bool allSeasons = true, List<int>? seasons = null, List<(int season, int episode)>? episodes = null, bool monitored = false)
+    private async Task<MediaRequestResult> CreateRequestCoreAsync(int userId, string username, bool isAdmin, int mediaId, MediaType mediaType, bool allSeasons = true, List<int>? seasons = null, List<(int season, int episode)>? episodes = null, bool monitored = false, int? qualityProfileId = null)
     {
         // Per-user duplicate check: a second user requesting the same title joins it rather than
         // being blocked. Only the same user re-requesting an already-covered scope is rejected — for TV
@@ -383,6 +395,10 @@ public class MediaRequestService(
         // Enrich with metadata for nice UI
         string title = $"Item #{mediaId}";
         string? poster = null;
+        // Genres are picked up here too: profile assignment rules can match on genre, so resolving the
+        // profile below needs them. Best-effort, same as the title — a metadata outage falls back to the
+        // rules that don't need genres, not to no profile at all.
+        List<string>? genres = null;
         try
         {
             var details = await _metadata.GetDetailsAsync(mediaId, mediaType);
@@ -390,6 +406,7 @@ public class MediaRequestService(
             {
                 title = string.IsNullOrWhiteSpace(details.Title) ? title : details.Title;
                 poster = details.PosterUrl;
+                genres = details.Genres;
             }
         }
         catch { /* best-effort */ }
@@ -415,7 +432,14 @@ public class MediaRequestService(
             RequestedEpisodesCsv = mediaType == MediaType.TvShow && episodes is { Count: > 0 }
                 ? string.Join(",", episodes.Distinct().OrderBy(e => e.season).ThenBy(e => e.episode).Select(e => $"S{e.season}E{e.episode}"))
                 : null,
-            Monitored = mediaType == MediaType.TvShow && monitored
+            Monitored = mediaType == MediaType.TvShow && monitored,
+            // Resolved here rather than left null for the queue to work out later: the request row is what
+            // the whole system reads to decide what "good enough" means for this title, and a null there
+            // meant the answer depended on when you asked. ResolveProfileIdAsync re-validates the
+            // requester's pick against what they may actually select, so an unauthorised id is ignored
+            // rather than trusted.
+            QualityProfileId = await _qualityProfiles.ResolveProfileIdAsync(mediaType, mediaId, genres,
+                qualityProfileId, userId)
         };
         _db.MediaRequests.Add(entity);
         var saved = await _db.SaveChangesAsync() > 0;

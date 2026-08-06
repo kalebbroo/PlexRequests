@@ -1,3 +1,4 @@
+using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 
 namespace PlexRequestsHosted.Services.Abstractions;
@@ -11,4 +12,15 @@ public interface IMetadataRefreshCoordinator
 {
     void QueueDetail(MediaType mediaType, int tmdbId);
     void QueueEpisodes(int showTmdbId, int seasonNumber);
+
+    /// <summary>
+    /// Fetch fresh metadata and WAIT for it, rather than queueing a background refresh and returning the
+    /// stale copy. The monitor needs this: with a 6-hour detail TTL and a 12-hour episode TTL, a newly
+    /// aired episode could stay invisible for most of a day purely because nothing ever forced a fetch.
+    /// Shares the same in-flight dedup as the queue methods, so a concurrent background refresh isn't
+    /// duplicated.
+    /// </summary>
+    Task<MediaDetailDto?> RefreshDetailNowAsync(MediaType mediaType, int tmdbId);
+
+    Task<List<EpisodeDto>> RefreshEpisodesNowAsync(int showTmdbId, int seasonNumber);
 }

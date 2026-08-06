@@ -23,6 +23,24 @@ public class ImportedFileEntity
     /// <summary>Vertical resolution (pixel height, e.g. 1080) of the release this file came from, as ranked
     /// by the downloader. 0 = unknown. Drives achieved-quality rollup and quality-upgrade (cutoff) detection.</summary>
     public int ResolutionHeight { get; set; }
+
+    /// <summary>The full tier (resolution x source) this file's release matched, as a
+    /// <see cref="QualityDefinitionEntity"/> id. Null for rows imported before tiers existed.</summary>
+    public int? QualityDefinitionId { get; set; }
+
+    /// <summary>Custom-format score of the release this file came from. Inert until custom formats ship.</summary>
+    public int CustomFormatScore { get; set; }
+
+    /// <summary>
+    /// The release name this file was imported from. Worth storing because it lets quality, source and (later)
+    /// custom-format scores be re-derived for the existing library without re-searching indexers — which is
+    /// what makes a cutoff state of "unknown" recoverable and a scoring-rule change retroactive.
+    /// </summary>
+    [MaxLength(512)] public string? ReleaseName { get; set; }
+
+    /// <summary>Info hash of the torrent this came from, for failure blocklisting.</summary>
+    [MaxLength(40)] public string? InfoHash { get; set; }
+
     public DateTime ImportedAt { get; set; } = DateTime.UtcNow;
 
     [ForeignKey(nameof(FulfillmentJobId))]

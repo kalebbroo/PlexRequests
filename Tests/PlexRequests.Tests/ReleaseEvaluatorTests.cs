@@ -1,0 +1,245 @@
+using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Releases;
+using Xunit;
+
+namespace PlexRequests.Tests;
+
+/// <summary>One test per rejection reason, plus the profile behaviour that Phase 3 made possible.</summary>
+public class ReleaseEvaluatorTests
+{
+    private readonly ReleaseEvaluator _eval = TestData.Evaluator();
+
+    private static bool Rejected(RankedCandidate r, RejectionReason reason) =>
+        r.Rejections.Any(x => x.Reason == reason);
+
+    [Fact]
+    public void Accepts_a_release_matching_the_profile()
+    {
+        var defs = TestData.Definitions();
+        var r = _eval.Evaluate(
+            TestData.Release("Severance.S02E07.1080p.WEB-DL-NTb"),
+            TestData.Job(),
+            TestData.Context(TestData.Profile(defs), defs: defs));
+
+        Assert.True(r.Accepted);
+        Assert.Equal(1080, r.Resolution);
+        Assert.Equal(TestData.TierId(defs, Quality.FullHD, ReleaseSource.WebDl), r.QualityDefinitionId);
+    }
+
+    // The headline behaviour of this phase: quality is judged against the profile's allowed tier list,
+    // not just a pixel-height floor.
+    [Fact]
+    public void Rejects_a_tier_the_profile_disallows()
+    {
+        var defs = TestData.Definitions();
+        var profile = TestData.Profile(defs, floor: Quality.FullHD);
+        var r = _eval.Evaluate(
+            TestData.Release("Severance.S02E07.720p.WEB-DL-NTb"),
+            TestData.Job(),
+            TestData.Context(profile, defs: defs));
+
+        Assert.False(r.Accepted);
+        Assert.True(Rejected(r, RejectionReason.NotInProfile));
+        Assert.Contains("isn't allowed", r.Rejections.First().Detail);
+    }
+
+    [Fact]
+    public void Relaxing_admits_a_disallowed_tier_but_never_a_CAM()
+    {
+        var defs = TestData.Definitions();
+        var profile = TestData.Profile(defs, floor: Quality.FullHD);
+
+        var settled = _eval.Evaluate(TestData.Release("Severance.S02E07.720p.WEB-DL"),
+            TestData.Job(), TestData.Context(profile, relax: true, defs: defs));
+        Assert.True(settled.Accepted);
+
+        var cam = _eval.Evaluate(TestData.Release("Severance.S02E07.720p.CAM"),
+            TestData.Job(), TestData.Context(profile, relax: true, defs: defs));
+        Assert.False(cam.Accepted);
+        Assert.True(Rejected(cam, RejectionReason.NotInProfile));
+    }
+
+    [Fact]
+    public void Falls_back_to_the_flat_floor_when_a_job_has_no_profile()
+    {
+        var r = _eval.Evaluate(TestData.Release("Severance.S02E07.720p.WEB-DL"),
+            TestData.Job(quality: Quality.FullHD), TestData.Context(profile: null));
+        Assert.False(r.Accepted);
+        Assert.True(Rejected(r, RejectionReason.BelowQualityFloor));
+    }
+
+    [Fact]
+    public void Resolves_an_unknown_source_to_the_Unknown_tier()
+    {
+        // A large share of real release names carry no source token. Without the Unknown-source tier these
+        // would resolve to nothing and be unrankable.
+        var defs = TestData.Definitions();
+        var r = _eval.Evaluate(TestData.Release("Severance.S02E07.1080p"),
+            TestData.Job(), TestData.Context(TestData.Profile(defs), defs: defs));
+
+        Assert.True(r.Accepted);
+        Assert.Equal(TestData.TierId(defs, Quality.FullHD, ReleaseSource.Unknown), r.QualityDefinitionId);
+    }
+
+    [Fact]
+    public void Rejects_too_few_seeders()
+    {
+        var r = _eval.Evaluate(TestData.Release("Severance.S02E07.1080p.WEB-DL", seeders: 0),
+            TestData.Job(), TestData.Context());
+        Assert.True(Rejected(r, RejectionReason.TooFewSeeders));
+    }
+
+    // Two scrapers routinely fail to parse seeders and size. Treating that as a genuine zero silently
+    // discarded much of their output against the minimum-seeder and minimum-size gates.
+    [Fact]
+    public void Unknown_seeders_and_size_are_not_rejections()
+    {
+        var r = _eval.Evaluate(
+            TestData.Release("Severance.S02E07.1080p.WEB-DL", seeders: 0, sizeGb: 0, seedersKnown: false, sizeKnown: false),
+            TestData.Job(), TestData.Context());
+
+        Assert.True(r.Accepted);
+        Assert.DoesNotContain(r.Rejections, x => x.Reason == RejectionReason.TooFewSeeders);
+        Assert.DoesNotContain(r.Rejections, x => x.Reason == RejectionReason.SizeTooSmall);
+        // ...but it should score worse than an equivalent release with known seeders.
+        var known = _eval.Evaluate(TestData.Release("Severance.S02E07.1080p.WEB-DL", seeders: 50),
+            TestData.Job(), TestData.Context());
+        Assert.True(known.Score > r.Score);
+    }
+
+    [Theory]
+    [InlineData(0.01, RejectionReason.SizeTooSmall)]
+    [InlineData(999, RejectionReason.SizeTooLarge)]
+    public void Rejects_implausible_sizes(double sizeGb, RejectionReason expected)
+    {
+        var r = _eval.Evaluate(TestData.Release("Severance.S02E07.1080p.WEB-DL", sizeGb: sizeGb),
+            TestData.Job(), TestData.Context());
+        Assert.True(Rejected(r, expected));
+    }
+
+    [Fact]
+    public void Rejects_a_different_title()
+    {
+        var r = _eval.Evaluate(TestData.Release("Completely.Different.Show.S01E01.1080p.WEB-DL"),
+            TestData.Job(title: "Severance"), TestData.Context());
+        Assert.True(Rejected(r, RejectionReason.TitleMismatch));
+    }
+
+    // The short-title false positive: a one-word request must not match a longer title that contains it.
+    [Fact]
+    public void Rejects_a_longer_title_containing_the_request()
+    {
+        var r = _eval.Evaluate(TestData.Release("Lucky.Star.S01.1080p.WEB-DL"),
+            TestData.Job(title: "Lucky", type: MediaType.TvShow), TestData.Context());
+        Assert.True(Rejected(r, RejectionReason.ExtraTitleTokens));
+    }
+
+    [Fact]
+    public void Accepts_a_regional_variant()
+    {
+        // "US"/"UK"/"AU" disambiguate a country's edition; they aren't evidence of a different show.
+        var r = _eval.Evaluate(TestData.Release("The.Office.US.S01E01.1080p.WEB-DL"),
+            TestData.Job(title: "The Office"), TestData.Context());
+        Assert.DoesNotContain(r.Rejections, x => x.Reason == RejectionReason.ExtraTitleTokens);
+    }
+
+    [Fact]
+    public void An_imdb_id_match_overrides_fuzzy_title_matching()
+    {
+        // The id is authoritative, so an oddly-named release with the right id is still accepted.
+        var r = _eval.Evaluate(
+            TestData.Release("Totally.Unrecognisable.Name.1080p.WEB-DL", imdbId: "tt11280740"),
+            TestData.Job(imdbId: "tt11280740"), TestData.Context());
+        Assert.True(r.Accepted);
+        Assert.Contains(r.ScoreBreakdown, c => c.Name == "IMDb id match");
+    }
+
+    [Fact]
+    public void An_imdb_id_mismatch_is_a_hard_rejection()
+    {
+        var r = _eval.Evaluate(TestData.Release("Severance.S02E07.1080p.WEB-DL", imdbId: "tt0000001"),
+            TestData.Job(imdbId: "tt11280740"), TestData.Context());
+        Assert.True(Rejected(r, RejectionReason.ImdbMismatch));
+    }
+
+    [Fact]
+    public void Rejects_a_mismatched_year()
+    {
+        var r = _eval.Evaluate(TestData.Release("Dune.1984.1080p.BluRay"),
+            TestData.Job(title: "Dune", type: MediaType.Movie, year: 2021), TestData.Context());
+        Assert.True(Rejected(r, RejectionReason.YearMismatch));
+    }
+
+    [Fact]
+    public void Rejects_a_tv_release_for_a_movie_request()
+    {
+        var r = _eval.Evaluate(TestData.Release("Dune.S01E01.1080p.WEB-DL"),
+            TestData.Job(title: "Dune", type: MediaType.Movie), TestData.Context());
+        Assert.True(Rejected(r, RejectionReason.MediaTypeMismatch));
+    }
+
+    [Fact]
+    public void Rejects_a_blocklisted_release_by_hash()
+    {
+        var hash = new string('a', 40);
+        var context = TestData.Context(blocklist: new HashSet<string> { hash });
+        var r = _eval.Evaluate(TestData.Release("Severance.S02E07.1080p.WEB-DL", infoHash: hash),
+            TestData.Job(), context);
+        Assert.True(Rejected(r, RejectionReason.Blocklisted));
+    }
+
+    [Fact]
+    public void Blocklisting_works_even_when_the_indexer_reported_no_hash()
+    {
+        // Only some indexers report an info hash, so it's derived from the magnet. Without that, a failed
+        // release from any other indexer could be grabbed again immediately.
+        var hash = new string('b', 40);
+        var candidate = TestData.Release("Severance.S02E07.1080p.WEB-DL", infoHash: hash) with { InfoHash = null };
+        var r = _eval.Evaluate(candidate, TestData.Job(),
+            TestData.Context(blocklist: new HashSet<string> { hash }));
+        Assert.True(Rejected(r, RejectionReason.Blocklisted));
+    }
+
+    [Fact]
+    public void An_upgrade_never_accepts_a_downgrade_even_when_relaxed()
+    {
+        var r = _eval.Evaluate(TestData.Release("Severance.S02E07.720p.WEB-DL"),
+            TestData.Job(quality: Quality.FullHD, isUpgrade: true),
+            TestData.Context(relax: true));
+        Assert.True(Rejected(r, RejectionReason.NotAnUpgrade));
+    }
+
+    [Fact]
+    public void Higher_profile_rank_outscores_more_seeders()
+    {
+        // Profile position must dominate: the tier the admin ranked higher should win even when a worse
+        // tier has far better seeding.
+        var defs = TestData.Definitions();
+        var context = TestData.Context(TestData.Profile(defs, floor: Quality.HD), defs: defs);
+
+        var better = _eval.Evaluate(TestData.Release("Severance.S02E07.1080p.WEB-DL", seeders: 5), TestData.Job(), context);
+        var worse = _eval.Evaluate(TestData.Release("Severance.S02E07.720p.WEB-DL", seeders: 5000), TestData.Job(), context);
+
+        Assert.True(better.Accepted && worse.Accepted);
+        Assert.True(better.Score > worse.Score, $"1080p scored {better.Score}, 720p scored {worse.Score}");
+    }
+
+    [Fact]
+    public void Score_breakdown_explains_the_result()
+    {
+        var r = _eval.Evaluate(TestData.Release("Severance.S02E07.1080p.WEB-DL.x265-NTb", seeders: 500),
+            TestData.Job(), TestData.Context());
+        Assert.NotEmpty(r.ScoreBreakdown);
+        Assert.Equal(r.Score, r.ScoreBreakdown.Sum(c => c.Points), 3);
+    }
+
+    [Fact]
+    public void MeetsCutoff_compares_tier_weight_not_resolution_alone()
+    {
+        var defs = TestData.Definitions();
+        var profile = TestData.Profile(defs, cutoff: Quality.FullHD);
+        Assert.True(ReleaseEvaluator.MeetsCutoff(TestData.TierId(defs, Quality.UHD4K, ReleaseSource.WebDl), profile, defs));
+        Assert.False(ReleaseEvaluator.MeetsCutoff(TestData.TierId(defs, Quality.HD, ReleaseSource.Remux), profile, defs));
+        Assert.False(ReleaseEvaluator.MeetsCutoff(null, profile, defs));
+    }
+}

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Indexers;
 
@@ -14,7 +15,7 @@ namespace PlexRequests.Downloader.Indexers;
 /// (kids'/preschool shows especially). Magnets are built from the reported info hash.
 /// </summary>
 public class PirateBayIndexerProvider(HttpClient http, IOptions<IndexerOptions> options, ILogger<PirateBayIndexerProvider> logger)
-    : IIndexerProvider
+    : IIndexerImplementation
 {
     // apibay reports a zeroed hash + "No results returned" sentinel row when a query matches nothing.
     private const string ZeroHash = "0000000000000000000000000000000000000000";
@@ -32,10 +33,9 @@ public class PirateBayIndexerProvider(HttpClient http, IOptions<IndexerOptions> 
     private readonly IndexerOptions _opts = options.Value;
     private readonly ILogger<PirateBayIndexerProvider> _logger = logger;
 
-    public string Name => "PirateBay";
-    public bool Supports(MediaType mediaType) => mediaType is MediaType.Movie or MediaType.TvShow or MediaType.Anime;
+    public string Key => "PirateBay";
 
-    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct)
+    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(IndexerConfigDto indexer, FulfillmentJobDto job, CancellationToken ct)
     {
         if (!_opts.PirateBayEnabled || string.IsNullOrWhiteSpace(job.Title)) return Array.Empty<ReleaseCandidate>();
 
@@ -88,7 +88,8 @@ public class PirateBayIndexerProvider(HttpClient http, IOptions<IndexerOptions> 
                     Seeders = t.Seeders,
                     Leechers = t.Leechers,
                     SizeBytes = t.Size,
-                    Source = Name
+                    IndexerId = indexer.Id,
+                    Source = indexer.Name
                 });
             }
         }

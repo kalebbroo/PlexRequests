@@ -31,6 +31,14 @@ public class DownloadPreferencesEntity
     public bool PreferHigherQualitySource { get; set; } = true;
     public bool EnforceQualityFloor { get; set; } = true;
 
+    /// <summary>
+    /// How many searches may come back with nothing at or above the preferred quality before the floor is
+    /// relaxed and the best available release is taken instead. Previously this was effectively 1 (keyed off
+    /// a counter that incremented on every claim), so one 30-minute deferral was enough to settle for 720p
+    /// permanently. Three empty searches spans hours, which is the point of holding out.
+    /// </summary>
+    public int RelaxFloorAfterEmptySearches { get; set; } = 3;
+
     /// <summary>Minimum normalized title-similarity (0-1) a release name must clear against the requested
     /// title to be considered — guards free-text-search indexers against wrong-show/spam matches.</summary>
     public double MinTitleSimilarity { get; set; } = 0.5;

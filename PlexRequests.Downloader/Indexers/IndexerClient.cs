@@ -1,14 +1,16 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Caching.Memory;
 using PlexRequests.Downloader.Api;
 using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Indexers;
 
-/// <summary>One provider's outcome for one search pass — feeds the defer-reason summary and the admin panel.</summary>
-public sealed record ProviderSearchOutcome(string Provider, bool Success, int Count, string? Error, int LatencyMs);
+/// <summary>One indexer's outcome for one search pass — feeds the defer-reason summary and the admin panel.</summary>
+public sealed record ProviderSearchOutcome(int IndexerId, string Provider, bool Success, int Count, string? Error, int LatencyMs);
 
-/// <summary>Merged candidates plus the per-provider breakdown of where they came from (or didn't).</summary>
+/// <summary>Merged candidates plus the per-indexer breakdown of where they came from (or didn't).</summary>
 public sealed record IndexerSearchResult(
     IReadOnlyList<ReleaseCandidate> Candidates,
     IReadOnlyList<ProviderSearchOutcome> Providers)
@@ -16,7 +18,7 @@ public sealed record IndexerSearchResult(
     public static readonly IndexerSearchResult Empty =
         new(Array.Empty<ReleaseCandidate>(), Array.Empty<ProviderSearchOutcome>());
 
-    /// <summary>Human-readable per-provider summary, e.g. "EZTV: 0, PirateBay: 12, 1337x: error".
+    /// <summary>Human-readable per-indexer summary, e.g. "EZTV: 0, PirateBay: 12, 1337x: error".
     /// Shown in the admin Missing panel via the deferral reason, so "why is nothing found" is
     /// answerable without downloader logs.</summary>
     public string Summary => Providers.Count == 0
@@ -25,65 +27,174 @@ public sealed record IndexerSearchResult(
 }
 
 /// <summary>
-/// Runs every provider that supports the job's media type (and that the admin hasn't disabled — see the
-/// Indexers panel), merges the candidates, and reports each provider's outcome back to the web app as
-/// rolling health telemetry.
+/// Runs every configured indexer that can serve the job, merges the results, and reports each one's outcome
+/// back to the web app as rolling health telemetry.
+///
+/// Fan-out is driven by the admin's indexer ROWS, not by what happens to be registered in DI: an
+/// implementation is looked up per row by its key, so one Torznab implementation serves however many
+/// endpoints exist. Concurrency is bounded, results are cached per (indexer, query) and deduplicated across
+/// indexers by info hash — none of which the previous unbounded, uncached, un-deduplicated version did.
 /// </summary>
 public class IndexerClient(
-    IEnumerable<IIndexerProvider> providers,
+    IEnumerable<IIndexerImplementation> implementations,
     IIndexerSettingsProvider settings,
+    IIndexerRateLimiter rateLimiter,
+    IMemoryCache cache,
     IPlexRequestsApiClient api,
     ILogger<IndexerClient> logger) : IIndexerClient
 {
-    private readonly IReadOnlyList<IIndexerProvider> _providers = providers.ToList();
-    private readonly IIndexerSettingsProvider _settings = settings;
-    private readonly IPlexRequestsApiClient _api = api;
-    private readonly ILogger<IndexerClient> _logger = logger;
+    // Kept modest: these all egress through one VPN tunnel, and several are public sites that respond
+    // badly to a burst. Per-indexer rate limits sit underneath this.
+    private const int MaxConcurrentIndexers = 6;
+
+    private readonly Dictionary<string, IIndexerImplementation> _byKey =
+        implementations.ToDictionary(i => i.Key, StringComparer.OrdinalIgnoreCase);
 
     public async Task<IndexerSearchResult> SearchAsync(FulfillmentJobDto job, CancellationToken ct)
     {
-        await _settings.RefreshAsync(ct); // pick up admin enable/priority changes (throttled internally)
+        await settings.RefreshAsync(ct); // pick up admin changes (throttled internally)
 
-        // Anime-only sources (Nyaa) are skipped unless the job was classified as anime — this stops a plain
-        // movie/TV request from ever matching an anime release with a coincidentally-overlapping title.
-        var applicable = _providers
-            .Where(p => p.Supports(job.MediaType))
-            .Where(p => !p.AnimeOnly || job.IsAnime)
-            .Where(p => _settings.IsEnabled(p.Name))
+        var applicable = settings.All
+            .Where(i => i.Enabled && i.EnableAutomaticSearch)
+            .Where(i => i.Supports(job.MediaType))
+            // Anime-only sources (Nyaa) are skipped unless the job was classified as anime, so a plain
+            // movie/TV request never matches an anime release with a coincidentally overlapping title.
+            .Where(i => !i.AnimeOnly || job.IsAnime)
+            .Where(i => _byKey.ContainsKey(i.Implementation))
             .ToList();
+
+        foreach (var unknown in settings.All.Where(i => i.Enabled && !_byKey.ContainsKey(i.Implementation)))
+            logger.LogWarning("Indexer \"{Name}\" has no implementation for \"{Impl}\"; skipping", unknown.Name, unknown.Implementation);
+
         if (applicable.Count == 0)
         {
-            _logger.LogWarning("No enabled indexer supports media type {Type} for \"{Title}\" (anime={IsAnime})", job.MediaType, job.Title, job.IsAnime);
+            logger.LogWarning("No enabled indexer supports media type {Type} for \"{Title}\" (anime={IsAnime})",
+                job.MediaType, job.Title, job.IsAnime);
             return IndexerSearchResult.Empty;
         }
 
         var searchedAt = DateTime.UtcNow;
-        var results = await Task.WhenAll(applicable.Select(async p =>
-        {
-            var sw = Stopwatch.StartNew();
-            try
+        var results = new List<(IReadOnlyList<ReleaseCandidate> Candidates, ProviderSearchOutcome Outcome)>();
+        var gate = new object();
+
+        await Parallel.ForEachAsync(applicable,
+            new ParallelOptions { MaxDegreeOfParallelism = MaxConcurrentIndexers, CancellationToken = ct },
+            async (indexer, token) =>
             {
-                var found = await p.SearchAsync(job, ct);
-                sw.Stop();
-                _logger.LogInformation("{Provider}: {Count} candidate(s) for \"{Title}\" in {Ms}ms", p.Name, found.Count, job.Title, sw.ElapsedMilliseconds);
-                return (Candidates: found, Outcome: new ProviderSearchOutcome(p.Name, true, found.Count, null, (int)sw.ElapsedMilliseconds));
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                sw.Stop();
-                _logger.LogWarning(ex, "Indexer {Provider} failed for \"{Title}\"", p.Name, job.Title);
-                return (Candidates: (IReadOnlyList<ReleaseCandidate>)Array.Empty<ReleaseCandidate>(),
-                        Outcome: new ProviderSearchOutcome(p.Name, false, 0, ex.Message, (int)sw.ElapsedMilliseconds));
-            }
-        }));
+                var outcome = await SearchOneAsync(indexer, job, token);
+                lock (gate) results.Add(outcome);
+            });
 
         var outcomes = results.Select(r => r.Outcome).ToList();
+        await ReportHealthAsync(outcomes, searchedAt, ct);
 
-        // Health telemetry for the admin Indexers panel — best-effort, never blocks or fails a search.
+        var merged = Deduplicate(results.SelectMany(r => r.Candidates));
+        return new IndexerSearchResult(merged, outcomes);
+    }
+
+    public async Task<IndexerCapabilitiesDto> TestAsync(int indexerId, CancellationToken ct)
+    {
+        await settings.RefreshAsync(ct);
+
+        var indexer = settings.All.FirstOrDefault(i => i.Id == indexerId);
+        if (indexer is null)
+            return new IndexerCapabilitiesDto { Message = "That indexer no longer exists — reload the panel." };
+        if (!_byKey.TryGetValue(indexer.Implementation, out var impl))
+            return new IndexerCapabilitiesDto { Message = $"No implementation is registered for \"{indexer.Implementation}\"." };
+
+        // The rate limiter still applies: a Test is a real request to someone else's server, and an admin
+        // clicking it repeatedly must not be the thing that gets the tunnel's IP blocked.
+        await rateLimiter.WaitAsync(indexer, ct);
         try
         {
-            await _api.ReportIndexerStatusAsync(outcomes.Select(o => new IndexerStatusReportDto
+            return await impl.TestAsync(indexer, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Capabilities probe threw for indexer \"{Name}\"", indexer.Name);
+            return new IndexerCapabilitiesDto { Reachable = false, Message = ex.Message };
+        }
+    }
+
+    private async Task<(IReadOnlyList<ReleaseCandidate>, ProviderSearchOutcome)> SearchOneAsync(
+        IndexerConfigDto indexer, FulfillmentJobDto job, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        var cacheKey = $"idx:{indexer.Id}:{CacheKeyFor(job)}";
+        if (indexer.CacheSeconds > 0 && cache.TryGetValue<IReadOnlyList<ReleaseCandidate>>(cacheKey, out var cached) && cached is not null)
+        {
+            logger.LogDebug("{Indexer}: {Count} cached candidate(s) for \"{Title}\"", indexer.Name, cached.Count, job.Title);
+            return (cached, new ProviderSearchOutcome(indexer.Id, indexer.Name, true, cached.Count, null, 0));
+        }
+
+        try
+        {
+            await rateLimiter.WaitAsync(indexer, ct);
+            var found = await _byKey[indexer.Implementation].SearchAsync(indexer, job, ct);
+
+            // Age filter, when the indexer reports publish dates and the admin set a limit.
+            if (indexer.MaxAgeDays is int maxAge && maxAge > 0)
+                found = found.Where(c => c.AgeDays is not double age || age <= maxAge).ToList();
+
+            sw.Stop();
+            if (indexer.CacheSeconds > 0)
+                cache.Set(cacheKey, found, TimeSpan.FromSeconds(indexer.CacheSeconds));
+
+            logger.LogInformation("{Indexer}: {Count} candidate(s) for \"{Title}\" in {Ms}ms",
+                indexer.Name, found.Count, job.Title, sw.ElapsedMilliseconds);
+            return (found, new ProviderSearchOutcome(indexer.Id, indexer.Name, true, found.Count, null, (int)sw.ElapsedMilliseconds));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            sw.Stop();
+            logger.LogWarning(ex, "Indexer {Indexer} failed for \"{Title}\"", indexer.Name, job.Title);
+            return (Array.Empty<ReleaseCandidate>(),
+                    new ProviderSearchOutcome(indexer.Id, indexer.Name, false, 0, ex.Message, (int)sw.ElapsedMilliseconds));
+        }
+    }
+
+    /// <summary>
+    /// Collapse the same release found on several indexers into one candidate. Without this the ranker saw
+    /// (and the admin panel counted) the same torrent repeatedly, and whichever copy happened to be scored
+    /// first won. Keeps the highest-priority indexer's attribution while merging the best facts available:
+    /// the highest reported seeder count and the first IMDb id anyone supplied.
+    /// </summary>
+    private IReadOnlyList<ReleaseCandidate> Deduplicate(IEnumerable<ReleaseCandidate> all)
+    {
+        var byHash = new Dictionary<string, ReleaseCandidate>(StringComparer.OrdinalIgnoreCase);
+        var noHash = new List<ReleaseCandidate>();
+
+        foreach (var c in all)
+        {
+            if (string.IsNullOrWhiteSpace(c.InfoHash)) { noHash.Add(c); continue; }
+            if (!byHash.TryGetValue(c.InfoHash, out var existing)) { byHash[c.InfoHash] = c; continue; }
+
+            var keep = settings.PriorityOf(c.IndexerId) < settings.PriorityOf(existing.IndexerId) ? c : existing;
+            byHash[c.InfoHash] = keep with
             {
+                Seeders = Math.Max(c.Seeders, existing.Seeders),
+                SeedersKnown = c.SeedersKnown || existing.SeedersKnown,
+                SizeBytes = Math.Max(c.SizeBytes, existing.SizeBytes),
+                SizeKnown = c.SizeKnown || existing.SizeKnown,
+                ImdbId = keep.ImdbId ?? c.ImdbId ?? existing.ImdbId,
+                QualityLabel = keep.QualityLabel ?? c.QualityLabel ?? existing.QualityLabel
+            };
+        }
+
+        var merged = byHash.Values.Concat(noHash).ToList();
+        var duplicates = all.Count() - merged.Count;
+        if (duplicates > 0) logger.LogDebug("Merged {Count} duplicate release(s) across indexers", duplicates);
+        return merged;
+    }
+
+    private async Task ReportHealthAsync(List<ProviderSearchOutcome> outcomes, DateTime searchedAt, CancellationToken ct)
+    {
+        // Best-effort: telemetry must never fail or delay an actual search.
+        try
+        {
+            await api.ReportIndexerStatusAsync(outcomes.Select(o => new IndexerStatusReportDto
+            {
+                IndexerId = o.IndexerId,
                 Name = o.Provider,
                 Success = o.Success,
                 ResultCount = o.Count,
@@ -92,8 +203,15 @@ public class IndexerClient(
                 SearchedAt = searchedAt
             }).ToList(), ct);
         }
-        catch (Exception ex) { _logger.LogDebug(ex, "Indexer status report skipped"); }
+        catch (Exception ex) { logger.LogDebug(ex, "Indexer status report skipped"); }
+    }
 
-        return new IndexerSearchResult(results.SelectMany(r => r.Candidates).ToList(), outcomes);
+    /// <summary>Identity of a search for caching: same title/season/episode scope = same query.</summary>
+    private static string CacheKeyFor(FulfillmentJobDto job)
+    {
+        var seasons = string.Join('-', job.RequestedSeasons.OrderBy(s => s));
+        var episodes = string.Join('-', job.RequestedEpisodes.Select(e => $"{e.Season}x{e.Episode}").OrderBy(s => s));
+        var targets = string.Join('-', job.SeasonTargets.Select(t => t.Season).OrderBy(s => s));
+        return $"{job.MediaType}:{job.Title}:{job.Year}:{job.ImdbId}:{seasons}:{episodes}:{targets}";
     }
 }

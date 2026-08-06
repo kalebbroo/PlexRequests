@@ -1,0 +1,192 @@
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Releases
+@inject PlexRequestsHosted.Services.Implementations.ICustomFormatService Formats
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
+
+@* User-defined scoring rules. A format matches when every REQUIRED condition matches and at least one
+   optional one does; scores live per quality profile, so the same rule can be desirable in one profile and
+   disqualifying in another. The test box at the top runs the identical matcher the downloader uses — it's
+   pure, so there's no round-trip and no second implementation to disagree with. *@
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else
+{
+    <MudPaper Class="pa-3 mb-3" Elevation="1">
+        <MudText Typo="Typo.subtitle2" Class="mb-2">Test a release name</MudText>
+        <div class="d-flex gap-2 align-items-start">
+            <MudTextField T="string" @bind-Value="_testName" Variant="Variant.Outlined" Margin="Margin.Dense"
+                          Placeholder="Severance.S02E07.2160p.WEB-DL.DV.HDR10+.TrueHD.Atmos.7.1.x265-NTb"
+                          Immediate="true" DebounceInterval="300" Style="flex:1;" />
+        </div>
+        @if (!string.IsNullOrWhiteSpace(_testName))
+        {
+            var parsed = _parser.Parse(_testName);
+            <div class="mt-2">
+                <MudText Typo="Typo.caption" Class="text-muted">
+                    parsed: title "@parsed.Title" · @(parsed.Resolution > 0 ? parsed.Resolution + "p" : "no resolution")
+                    · @parsed.Source
+                    @if (parsed.AudioCodec is not null) { <span> · @parsed.AudioCodec</span> }
+                    @if (parsed.AudioChannels is not null) { <span> @parsed.AudioChannels</span> }
+                    @if (parsed.HdrFormat != PlexRequestsHosted.Shared.Enums.HdrFormat.None) { <span> · @parsed.HdrFormat</span> }
+                    @if (parsed.Edition is not null) { <span> · @parsed.Edition</span> }
+                    @if (parsed.Languages.Count > 0) { <span> · @string.Join("/", parsed.Languages)</span> }
+                    @if (parsed.Group is not null) { <span> · -@parsed.Group</span> }
+                </MudText>
+                <div class="d-flex flex-wrap gap-1 mt-2">
+                    @foreach (var f in _formats.Where(f => f.Enabled && MatchesTest(f)))
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Success">@f.Name</MudChip>
+                    }
+                    @if (!_formats.Any(f => f.Enabled && MatchesTest(f)))
+                    {
+                        <MudText Typo="Typo.caption" Class="text-muted">No format matches this release.</MudText>
+                    }
+                </div>
+            </div>
+        }
+    </MudPaper>
+
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <MudText Typo="Typo.body2" Class="text-muted">
+            Scores are set per quality profile, on the profile itself. A format with no score anywhere is inert.
+        </MudText>
+        <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Add" OnClick="AddFormat">New format</MudButton>
+    </div>
+
+    @foreach (var f in _formats)
+    {
+        <MudExpansionPanel Class="mb-2">
+            <TitleContent>
+                <div class="d-flex align-items-center gap-2">
+                    <MudText Typo="Typo.subtitle1"><b>@f.Name</b></MudText>
+                    @if (f.IsSystem) { <MudChip T="string" Size="Size.Small" Color="Color.Default">built-in</MudChip> }
+                    @if (!f.Enabled) { <MudChip T="string" Size="Size.Small" Color="Color.Warning">disabled</MudChip> }
+                    <MudText Typo="Typo.caption" Class="text-muted">@f.Specifications.Count condition(s)</MudText>
+                </div>
+            </TitleContent>
+            <ChildContent>
+                <div class="d-flex flex-wrap gap-3 mb-3">
+                    <MudTextField T="string" Label="Name" Value="f.Name" Variant="Variant.Outlined"
+                                  Style="min-width:220px;" ValueChanged="@(v => { f.Name = v; return Save(f); })" />
+                    <MudSwitch T="bool" Label="Enabled" Value="f.Enabled" Color="Color.Primary"
+                               ValueChanged="@(v => { f.Enabled = v; return Save(f); })" />
+                </div>
+
+                <MudTable Items="f.Specifications" Dense="true" Class="elevation-0">
+                    <HeaderContent>
+                        <MudTh>Field</MudTh>
+                        <MudTh>Operator</MudTh>
+                        <MudTh>Value</MudTh>
+                        <MudTh Style="width:90px;">Required</MudTh>
+                        <MudTh Style="width:80px;">Not</MudTh>
+                        <MudTh Style="width:50px;"></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>
+                            <MudSelect T="FormatField" Value="context.Field" Margin="Margin.Dense" Variant="Variant.Outlined"
+                                       ValueChanged="@(v => { context.Field = v; return Save(f); })">
+                                @foreach (var field in Enum.GetValues<FormatField>())
+                                {
+                                    <MudSelectItem Value="field">@field</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudTd>
+                        <MudTd>
+                            <MudSelect T="FormatOp" Value="context.Op" Margin="Margin.Dense" Variant="Variant.Outlined"
+                                       ValueChanged="@(v => { context.Op = v; return Save(f); })">
+                                @foreach (var op in Enum.GetValues<FormatOp>())
+                                {
+                                    <MudSelectItem Value="op">@op</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudTd>
+                        <MudTd>
+                            <MudTextField T="string" Value="context.Value" Margin="Margin.Dense" Variant="Variant.Outlined"
+                                          ValueChanged="@(v => { context.Value = v; return Save(f); })" />
+                        </MudTd>
+                        <MudTd>
+                            <MudSwitch T="bool" Value="context.Required" Color="Color.Primary"
+                                       ValueChanged="@(v => { context.Required = v; return Save(f); })" />
+                        </MudTd>
+                        <MudTd>
+                            <MudSwitch T="bool" Value="context.Negate" Color="Color.Secondary"
+                                       ValueChanged="@(v => { context.Negate = v; return Save(f); })" />
+                        </MudTd>
+                        <MudTd>
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           OnClick="@(() => { f.Specifications.Remove(context); return Save(f); })" />
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+
+                <div class="d-flex justify-content-between mt-2">
+                    <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="@(() => { f.Specifications.Add(new FormatSpecificationDto { Field = FormatField.ReleaseTitle, Op = FormatOp.Regex }); return Save(f); })">
+                        Add condition
+                    </MudButton>
+                    @if (!f.IsSystem)
+                    {
+                        <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined"
+                                   OnClick="() => Delete(f)">Delete format</MudButton>
+                    }
+                </div>
+            </ChildContent>
+        </MudExpansionPanel>
+    }
+}
+
+@code {
+    private bool _loading = true;
+    private List<CustomFormatDto> _formats = new();
+    private string _testName = string.Empty;
+    private readonly ReleaseParser _parser = new();
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _loading = true;
+        _formats = await Formats.GetAllAsync();
+        _loading = false;
+    }
+
+    /// <summary>Runs the shared matcher directly — it's pure, so the UI needs no round-trip.</summary>
+    private bool MatchesTest(CustomFormatDto f)
+    {
+        if (string.IsNullOrWhiteSpace(_testName)) return false;
+        var parsed = _parser.Parse(_testName);
+        var candidate = new ReleaseCandidate { ReleaseName = _testName, Magnet = string.Empty };
+        try { return CustomFormatMatcher.Matches(f, parsed, candidate); }
+        catch { return false; }
+    }
+
+    private async Task Save(CustomFormatDto f)
+    {
+        var (ok, error) = await Formats.SaveAsync(f);
+        if (!ok) await Toasts.ShowErrorAsync(error ?? "Save failed.");
+        await Load();
+    }
+
+    private async Task AddFormat()
+    {
+        await Formats.SaveAsync(new CustomFormatDto
+        {
+            Name = $"New format {_formats.Count + 1}",
+            Enabled = false,   // nothing takes effect until it's been given conditions and a score
+            Specifications = { new FormatSpecificationDto { Field = FormatField.ReleaseTitle, Op = FormatOp.Regex, Value = ".*" } }
+        });
+        await Toasts.ShowInfoAsync("Format created disabled — add conditions, then enable it and give it a score in a profile.");
+        await Load();
+    }
+
+    private async Task Delete(CustomFormatDto f)
+    {
+        var (ok, error) = await Formats.DeleteAsync(f.Id);
+        if (!ok) await Toasts.ShowErrorAsync(error ?? "Could not delete.");
+        await Load();
+    }
+}

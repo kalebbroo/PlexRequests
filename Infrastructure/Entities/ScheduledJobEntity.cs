@@ -32,8 +32,25 @@ public class ScheduledJobEntity
     [MaxLength(1000)]
     public string? LastMessage { get; set; }
 
-    /// <summary>Guard flag so a long run isn't double-dispatched by an overlapping tick. Cleared when the run ends.</summary>
+    /// <summary>Guard flag so a long run isn't double-dispatched by an overlapping tick. Cleared when the run ends.
+    /// The scheduler also clears every row's flag on startup, so a crash mid-run can't wedge a job type forever.</summary>
     public bool IsRunning { get; set; }
+
+    /// <summary>When the in-flight run started; null when idle. Paired with <see cref="TimeoutSeconds"/> this is
+    /// what lets the admin panel tell "legitimately still working" from "wedged", and what the startup reset
+    /// reports on.</summary>
+    public DateTime? RunningSince { get; set; }
+
+    /// <summary>Hard cap on a single run. The scheduler cancels the handler's token past this, so one hung job
+    /// can't hold a dispatch slot indefinitely. Note a handler that ignores its CancellationToken can only be
+    /// abandoned, not actually stopped.</summary>
+    public int TimeoutSeconds { get; set; } = 1800;
+
+    /// <summary>Wall-clock duration of the last run, for the admin panel. 0 until the first run completes.</summary>
+    public int LastRunDurationMs { get; set; }
+
+    /// <summary>Consecutive failed runs; reset to 0 on any success. Surfaces a persistently broken job.</summary>
+    public int ConsecutiveFailures { get; set; }
 
     /// <summary>Set by an admin "Run now"; the next dispatch records the run as manually triggered and clears this.</summary>
     public bool ManualRunRequested { get; set; }

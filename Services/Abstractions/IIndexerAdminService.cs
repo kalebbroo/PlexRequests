@@ -17,7 +17,20 @@ public interface IIndexerAdminService
     /// <summary>Set 1 (highest) – 50 (lowest); values are clamped.</summary>
     Task<bool> SetPriorityAsync(string name, int priority);
 
-    /// <summary>Slim enabled/priority list the downloader polls (unknown providers default to enabled).</summary>
+    /// <summary>Create or update an indexer. Id 0 creates. A blank ApiKey leaves the stored one untouched.</summary>
+    Task<(bool ok, string? error)> SaveAsync(IndexerSettingDto dto);
+
+    /// <summary>Delete an admin-added indexer. Built-ins are disableable, not deletable.</summary>
+    Task<(bool ok, string? error)> DeleteAsync(int id);
+
+    /// <summary>
+    /// Import Torznab endpoints the downloader found in its own environment. Pushed by the downloader
+    /// because those variables live in ITS container, which the web app can't read. Idempotent by URL.
+    /// Returns how many rows were created.
+    /// </summary>
+    Task<int> ImportLegacyTorznabAsync(List<LegacyTorznabEndpointDto> endpoints);
+
+    /// <summary>Full indexer definitions the downloader polls, including decrypted API keys.</summary>
     Task<List<IndexerConfigDto>> GetWorkerConfigAsync();
 
     /// <summary>Apply a batch of per-search outcomes from the downloader; unknown provider names are

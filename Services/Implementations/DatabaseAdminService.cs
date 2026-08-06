@@ -34,7 +34,7 @@ public class DatabaseAdminService(AppDbContext db, IPlexApiService plex, ILogger
             new("Metadata cache", await db.MediaMetadataCache.CountAsync()),
             new("Episode-list cache", await db.SeasonEpisodesCache.CountAsync()),
             new("Quality rules", await db.QualityRules.CountAsync()),
-            new("Indexer settings", await db.IndexerSettings.CountAsync()),
+            new("Indexers", await db.Indexers.CountAsync()),
             new("Network shares", await db.NetworkShares.CountAsync()),
             new("Scheduled jobs", await db.ScheduledJobs.CountAsync()),
             new("Job run history", await db.JobRuns.CountAsync()),
@@ -146,7 +146,7 @@ public class DatabaseAdminService(AppDbContext db, IPlexApiService plex, ILogger
         await db.SeasonEpisodesCache.ExecuteDeleteAsync();
         await db.JobRuns.ExecuteDeleteAsync();
         await db.ScheduledJobs.ExecuteDeleteAsync();        // re-seeded by the scheduler on app restart
-        await db.IndexerSettings.ExecuteDeleteAsync();      // re-seeded on next panel view / worker poll
+        await db.Indexers.ExecuteDeleteAsync();      // re-seeded on next panel view / worker poll
         await db.QualityRules.ExecuteDeleteAsync();
         await db.DownloadPreferences.ExecuteDeleteAsync();  // singleton re-created on demand
         await db.LibraryOrganizationPreferences.ExecuteDeleteAsync(); // singleton re-created on demand

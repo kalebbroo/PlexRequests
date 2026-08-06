@@ -23,6 +23,7 @@ public class MediaIssueService(
     AppDbContext db,
     AuthenticationStateProvider authProvider,
     IFulfillmentQueue fulfillment,
+    IQualityProfileService qualityProfiles,
     IConfiguration config) : IMediaIssueService
 {
     public async Task<bool> ReportIssueAsync(int mediaId, MediaType mediaType, string title, string? posterUrl, string reason, string? detail, int? season = null, int? episode = null)
@@ -79,6 +80,15 @@ public class MediaIssueService(
         var episodesCsv = issue.SeasonNumber is int s && issue.EpisodeNumber is int e ? $"S{s}E{e}" : null;
         var seasonsCsv = episodesCsv is null && issue.SeasonNumber is int so ? so.ToString() : null;
 
+        // Reuse the profile the existing request for this title was bound to where there is one: a
+        // re-download of a reported-broken file should come back at the quality it was supposed to be, not
+        // at whatever today's default happens to be.
+        var existingProfileId = await db.MediaRequests
+            .Where(r => r.MediaId == issue.MediaId && r.MediaType == issue.MediaType && r.QualityProfileId != null)
+            .OrderByDescending(r => r.Id)
+            .Select(r => r.QualityProfileId)
+            .FirstOrDefaultAsync();
+
         var req = new MediaRequestEntity
         {
             MediaId = issue.MediaId,
@@ -92,7 +102,10 @@ public class MediaIssueService(
             RequestedByUserId = issue.ReportedByUserId,
             RequestAllSeasons = seasonsCsv is null && episodesCsv is null,
             RequestedSeasonsCsv = seasonsCsv,
-            RequestedEpisodesCsv = episodesCsv
+            RequestedEpisodesCsv = episodesCsv,
+            QualityProfileId = existingProfileId
+                ?? await qualityProfiles.ResolveProfileIdAsync(issue.MediaType, issue.MediaId, null,
+                    requesterChoiceId: null, userId: issue.ReportedByUserId)
         };
         db.MediaRequests.Add(req);
         await db.SaveChangesAsync();

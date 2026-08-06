@@ -16,42 +16,29 @@ namespace PlexRequestsHosted.Services.Background;
 /// "hard-to-find title", not "poison job". Upgrade jobs (content already available) are closed quietly.
 /// </summary>
 public class FulfillmentReaperService(
-    IServiceScopeFactory scopeFactory,
+    AppDbContext db,
+    INotificationService notify,
     IConfiguration config,
-    ILogger<FulfillmentReaperService> logger) : BackgroundService
+    ILogger<FulfillmentReaperService> logger) : IJobHandler
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        if (!config.GetValue<bool>("Fulfillment:Enabled"))
-        {
-            logger.LogInformation("Fulfillment disabled; stale-claim reaper not running");
-            return;
-        }
+    public JobType Type => JobType.StaleClaimReaper;
 
-        var interval = TimeSpan.FromMinutes(Math.Max(1, config.GetValue("Fulfillment:ReaperIntervalMinutes", 5)));
+    public async Task<JobResult> ExecuteAsync(JobContext context, CancellationToken ct)
+    {
+        if (!config.GetValue<bool>("Fulfillment:Enabled")) return JobResult.Skipped("Fulfillment is disabled");
+
         var staleMinutes = Math.Max(1, config.GetValue("Fulfillment:StaleMinutes", 30));
         var maxAttempts = Math.Max(1, config.GetValue("Fulfillment:MaxAttempts", 3));
-        logger.LogInformation("Stale-claim reaper started (every {Interval}m, stale after {Stale}m, max {Max} attempts)",
-            interval.TotalMinutes, staleMinutes, maxAttempts);
 
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try { await RunOnceAsync(staleMinutes, maxAttempts, stoppingToken); }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex) { logger.LogError(ex, "Reaper pass failed"); }
-
-            try { await Task.Delay(interval, stoppingToken); }
-            catch (OperationCanceledException) { break; }
-        }
+        var acted = await RunOnceAsync(staleMinutes, maxAttempts, ct);
+        return acted > 0
+            ? JobResult.Ok(acted, $"Reaped {acted} stale job(s)")
+            : JobResult.Skipped("No stale downloader claims");
     }
 
     /// <summary>Run a single reap pass. Returns the number of stale jobs acted on.</summary>
     public async Task<int> RunOnceAsync(int staleMinutes, int maxAttempts, CancellationToken ct)
     {
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var notify = scope.ServiceProvider.GetRequiredService<INotificationService>();
-
         var cutoff = DateTime.UtcNow.AddMinutes(-staleMinutes);
         var stale = await db.FulfillmentJobs
             .Where(j => (j.Status == FulfillmentStatus.Claimed || j.Status == FulfillmentStatus.Downloading)

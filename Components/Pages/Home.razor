@@ -7,6 +7,7 @@
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject NavigationManager Navigation
+@inject PlexRequestsHosted.Services.Implementations.IRecommendedFeedService RecommendedFeed
 
 <PageTitle>Home - Plex Requests</PageTitle>
 
@@ -59,6 +60,13 @@
         }
         else
         {
+            @* What's actually being uploaded right now, from whichever indexer is set as the feed source.
+               Hidden entirely when the feed is empty or stale — public trackers are frequently blocked, and
+               an empty or months-old row is worse than no row. *@
+            @if (_recommended.Count > 0)
+            {
+                <MediaRow Title="Recommended" Items="_recommended" OnRequest="Request" OnPlay="Play" />
+            }
             <MediaRow Title="Trending Now" Items="_trending" OnRequest="Request" OnPlay="Play" />
             <MediaRow Title="Popular Movies" Items="_popularMovies" SeeAllHref="/browse/movie" OnRequest="Request" OnPlay="Play" />
             <MediaRow Title="Popular TV" Items="_popularTv" SeeAllHref="/browse/tvshow" OnRequest="Request" OnPlay="Play" />
@@ -85,6 +93,9 @@
 @code {
     private MediaCardDto? _hero;
     private List<MediaCardDto> _trending = new();
+    // Read from the cached feed table, never a live scrape — a page load must not wait on a torrent site,
+    // and the web app must not talk to one at all (it sits outside the VPN tunnel).
+    private List<MediaCardDto> _recommended = new();
     private List<MediaCardDto> _popularMovies = new();
     private List<MediaCardDto> _popularTv = new();
     private List<MediaCardDto> _actionMovies = new();
@@ -109,6 +120,7 @@
     {
         try
         {
+            var recommendedTask = RecommendedFeed.GetAsync(RowSize);
             var trendingTask = PlexApiService.GetTrendingAsync(null, 1, RowSize);
             var popMoviesTask = PlexApiService.GetPopularAsync(MediaType.Movie, 1, RowSize);
             var popTvTask = PlexApiService.GetPopularAsync(MediaType.TvShow, 1, RowSize);
@@ -116,8 +128,9 @@
             var topMoviesTask = PlexApiService.GetTopRatedAsync(MediaType.Movie, 1, RowSize);
             var topTvTask = PlexApiService.GetTopRatedAsync(MediaType.TvShow, 1, RowSize);
 
-            await Task.WhenAll(trendingTask, popMoviesTask, popTvTask, actionTask, topMoviesTask, topTvTask);
+            await Task.WhenAll(recommendedTask, trendingTask, popMoviesTask, popTvTask, actionTask, topMoviesTask, topTvTask);
 
+            _recommended = recommendedTask.Result;
             var trending = trendingTask.Result;
             _hero = trending.FirstOrDefault();
             _trending = trending.Skip(1).ToList();
@@ -129,6 +142,7 @@
             // Overlay availability + this user's request status across everything we just loaded.
             var all = new List<MediaCardDto>();
             if (_hero is not null) all.Add(_hero);
+            all.AddRange(_recommended);
             all.AddRange(_trending);
             all.AddRange(_popularMovies);
             all.AddRange(_popularTv);

@@ -1,15 +1,22 @@
 @using PlexRequestsHosted.Shared.DTOs
 @inject PlexRequestsHosted.Services.Abstractions.IIndexerAdminService Indexers
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
+@inject IDialogService Dialogs
 
 <div class="d-flex justify-content-between align-items-center mb-2">
     <h2>Indexers</h2>
-    <MudButton Color="Color.Primary" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" OnClick="Load" Disabled="_loading">Refresh</MudButton>
+    <div class="d-flex gap-2">
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="() => OpenDialog(null)">Add indexer</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" OnClick="Load" Disabled="_loading">Refresh</MudButton>
+    </div>
 </div>
 <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-4">
-    The torrent sources the downloader searches. Toggle a source off to skip it; priority (1 = highest)
-    gives its releases a small ranking edge when candidates are otherwise comparable. Health columns update
-    each time the downloader searches — a failure streak usually means the site is down or blocking.
+    The sources the downloader searches. Add a Torznab endpoint (Jackett or Prowlarr) to search every
+    tracker configured there — that is the practical way to get coverage the built-in public sources can't
+    match. Toggle a source off to skip it; priority (1 = highest) gives its releases a small ranking edge
+    when candidates are otherwise comparable. Health columns update each time the downloader searches —
+    a failure streak usually means the site is down or blocking.
 </MudText>
 
 @if (_loading)
@@ -22,6 +29,7 @@ else
         <MudTable T="IndexerSettingDto" Items="_items" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
             <HeaderContent>
                 <MudTh>Indexer</MudTh>
+                <MudTh>Type</MudTh>
                 <MudTh>Enabled</MudTh>
                 <MudTh>Priority</MudTh>
                 <MudTh>Last search</MudTh>
@@ -30,9 +38,21 @@ else
                 <MudTh>Latency</MudTh>
                 <MudTh>Totals</MudTh>
                 <MudTh>Status</MudTh>
+                <MudTh></MudTh>
             </HeaderContent>
             <RowTemplate>
-                <MudTd DataLabel="Indexer"><b>@context.Name</b></MudTd>
+                <MudTd DataLabel="Indexer">
+                    <b>@context.Name</b>
+                    @if (!string.IsNullOrWhiteSpace(context.Url))
+                    {
+                        <div class="text-muted small">@context.Url</div>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Type">
+                    <MudChip T="string" Size="Size.Small" Color="@(context.IsBuiltIn ? Color.Default : Color.Info)">
+                        @(context.IsBuiltIn ? "Built-in" : context.Implementation)
+                    </MudChip>
+                </MudTd>
                 <MudTd DataLabel="Enabled">
                     <MudSwitch T="bool" Color="Color.Primary" Value="@context.Enabled"
                                ValueChanged="@(v => SetEnabled(context, v))" />
@@ -76,12 +96,24 @@ else
                         <MudChip T="string" Color="Color.Success" Size="Size.Small">ok</MudChip>
                     }
                 </MudTd>
+                <MudTd>
+                    <div class="d-flex">
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                                       OnClick="() => OpenDialog(context)" />
+                        <MudTooltip Text="@(context.IsBuiltIn ? "Built-in indexers can only be disabled." : "Delete this indexer.")">
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           Disabled="context.IsBuiltIn" OnClick="() => Delete(context)" />
+                        </MudTooltip>
+                    </div>
+                </MudTd>
             </RowTemplate>
         </MudTable>
     </MudPaper>
     <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
-        Site URLs, mirrors, and optional Torznab (Jackett/Prowlarr) endpoints are configured on the downloader
-        (appsettings / environment). New sources added there appear here automatically after their first search.
+        Torznab endpoints are managed here — add as many as you like, each with its own categories, priority
+        and health. Any left configured in the downloader's environment are imported automatically on its next
+        start; you can remove the <code>Indexer__Torznab__*</code> variables afterwards. Built-in public
+        sources can be disabled or re-prioritised but not deleted.
     </MudText>
 }
 
@@ -123,4 +155,21 @@ else
         if (span.TotalDays < 1) return $"{(int)span.TotalHours}h ago";
         return $"{(int)span.TotalDays}d ago";
     }
+    private async Task OpenDialog(IndexerSettingDto? existing)
+    {
+        var parameters = new DialogParameters<IndexerDialog> { { x => x.Existing, existing } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true };
+        var dialog = await Dialogs.ShowAsync<IndexerDialog>(existing is null ? "Add indexer" : $"Edit {existing.Name}", parameters, options);
+        var result = await dialog.Result;
+        if (result is { Canceled: false }) await Load();
+    }
+
+    private async Task Delete(IndexerSettingDto item)
+    {
+        var (ok, error) = await Indexers.DeleteAsync(item.Id);
+        if (ok) await Toast.ShowSuccessAsync($"Deleted {item.Name}.");
+        else await Toast.ShowErrorAsync(error ?? "Could not delete this indexer.");
+        await Load();
+    }
+
 }

@@ -4,8 +4,10 @@ using System.Web;
 using HtmlAgilityPack;
 using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Configuration;
+using PlexRequests.Downloader.Ranking;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Indexers;
 
@@ -16,20 +18,17 @@ namespace PlexRequests.Downloader.Indexers;
 /// layout changes break parsing) and 1337x is often behind Cloudflare, which can block a plain
 /// HttpClient from a datacenter IP. Runs fine from a residential/VPN egress.
 /// </summary>
-public partial class X1337xIndexerProvider(HttpClient http, IOptions<IndexerOptions> options, ILogger<X1337xIndexerProvider> logger)
-    : IIndexerProvider
+public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parser, ILogger<X1337xIndexerProvider> logger)
+    : IIndexerImplementation
 {
     private readonly HttpClient _http = http;
-    private readonly IndexerOptions _opts = options.Value;
+    private readonly IReleaseParser _parser = parser;
     private readonly ILogger<X1337xIndexerProvider> _logger = logger;
 
-    public string Name => "1337x";
-    public bool Supports(MediaType mediaType) => mediaType is MediaType.Movie or MediaType.TvShow or MediaType.Anime;
+    public string Key => "1337x";
 
-    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct)
+    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(IndexerConfigDto indexer, FulfillmentJobDto job, CancellationToken ct)
     {
-        if (!_opts.X1337xEnabled) return Array.Empty<ReleaseCandidate>();
-
         var category = job.MediaType switch
         {
             MediaType.Movie => "Movies",
@@ -79,16 +78,58 @@ public partial class X1337xIndexerProvider(HttpClient http, IOptions<IndexerOpti
 
         if (rowsByPath.Count == 0) return Array.Empty<ReleaseCandidate>();
 
-        // Only open the strongest rows for magnets (each detail page is a separate request).
-        var topRows = rowsByPath.Values.OrderByDescending(r => r.Seeders).Take(Math.Clamp(_opts.X1337xMaxDetail, 1, 25)).ToList();
+        // Magnets only exist on each torrent's detail page, so we can only open a bounded number of rows.
+        // Which rows we pick is the whole ballgame: this used to take the top 8 purely by seeder count,
+        // BEFORE considering quality at all. On this site the highest-seeded TV rows are routinely the
+        // smaller 720p ones, so every 1080p release on the page was discarded before the ranker ever saw
+        // it — and the job then settled for 720p. Filtering by the job's quality floor first costs nothing
+        // (the row already carries the release name) and is the direct fix.
+        var cap = Math.Clamp(indexer.MaxDetailFetches, 1, 100);
+        var candidateRows = SelectRows(rowsByPath.Values, job, cap);
+
         var candidates = new List<ReleaseCandidate>();
-        var results = await Task.WhenAll(topRows.Select(r => ResolveMagnetAsync(r, ct)));
+        var results = new List<ReleaseCandidate?>();
+        var gate = new object();
+        await Parallel.ForEachAsync(candidateRows,
+            new ParallelOptions { MaxDegreeOfParallelism = MaxParallelDetailFetches, CancellationToken = ct },
+            async (row, token) =>
+            {
+                var c = await ResolveMagnetAsync(row, indexer, token);
+                lock (gate) results.Add(c);
+            });
         foreach (var c in results) if (c is not null) candidates.Add(c);
 
         return candidates;
     }
 
-    private async Task<ReleaseCandidate?> ResolveMagnetAsync(RowInfo row, CancellationToken ct)
+    // Opening a detail page per row is the expensive part, so keep the concurrency against one host modest.
+    private const int MaxParallelDetailFetches = 4;
+
+    /// <summary>
+    /// Choose which listing rows are worth opening. Rows whose parsed resolution already meets the job's
+    /// quality floor come first (best-seeded first), and only if there aren't enough of those do we fall
+    /// back to the rest — so a page full of well-seeded 720p can no longer crowd out the 1080p releases,
+    /// while a title that genuinely only exists below the floor still yields candidates.
+    /// </summary>
+    private List<RowInfo> SelectRows(IEnumerable<RowInfo> rows, FulfillmentJobDto job, int cap)
+    {
+        int floor = (int)job.Quality;
+        var ordered = rows.OrderByDescending(r => r.Seeders).ToList();
+        if (floor <= 0) return ordered.Take(cap).ToList();
+
+        var atFloor = ordered.Where(r => _parser.Parse(r.Name).Resolution >= floor).ToList();
+        var below = ordered.Except(atFloor).ToList();
+
+        var picked = atFloor.Take(cap).ToList();
+        if (picked.Count < cap) picked.AddRange(below.Take(cap - picked.Count));
+
+        if (atFloor.Count > 0)
+            _logger.LogDebug("1337x: {AtFloor} of {Total} row(s) meet the {Floor}p floor; opening {Opened}",
+                atFloor.Count, ordered.Count, floor, picked.Count);
+        return picked;
+    }
+
+    private async Task<ReleaseCandidate?> ResolveMagnetAsync(RowInfo row, IndexerConfigDto indexer, CancellationToken ct)
     {
         try
         {
@@ -107,7 +148,12 @@ public partial class X1337xIndexerProvider(HttpClient http, IOptions<IndexerOpti
                 Seeders = row.Seeders,
                 Leechers = row.Leechers,
                 SizeBytes = row.SizeBytes,
-                Source = Name
+                // These come from scraping the listing row and often fail to parse. Saying so lets the
+                // ranker treat "unknown" differently from a genuine zero instead of silently rejecting it.
+                SeedersKnown = row.Seeders > 0,
+                SizeKnown = row.SizeBytes > 0,
+                IndexerId = indexer.Id,
+                Source = indexer.Name
             };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -115,6 +161,52 @@ public partial class X1337xIndexerProvider(HttpClient http, IOptions<IndexerOpti
             _logger.LogDebug(ex, "1337x detail fetch failed for {Path}", row.DetailPath);
             return null;
         }
+    }
+
+    /// <summary>
+    /// The newest uploads in a category, for the recommended feed. Deliberately does NOT open detail pages:
+    /// a poster row needs a title, not a magnet, so this costs one request per media type instead of dozens.
+    /// </summary>
+    public async Task<IReadOnlyList<ReleaseCandidate>> BrowseLatestAsync(IndexerConfigDto indexer, MediaType mediaType, int limit, CancellationToken ct)
+    {
+        var category = mediaType switch
+        {
+            MediaType.Movie => "Movies",
+            MediaType.Anime => "Anime",
+            _ => "TV"
+        };
+
+        string html;
+        try
+        {
+            // The category listing is already newest-first, which is exactly what "latest" wants.
+            html = await _http.GetStringAsync($"/cat/{category}/1/", ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "1337x browse failed for {Category}", category);
+            return Array.Empty<ReleaseCandidate>();
+        }
+
+        if (LooksLikeChallenge(html))
+        {
+            _logger.LogWarning("1337x returned a Cloudflare/anti-bot page while browsing {Category}", category);
+            return Array.Empty<ReleaseCandidate>();
+        }
+
+        return ParseRows(html).Take(Math.Clamp(limit, 1, 100)).Select(r => new ReleaseCandidate
+        {
+            ReleaseName = r.Name,
+            // No detail page was opened, so there's no magnet. Nothing downstream of the feed needs one.
+            Magnet = string.Empty,
+            Seeders = r.Seeders,
+            Leechers = r.Leechers,
+            SizeBytes = r.SizeBytes,
+            SeedersKnown = r.Seeders > 0,
+            SizeKnown = r.SizeBytes > 0,
+            IndexerId = indexer.Id,
+            Source = indexer.Name
+        }).ToList();
     }
 
     private List<RowInfo> ParseRows(string html)
@@ -159,28 +251,10 @@ public partial class X1337xIndexerProvider(HttpClient http, IOptions<IndexerOpti
         html.Contains("cf-browser-verification", StringComparison.OrdinalIgnoreCase) ||
         html.Contains("Checking your browser", StringComparison.OrdinalIgnoreCase);
 
-    private static int ParseInt(HtmlNode? node)
-    {
-        if (node is null) return 0;
-        var digits = new string(node.InnerText.Where(char.IsDigit).ToArray());
-        return int.TryParse(digits, out var n) ? n : 0;
-    }
+    // Size/count parsing lives in IndexerParsing — this file used to carry byte-identical private copies.
+    private static int ParseInt(HtmlNode? node) => node is null ? 0 : IndexerParsing.ParseInt(node.InnerText);
 
-    private static long ParseSize(string s)
-    {
-        var m = Regex.Match(s, @"([\d.,]+)\s*(TB|GB|MB|KB|B|TiB|GiB|MiB|KiB)", RegexOptions.IgnoreCase);
-        if (!m.Success) return 0;
-        if (!double.TryParse(m.Groups[1].Value.Replace(",", ""), NumberStyles.Any, CultureInfo.InvariantCulture, out var val)) return 0;
-        double mult = m.Groups[2].Value.ToUpperInvariant() switch
-        {
-            "TB" or "TIB" => 1024d * 1024 * 1024 * 1024,
-            "GB" or "GIB" => 1024d * 1024 * 1024,
-            "MB" or "MIB" => 1024d * 1024,
-            "KB" or "KIB" => 1024d,
-            _ => 1d
-        };
-        return (long)(val * mult);
-    }
+    private static long ParseSize(string s) => IndexerParsing.ParseSize(s);
 
     [GeneratedRegex(@"urn:btih:([A-Za-z0-9]+)")]
     private static partial Regex InfoHashRegex();

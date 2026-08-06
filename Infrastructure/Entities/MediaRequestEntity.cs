@@ -53,17 +53,64 @@ public class MediaRequestEntity
     [MaxLength(4096)]
     public string? RequestedEpisodesCsv { get; set; }
 
-    // Ongoing-series monitoring: when set (whole-series request of a still-running show), the
-    // SeriesMonitorService keeps checking TMDB for newly-aired episodes and auto-enqueues them.
+    // --- Ongoing-series monitoring -------------------------------------------------------------------
+    /// <summary>
+    /// Which episodes to keep chasing. This is the authoritative field; <see cref="Monitored"/> is kept as
+    /// a shadow of "not None" so existing queries keep working during the transition.
+    /// </summary>
+    public MonitorMode MonitorMode { get; set; } = MonitorMode.None;
+
+    /// <summary>Legacy mirror of <c>MonitorMode != None</c>. Read <see cref="MonitorMode"/> instead.</summary>
     public bool Monitored { get; set; }
+
+    /// <summary>Pick up seasons that appear after the request was made — the difference between "the show
+    /// I asked for" and "this show, ongoing".</summary>
+    public bool AutoMonitorNewSeasons { get; set; } = true;
+
+    /// <summary>Keep looking for a better release once something is in the library.</summary>
+    public bool SearchForCutoffUpgrades { get; set; } = true;
+
+    public DateTime? MonitoredSince { get; set; }
+    /// <summary>Last time the calendar was refreshed for this series.</summary>
+    public DateTime? LastMonitorCheckAt { get; set; }
+
+    /// <summary>Per-series override of the assumed air time, in minutes from midnight local. Null uses the
+    /// global default.</summary>
+    public int? AirTimeOverrideMinutes { get; set; }
 
     // --- Achieved quality / upgrade tracking ---------------------------------------------------------
     /// <summary>The lowest quality tier actually imported into the library for this request (min across its
     /// video files). <see cref="Quality.Any"/> until something imports. Compared against the preferred
     /// target to decide whether the request's cutoff is met.</summary>
     public Quality AchievedQuality { get; set; } = Quality.Any;
-    /// <summary>False when at least one imported file is below the request's preferred quality — the request
-    /// is a candidate for an automatic upgrade search. Defaults true so nothing is flagged until known.</summary>
+
+    /// <summary>
+    /// The quality profile governing this request. Every creation path now resolves one up front
+    /// (requester's pick, validated -> assignment rule -> default profile) and the startup seeder backfills
+    /// any row that predates profiles, so in practice this is never null — it is what the ranker, the
+    /// upgrade scan and the cutoff check all read to decide what "good enough" means for this title.
+    ///
+    /// The column stays NULLABLE deliberately. Making it required means a SQLite table rebuild plus a
+    /// restricting FK, and on a deployment where the profiles migration and that one land in the SAME
+    /// startup pass, QualityProfiles is still empty when the constraint is applied: every row would take
+    /// the default 0, the FK would find no parent, and the app would fail to start. The constraint is only
+    /// safe on a deploy where profiles are already live, so it's a separate decision, not a side effect.
+    /// </summary>
+    public int? QualityProfileId { get; set; }
+
+    /// <summary>The lowest quality tier actually imported, as a <see cref="QualityDefinitionEntity"/> id.
+    /// The finer-grained counterpart to <see cref="AchievedQuality"/>, which only tracks resolution.</summary>
+    public int? AchievedQualityDefinitionId { get; set; }
+
+    /// <summary>Aggregate custom-format score of what's imported. Inert until custom formats ship.</summary>
+    public int AchievedFormatScore { get; set; }
+    /// <summary>Whether the imported files meet the preferred quality, or whether that's simply not knowable
+    /// yet. This is the authoritative field; see <see cref="Shared.Enums.CutoffState"/> for why it isn't a
+    /// boolean. Only <see cref="Shared.Enums.CutoffState.Unmet"/> makes a request an upgrade candidate.</summary>
+    public CutoffState CutoffState { get; set; } = CutoffState.Unknown;
+
+    /// <summary>Legacy mirror of <see cref="CutoffState"/> (<c>state == Met</c>), kept for one release so a
+    /// rollback doesn't lose the column. Nothing should read this — read <see cref="CutoffState"/>.</summary>
     public bool CutoffMet { get; set; } = true;
     /// <summary>When the upgrade scanner last enqueued (or considered) an upgrade for this request — gates the
     /// per-request upgrade cooldown so it isn't re-searched every scan.</summary>

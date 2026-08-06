@@ -69,3 +69,5 @@ dkms.conf
 /Shared/obj
 /PlexRequests.Downloader/obj
 /PlexRequests.Downloader/bin
+/Tests/PlexRequests.Tests/obj
+/Tests/PlexRequests.Tests/bin

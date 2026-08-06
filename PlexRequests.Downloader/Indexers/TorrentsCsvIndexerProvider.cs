@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Indexers;
 
@@ -14,7 +15,7 @@ namespace PlexRequests.Downloader.Indexers;
 /// sources miss. Magnets are built from the reported info hash.
 /// </summary>
 public class TorrentsCsvIndexerProvider(HttpClient http, IOptions<IndexerOptions> options, ILogger<TorrentsCsvIndexerProvider> logger)
-    : IIndexerProvider
+    : IIndexerImplementation
 {
     private static readonly string[] Trackers =
     {
@@ -29,10 +30,9 @@ public class TorrentsCsvIndexerProvider(HttpClient http, IOptions<IndexerOptions
     private readonly IndexerOptions _opts = options.Value;
     private readonly ILogger<TorrentsCsvIndexerProvider> _logger = logger;
 
-    public string Name => "TorrentsCSV";
-    public bool Supports(MediaType mediaType) => mediaType is MediaType.Movie or MediaType.TvShow or MediaType.Anime;
+    public string Key => "TorrentsCSV";
 
-    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct)
+    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(IndexerConfigDto indexer, FulfillmentJobDto job, CancellationToken ct)
     {
         if (!_opts.TorrentsCsvEnabled || string.IsNullOrWhiteSpace(job.Title)) return Array.Empty<ReleaseCandidate>();
 
@@ -77,7 +77,8 @@ public class TorrentsCsvIndexerProvider(HttpClient http, IOptions<IndexerOptions
                     Seeders = t.Seeders ?? 0,
                     Leechers = t.Leechers ?? 0,
                     SizeBytes = t.SizeBytes,
-                    Source = Name
+                    IndexerId = indexer.Id,
+                    Source = indexer.Name
                 });
             }
         }

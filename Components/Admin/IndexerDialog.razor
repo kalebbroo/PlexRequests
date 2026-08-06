@@ -1,0 +1,286 @@
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@inject PlexRequestsHosted.Services.Abstractions.IIndexerAdminService Indexers
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
+@inject PlexRequestsHosted.Services.Implementations.IInteractiveSearchService Search
+
+@* Add/edit one indexer. Unlike the rest of the panel this uses an explicit Save rather than immediate-write:
+   a half-typed URL or API key must never be persisted and then searched against. Modelled on
+   NetworkShareDialog, which handles credentials the same way. *@
+
+<MudDialog>
+    <DialogContent>
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="6">
+                <MudTextField T="string" Label="Name" @bind-Value="_model.Name" Required="true"
+                              Variant="Variant.Outlined" HelperText="How it appears in the panel and in logs." />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudSelect T="string" Label="Type" @bind-Value="_model.Implementation" Variant="Variant.Outlined"
+                           Disabled="_model.IsBuiltIn"
+                           HelperText="@(_model.IsBuiltIn ? "Built-in indexers have a fixed type." : "Torznab covers Jackett and Prowlarr.")">
+                    <MudSelectItem Value="@("Torznab")">Torznab (Jackett / Prowlarr)</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+
+            @if (!_model.IsBuiltIn)
+            {
+                <MudItem xs="12">
+                    <MudTextField T="string" Label="API URL" @bind-Value="_model.Url" Required="true"
+                                  Variant="Variant.Outlined"
+                                  Placeholder="https://prowlarr.local/1/api"
+                                  HelperText="The endpoint's full Torznab API URL." />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField T="string" Label="API key" @bind-Value="_model.ApiKey"
+                                  InputType="InputType.Password" Variant="Variant.Outlined"
+                                  HelperText="@(_model.HasApiKey ? "A key is stored. Leave blank to keep it." : "Stored encrypted.")" />
+                </MudItem>
+            }
+
+            <MudItem xs="12"><MudDivider Class="my-2" /></MudItem>
+
+            <MudItem xs="12" sm="4">
+                <MudTextField T="string" Label="Movie categories" @bind-Value="_model.MovieCategoriesCsv"
+                              Variant="Variant.Outlined" Placeholder="2000"
+                              HelperText="Blank = Torznab standard." />
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudTextField T="string" Label="TV categories" @bind-Value="_model.TvCategoriesCsv"
+                              Variant="Variant.Outlined" Placeholder="5000" HelperText="Blank = Torznab standard." />
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudTextField T="string" Label="Anime categories" @bind-Value="_model.AnimeCategoriesCsv"
+                              Variant="Variant.Outlined" Placeholder="5000,5070" HelperText="Blank = Torznab standard." />
+            </MudItem>
+
+            <MudItem xs="12" sm="6">
+                <MudText Typo="Typo.caption" Class="text-muted">Searches this indexer serves</MudText>
+                <div class="d-flex flex-wrap gap-2">
+                    <MudSwitch T="bool" Label="Movies" @bind-Value="_model.SupportsMovie" Color="Color.Primary" />
+                    <MudSwitch T="bool" Label="TV" @bind-Value="_model.SupportsTv" Color="Color.Primary" />
+                    <MudSwitch T="bool" Label="Anime" @bind-Value="_model.SupportsAnime" Color="Color.Primary" />
+                </div>
+                <MudSwitch T="bool" Label="Anime only" @bind-Value="_model.AnimeOnly" Color="Color.Secondary" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudText Typo="Typo.caption" Class="text-muted">When it's used</MudText>
+                <div class="d-flex flex-column">
+                    <MudSwitch T="bool" Label="Automatic search" @bind-Value="_model.EnableAutomaticSearch" Color="Color.Primary" />
+                    <MudSwitch T="bool" Label="RSS sweep" @bind-Value="_model.EnableRss" Color="Color.Primary" />
+                    <MudSwitch T="bool" Label="Interactive search" @bind-Value="_model.EnableInteractiveSearch" Color="Color.Primary" />
+                    <MudTooltip Text="Use this indexer's newest uploads for the home page's Recommended row. Only sources that can browse (not just search) can serve it.">
+                        <MudSwitch T="bool" Label="Recommended feed" @bind-Value="_model.EnableRecommendedFeed" Color="Color.Secondary" />
+                    </MudTooltip>
+                </div>
+            </MudItem>
+
+            <MudItem xs="12"><MudDivider Class="my-2" /></MudItem>
+
+            <MudItem xs="6" sm="3">
+                <MudNumericField T="int" Label="Priority" @bind-Value="_model.Priority" Min="1" Max="50"
+                                 Variant="Variant.Outlined" HelperText="1 = highest." />
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudNumericField T="int" Label="Requests / min" @bind-Value="_model.RateLimitPerMinute" Min="1" Max="600"
+                                 Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudNumericField T="int" Label="Cache (sec)" @bind-Value="_model.CacheSeconds" Min="0" Max="3600"
+                                 Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudNumericField T="int" Label="Detail fetches" @bind-Value="_model.MaxDetailFetches" Min="1" Max="100"
+                                 Variant="Variant.Outlined" HelperText="Scrapers only." />
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudNumericField T="int?" Label="Min seeders" @bind-Value="_model.MinSeeders" Clearable="true" Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudNumericField T="int?" Label="Max age (days)" @bind-Value="_model.MaxAgeDays" Clearable="true" Variant="Variant.Outlined" />
+            </MudItem>
+        </MudGrid>
+
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3" Dense="true">@_error</MudAlert>
+        }
+
+        @if (_testing)
+        {
+            <div class="d-flex align-items-center gap-2 mt-3">
+                <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
+                <MudText Typo="Typo.body2">Asking the downloader to contact the endpoint…</MudText>
+            </div>
+        }
+        else if (_caps is not null)
+        {
+            <MudAlert Severity="@(_caps.Reachable ? Severity.Success : Severity.Error)" Class="mt-3" Dense="true">
+                @_caps.Message
+            </MudAlert>
+
+            @if (_caps.Categories.Count > 0)
+            {
+                <div class="d-flex justify-content-between align-items-center mt-2">
+                    <MudText Typo="Typo.caption" Class="text-muted">
+                        Categories this endpoint advertises. The category fields above are the single most
+                        common misconfiguration — a tracker with private numbering returns nothing for the
+                        Torznab standards, which looks exactly like "no matches".
+                    </MudText>
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="ApplySuggestedCategories">
+                        Use these
+                    </MudButton>
+                </div>
+                <div class="d-flex flex-wrap gap-1 mt-2" style="max-height:160px; overflow-y:auto;">
+                    @foreach (var c in _caps.Categories.OrderBy(c => c.Id))
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@c.Id @c.Name</MudChip>
+                    }
+                </div>
+            }
+
+            @if (_caps.SupportedParams.Count > 0)
+            {
+                <MudText Typo="Typo.caption" Class="text-muted mt-2 d-block">
+                    Search parameters: @string.Join(", ", _caps.SupportedParams)
+                </MudText>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        @* A test runs against the SAVED row: the probe happens in the downloader, which reads its config
+           from the database, so an unsaved URL is not something it can reach. *@
+        <MudTooltip Text="@(_model.Id > 0 ? "Contact this endpoint and read back what it supports." : "Save the indexer first — the downloader tests the stored configuration.")">
+            <MudButton StartIcon="@Icons.Material.Filled.NetworkCheck" Disabled="@(_testing || _saving || _model.Id <= 0)"
+                       OnClick="Test">Test</MudButton>
+        </MudTooltip>
+        <MudSpacer />
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_saving" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    /// <summary>Existing row to edit; null creates a new Torznab indexer.</summary>
+    [Parameter] public IndexerSettingDto? Existing { get; set; }
+
+    private IndexerSettingDto _model = new();
+    private string? _error;
+    private bool _saving;
+    private bool _testing;
+    private IndexerCapabilitiesDto? _caps;
+
+    protected override void OnInitialized()
+    {
+        // Copy rather than bind the caller's instance, so cancelling genuinely discards the edits.
+        _model = Existing is null
+            ? new IndexerSettingDto { Implementation = "Torznab", Enabled = true, Priority = 10 }
+            : new IndexerSettingDto
+            {
+                Id = Existing.Id, Name = Existing.Name, Implementation = Existing.Implementation,
+                IsBuiltIn = Existing.IsBuiltIn, Enabled = Existing.Enabled, Priority = Existing.Priority,
+                Url = Existing.Url, HasApiKey = Existing.HasApiKey, BaseUrlOverride = Existing.BaseUrlOverride,
+                MovieCategoriesCsv = Existing.MovieCategoriesCsv, TvCategoriesCsv = Existing.TvCategoriesCsv,
+                AnimeCategoriesCsv = Existing.AnimeCategoriesCsv,
+                SupportsMovie = Existing.SupportsMovie, SupportsTv = Existing.SupportsTv,
+                SupportsAnime = Existing.SupportsAnime, AnimeOnly = Existing.AnimeOnly,
+                EnableRss = Existing.EnableRss, EnableAutomaticSearch = Existing.EnableAutomaticSearch,
+                EnableInteractiveSearch = Existing.EnableInteractiveSearch,
+                EnableRecommendedFeed = Existing.EnableRecommendedFeed,
+                MinSeeders = Existing.MinSeeders, TimeoutSeconds = Existing.TimeoutSeconds,
+                RateLimitPerMinute = Existing.RateLimitPerMinute, CacheSeconds = Existing.CacheSeconds,
+                MaxDetailFetches = Existing.MaxDetailFetches, MaxAgeDays = Existing.MaxAgeDays,
+                Notes = Existing.Notes
+            };
+    }
+
+    private async Task Save()
+    {
+        _saving = true;
+        _error = null;
+        var (ok, error) = await Indexers.SaveAsync(_model);
+        _saving = false;
+        if (!ok) { _error = error; return; }
+        await Toasts.ShowSuccessAsync($"Saved {_model.Name}.");
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    /// <summary>
+    /// Queue a capabilities probe and wait for the downloader to answer. Same handoff as an interactive
+    /// search — the web app has no route to an indexer that doesn't leave the VPN tunnel, so the work is a
+    /// row the worker claims and the answer comes back through the database.
+    /// </summary>
+    private async Task Test()
+    {
+        _testing = true;
+        _caps = null;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            var taskId = await Search.CreateCapabilitiesTestAsync(_model.Id, null);
+            var deadline = DateTime.UtcNow.AddSeconds(60);
+            while (DateTime.UtcNow < deadline)
+            {
+                var status = await Search.GetAsync(taskId);
+                if (status is not null && status.Status is not (SearchTaskStatus.Pending or SearchTaskStatus.Claimed))
+                {
+                    _caps = status.Capabilities
+                            ?? new IndexerCapabilitiesDto { Message = status.Error ?? "The test returned nothing." };
+                    return;
+                }
+                await Task.Delay(TimeSpan.FromSeconds(1));
+            }
+            // A timeout here almost always means the downloader isn't running, which is worth saying plainly
+            // rather than leaving the dialog spinning.
+            _caps = new IndexerCapabilitiesDto
+            {
+                Message = "No answer within 60s. The downloader picks these up on a 2-second poll, so it's " +
+                          "probably not running — check the Overview tab."
+            };
+        }
+        catch (Exception ex)
+        {
+            _caps = new IndexerCapabilitiesDto { Message = ex.Message };
+        }
+        finally
+        {
+            _testing = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Fill the category fields from what the endpoint reported. Torznab numbers movies in 2000-2999 and TV
+    /// in 5000-5999, so the ranges classify the standard ones; but a tracker's own categories are exactly
+    /// what the standard ranges miss — Jackett surfaces those with a six-digit private id under a standard
+    /// parent, so a subcategory is classified by its PARENT, not by its own number. Missing those is the
+    /// whole failure this feature exists to prevent.
+    /// </summary>
+    private void ApplySuggestedCategories()
+    {
+        if (_caps is null) return;
+
+        bool InRange(IndexerCategoryDto c, int low, int high) =>
+            (c.Id >= low && c.Id < high) || (c.ParentId is int p && p >= low && p < high);
+
+        string Csv(Func<IndexerCategoryDto, bool> pick) =>
+            string.Join(",", _caps.Categories.Where(pick).Select(c => c.Id).Distinct().OrderBy(id => id));
+
+        var movies = Csv(c => InRange(c, 2000, 3000));
+        var tv = Csv(c => InRange(c, 5000, 6000));
+        var anime = Csv(c => c.Name.Contains("anime", StringComparison.OrdinalIgnoreCase));
+
+        if (movies.Length > 0) _model.MovieCategoriesCsv = movies;
+        if (tv.Length > 0) _model.TvCategoriesCsv = tv;
+        if (anime.Length > 0) _model.AnimeCategoriesCsv = anime;
+
+        _error = null;
+        StateHasChanged();
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

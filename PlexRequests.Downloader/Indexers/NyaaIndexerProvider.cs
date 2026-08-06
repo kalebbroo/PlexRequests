@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Indexers;
 
@@ -13,7 +14,7 @@ namespace PlexRequests.Downloader.Indexers;
 /// for all of those — for non-anime titles it simply returns nothing.
 /// </summary>
 public class NyaaIndexerProvider(HttpClient http, IOptions<IndexerOptions> options, ILogger<NyaaIndexerProvider> logger)
-    : IIndexerProvider
+    : IIndexerImplementation
 {
     private static readonly XNamespace Ns = "https://nyaa.si/xmlns/nyaa";
     private static readonly string[] Trackers =
@@ -30,11 +31,9 @@ public class NyaaIndexerProvider(HttpClient http, IOptions<IndexerOptions> optio
     private readonly IndexerOptions _opts = options.Value;
     private readonly ILogger<NyaaIndexerProvider> _logger = logger;
 
-    public string Name => "Nyaa";
-    public bool Supports(MediaType mediaType) => mediaType is MediaType.Anime or MediaType.TvShow or MediaType.Movie;
-    public bool AnimeOnly => true;
+    public string Key => "Nyaa";
 
-    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct)
+    public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(IndexerConfigDto indexer, FulfillmentJobDto job, CancellationToken ct)
     {
         if (!_opts.NyaaEnabled || string.IsNullOrWhiteSpace(job.Title)) return Array.Empty<ReleaseCandidate>();
 
@@ -69,7 +68,8 @@ public class NyaaIndexerProvider(HttpClient http, IOptions<IndexerOptions> optio
                     Seeders = IndexerParsing.ParseInt((string?)item.Element(Ns + "seeders")),
                     Leechers = IndexerParsing.ParseInt((string?)item.Element(Ns + "leechers")),
                     SizeBytes = IndexerParsing.ParseSize((string?)item.Element(Ns + "size")),
-                    Source = Name
+                    IndexerId = indexer.Id,
+                    Source = indexer.Name
                 });
             }
         }

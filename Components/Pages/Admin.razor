@@ -13,13 +13,13 @@
    Users      - accounts & roles
    System     - database maintenance: overview, backup, targeted cleanup, factory reset *@
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6">
-    <MudTabs ActivePanelIndex="_activeIndex" ActivePanelIndexChanged="OnTabChanged" Elevation="0" Rounded="false" Color="Color.Primary" SliderColor="Color.Primary" Class="custom-tabs">
+    <MudTabs ActivePanelIndex="_activeIndex" ActivePanelIndexChanged="OnTabChanged" Elevation="0" Rounded="false" SliderColor="Color.Primary" Class="custom-tabs">
         <MudTabPanel Text="Overview">
             <div class="pt-4"><AdminServerHealthPanel /></div>
         </MudTabPanel>
         <MudTabPanel Text="Requests">
             <div class="pt-4">
-                <MudTabs ActivePanelIndex="_requestsSub" ActivePanelIndexChanged="OnRequestsSubChanged" Elevation="0" Rounded="false" Color="Color.Secondary">
+                <MudTabs ActivePanelIndex="_requestsSub" ActivePanelIndexChanged="OnRequestsSubChanged" Elevation="0" Rounded="false" SliderColor="Color.Primary" Class="custom-tabs custom-subtabs">
                     <MudTabPanel Text="Approvals">
                         <div class="pt-4"><AdminApprovalsPanel /></div>
                     </MudTabPanel>
@@ -31,12 +31,18 @@
         </MudTabPanel>
         <MudTabPanel Text="Downloads">
             <div class="pt-4">
-                <MudTabs ActivePanelIndex="_downloadsSub" ActivePanelIndexChanged="OnDownloadsSubChanged" Elevation="0" Rounded="false" Color="Color.Secondary">
+                <MudTabs ActivePanelIndex="_downloadsSub" ActivePanelIndexChanged="OnDownloadsSubChanged" Elevation="0" Rounded="false" SliderColor="Color.Primary" Class="custom-tabs custom-subtabs">
                     <MudTabPanel Text="Preferences">
                         <div class="pt-4"><AdminDownloadsPanel /></div>
                     </MudTabPanel>
-                    <MudTabPanel Text="Quality Rules">
-                        <div class="pt-4"><AdminQualityPanel /></div>
+                    <MudTabPanel Text="Quality Profiles">
+                        <div class="pt-4"><AdminQualityProfilesPanel /></div>
+                    </MudTabPanel>
+                    <MudTabPanel Text="Profile Assignment">
+                        <div class="pt-4"><AdminProfileAssignmentPanel /></div>
+                    </MudTabPanel>
+                    <MudTabPanel Text="Custom Formats">
+                        <div class="pt-4"><AdminCustomFormatsPanel /></div>
                     </MudTabPanel>
                     <MudTabPanel Text="Indexers">
                         <div class="pt-4"><AdminIndexersPanel /></div>
@@ -46,7 +52,7 @@
         </MudTabPanel>
         <MudTabPanel Text="Library">
             <div class="pt-4">
-                <MudTabs ActivePanelIndex="_librarySub" ActivePanelIndexChanged="OnLibrarySubChanged" Elevation="0" Rounded="false" Color="Color.Secondary">
+                <MudTabs ActivePanelIndex="_librarySub" ActivePanelIndexChanged="OnLibrarySubChanged" Elevation="0" Rounded="false" SliderColor="Color.Primary" Class="custom-tabs custom-subtabs">
                     <MudTabPanel Text="Organization">
                         <div class="pt-4"><AdminLibraryOrganizationPanel /></div>
                     </MudTabPanel>
@@ -73,7 +79,9 @@
     private static readonly string[] TabKeys = { "overview", "requests", "downloads", "library", "jobs", "users", "system" };
     // Sub-tab keys per group — must match each nested MudTabPanel order. Used for ?sub= deep links.
     private static readonly string[] RequestsSubKeys = { "approvals", "issues" };
-    private static readonly string[] DownloadsSubKeys = { "preferences", "quality", "indexers" };
+    // "quality" is kept as the key for the profiles tab so existing ?sub=quality bookmarks and the legacy
+    // ?tab=quality alias below still land on the right place after Quality Rules became Quality Profiles.
+    private static readonly string[] DownloadsSubKeys = { "preferences", "quality", "assignment", "formats", "indexers" };
     private static readonly string[] LibrarySubKeys = { "organization", "network" };
 
     // Pre-consolidation single-level keys: old bookmarks and cross-links (e.g. /admin?tab=quality)
