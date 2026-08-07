@@ -63,7 +63,7 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
     {
         await EnsureAuthAsync(ct);
         var keys = new[] { "name", "state", "progress", "total_size", "is_finished", "download_location", "save_path", "files",
-                           "download_payload_rate", "num_seeds", "num_peers", "eta" };
+                           "download_payload_rate", "num_seeds", "num_peers", "eta", "tracker_status" };
         var result = await RpcAsync("core.get_torrent_status", new object[] { torrentId, keys }, ct);
         if (result.ValueKind != JsonValueKind.Object || !result.EnumerateObject().Any())
             return null;
@@ -96,7 +96,7 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
             }
         }
 
-        return new DownloadStatus(state, progress, name, size, string.IsNullOrEmpty(path) ? null : path, finished, files, rate, seeds, peers, eta);
+        return new DownloadStatus(state, progress, name, size, string.IsNullOrEmpty(path) ? null : path, finished, files, rate, seeds, peers, eta, Str(result, "tracker_status"));
     }
 
     public async Task<bool> RemoveAsync(string torrentId, bool removeData, CancellationToken ct)

@@ -351,6 +351,53 @@ public class DownloadTorrentTelemetry
     public int? Episode { get; set; }
 }
 
+/// <summary>
+/// One torrent backing a job, as the database durably knows it. Distinct from
+/// <see cref="DownloadTorrentTelemetry"/>, which is an in-memory snapshot for the live panel and is lost
+/// whenever the worker restarts — this is the record that survives, and the join key the reconciler uses.
+/// </summary>
+public class TrackedTorrentDto
+{
+    public int Id { get; set; }
+    public int FulfillmentJobId { get; set; }
+    /// <summary>The download client's own id. Never computed by us.</summary>
+    public string TorrentId { get; set; } = string.Empty;
+    /// <summary>v1 infohash from the magnet, for blocklisting. Differs from TorrentId for v2 torrents.</summary>
+    public string? InfoHash { get; set; }
+    public string? ReleaseName { get; set; }
+    public int? Season { get; set; }
+    public int? Episode { get; set; }
+    public bool IsPack { get; set; }
+    public List<int> NeededEpisodes { get; set; } = new();
+    public int Resolution { get; set; }
+
+    public TorrentTrackingState State { get; set; }
+    public double Progress { get; set; }
+    public int Seeds { get; set; }
+    public int Peers { get; set; }
+    public double DownloadRateBytesPerSec { get; set; }
+    public long TotalSizeBytes { get; set; }
+    public DateTime AddedAt { get; set; }
+    public DateTime? ProgressChangedAt { get; set; }
+    public string? TrackerStatus { get; set; }
+    public string? FailReason { get; set; }
+}
+
+/// <summary>One torrent's outcome from a reconciliation pass.</summary>
+public class TorrentStateUpdateDto
+{
+    public string TorrentId { get; set; } = string.Empty;
+    public TorrentTrackingState State { get; set; }
+    public double Progress { get; set; }
+    public int Seeds { get; set; }
+    public int Peers { get; set; }
+    public double DownloadRateBytesPerSec { get; set; }
+    public long TotalSizeBytes { get; set; }
+    public string? TrackerStatus { get; set; }
+    /// <summary>Why it failed or went missing; null while healthy.</summary>
+    public string? Reason { get; set; }
+}
+
 /// <summary>Per-torrent lifecycle stage surfaced in the admin live-downloads panel.</summary>
 public enum DownloadTorrentStage
 {

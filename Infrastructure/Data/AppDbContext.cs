@@ -24,6 +24,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
     public DbSet<FulfillmentJobEntity> FulfillmentJobs => Set<FulfillmentJobEntity>();
     public DbSet<ImportedFileEntity> ImportedFiles => Set<ImportedFileEntity>();
+    public DbSet<FulfillmentTorrentEntity> FulfillmentTorrents => Set<FulfillmentTorrentEntity>();
     public DbSet<BridgeOutboxEntity> BridgeOutbox => Set<BridgeOutboxEntity>();
     public DbSet<ScheduledJobEntity> ScheduledJobs => Set<ScheduledJobEntity>();
     public DbSet<JobRunEntity> JobRuns => Set<JobRunEntity>();
@@ -151,6 +152,22 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasOne<QualityProfileEntity>().WithMany()
                 .HasForeignKey(x => x.QualityProfileId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<FulfillmentTorrentEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            // The join key the reconciler uses every cycle, and the uniqueness that makes registering a
+            // torrent idempotent — re-adding the same one after a restart updates rather than duplicates.
+            b.HasIndex(x => x.TorrentId);
+            b.HasIndex(x => new { x.FulfillmentJobId, x.TorrentId }).IsUnique();
+            // "Everything still in flight" is the reconciler's hot query.
+            b.HasIndex(x => x.State);
+            b.HasIndex(x => x.InfoHash);
+            // A job's torrents are meaningless without the job.
+            b.HasOne(x => x.Job).WithMany()
+                .HasForeignKey(x => x.FulfillmentJobId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<DownloadPreferencesEntity>(b =>

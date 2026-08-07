@@ -124,6 +124,9 @@ builder.Services.AddSingleton<IIndexerFetch, IndexerFetch>();
 builder.Services.AddHostedService<PlexRequests.Downloader.Worker.LegacyTorznabImporter>();
 // Serves admin-initiated searches on a short poll, separate from the fulfillment loop — someone is waiting.
 builder.Services.AddHostedService<PlexRequests.Downloader.Worker.InteractiveSearchWorker>();
+// Reconciles the database's view of what is downloading against the client's, every cycle. Stateless by
+// design: a restart loses nothing because it holds nothing between passes.
+builder.Services.AddHostedService<PlexRequests.Downloader.Worker.TorrentReconciler>();
 // Browses enabled indexers' newest uploads to feed the home page's "Recommended" row. Runs here rather
 // than in the web app so torrent-site traffic stays inside the VPN tunnel.
 builder.Services.AddHostedService<PlexRequests.Downloader.Worker.RecommendedFeedWorker>();

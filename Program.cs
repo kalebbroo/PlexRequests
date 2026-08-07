@@ -166,6 +166,9 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<PlexRequestsHosted
 // their ScheduledJobEntity row.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.MissingSearchJob>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.SearchTaskCleanupJob>();
+// The durable job<->torrent link the reconciler joins on. Without it the link lived only in the worker's
+// local file and an in-memory store, so a worker restart orphaned every in-flight download.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IFulfillmentTorrentService, PlexRequestsHosted.Services.Implementations.FulfillmentTorrentService>();
 // Re-derives tier + format score for already-imported files from their stored release names, so editing a
 // custom format reaches the library you already have and not only the next download.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.RecomputeFormatScoresJob>();
@@ -498,6 +501,28 @@ app.MapPost("/api/fulfillment/indexer-status", async (List<PlexRequestsHosted.Sh
 // The worker polls for admin-initiated searches. This is a pull, not a push, because the web app has no
 // route to the downloader: it has no listening port and, under the VPN compose file, shares gluetun's
 // network namespace. A short poll interval is what keeps the admin-perceived latency to a couple of seconds.
+// ---- Torrent reconciliation -------------------------------------------------------------------
+// The downloader registers what it added, then reconciles it against the download client on every pass.
+// This is a pull-and-push loop over durable state rather than in-process monitoring, so it is indifferent
+// to either side restarting: the next cycle re-derives everything from the client plus the database.
+app.MapPost("/api/fulfillment/{jobId:int}/torrents", async (int jobId, List<PlexRequestsHosted.Shared.DTOs.TrackedTorrentDto> body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IFulfillmentTorrentService svc) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return Results.Ok(await svc.RegisterAsync(jobId, body));
+});
+
+app.MapGet("/api/fulfillment/torrents/active", async (HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IFulfillmentTorrentService svc) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return Results.Ok(await svc.GetActiveAsync());
+});
+
+app.MapPost("/api/fulfillment/torrents/state", async (List<PlexRequestsHosted.Shared.DTOs.TorrentStateUpdateDto> body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IFulfillmentTorrentService svc) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return Results.Ok(await svc.ApplyAsync(body));
+});
+
 app.MapPost("/api/fulfillment/search/claim", async (ClaimRequest body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IInteractiveSearchService search) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
