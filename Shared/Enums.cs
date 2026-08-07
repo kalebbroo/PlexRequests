@@ -144,6 +144,27 @@ public enum CutoffState
     Unmet = 2
 }
 
+/// <summary>
+/// Where one torrent stands, as the reconciler sees it. Deliberately separate from the JOB's status: a job
+/// is Deferred/Completed as a whole, while its individual torrents succeed and fail independently — and
+/// conflating the two is how a job came to be marked "no acceptable release found" while nine of its
+/// torrents had finished downloading.
+/// </summary>
+public enum TorrentTrackingState
+{
+    /// <summary>In the client and progressing (or legitimately queued behind it).</summary>
+    Active = 0,
+    /// <summary>Finished downloading; not yet moved into the library.</summary>
+    Finished = 1,
+    /// <summary>Files placed in the library. Terminal, successful.</summary>
+    Imported = 2,
+    /// <summary>Gave up on this torrent — stalled, errored, or unimportable. Terminal.</summary>
+    Failed = 3,
+    /// <summary>The client no longer has it: removed by hand, or its state was lost. Terminal; the job
+    /// re-plans for whatever this was supposed to cover rather than waiting on something that is gone.</summary>
+    Missing = 4
+}
+
 /// <summary>Where an episode stands in the monitor's pipeline.</summary>
 public enum AirSearchState
 {

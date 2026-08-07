@@ -237,6 +237,51 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         }
     }
 
+    public async Task<bool> RegisterTorrentsAsync(int jobId, IReadOnlyList<TrackedTorrentDto> torrents, CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _http.PostAsJsonAsync($"/api/fulfillment/{jobId}/torrents", torrents, ct);
+            return resp.IsSuccessStatusCode;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Not best-effort in spirit — losing this loses the durable link — but the reconciler recovers
+            // on the next pass once the web app is reachable again, so a failure here is a delay, not a leak.
+            _logger.LogWarning(ex, "Could not register torrents for job {JobId}", jobId);
+            return false;
+        }
+    }
+
+    public async Task<List<TrackedTorrentDto>> GetActiveTorrentsAsync(CancellationToken ct)
+    {
+        try
+        {
+            var list = await _http.GetFromJsonAsync<List<TrackedTorrentDto>>("/api/fulfillment/torrents/active", ct);
+            return list ?? new();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // An empty list means "do nothing this pass", which is the correct response to not knowing.
+            _logger.LogDebug(ex, "Active torrent list unavailable");
+            return new();
+        }
+    }
+
+    public async Task<bool> ReportTorrentStateAsync(IReadOnlyList<TorrentStateUpdateDto> updates, CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _http.PostAsJsonAsync("/api/fulfillment/torrents/state", updates, ct);
+            return resp.IsSuccessStatusCode;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not report torrent state");
+            return false;
+        }
+    }
+
     public async Task<bool> BlocklistAsync(int jobId, BlocklistRequestDto request, CancellationToken ct)
     {
         try

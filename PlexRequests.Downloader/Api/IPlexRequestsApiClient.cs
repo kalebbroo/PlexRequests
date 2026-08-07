@@ -34,6 +34,13 @@ public interface IPlexRequestsApiClient
     /// <summary>Record a release that failed, so it is never grabbed for this request again.</summary>
     Task<bool> BlocklistAsync(int jobId, BlocklistRequestDto request, CancellationToken ct);
 
+    // ---- Torrent reconciliation ----------------------------------------------------------------
+    /// <summary>Record the torrents backing a job, so the link survives this process.</summary>
+    Task<bool> RegisterTorrentsAsync(int jobId, IReadOnlyList<TrackedTorrentDto> torrents, CancellationToken ct);
+    /// <summary>Everything the database still believes is in flight — the reconciler's work list.</summary>
+    Task<List<TrackedTorrentDto>> GetActiveTorrentsAsync(CancellationToken ct);
+    Task<bool> ReportTorrentStateAsync(IReadOnlyList<TorrentStateUpdateDto> updates, CancellationToken ct);
+
     /// <summary>Push the titles currently trending on an indexer. Returns how many resolved to metadata.</summary>
     Task<int> PushRecommendedAsync(IReadOnlyList<RecommendedFeedItemDto> items, CancellationToken ct);
 

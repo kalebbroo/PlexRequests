@@ -12,7 +12,12 @@ namespace PlexRequests.Downloader.Download;
 /// <param name="Seeds">Connected seeds, if the client reports it.</param>
 /// <param name="Peers">Connected peers, if the client reports it.</param>
 /// <param name="Eta">Estimated seconds to completion as reported by the client (0 ⇒ unknown/finished).</param>
-public record DownloadStatus(string State, double Progress, string Name, long TotalSizeBytes, string? SavePath, bool IsFinished, IReadOnlyList<string> Files, double DownloadRate = 0, int Seeds = 0, int Peers = 0, long Eta = 0);
+/// <summary>
+/// <paramref name="Progress"/> is 0-100. <paramref name="TrackerStatus"/> is the client's own last word
+/// from the tracker ("Announce OK", "Error: Host not found (authoritative)") — the single most diagnostic
+/// field when a torrent sits at 0%, and previously discarded.
+/// </summary>
+public record DownloadStatus(string State, double Progress, string Name, long TotalSizeBytes, string? SavePath, bool IsFinished, IReadOnlyList<string> Files, double DownloadRate = 0, int Seeds = 0, int Peers = 0, long Eta = 0, string? TrackerStatus = null);
 
 /// <summary>Torrent client abstraction (implemented for Deluge; swappable).</summary>
 public interface IDownloadClient

@@ -111,6 +111,26 @@ public class FulfillmentPipeline(
             }
 
             logger.LogInformation("Job {JobId} \"{Title}\": added {Count} torrent(s) [{Kind}]", job.Id, job.Title, torrents.Count, plan.Kind);
+
+            // Persist the job<->torrent link BEFORE monitoring starts. The local state file written below
+            // only helps THIS process; this is what lets any process — the reconciler after a deploy, or a
+            // replacement worker — pick these up. Without it, torrents added here became invisible the
+            // moment this worker was replaced, which is how sixty-seven of them ended up downloading with
+            // their job marked "no acceptable release found".
+            await api.RegisterTorrentsAsync(job.Id, torrents.Select((t, i) => new TrackedTorrentDto
+            {
+                FulfillmentJobId = job.Id,
+                TorrentId = t.TorrentId,
+                InfoHash = MagnetUtil.InfoHashFromMagnet(plan.Items.ElementAtOrDefault(i)?.Candidate.Magnet ?? string.Empty)
+                           ?? MagnetUtil.Normalize(t.TorrentId),
+                ReleaseName = plan.Items.ElementAtOrDefault(i)?.Candidate.ReleaseName,
+                Season = t.Season,
+                Episode = t.Episode,
+                IsPack = t.IsPack,
+                NeededEpisodes = t.NeededEpisodes?.ToList() ?? new(),
+                Resolution = t.Resolution
+            }).ToList(), ct);
+
             var record = new ActiveJobRecord(job, torrents);
             await stateStore.SaveAsync(record, ct);
             await SafeReportProgress(job.Id, 0);
