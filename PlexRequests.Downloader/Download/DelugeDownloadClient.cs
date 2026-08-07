@@ -21,8 +21,28 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
     public async Task<string?> AddMagnetAsync(string magnet, string? label, CancellationToken ct)
     {
         await EnsureAuthAsync(ct);
-        var result = await RpcAsync("core.add_torrent_magnet", new object[] { magnet, new Dictionary<string, object>() }, ct);
-        var hash = result.ValueKind == JsonValueKind.String ? result.GetString() : null;
+
+        string? hash;
+        try
+        {
+            var result = await RpcAsync("core.add_torrent_magnet", new object[] { magnet, new Dictionary<string, object>() }, ct);
+            hash = result.ValueKind == JsonValueKind.String ? result.GetString() : null;
+        }
+        catch (DelugeDuplicateTorrentException dup)
+        {
+            // Adding is idempotent by intent: "make Deluge be downloading this" is already satisfied. This
+            // happens routinely — a job retried after a downloader restart, an upgrade re-grabbing the same
+            // release, two episodes served by one pack. Treating it as failure is what stranded jobs at 0%
+            // with the torrent sitting right there in the client.
+            hash = dup.Hash ?? MagnetHash(magnet);
+            if (string.IsNullOrWhiteSpace(hash))
+            {
+                _logger.LogWarning("Deluge reports this torrent is already present but gave no id: {Message}", dup.Message);
+                return null;
+            }
+            _logger.LogInformation("Torrent {Hash} is already in Deluge — adopting the existing one", hash);
+        }
+
         if (string.IsNullOrWhiteSpace(hash))
         {
             _logger.LogWarning("Deluge did not return a torrent id when adding a magnet");
@@ -151,10 +171,17 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
 
         if (root.TryGetProperty("error", out var err) && err.ValueKind == JsonValueKind.Object)
         {
-            var msg = err.TryGetProperty("message", out var m) ? m.GetString() : "unknown error";
-            if ((msg ?? "").Contains("auth", StringComparison.OrdinalIgnoreCase) || (msg ?? "").Contains("session", StringComparison.OrdinalIgnoreCase))
-                throw new DelugeAuthException(msg ?? "not authenticated");
-            throw new InvalidOperationException($"Deluge RPC '{method}' failed: {msg}");
+            var msg = err.TryGetProperty("message", out var m) ? m.GetString() ?? "unknown error" : "unknown error";
+
+            // Classification lives in DelugeError so it can be unit-tested; see the note there on why
+            // substring-matching "session" was actively harmful.
+            throw DelugeError.Classify(msg) switch
+            {
+                DelugeErrorKind.AlreadyInSession => new DelugeDuplicateTorrentException(msg, DelugeError.HashIn(msg)),
+                DelugeErrorKind.NotAuthenticated => new DelugeAuthException(msg),
+                DelugeErrorKind.UnknownTorrent => new DelugeUnknownTorrentException(msg),
+                _ => new InvalidOperationException($"Deluge RPC '{method}' failed: {msg}")
+            };
         }
         return root.TryGetProperty("result", out var result) ? result.Clone() : default;
     }
@@ -165,5 +192,19 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
     private static string Str(JsonElement obj, string prop) =>
         obj.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? string.Empty : string.Empty;
 
+    /// <summary>Last-resort id for a duplicate add whose message carried no hash: read it off the magnet.
+    /// Only valid for v1 (btih) magnets, which is why Deluge's own answer is preferred when present.</summary>
+    private static string? MagnetHash(string magnet) =>
+        PlexRequestsHosted.Shared.Releases.MagnetUtil.InfoHashFromMagnet(magnet);
+
     private sealed class DelugeAuthException(string message) : Exception(message);
+
+    /// <summary>Deluge already has this torrent. Not an error — the desired end state already holds.</summary>
+    private sealed class DelugeDuplicateTorrentException(string message, string? hash) : Exception(message)
+    {
+        public string? Hash { get; } = hash;
+    }
+
+    /// <summary>Deluge doesn't know this torrent id — removed by hand, or its state was lost.</summary>
+    private sealed class DelugeUnknownTorrentException(string message) : Exception(message);
 }
