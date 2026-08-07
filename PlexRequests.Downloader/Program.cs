@@ -120,6 +120,10 @@ builder.Services.AddSingleton<IIndexerRateLimiter, IndexerRateLimiter>();
 // The single fetch seam every scraped indexer goes through: applies stored clearance credentials and turns
 // a refusal into a typed IndexerBlockedException instead of an empty result set.
 builder.Services.AddSingleton<IIndexerFetch, IndexerFetch>();
+// Solving a Cloudflare interstitial needs a browser engine — no header or TLS trick substitutes for running
+// the challenge. Registered unconditionally; it reports itself unavailable when no browser is installed, so
+// a deployment without one degrades to "blocked, here's why" rather than failing oddly.
+builder.Services.AddSingleton<IChallengeSolver, BrowserChallengeSolver>();
 // One-time migration of Indexer__Torznab__* env config into the admin-managed Indexers table.
 builder.Services.AddHostedService<PlexRequests.Downloader.Worker.LegacyTorznabImporter>();
 // Serves admin-initiated searches on a short poll, separate from the fulfillment loop — someone is waiting.

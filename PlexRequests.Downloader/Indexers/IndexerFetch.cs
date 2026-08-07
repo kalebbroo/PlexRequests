@@ -34,8 +34,18 @@ public interface IIndexerFetch
     Task<string> GetStringAsync(HttpClient http, IndexerConfigDto indexer, string url, CancellationToken ct);
 }
 
-public class IndexerFetch(ILogger<IndexerFetch> logger) : IIndexerFetch
+public class IndexerFetch(
+    IChallengeSolver solver,
+    PlexRequests.Downloader.Api.IPlexRequestsApiClient api,
+    ILogger<IndexerFetch> logger) : IIndexerFetch
 {
+    /// <summary>
+    /// Sites we have already tried and failed to solve this process-lifetime. Without this, every search
+    /// against a site whose challenge cannot be beaten would launch a browser and burn a minute — turning
+    /// one blocked indexer into a system-wide slowdown.
+    /// </summary>
+    private readonly HashSet<string> _unsolvable = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Cloudflare's interstitial is a 403/503 carrying these markers. Distinguishing the
     /// *challenge* (solvable — a browser can earn a clearance cookie) from a hard IP ban (error 1020,
     /// nothing to be done) decides whether escalating to a browser is worth the cost.</summary>
@@ -92,6 +102,18 @@ public class IndexerFetch(ILogger<IndexerFetch> logger) : IIndexerFetch
     /// User-Agent that earned it, so the two are stored and sent together — sending the cookie with a
     /// different UA is worse than sending no cookie at all, because it looks like theft.
     /// </summary>
+    private static string AbsoluteUrl(HttpClient http, string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var abs) ? abs.ToString()
+        : http.BaseAddress is not null ? new Uri(http.BaseAddress, url).ToString()
+        : url;
+
+    private async Task SafePersistAsync(IndexerConfigDto indexer, Clearance clearance, CancellationToken ct)
+    {
+        // Best-effort: an unsaved clearance still works for this process, it just has to be re-earned later.
+        try { await api.SaveIndexerClearanceAsync(indexer.Id, clearance.CookieHeader, clearance.UserAgent, ct); }
+        catch (Exception ex) { logger.LogDebug(ex, "Could not persist the clearance for {Indexer}", indexer.Name); }
+    }
+
     /// <summary>Anchored to the document title so a release name can never trip it.</summary>
     private static bool TitleSaysJustAMoment(string body)
     {
@@ -103,7 +125,10 @@ public class IndexerFetch(ILogger<IndexerFetch> logger) : IIndexerFetch
             || title.Contains("Attention Required", StringComparison.OrdinalIgnoreCase);
     }
 
-    public async Task<string> GetStringAsync(HttpClient http, IndexerConfigDto indexer, string url, CancellationToken ct)
+    public Task<string> GetStringAsync(HttpClient http, IndexerConfigDto indexer, string url, CancellationToken ct) =>
+        GetStringAsync(http, indexer, url, ct, allowSolve: true);
+
+    private async Task<string> GetStringAsync(HttpClient http, IndexerConfigDto indexer, string url, CancellationToken ct, bool allowSolve)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
 
@@ -127,6 +152,28 @@ public class IndexerFetch(ILogger<IndexerFetch> logger) : IIndexerFetch
         var block = DetectBlock(resp.StatusCode, headers, body);
         if (block is IndexerBlockReason reason)
         {
+            // Escalate to a browser ONLY for a solvable challenge, and only once per site per process. An
+            // IP ban is not solvable by any client-side means, so spending a browser launch on it would
+            // waste a minute per search and still fail; a rate limit wants patience, not a heavier client.
+            if (reason == IndexerBlockReason.CloudflareChallenge && allowSolve && solver.IsAvailable
+                && !_unsolvable.Contains(indexer.Name))
+            {
+                var clearance = await solver.SolveAsync(indexer, AbsoluteUrl(http, url), ct);
+                if (clearance is not null)
+                {
+                    // Persist so the clearance survives a restart and is shared by every later search,
+                    // rather than being re-earned per process.
+                    await SafePersistAsync(indexer, clearance, ct);
+                    indexer.ClearanceCookie = clearance.CookieHeader;
+                    indexer.UserAgent = clearance.UserAgent;
+
+                    // One retry with the clearance. allowSolve:false makes this terminal — a second failure
+                    // means the cookie did not help, and looping would be indistinguishable from a hang.
+                    return await GetStringAsync(http, indexer, url, ct, allowSolve: false);
+                }
+                _unsolvable.Add(indexer.Name);
+            }
+
             logger.LogWarning("{Indexer} is blocked ({Reason}) fetching {Url}", indexer.Name, reason, url);
             throw new IndexerBlockedException(reason,
                 $"{indexer.Name} refused the request ({reason}, HTTP {(int)resp.StatusCode})");

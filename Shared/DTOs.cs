@@ -318,6 +318,9 @@ public class UserDto : BaseDto
 
 // Wire types for the fulfillment worker API — shared by the web app (endpoints) and the downloader (client).
 public record ClaimRequest(string? WorkerId, int? Max);
+
+/// <summary>A clearance the downloader's challenge solver earned, on its way to being stored.</summary>
+public record ClearanceRequest(string? CookieHeader, string? UserAgent);
 public record ProgressRequest(int Progress, string? WorkerId, List<DownloadTorrentTelemetry>? Torrents = null);
 /// <param name="CandidatesRejected">
 /// True when the search DID return releases but none were acceptable. That is the only situation in which

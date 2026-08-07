@@ -31,6 +31,18 @@ public class WorkerOptions
 /// <summary>Indexer endpoints (public JSON APIs keyed by IMDb id).</summary>
 public class IndexerOptions
 {
+    /// <summary>Path to a Chromium/Chrome binary for solving interstitial challenges. Blank = auto-detect,
+    /// and if none is found the solver reports itself unavailable rather than failing searches.</summary>
+    public string? BrowserPath { get; set; }
+
+    /// <summary>Hard ceiling on one solve. A browser launch plus a Cloudflare interstitial is tens of
+    /// seconds; beyond this it is not going to succeed.</summary>
+    public int ChallengeSolveTimeoutSeconds { get; set; } = 90;
+
+    /// <summary>How long to let the interstitial run before reading cookies. Cloudflare imposes the delay
+    /// deliberately, so polling faster does not help — this simply has to outlast it.</summary>
+    public int ChallengeSettleSeconds { get; set; } = 15;
+
     public const string Section = "Indexer";
     public int TimeoutSeconds { get; set; } = 20;
     public string EztvBaseUrl { get; set; } = "https://eztvx.to";   // TV (JSON API)

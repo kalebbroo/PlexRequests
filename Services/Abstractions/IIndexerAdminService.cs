@@ -36,4 +36,7 @@ public interface IIndexerAdminService
     /// <summary>Apply a batch of per-search outcomes from the downloader; unknown provider names are
     /// auto-registered so new indexers appear in the panel without a schema/seed change.</summary>
     Task ReportStatusAsync(List<IndexerStatusReportDto> reports);
+
+    /// <summary>Persist a clearance earned by the downloader's challenge solver.</summary>
+    Task<bool> SaveClearanceAsync(int indexerId, string cookieHeader, string userAgent);
 }

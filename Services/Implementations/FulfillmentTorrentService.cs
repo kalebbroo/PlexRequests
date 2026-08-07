@@ -20,6 +20,9 @@ public interface IFulfillmentTorrentService
 
     /// <summary>Per-job torrents for the admin panel, newest job first.</summary>
     Task<List<TrackedTorrentDto>> GetForJobAsync(int jobId);
+
+    /// <summary>One-time repair for rows written off as Missing that had in fact been imported. Idempotent.</summary>
+    Task<int> CorrectMisclassifiedMissingAsync();
 }
 
 /// <summary>
@@ -120,21 +123,78 @@ public class FulfillmentTorrentService(AppDbContext db, ILogger<FulfillmentTorre
             row.TrackerStatus = Trim(u.TrackerStatus, 512);
             row.LastSeenAt = now;
 
-            if (u.State != row.State)
+            // "Gone from the client" and "lost" are not the same thing. The overwhelmingly common reason a
+            // torrent disappears is that it was imported and removed — by this reconciler, or by the
+            // pipeline, or by an operator tidying up after the files were already in the library. Writing
+            // that off as Missing would eventually have the job re-plan and re-download content already on
+            // disk, so the import audit is consulted before believing the loss.
+            var state = u.State;
+            if (state == TorrentTrackingState.Missing && await WasImportedAsync(row.TorrentId))
             {
-                row.State = u.State;
-                if (u.State == TorrentTrackingState.Imported) row.ImportedAt = now;
-                if (u.State is TorrentTrackingState.Failed or TorrentTrackingState.Missing)
-                    row.FailReason = Trim(u.Reason, 512);
+                state = TorrentTrackingState.Imported;
+                logger.LogDebug("Torrent {Torrent} is gone from the client but its files were imported — recording Imported, not Missing",
+                    row.TorrentId);
+            }
+
+            // A promotion to Imported carries no failure reason — it isn't one.
+            var reason = state == TorrentTrackingState.Imported ? null : u.Reason;
+
+            if (state != row.State)
+            {
+                row.State = state;
+                if (state == TorrentTrackingState.Imported) row.ImportedAt = now;
+                if (state is TorrentTrackingState.Failed or TorrentTrackingState.Missing)
+                    row.FailReason = Trim(reason, 512);
                 logger.LogInformation("Torrent {Torrent} (job {JobId}) -> {State}{Reason}",
-                    row.TorrentId[..Math.Min(12, row.TorrentId.Length)], row.FulfillmentJobId, u.State,
-                    string.IsNullOrWhiteSpace(u.Reason) ? "" : $": {u.Reason}");
+                    row.TorrentId[..Math.Min(12, row.TorrentId.Length)], row.FulfillmentJobId, state,
+                    string.IsNullOrWhiteSpace(reason) ? "" : $": {reason}");
             }
             changed++;
         }
 
         await db.SaveChangesAsync();
         return changed;
+    }
+
+    /// <summary>Did this torrent's files reach the library? The import audit is the authority — it is
+    /// written only after files are actually placed.</summary>
+    private Task<bool> WasImportedAsync(string torrentId) =>
+        db.ImportedFiles.AsNoTracking().AnyAsync(f => f.TorrentId == torrentId);
+
+    public async Task<int> CorrectMisclassifiedMissingAsync()
+    {
+        // Repairs rows written off before the check above existed. On the live deployment that was 59 of
+        // them: torrents the pipeline had imported and removed, which the reconciler then quite reasonably
+        // observed were no longer in the client and recorded as lost.
+        var missing = await db.FulfillmentTorrents
+            .Where(t => t.State == TorrentTrackingState.Missing)
+            .ToListAsync();
+        if (missing.Count == 0) return 0;
+
+        var ids = missing.Select(t => t.TorrentId).ToList();
+        var importedIds = await db.ImportedFiles.AsNoTracking()
+            .Where(f => f.TorrentId != null && ids.Contains(f.TorrentId))
+            .Select(f => f.TorrentId!)
+            .Distinct()
+            .ToListAsync();
+        if (importedIds.Count == 0) return 0;
+
+        var set = importedIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var fixedUp = 0;
+        foreach (var row in missing.Where(t => set.Contains(t.TorrentId)))
+        {
+            row.State = TorrentTrackingState.Imported;
+            row.ImportedAt ??= row.LastSeenAt ?? DateTime.UtcNow;
+            row.FailReason = null;
+            fixedUp++;
+        }
+
+        if (fixedUp > 0)
+        {
+            await db.SaveChangesAsync();
+            logger.LogInformation("Corrected {Count} torrent(s) recorded as Missing that had actually been imported", fixedUp);
+        }
+        return fixedUp;
     }
 
     private static string? Trim(string? s, int max) => s is { Length: > 0 } && s.Length > max ? s[..max] : s;
