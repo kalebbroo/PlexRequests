@@ -14,9 +14,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Shared only. The ranking logic was moved there precisely so it can be tested without standing up
-         a worker host or a database. -->
+    <!-- Ranking logic lives in Shared precisely so it can be tested without standing up a worker host or a
+         database, and that remains the bulk of these tests. -->
     <ProjectReference Include="../../Shared/PlexRequests.Shared.csproj" />
+    <!-- The downloader is referenced only for pure, host-free helpers such as DelugeError. A classification
+         bug there caused a live outage, so it needs pinning; nothing here constructs a worker or a client. -->
+    <ProjectReference Include="../../PlexRequests.Downloader/PlexRequests.Downloader.csproj" />
   </ItemGroup>
 
 </Project>
