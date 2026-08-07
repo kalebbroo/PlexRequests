@@ -127,6 +127,9 @@ builder.Services.AddHostedService<PlexRequests.Downloader.Worker.InteractiveSear
 // Reconciles the database's view of what is downloading against the client's, every cycle. Stateless by
 // design: a restart loses nothing because it holds nothing between passes.
 builder.Services.AddHostedService<PlexRequests.Downloader.Worker.TorrentReconciler>();
+// One-time-per-start bridge: without it the reconciler cannot see anything that was already downloading
+// when it shipped — which is exactly the set it exists to rescue.
+builder.Services.AddHostedService<PlexRequests.Downloader.Worker.LegacyTorrentStateAdopter>();
 // Browses enabled indexers' newest uploads to feed the home page's "Recommended" row. Runs here rather
 // than in the web app so torrent-site traffic stays inside the VPN tunnel.
 builder.Services.AddHostedService<PlexRequests.Downloader.Worker.RecommendedFeedWorker>();
