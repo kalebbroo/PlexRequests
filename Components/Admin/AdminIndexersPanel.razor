@@ -85,6 +85,17 @@ else
                     {
                         <MudChip T="string" Color="Color.Info" Size="Size.Small">no searches yet</MudChip>
                     }
+                    @* A block gets its own state ahead of the generic failure. It used to be invisible: the
+                       provider swallowed the 403 and reported "success, 0 results", so 1337x and ext.to sat
+                       green through 13 searches apiece while contributing nothing. Blocked is not quiet. *@
+                    else if (context.LastBlockReason != IndexerBlockReason.None)
+                    {
+                        <MudTooltip Text="@BlockHelp(context)">
+                            <MudChip T="string" Color="Color.Warning" Size="Size.Small" Icon="@Icons.Material.Filled.Block">
+                                @BlockLabel(context.LastBlockReason)
+                            </MudChip>
+                        </MudTooltip>
+                    }
                     else if (context.ConsecutiveFailures > 0 && !string.IsNullOrWhiteSpace(context.LastError))
                     {
                         <MudTooltip Text="@context.LastError">
@@ -118,6 +129,32 @@ else
 }
 
 @code {
+    private static string BlockLabel(IndexerBlockReason reason) => reason switch
+    {
+        IndexerBlockReason.CloudflareChallenge => "Cloudflare",
+        IndexerBlockReason.IpBanned => "IP banned",
+        IndexerBlockReason.RateLimited => "rate limited",
+        IndexerBlockReason.Forbidden => "forbidden",
+        _ => "blocked"
+    };
+
+    /// <summary>Each block has a different remedy — say which, rather than just naming the symptom.</summary>
+    private static string BlockHelp(IndexerSettingDto i) => i.LastBlockReason switch
+    {
+        IndexerBlockReason.CloudflareChallenge =>
+            "The site served a Cloudflare interstitial instead of results, so this indexer is contributing nothing. "
+            + "It's solvable: open the site in a browser from this server, then paste the cf_clearance cookie and "
+            + "that browser's User-Agent into this indexer's settings.",
+        IndexerBlockReason.IpBanned =>
+            "The site has banned this exit IP outright (Cloudflare error 1020). A clearance cookie won't help — "
+            + "this needs a different egress.",
+        IndexerBlockReason.RateLimited =>
+            "The site is asking us to slow down. Lower this indexer's requests/min.",
+        IndexerBlockReason.Forbidden =>
+            "The site returned 403 with no challenge — usually missing or rejected credentials.",
+        _ => i.LastError ?? "Blocked."
+    };
+
     private bool _loading = true;
     private List<IndexerSettingDto> _items = new();
 

@@ -252,6 +252,24 @@ public enum HdrFormat
 /// Lives here rather than in the downloader because it is one half of a quality tier (resolution x source):
 /// the web app defines and orders those tiers, the downloader matches releases against them.
 /// </summary>
+/// <summary>
+/// Why an indexer refused to answer. Kept distinct from "answered with nothing" because conflating the two
+/// is what let two permanently-blocked indexers sit green in the admin panel through thirteen searches
+/// apiece. Each value implies a different remedy, which is the point of naming them.
+/// </summary>
+public enum IndexerBlockReason
+{
+    None = 0,
+    /// <summary>Cloudflare interstitial. Solvable: a real browser can earn a clearance cookie.</summary>
+    CloudflareChallenge = 1,
+    /// <summary>Plain 403 with no challenge — credentials or the site simply says no.</summary>
+    Forbidden = 2,
+    /// <summary>429/backoff. Transient; slow down rather than escalate.</summary>
+    RateLimited = 3,
+    /// <summary>Cloudflare error 1020 or equivalent. The exit IP is banned; a browser will not help.</summary>
+    IpBanned = 4
+}
+
 public enum ReleaseSource
 {
     Unknown = 0,

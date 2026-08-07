@@ -51,6 +51,18 @@ public class IndexerEntity
     /// <summary>Optional override of the built-in's base URL, for mirrors.</summary>
     [MaxLength(2048)] public string? BaseUrlOverride { get; set; }
 
+    /// <summary>
+    /// A Cloudflare clearance cookie harvested from a real browser, stored as a raw Cookie header
+    /// ("cf_clearance=…") and encrypted at rest like the API key. Paired with <see cref="UserAgent"/>
+    /// because Cloudflare binds the cookie to the exact User-Agent AND the client IP that earned it —
+    /// replaying it under a different UA is worse than sending nothing, since it reads as a stolen cookie.
+    /// This is the manual escape hatch; the headless-browser solver populates the same two fields.
+    /// </summary>
+    [MaxLength(4096)] public string? ClearanceCookieEncrypted { get; set; }
+    [MaxLength(512)] public string? UserAgent { get; set; }
+    /// <summary>When the clearance was obtained, so the UI can say how stale it is (they expire).</summary>
+    public DateTime? ClearanceObtainedAt { get; set; }
+
     // --- Search scope -------------------------------------------------------------------------------
     /// <summary>Torznab category ids per media type. Previously hardcoded (2000 movies / 5000 TV / 5070 anime),
     /// which is wrong for trackers that use their own numbering.</summary>
@@ -114,6 +126,15 @@ public class IndexerEntity
     [MaxLength(512)] public string? LastError { get; set; }
     /// <summary>Consecutive failed searches; reset to 0 on any success. High values = the site is down/blocked.</summary>
     public int ConsecutiveFailures { get; set; }
+
+    /// <summary>
+    /// Why the last search was refused, when it was. Kept separate from <see cref="LastError"/> because a
+    /// block is a distinct condition with a distinct remedy: 1337x and ext.to each ran 13 searches that
+    /// returned nothing and still showed a clean health record, because the provider swallowed the 403 and
+    /// reported "success, 0 results". Blocked must never look like quiet.
+    /// </summary>
+    public IndexerBlockReason LastBlockReason { get; set; }
+    public DateTime? LastBlockedAt { get; set; }
     public long TotalSearches { get; set; }
     public long TotalResults { get; set; }
     public int LastLatencyMs { get; set; }
