@@ -18,6 +18,10 @@ public interface IFulfillmentQueue
     /// <summary>Atomically claim up to <paramref name="max"/> queued jobs for a worker.</summary>
     Task<List<FulfillmentJobDto>> ClaimNextAsync(string workerId, int max = 1);
 
+    /// <summary>One job by id, without claiming it. The reconciler needs a job's context to import a
+    /// torrent it did not itself add — claiming would be wrong, since the job may be terminal.</summary>
+    Task<FulfillmentJobDto?> GetJobAsync(int jobId);
+
     /// <summary>Record download progress (0-100) for a claimed job.</summary>
     Task<bool> ReportProgressAsync(int jobId, int progress);
 
