@@ -511,6 +511,13 @@ app.MapPost("/api/fulfillment/{jobId:int}/torrents", async (int jobId, List<Plex
     return Results.Ok(await svc.RegisterAsync(jobId, body));
 });
 
+app.MapGet("/api/fulfillment/jobs/{jobId:int}", async (int jobId, HttpContext ctx, IConfiguration cfg, IFulfillmentQueue queue) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var job = await queue.GetJobAsync(jobId);
+    return job is null ? Results.NotFound() : Results.Ok(job);
+});
+
 app.MapGet("/api/fulfillment/torrents/active", async (HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IFulfillmentTorrentService svc) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();

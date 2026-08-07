@@ -268,6 +268,16 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         }
     }
 
+    public async Task<FulfillmentJobDto?> GetJobAsync(int jobId, CancellationToken ct)
+    {
+        try { return await _http.GetFromJsonAsync<FulfillmentJobDto>($"/api/fulfillment/jobs/{jobId}", ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Job {JobId} unavailable", jobId);
+            return null;
+        }
+    }
+
     public async Task<bool> ReportTorrentStateAsync(IReadOnlyList<TorrentStateUpdateDto> updates, CancellationToken ct)
     {
         try

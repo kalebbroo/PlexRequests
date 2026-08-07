@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Api;
 using PlexRequests.Downloader.Configuration;
 using PlexRequests.Downloader.Download;
+using PlexRequests.Downloader.Import;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
@@ -26,6 +27,7 @@ namespace PlexRequests.Downloader.Worker;
 public class TorrentReconciler(
     IPlexRequestsApiClient api,
     IDownloadClient downloadClient,
+    ILibraryImporter importer,
     IOptions<WorkerOptions> workerOptions,
     ILogger<TorrentReconciler> logger) : BackgroundService
 {
@@ -98,10 +100,20 @@ public class TorrentReconciler(
                     _ => TorrentTrackingState.Active
                 }
             };
+            // A finished torrent is imported here and now, by whoever noticed — not only by the process that
+            // added it. That is the whole point: nine finished episodes sat unimported for days because the
+            // only code that could import them belonged to a worker that had been replaced.
+            if (decision.Verdict == TorrentVerdict.Import && status is not null)
+            {
+                var outcome = await TryImportAsync(t, status, ct);
+                update.State = outcome.State;
+                update.Reason = outcome.Reason ?? update.Reason;
+            }
+
             updates.Add(update);
 
-            if (decision.Verdict == TorrentVerdict.Fail && decision.Blocklist)
-                await SafeBlocklist(t, decision.Reason, obs.ClientState.Equals("error", StringComparison.OrdinalIgnoreCase), ct);
+            if (update.State == TorrentTrackingState.Failed && decision.Blocklist)
+                await SafeBlocklist(t, update.Reason, obs.ClientState.Equals("error", StringComparison.OrdinalIgnoreCase), ct);
         }
 
         if (updates.Count == 0) return 0;
@@ -140,6 +152,61 @@ public class TorrentReconciler(
             // apart from "downloading nothing".
             HasMetadata = status.TotalSizeBytes > 0
         };
+    }
+
+    /// <summary>
+    /// Move a finished torrent's files into the library.
+    ///
+    /// Two failure shapes are kept apart. A path that will not resolve yet is NOT a failure: Deluge reports
+    /// is_finished before the data is necessarily flushed, so the row simply stays Finished and the next
+    /// pass tries again — the reconciler runs every cycle, so waiting costs nothing and needs no timer.
+    /// An import that genuinely fails IS terminal, and blocklists, because retrying it forever would peg
+    /// the disk and never succeed.
+    /// </summary>
+    private async Task<(TorrentTrackingState State, string? Reason)> TryImportAsync(
+        TrackedTorrentDto t, DownloadStatus status, CancellationToken ct)
+    {
+        var job = await api.GetJobAsync(t.FulfillmentJobId, ct);
+        if (job is null)
+            return (TorrentTrackingState.Finished, "Waiting: the job could not be read");
+
+        var sourcePath = ImportSourceResolver.Resolve(status, t.FulfillmentJobId, t.TorrentId, logger);
+        if (sourcePath is null)
+            return (TorrentTrackingState.Finished, "Waiting: files not on disk yet");
+
+        var item = new TorrentItem(t.TorrentId, t.Season, t.Episode, t.IsPack,
+            NeededEpisodes: t.NeededEpisodes.Count > 0 ? t.NeededEpisodes : null, Resolution: t.Resolution);
+
+        var result = await importer.ImportAsync(job, item, sourcePath, ct);
+        if (!result.Success)
+            return (TorrentTrackingState.Failed, result.FailReason ?? "Import failed");
+
+        try
+        {
+            await api.ReportImportedFilesAsync(job.Id, result.Files.Select(f => new ImportedFileDto
+            {
+                TorrentId = t.TorrentId,
+                SourcePath = f.SourcePath,
+                DestinationPath = f.DestinationPath,
+                FileType = f.FileType,
+                SeasonNumber = f.Season,
+                EpisodeNumber = f.Episode,
+                SizeBytes = f.SizeBytes,
+                ResolutionHeight = t.Resolution
+            }).ToList(), ct);
+        }
+        catch (Exception ex) { logger.LogWarning(ex, "Could not persist import audit rows for job {JobId}", job.Id); }
+
+        try { await api.RefreshLibraryAsync(job.MediaType, ct); }
+        catch (Exception ex) { logger.LogDebug(ex, "Plex refresh trigger skipped"); }
+
+        // Files are kept so the torrent can go on seeding; only the client's entry goes.
+        try { await downloadClient.RemoveAsync(t.TorrentId, removeData: false, ct); }
+        catch (Exception ex) { logger.LogDebug(ex, "Torrent removal after import skipped"); }
+
+        logger.LogInformation("Imported {Count} file(s) for job {JobId} from {Release}",
+            result.Files.Count, job.Id, t.ReleaseName ?? t.TorrentId);
+        return (TorrentTrackingState.Imported, null);
     }
 
     private async Task SafeBlocklist(TrackedTorrentDto t, string? reason, bool clientError, CancellationToken ct)

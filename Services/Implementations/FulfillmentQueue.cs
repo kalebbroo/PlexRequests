@@ -546,6 +546,17 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         return list;
     }
 
+    /// <summary>
+    /// Read a job without touching its status. Deliberately NOT a claim: the reconciler imports torrents
+    /// belonging to jobs that may already be Deferred or Failed — which is exactly the case that stranded
+    /// nine finished downloads — so claiming or reviving the job here would fight the rest of the system.
+    /// </summary>
+    public async Task<FulfillmentJobDto?> GetJobAsync(int jobId)
+    {
+        var job = await _db.FulfillmentJobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == jobId);
+        return job is null ? null : Map(job);
+    }
+
     private static FulfillmentJobDto Map(FulfillmentJobEntity j) => new()
     {
         Id = j.Id,
