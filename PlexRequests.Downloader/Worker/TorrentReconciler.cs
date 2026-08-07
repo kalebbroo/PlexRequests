@@ -34,6 +34,22 @@ public class TorrentReconciler(
     private readonly TimeSpan _interval =
         TimeSpan.FromSeconds(Math.Clamp(workerOptions.Value.MonitorIntervalSeconds, 10, 120));
 
+    /// <summary>
+    /// Results are flushed in batches rather than once at the end of the pass. With seventy torrents and an
+    /// unresponsive client, an all-or-nothing pass wrote absolutely nothing for over half an hour — every
+    /// status call burning the HttpClient's full timeout and the single report never being reached. Partial
+    /// progress is strictly better than none, and the reconciler is idempotent, so a half-finished pass
+    /// costs nothing.
+    /// </summary>
+    private const int FlushEvery = 10;
+
+    /// <summary>
+    /// A hard ceiling per status call, well under the HTTP client's own timeout. One wedged connection must
+    /// not be able to consume the pass: at the default 30s timeout, seventy torrents meant a 35-minute
+    /// cycle that appeared frozen from outside.
+    /// </summary>
+    private static readonly TimeSpan StatusTimeout = TimeSpan.FromSeconds(8);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Let the web app finish its migrations before the first pass.
@@ -59,6 +75,7 @@ public class TorrentReconciler(
         if (tracked.Count == 0) return 0;
 
         var updates = new List<TorrentStateUpdateDto>();
+        var flushed = 0;
         var now = DateTime.UtcNow;
 
         foreach (var t in tracked)
@@ -69,7 +86,17 @@ public class TorrentReconciler(
             // what the existing client already speaks and the set here is bounded by what we ourselves
             // added — not by everything in the client, which may include the operator's own torrents.
             DownloadStatus? status = null;
-            try { status = await downloadClient.GetStatusAsync(t.TorrentId, ct); }
+            using var perCall = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            perCall.CancelAfter(StatusTimeout);
+            try { status = await downloadClient.GetStatusAsync(t.TorrentId, perCall.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // Our own ceiling fired, not shutdown. Treat exactly like an unreachable client: say nothing
+                // about this torrent and try again next cycle. Never infer absence from a timeout.
+                logger.LogDebug("Status call for {Torrent} exceeded {Seconds}s; skipping this pass",
+                    t.TorrentId, StatusTimeout.TotalSeconds);
+                continue;
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // A failed status call is not evidence the torrent is gone — the client may simply be
@@ -114,10 +141,16 @@ public class TorrentReconciler(
 
             if (update.State == TorrentTrackingState.Failed && decision.Blocklist)
                 await SafeBlocklist(t, update.Reason, obs.ClientState.Equals("error", StringComparison.OrdinalIgnoreCase), ct);
+
+            if (updates.Count - flushed >= FlushEvery)
+            {
+                await api.ReportTorrentStateAsync(updates.Skip(flushed).ToList(), ct);
+                flushed = updates.Count;
+            }
         }
 
         if (updates.Count == 0) return 0;
-        await api.ReportTorrentStateAsync(updates, ct);
+        if (flushed < updates.Count) await api.ReportTorrentStateAsync(updates.Skip(flushed).ToList(), ct);
 
         var finished = updates.Count(u => u.State == TorrentTrackingState.Finished);
         var failed = updates.Count(u => u.State == TorrentTrackingState.Failed);

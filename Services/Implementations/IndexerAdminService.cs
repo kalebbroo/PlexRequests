@@ -244,6 +244,26 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
         }).ToList();
     }
 
+    /// <summary>
+    /// Store a clearance the downloader's solver earned. Encrypted like the API key, stamped so the panel
+    /// can show its age, and it clears the block state — the indexer is by definition no longer blocked.
+    /// </summary>
+    public async Task<bool> SaveClearanceAsync(int indexerId, string cookieHeader, string userAgent)
+    {
+        var row = await db.Indexers.FirstOrDefaultAsync(i => i.Id == indexerId);
+        if (row is null || string.IsNullOrWhiteSpace(cookieHeader)) return false;
+
+        row.ClearanceCookieEncrypted = _protector.Protect(cookieHeader.Trim());
+        row.UserAgent = string.IsNullOrWhiteSpace(userAgent) ? row.UserAgent : userAgent.Trim();
+        row.ClearanceObtainedAt = DateTime.UtcNow;
+        row.LastBlockReason = IndexerBlockReason.None;
+        row.LastBlockedAt = null;
+        row.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        logger.LogInformation("Stored a solved clearance for indexer \"{Name}\"", row.Name);
+        return true;
+    }
+
     public async Task ReportStatusAsync(List<IndexerStatusReportDto> reports)
     {
         if (reports.Count == 0) return;

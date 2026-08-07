@@ -268,6 +268,21 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         }
     }
 
+    public async Task<bool> SaveIndexerClearanceAsync(int indexerId, string cookieHeader, string userAgent, CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _http.PostAsJsonAsync($"/api/fulfillment/indexers/{indexerId}/clearance",
+                new { CookieHeader = cookieHeader, UserAgent = userAgent }, ct);
+            return resp.IsSuccessStatusCode;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not save clearance for indexer {IndexerId}", indexerId);
+            return false;
+        }
+    }
+
     public async Task<FulfillmentJobDto?> GetJobAsync(int jobId, CancellationToken ct)
     {
         try { return await _http.GetFromJsonAsync<FulfillmentJobDto>($"/api/fulfillment/jobs/{jobId}", ct); }

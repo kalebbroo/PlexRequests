@@ -359,6 +359,10 @@ using (var scope = app.Services.CreateScope())
         // than only after something happens to touch the service.
         await scope.ServiceProvider.GetRequiredService<PlexRequestsHosted.Services.Implementations.ICustomFormatService>()
             .SeedAsync();
+        // Repair torrents written off as Missing that had in fact been imported — see the note on
+        // CorrectMisclassifiedMissingAsync. Idempotent, so it costs one query once the data is clean.
+        await scope.ServiceProvider.GetRequiredService<PlexRequestsHosted.Services.Implementations.IFulfillmentTorrentService>()
+            .CorrectMisclassifiedMissingAsync();
     }
     catch (Exception ex)
     {
@@ -509,6 +513,13 @@ app.MapPost("/api/fulfillment/{jobId:int}/torrents", async (int jobId, List<Plex
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     return Results.Ok(await svc.RegisterAsync(jobId, body));
+});
+
+app.MapPost("/api/fulfillment/indexers/{indexerId:int}/clearance", async (int indexerId, ClearanceRequest body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Abstractions.IIndexerAdminService indexers) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return await indexers.SaveClearanceAsync(indexerId, body.CookieHeader ?? "", body.UserAgent ?? "")
+        ? Results.Ok() : Results.NotFound();
 });
 
 app.MapGet("/api/fulfillment/jobs/{jobId:int}", async (int jobId, HttpContext ctx, IConfiguration cfg, IFulfillmentQueue queue) =>

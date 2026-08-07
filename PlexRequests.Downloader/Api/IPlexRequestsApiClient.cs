@@ -18,6 +18,9 @@ public interface IPlexRequestsApiClient
     /// <summary>Report per-indexer outcomes for one search pass (drives the admin Indexers panel's health).</summary>
     Task<bool> ReportIndexerStatusAsync(IReadOnlyList<IndexerStatusReportDto> reports, CancellationToken ct);
 
+    /// <summary>Store a clearance the solver earned, so it outlives this process and is shared by later searches.</summary>
+    Task<bool> SaveIndexerClearanceAsync(int indexerId, string cookieHeader, string userAgent, CancellationToken ct);
+
     /// <summary>
     /// One-time push of Torznab endpoints found in this container's own environment, so the admin doesn't
     /// have to re-enter a URL and API key that were already configured. The web app can't read them itself —
