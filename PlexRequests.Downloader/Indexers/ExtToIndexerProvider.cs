@@ -18,11 +18,12 @@ namespace PlexRequests.Downloader.Indexers;
 /// (detected here → returns nothing). The search-path template and base URL are configurable so the
 /// selectors/URL can be tuned against a live page without code changes.
 /// </summary>
-public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptions> options, ILogger<ExtToIndexerProvider> logger)
+public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptions> options, IIndexerFetch fetch, ILogger<ExtToIndexerProvider> logger)
     : IIndexerImplementation
 {
     private readonly HttpClient _http = http;
     private readonly IndexerOptions _opts = options.Value;
+    private readonly IIndexerFetch _fetch = fetch;
     private readonly ILogger<ExtToIndexerProvider> _logger = logger;
 
     public string Key => "ext.to";
@@ -35,19 +36,14 @@ public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptio
         var query = Uri.EscapeDataString(Regex.Replace(terms, @"\s+", " ").Trim());
         var searchUrl = _opts.ExtToSearchPath.Replace("{query}", query);
 
-        string html;
-        try { html = await _http.GetStringAsync(searchUrl, ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "ext.to search request failed for \"{Title}\"", job.Title);
-            return Array.Empty<ReleaseCandidate>();
-        }
+        // Through the shared seam, so a refusal is reported as a block rather than as an empty result.
+        // ext.to was left behind when 1337x was converted and kept showing a clean health record while
+        // contributing nothing across 16 searches — the exact condition that change existed to end.
+        var html = await _fetch.GetStringAsync(_http, indexer, searchUrl, ct);
 
         if (LooksLikeChallenge(html))
-        {
-            _logger.LogWarning("ext.to returned a Cloudflare/anti-bot page; skipping (search for \"{Title}\")", job.Title);
-            return Array.Empty<ReleaseCandidate>();
-        }
+            throw new IndexerBlockedException(IndexerBlockReason.CloudflareChallenge,
+                "ext.to served an anti-bot interstitial instead of results");
 
         var doc = new HtmlDocument();
         doc.LoadHtml(html);
