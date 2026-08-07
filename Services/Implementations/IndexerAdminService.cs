@@ -1,3 +1,4 @@
+using PlexRequestsHosted.Shared.Enums;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
@@ -117,6 +118,21 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
         if (!string.IsNullOrWhiteSpace(dto.ApiKey))
             row.ApiKeyEncrypted = _protector.Protect(dto.ApiKey.Trim());
 
+        // Clearance is a pair: the cookie is bound to the User-Agent that earned it, so setting one without
+        // the other produces a combination Cloudflare will reject. Stamped with a time so the panel can show
+        // how stale it is — these expire, typically within a day.
+        if (!string.IsNullOrWhiteSpace(dto.ClearanceCookie))
+        {
+            row.ClearanceCookieEncrypted = _protector.Protect(dto.ClearanceCookie.Trim());
+            row.ClearanceObtainedAt = DateTime.UtcNow;
+        }
+        else if (dto.ClearClearance)
+        {
+            row.ClearanceCookieEncrypted = null;
+            row.ClearanceObtainedAt = null;
+        }
+        if (dto.UserAgent is not null) row.UserAgent = Blank(dto.UserAgent);
+
         row.UpdatedAt = DateTime.UtcNow;
         if (isNew)
         {
@@ -206,6 +222,8 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
             Url = i.Url,
             ApiKey = Unprotect(i.ApiKeyEncrypted),
             BaseUrlOverride = i.BaseUrlOverride,
+            ClearanceCookie = Unprotect(i.ClearanceCookieEncrypted),
+            UserAgent = i.UserAgent,
             MovieCategoriesCsv = i.MovieCategoriesCsv,
             TvCategoriesCsv = i.TvCategoriesCsv,
             AnimeCategoriesCsv = i.AnimeCategoriesCsv,
@@ -267,7 +285,15 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
             {
                 row.ConsecutiveFailures++;
                 row.LastError = r.Error is { Length: > 512 } e ? e[..512] : r.Error;
+                if (r.BlockReason != IndexerBlockReason.None)
+                {
+                    row.LastBlockReason = r.BlockReason;
+                    row.LastBlockedAt = row.LastSearchAt;
+                }
             }
+            // A block clears only on a genuine success, so the panel keeps showing "Blocked by Cloudflare"
+            // until the indexer actually answers again rather than flickering on the next unrelated error.
+            if (r.Success) { row.LastBlockReason = IndexerBlockReason.None; row.LastBlockedAt = null; }
             row.UpdatedAt = now;
         }
         await db.SaveChangesAsync();
@@ -327,6 +353,10 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
         LastSearchAt = i.LastSearchAt, LastResultCount = i.LastResultCount,
         LastSuccessAt = i.LastSuccessAt, LastError = i.LastError,
         ConsecutiveFailures = i.ConsecutiveFailures,
+        LastBlockReason = i.LastBlockReason, LastBlockedAt = i.LastBlockedAt,
+        HasClearance = !string.IsNullOrWhiteSpace(i.ClearanceCookieEncrypted),
+        ClearanceObtainedAt = i.ClearanceObtainedAt,
+        UserAgent = i.UserAgent,
         TotalSearches = i.TotalSearches, TotalResults = i.TotalResults, LastLatencyMs = i.LastLatencyMs
     };
 

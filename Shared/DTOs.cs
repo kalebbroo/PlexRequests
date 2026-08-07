@@ -605,6 +605,22 @@ public class IndexerSettingDto
     public long TotalSearches { get; set; }
     public long TotalResults { get; set; }
     public int LastLatencyMs { get; set; }
+
+    /// <summary>Set while the indexer is refusing to answer. Distinct from an empty result, so the panel can
+    /// say "Blocked by Cloudflare" and offer the remedy instead of showing a healthy source finding nothing.</summary>
+    public IndexerBlockReason LastBlockReason { get; set; }
+    public DateTime? LastBlockedAt { get; set; }
+
+    // --- Cloudflare clearance (write-only cookie, like the API key) --------------------------------
+    /// <summary>Raw Cookie header to send, e.g. "cf_clearance=…". Never returned to the browser.</summary>
+    public string? ClearanceCookie { get; set; }
+    /// <summary>True when one is stored, so the UI can say so without revealing it.</summary>
+    public bool HasClearance { get; set; }
+    /// <summary>Explicitly wipe the stored clearance (blank means "leave alone", as with the API key).</summary>
+    public bool ClearClearance { get; set; }
+    public DateTime? ClearanceObtainedAt { get; set; }
+    /// <summary>The User-Agent the clearance was earned with. Sent with it; useless apart from it.</summary>
+    public string? UserAgent { get; set; }
 }
 
 /// <summary>
@@ -623,6 +639,15 @@ public class IndexerConfigDto
     public string? Url { get; set; }
     public string? ApiKey { get; set; }
     public string? BaseUrlOverride { get; set; }
+
+    /// <summary>
+    /// A Cloudflare clearance cookie harvested from a real browser, as a raw Cookie header
+    /// ("cf_clearance=…"), together with the User-Agent that earned it. Cloudflare binds the cookie to the
+    /// exact UA *and* the client IP, so the two travel together and are useless apart — which is why this
+    /// is one paired setting rather than two independent fields.
+    /// </summary>
+    public string? ClearanceCookie { get; set; }
+    public string? UserAgent { get; set; }
 
     public string? MovieCategoriesCsv { get; set; }
     public string? TvCategoriesCsv { get; set; }
@@ -682,6 +707,8 @@ public class IndexerStatusReportDto
     public string? Error { get; set; }
     public int LatencyMs { get; set; }
     public DateTime SearchedAt { get; set; }
+    /// <summary>Set when the indexer refused rather than answered — drives the panel's "Blocked" state.</summary>
+    public IndexerBlockReason BlockReason { get; set; }
 }
 
 public class NotificationDto

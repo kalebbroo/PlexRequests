@@ -40,6 +40,32 @@
 
             <MudItem xs="12"><MudDivider Class="my-2" /></MudItem>
 
+            @* Cloudflare clearance. Shown for every indexer, not just Torznab: the scraped built-ins are
+               exactly the ones that get challenged. *@
+            <MudItem xs="12">
+                <MudExpansionPanel Text="@ClearanceSummary()" Dense="true">
+                    <MudText Typo="Typo.caption" Class="text-muted mb-2 d-block">
+                        Some sites (1337x among them) serve a Cloudflare interstitial to anything that isn't a
+                        real browser, which makes them return nothing at all. Open the site in a browser
+                        <b>on this server</b>, complete the check, then copy the <code>cf_clearance</code> cookie
+                        and that browser's User-Agent here. The cookie is bound to both the User-Agent and the
+                        server's IP, so all three have to match — a cookie from your laptop won't work.
+                    </MudText>
+                    <MudTextField T="string" Label="Cookie header" @bind-Value="_model.ClearanceCookie"
+                                  Variant="Variant.Outlined" Placeholder="cf_clearance=abc123..."
+                                  HelperText="@(_model.HasClearance ? $"A clearance is stored ({Age(_model.ClearanceObtainedAt)}). Leave blank to keep it." : "Paste the raw Cookie header value.")" />
+                    <MudTextField T="string" Label="User-Agent" @bind-Value="_model.UserAgent" Class="mt-2"
+                                  Variant="Variant.Outlined"
+                                  Placeholder="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ..."
+                                  HelperText="Must be byte-for-byte the User-Agent of the browser that earned the cookie." />
+                    @if (_model.HasClearance)
+                    {
+                        <MudCheckBox T="bool" @bind-Value="_model.ClearClearance" Dense="true" Color="Color.Error"
+                                     Label="Delete the stored clearance" Class="mt-1" />
+                    }
+                </MudExpansionPanel>
+            </MudItem>
+
             <MudItem xs="12" sm="4">
                 <MudTextField T="string" Label="Movie categories" @bind-Value="_model.MovieCategoriesCsv"
                               Variant="Variant.Outlined" Placeholder="2000"
@@ -189,6 +215,8 @@
                 EnableRss = Existing.EnableRss, EnableAutomaticSearch = Existing.EnableAutomaticSearch,
                 EnableInteractiveSearch = Existing.EnableInteractiveSearch,
                 EnableRecommendedFeed = Existing.EnableRecommendedFeed,
+                HasClearance = Existing.HasClearance, ClearanceObtainedAt = Existing.ClearanceObtainedAt,
+                UserAgent = Existing.UserAgent,
                 MinSeeders = Existing.MinSeeders, TimeoutSeconds = Existing.TimeoutSeconds,
                 RateLimitPerMinute = Existing.RateLimitPerMinute, CacheSeconds = Existing.CacheSeconds,
                 MaxDetailFetches = Existing.MaxDetailFetches, MaxAgeDays = Existing.MaxAgeDays,
@@ -280,6 +308,20 @@
 
         _error = null;
         StateHasChanged();
+    }
+
+    private string ClearanceSummary() => _model.HasClearance
+        ? $"Cloudflare clearance — stored {Age(_model.ClearanceObtainedAt)}"
+        : "Cloudflare clearance — none stored";
+
+    private static string Age(DateTime? when)
+    {
+        if (when is not DateTime t) return "never";
+        var d = DateTime.UtcNow - t;
+        // Clearance cookies are short-lived, so hours matter more than a date here.
+        return d.TotalHours < 1 ? $"{(int)d.TotalMinutes}m ago"
+             : d.TotalDays < 1 ? $"{(int)d.TotalHours}h ago"
+             : $"{(int)d.TotalDays}d ago";
     }
 
     private void Cancel() => MudDialog.Cancel();

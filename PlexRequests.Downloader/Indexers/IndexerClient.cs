@@ -3,12 +3,14 @@ using Microsoft.Extensions.Caching.Memory;
 using PlexRequests.Downloader.Api;
 using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
+using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Indexers;
 
 /// <summary>One indexer's outcome for one search pass — feeds the defer-reason summary and the admin panel.</summary>
-public sealed record ProviderSearchOutcome(int IndexerId, string Provider, bool Success, int Count, string? Error, int LatencyMs);
+public sealed record ProviderSearchOutcome(int IndexerId, string Provider, bool Success, int Count, string? Error, int LatencyMs,
+    IndexerBlockReason BlockReason = IndexerBlockReason.None);
 
 /// <summary>Merged candidates plus the per-indexer breakdown of where they came from (or didn't).</summary>
 public sealed record IndexerSearchResult(
@@ -23,7 +25,9 @@ public sealed record IndexerSearchResult(
     /// answerable without downloader logs.</summary>
     public string Summary => Providers.Count == 0
         ? "no indexers enabled for this media type"
-        : string.Join(", ", Providers.Select(o => o.Success ? $"{o.Provider}: {o.Count}" : $"{o.Provider}: error"));
+        : string.Join(", ", Providers.Select(o => o.Success ? $"{o.Provider}: {o.Count}"
+            : o.BlockReason != IndexerBlockReason.None ? $"{o.Provider}: {o.BlockReason}"
+            : $"{o.Provider}: error"));
 }
 
 /// <summary>
@@ -144,6 +148,17 @@ public class IndexerClient(
                 indexer.Name, found.Count, job.Title, sw.ElapsedMilliseconds);
             return (found, new ProviderSearchOutcome(indexer.Id, indexer.Name, true, found.Count, null, (int)sw.ElapsedMilliseconds));
         }
+        catch (IndexerBlockedException blocked)
+        {
+            // Blocked is its own outcome, not a generic failure and emphatically not an empty result. The
+            // reason travels with it so the panel can say "Blocked by Cloudflare" and offer the remedy that
+            // actually applies, rather than showing a healthy indexer that mysteriously finds nothing.
+            sw.Stop();
+            logger.LogWarning("Indexer {Indexer} blocked ({Reason}) for \"{Title}\"", indexer.Name, blocked.Reason, job.Title);
+            return (Array.Empty<ReleaseCandidate>(),
+                    new ProviderSearchOutcome(indexer.Id, indexer.Name, false, 0, blocked.Message,
+                        (int)sw.ElapsedMilliseconds, blocked.Reason));
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             sw.Stop();
@@ -200,7 +215,8 @@ public class IndexerClient(
                 ResultCount = o.Count,
                 Error = o.Error,
                 LatencyMs = o.LatencyMs,
-                SearchedAt = searchedAt
+                SearchedAt = searchedAt,
+                BlockReason = o.BlockReason
             }).ToList(), ct);
         }
         catch (Exception ex) { logger.LogDebug(ex, "Indexer status report skipped"); }

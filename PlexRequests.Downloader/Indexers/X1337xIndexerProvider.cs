@@ -18,11 +18,12 @@ namespace PlexRequests.Downloader.Indexers;
 /// layout changes break parsing) and 1337x is often behind Cloudflare, which can block a plain
 /// HttpClient from a datacenter IP. Runs fine from a residential/VPN egress.
 /// </summary>
-public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parser, ILogger<X1337xIndexerProvider> logger)
+public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parser, IIndexerFetch fetch, ILogger<X1337xIndexerProvider> logger)
     : IIndexerImplementation
 {
     private readonly HttpClient _http = http;
     private readonly IReleaseParser _parser = parser;
+    private readonly IIndexerFetch _fetch = fetch;
     private readonly ILogger<X1337xIndexerProvider> _logger = logger;
 
     public string Key => "1337x";
@@ -56,22 +57,15 @@ public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parse
             var query = BuildQuery(t);
             if (string.IsNullOrWhiteSpace(query)) continue;
 
-            string html;
-            try
-            {
-                html = await _http.GetStringAsync($"/category-search/{query}/{category}/1/", ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogWarning(ex, "1337x search request failed for \"{Terms}\"", t);
-                continue;
-            }
+            // Deliberately NOT wrapped in a swallow-and-continue. A refusal used to be logged as a warning
+            // and reported upward as "search succeeded, zero results", so a permanently blocked indexer was
+            // indistinguishable from a quiet one and stayed green in the admin panel for weeks. Let the
+            // block propagate; IndexerClient records it as a failure with a reason.
+            var html = await _fetch.GetStringAsync(_http, indexer, $"/category-search/{query}/{category}/1/", ct);
 
             if (LooksLikeChallenge(html))
-            {
-                _logger.LogWarning("1337x returned a Cloudflare/anti-bot page; skipping (search for \"{Title}\")", job.Title);
-                break; // every remaining query will hit the same wall
-            }
+                throw new IndexerBlockedException(IndexerBlockReason.CloudflareChallenge,
+                    "1337x served an anti-bot interstitial instead of results");
 
             foreach (var row in ParseRows(html)) rowsByPath.TryAdd(row.DetailPath, row);
         }
