@@ -48,15 +48,30 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
 
         if (context.Profile is not null)
         {
+            // The cutoff is a ceiling, not just the point where auto-upgrade searches stop. Every seeded
+            // profile marks every tier from its floor up through 8K "allowed" — that list only ever existed
+            // to gate the FLOOR, so a request for 1080p would happily grab a 2160p/4320p release because it
+            // scored higher and nothing said no. A user who picks "1080p" means exactly that, not "1080p or
+            // better" — bigger files, more bandwidth, and playback devices that may not handle 4K weren't
+            // asked for. Rank the cutoff the same way a candidate's own tier is ranked and reject anything
+            // strictly above it — except while relaxed, where nothing AT the target was found after repeated
+            // empty searches and something is better than nothing.
+            var cutoffDefinition = context.Definitions.FirstOrDefault(d => d.Id == context.Profile.CutoffQualityDefinitionId);
+            var (cutoffRank, _) = RankInProfile(cutoffDefinition, context.Profile);
+            bool aboveCutoff = rank is int rk && cutoffRank is int cr && rk > cr;
+
             if (definition is null)
                 rejections.Add(new Rejection(RejectionReason.NotInProfile,
                     $"no quality tier matches {(resolution > 0 ? resolution + "p" : "an unknown resolution")} from {parsed.Source}"));
+            else if (aboveCutoff && !context.RelaxQualityFloor)
+                rejections.Add(new Rejection(RejectionReason.AboveCutoff,
+                    $"{definition.Name} is above the \"{context.Profile.Name}\" profile's {cutoffDefinition?.Name ?? "cutoff"} target"));
             else if (!allowed && !context.RelaxQualityFloor)
                 rejections.Add(new Rejection(RejectionReason.NotInProfile,
                     $"{definition.Name} isn't allowed by the \"{context.Profile.Name}\" profile"));
-            else if (!allowed)
-                // Relaxed: a disallowed tier is still preferable to nothing, but it must not be a CAM —
-                // those are never what anyone meant, at any point.
+            else if (!allowed || aboveCutoff)
+                // Relaxed: a disallowed or above-cutoff tier is still preferable to nothing, but it must not
+                // be a CAM — those are never what anyone meant, at any point.
                 if (parsed.Source == ReleaseSource.Cam)
                     rejections.Add(new Rejection(RejectionReason.NotInProfile, "CAM releases are never acceptable"));
         }

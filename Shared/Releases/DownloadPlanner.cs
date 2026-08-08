@@ -272,6 +272,7 @@ public class DownloadPlanner : IDownloadPlanner
     {
         RejectionReason.BelowQualityFloor => "below the quality target",
         RejectionReason.NotInProfile => "not allowed by the quality profile",
+        RejectionReason.AboveCutoff => "above the quality target",
         RejectionReason.NotAnUpgrade => "no better than what's already there",
         RejectionReason.TooFewSeeders => "with too few seeders",
         RejectionReason.SizeTooSmall => "too small",
