@@ -16,21 +16,34 @@ WORKDIR /app
 # cifs-utils / nfs-common: mount.cifs & mount.nfs helpers so the worker can mount admin-configured NAS
 # shares (Admin > Library > Network Drives) read-write to place library files. Needs CAP_SYS_ADMIN at runtime
 # (granted in docker-compose.yml); harmless if the feature is unused.
-# cifs/nfs helpers as above, plus chromium for the Cloudflare challenge solver.
+# cifs/nfs helpers as above, plus a real browser for the Cloudflare challenge solver.
 #
 # The browser is the only way past a JS interstitial — it is what FlareSolverr is, and why Jackett
-# deployments end up running one. Including it here avoids a second service. It is used ONCE per site per
+# deployments end up running one. Including it here avoids a second service. It runs ONCE per site per
 # clearance lifetime to earn a cf_clearance cookie; every search after that is plain HTTP carrying the
-# cookie, so the cost is a larger image rather than a slower search.
+# cookie, so the cost is image size rather than search latency.
 #
-# INSTALL_BROWSER=false builds without it: the solver then reports itself unavailable and blocked indexers
-# are surfaced as blocked, which is the pre-existing behaviour rather than a regression.
+# Google Chrome rather than chromium, because this base is Ubuntu noble: apt has no real `chromium`
+# package there (candidate: none), and `chromium-browser` is a stub that refuses to run and tells you to
+# install the snap. Shipping that stub looked like success — the binary existed, so the solver believed it
+# had a browser — while every solve would have failed. Debian-based dotnet runtime tags that do carry a
+# genuine chromium (bookworm/trixie) are not published for .NET 10.
+#
+# INSTALL_BROWSER=false builds without it: the solver reports itself unavailable and blocked indexers are
+# surfaced as blocked, which is the pre-existing behaviour rather than a regression.
 ARG INSTALL_BROWSER=true
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends cifs-utils nfs-common \
+    && apt-get install -y --no-install-recommends cifs-utils nfs-common ca-certificates curl gnupg \
     && if [ "$INSTALL_BROWSER" = "true" ]; then \
-         apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates; \
+         curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+           | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+         && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+              > /etc/apt/sources.list.d/google-chrome.list \
+         && apt-get update \
+         && apt-get install -y --no-install-recommends google-chrome-stable fonts-liberation; \
        fi \
+    && apt-get purge -y curl gnupg \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app .
 ENTRYPOINT ["dotnet", "PlexRequests.Downloader.dll"]

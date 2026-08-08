@@ -41,7 +41,61 @@ public class BrowserChallengeSolver(
     /// concurrently multiplies the cost without shortening the wall clock they all wait on.</summary>
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public bool IsAvailable => ResolveBrowserPath() is not null;
+    /// <summary>
+    /// Cached because the check launches a process. Null = not yet probed.
+    /// </summary>
+    private bool? _available;
+
+    public bool IsAvailable => _available ??= ProbeBrowser();
+
+    /// <summary>
+    /// Existence on disk is not enough. Ubuntu ships /usr/bin/chromium-browser as a stub that refuses to
+    /// run and tells you to install the snap — so a File.Exists check reported a browser we did not have,
+    /// and every solve would have failed while the code believed it was equipped. Actually run it once.
+    /// </summary>
+    private bool ProbeBrowser()
+    {
+        var path = ResolveBrowserPath();
+        if (path is null) return false;
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = path,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            psi.ArgumentList.Add("--version");
+
+            using var p = Process.Start(psi);
+            if (p is null) return false;
+
+            var stdout = p.StandardOutput.ReadToEnd();
+            var stderr = p.StandardError.ReadToEnd();
+            if (!p.WaitForExit(15_000)) { try { p.Kill(true); } catch { } return false; }
+
+            var output = stdout + stderr;
+            // The stub exits non-zero AND says so; a real browser prints "Chromium 126.0..." / "Google Chrome ...".
+            var ok = p.ExitCode == 0
+                     && !output.Contains("snap", StringComparison.OrdinalIgnoreCase)
+                     && (output.Contains("Chrom", StringComparison.OrdinalIgnoreCase));
+
+            if (!ok)
+                logger.LogWarning("Browser at {Path} is not usable ({Output}); challenge solving is disabled",
+                    path, output.Trim().Split('\n').FirstOrDefault());
+            else
+                logger.LogInformation("Challenge solver ready using {Path} ({Version})", path, output.Trim());
+
+            return ok;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not probe the browser at {Path}; challenge solving is disabled", path);
+            return false;
+        }
+    }
 
     public async Task<Clearance?> SolveAsync(IndexerConfigDto indexer, string url, CancellationToken ct)
     {
@@ -219,10 +273,12 @@ public class BrowserChallengeSolver(
         if (!string.IsNullOrWhiteSpace(_opts.BrowserPath))
             return File.Exists(_opts.BrowserPath) ? _opts.BrowserPath : null;
 
+        // Ordered by likelihood of being genuine. chromium-browser is last because on Ubuntu it is
+        // usually the snap stub, and preferring it would pick a binary that cannot run.
         foreach (var candidate in new[]
         {
-            "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome",
-            "/usr/lib/chromium/chromium"
+            "/usr/bin/google-chrome-stable", "/usr/bin/google-chrome", "/usr/bin/chromium",
+            "/usr/lib/chromium/chromium", "/usr/bin/chromium-browser"
         })
             if (File.Exists(candidate)) return candidate;
 
