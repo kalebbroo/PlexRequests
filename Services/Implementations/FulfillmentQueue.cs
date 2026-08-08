@@ -589,9 +589,22 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
     /// </summary>
     private async Task<List<int>> PlexResolutionHeightsAsync(MediaRequestEntity req)
     {
-        if (req.MediaType is not (MediaType.TvShow or MediaType.Anime)) return new();
+        var byEpisode = await PlexEpisodeHeightsAsync(req.MediaType, req.MediaId, req.RequestedEpisodesCsv);
+        return byEpisode.Values.ToList();
+    }
 
-        var ratingKey = await _seasonEvaluator.ResolveRatingKeyAsync(req.MediaId);
+    /// <summary>Public, per-episode form of the same lookup — the upgrade scan needs to know WHICH episodes
+    /// are below target, not just whether any are, so it can scope the re-download instead of re-fetching the
+    /// whole show.</summary>
+    public Task<Dictionary<(int Season, int Episode), int>> GetPlexEpisodeHeightsAsync(MediaRequestDto request) =>
+        PlexEpisodeHeightsAsync(request.MediaType, request.MediaId, request.RequestedEpisodesCsv);
+
+    private async Task<Dictionary<(int Season, int Episode), int>> PlexEpisodeHeightsAsync(
+        MediaType mediaType, int mediaId, string? requestedEpisodesCsv)
+    {
+        if (mediaType is not (MediaType.TvShow or MediaType.Anime)) return new();
+
+        var ratingKey = await _seasonEvaluator.ResolveRatingKeyAsync(mediaId);
         if (string.IsNullOrEmpty(ratingKey)) return new();
 
         var seasons = await _db.PlexSeasonAvailability.AsNoTracking()
@@ -599,8 +612,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             .ToListAsync();
         if (seasons.Count == 0) return new();
 
-        var wanted = ParseEpisodeScope(req);   // (season, episode) pairs, or empty for "everything"
-        var heights = new List<int>();
+        var wanted = ParseEpisodeScope(requestedEpisodesCsv);   // (season, episode) pairs, or empty for "everything"
+        var heights = new Dictionary<(int, int), int>();
 
         foreach (var season in seasons)
         {
@@ -619,19 +632,19 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
                 if (wanted.Count > 0 && !wanted.Contains((season.SeasonNumber, episode))) continue;
 
                 var h = HeightFromPlexLabel(q.Resolution);
-                if (h > 0) heights.Add(h);
+                if (h > 0) heights[(season.SeasonNumber, episode)] = h;
             }
         }
         return heights;
     }
 
     /// <summary>The (season, episode) pairs a request covers. Empty means "the whole show".</summary>
-    private static HashSet<(int Season, int Episode)> ParseEpisodeScope(MediaRequestEntity req)
+    private static HashSet<(int Season, int Episode)> ParseEpisodeScope(string? requestedEpisodesCsv)
     {
         var set = new HashSet<(int, int)>();
-        if (string.IsNullOrWhiteSpace(req.RequestedEpisodesCsv)) return set;
+        if (string.IsNullOrWhiteSpace(requestedEpisodesCsv)) return set;
 
-        foreach (var token in req.RequestedEpisodesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var token in requestedEpisodesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var m = System.Text.RegularExpressions.Regex.Match(token, @"^[Ss](\d+)[Ee](\d+)$");
             if (m.Success && int.TryParse(m.Groups[1].Value, out var s) && int.TryParse(m.Groups[2].Value, out var e))
