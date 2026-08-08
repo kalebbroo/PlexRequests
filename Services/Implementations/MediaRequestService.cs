@@ -250,14 +250,14 @@ public class MediaRequestService(
     }
 
     /// <summary>Request specific episodes of a TV show, e.g. [(1,1),(1,2),(2,5)].</summary>
-    public async Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes, int? qualityProfileId = null)
+    public async Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes, int? qualityProfileId = null, bool asUpgrade = false)
     {
         var (username, isAdmin) = await GetUserAsync();
         if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
         if (episodes is not { Count: > 0 }) return new MediaRequestResult { Success = false, ErrorMessage = "No episodes selected" };
         var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
         if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
-        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons: false, seasons: null, episodes: episodes, qualityProfileId: qualityProfileId);
+        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons: false, seasons: null, episodes: episodes, qualityProfileId: qualityProfileId, asUpgrade: asUpgrade);
     }
 
     /// <summary>
@@ -375,15 +375,21 @@ public class MediaRequestService(
         return await CreateRequestCoreAsync(userId, user.Username, isAdmin, mediaId, mediaType);
     }
 
-    private async Task<MediaRequestResult> CreateRequestCoreAsync(int userId, string username, bool isAdmin, int mediaId, MediaType mediaType, bool allSeasons = true, List<int>? seasons = null, List<(int season, int episode)>? episodes = null, bool monitored = false, int? qualityProfileId = null)
+    private async Task<MediaRequestResult> CreateRequestCoreAsync(int userId, string username, bool isAdmin, int mediaId, MediaType mediaType, bool allSeasons = true, List<int>? seasons = null, List<(int season, int episode)>? episodes = null, bool monitored = false, int? qualityProfileId = null, bool asUpgrade = false)
     {
         // Per-user duplicate check: a second user requesting the same title joins it rather than
         // being blocked. Only the same user re-requesting an already-covered scope is rejected — for TV
         // this is season/episode-scope aware, so e.g. an active season-1 request doesn't block a season-3
         // request for the same show, and a season is only "already available" when it's genuinely complete
         // (not just the instant any single episode landed).
-        var (blocked, blockMessage) = await CheckScopeConflictAsync(userId, mediaId, mediaType, allSeasons, seasons, episodes);
-        if (blocked) return new MediaRequestResult { Success = false, ErrorMessage = blockMessage };
+        // An upgrade asks for something we deliberately already have, so the duplicate/already-available
+        // guard is exactly what must NOT fire. Without this bypass there was no way to ask for a better
+        // copy of an episode at all: the UI greyed it out, and the service would have refused anyway.
+        if (!asUpgrade)
+        {
+            var (blocked, blockMessage) = await CheckScopeConflictAsync(userId, mediaId, mediaType, allSeasons, seasons, episodes);
+            if (blocked) return new MediaRequestResult { Success = false, ErrorMessage = blockMessage };
+        }
 
         if (!isAdmin && !await CheckLimitsCoreAsync(userId, mediaType))
             return new MediaRequestResult { Success = false, ErrorMessage = "You've reached your request limit for this media type." };
@@ -450,7 +456,9 @@ public class MediaRequestService(
             {
                 // Straight to approved: notify + hand off to fulfillment (if a downloader is wired up).
                 await _notify.RequestApprovedAsync(dto);
-                if (_config.GetValue<bool>("Fulfillment:Enabled")) await _fulfillment.EnqueueAsync(dto);
+                // force: an upgrade's whole point is to re-fetch content already on Plex, and the enqueue
+                // path skips anything it finds there unless told otherwise.
+                if (_config.GetValue<bool>("Fulfillment:Enabled")) await _fulfillment.EnqueueAsync(dto, force: asUpgrade);
             }
             else
             {

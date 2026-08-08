@@ -249,9 +249,16 @@ else
                                                             @foreach (var ep in _episodes[season.SeasonNumber])
                                                             {
                                                                 <div class="episode-row @(ep.IsAvailable ? "is-available" : "")">
-                                                                    <MudCheckBox T="bool" Value="@_selectedEpisodes.Contains((ep.SeasonNumber, ep.EpisodeNumber))"
-                                                                                 ValueChanged="@((bool v) => ToggleEpisode(ep.SeasonNumber, ep.EpisodeNumber, v))"
-                                                                                 Disabled="@(ep.IsAvailable || !ep.HasAired)" Dense="true" />
+                                                                    @* Episodes already on Plex are selectable now. They used to be disabled, which meant
+                                                                       there was no way at all to ask for a better copy of something you already had — a
+                                                                       720p episode of a show with plenty of 1080p releases was simply stuck. Unaired
+                                                                       episodes stay disabled, because nothing exists to fetch. *@
+                                                                    <MudTooltip Text="@(ep.IsAvailable ? "Already on Plex — tick to fetch a better version" : null)" Disabled="@(!ep.IsAvailable)">
+                                                                        <MudCheckBox T="bool" Value="@_selectedEpisodes.Contains((ep.SeasonNumber, ep.EpisodeNumber))"
+                                                                                     ValueChanged="@((bool v) => ToggleEpisode(ep.SeasonNumber, ep.EpisodeNumber, v))"
+                                                                                     Color="@(ep.IsAvailable ? Color.Secondary : Color.Primary)"
+                                                                                     Disabled="@(!ep.HasAired)" Dense="true" />
+                                                                    </MudTooltip>
                                                                     <span class="episode-num">E@(ep.EpisodeNumber)</span>
                                                                     <span class="episode-name">@ep.Name</span>
                                                                     @if (ep.IsAvailable)
@@ -278,8 +285,13 @@ else
                                     </div>
 
                                     <div class="season-actions">
-                                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RequestSelectedEpisodes" Disabled="@(_selectedEpisodes.Count == 0)">
-                                            Request @_selectedEpisodes.Count Episode@(_selectedEpisodes.Count == 1 ? "" : "s")
+                                        @* Upgrades re-download something you already have, so the button says so
+                                           rather than looking identical to a normal request. *@
+                                        <MudButton Variant="Variant.Filled"
+                                                   Color="@(SelectionIsUpgrade ? Color.Secondary : Color.Primary)"
+                                                   StartIcon="@(SelectionIsUpgrade ? Icons.Material.Filled.Upgrade : null)"
+                                                   OnClick="RequestSelectedEpisodes" Disabled="@(_selectedEpisodes.Count == 0)">
+                                            @(SelectionIsUpgrade ? "Upgrade" : "Request") @_selectedEpisodes.Count Episode@(_selectedEpisodes.Count == 1 ? "" : "s")
                                         </MudButton>
                                         <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RequestSelectedSeasons" Disabled="@(_selectedSeasons.Count == 0)">
                                             Request @_selectedSeasons.Count Season@(_selectedSeasons.Count == 1 ? "" : "s")
@@ -633,11 +645,25 @@ else
         if (result.Success) _selectedSeasons.Clear();
     }
 
+    /// <summary>
+    /// True when any selected episode is already on Plex, i.e. the user is asking for a better copy rather
+    /// than a missing one. Mixed selections count as an upgrade: the request has to bypass the
+    /// already-available guard or the on-Plex episodes in it would be silently dropped.
+    /// </summary>
+    private bool SelectionIsUpgrade =>
+        _selectedEpisodes.Count > 0 && _episodes.Values.SelectMany(e => e)
+            .Any(ep => ep.IsAvailable && _selectedEpisodes.Contains((ep.SeasonNumber, ep.EpisodeNumber)));
+
     private async Task RequestSelectedEpisodes()
     {
         if (_media is null || _selectedEpisodes.Count == 0) return;
-        var result = await MediaRequestService.RequestEpisodesAsync(_media.Id, _media.MediaType, _selectedEpisodes.ToList(), _selectedProfileId);
-        await AfterTvRequest(result, $"Requested {_selectedEpisodes.Count} episode(s) of {_media.Title}!");
+        var upgrade = SelectionIsUpgrade;
+        var count = _selectedEpisodes.Count;
+        var result = await MediaRequestService.RequestEpisodesAsync(
+            _media.Id, _media.MediaType, _selectedEpisodes.ToList(), _selectedProfileId, asUpgrade: upgrade);
+        await AfterTvRequest(result, upgrade
+            ? $"Looking for a better copy of {count} episode(s) of {_media.Title}."
+            : $"Requested {count} episode(s) of {_media.Title}!");
         if (result.Success) _selectedEpisodes.Clear();
     }
 
