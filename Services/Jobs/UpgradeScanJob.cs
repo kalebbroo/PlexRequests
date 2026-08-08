@@ -47,7 +47,12 @@ public class UpgradeScanJob(
             //
             // Evaluating an Unknown request is cheap and self-correcting: TryEnqueueUpgradeAsync resolves
             // it to Met or Unmet the moment any file's resolution is known, and leaves it Unknown otherwise.
+            // Honour the per-series toggle. It was stored, shown in the monitoring panel, read back for
+            // display — and consulted by nothing that performs upgrades, so switching it on did precisely
+            // nothing. A user who set "search for better versions" and watched 720p episodes sit there was
+            // observing exactly that. It defaults to true, so wiring it in disables nothing that was working.
             .Where(r => r.Status == RequestStatus.Available
+                        && r.SearchForCutoffUpgrades
                         && (r.CutoffState == CutoffState.Unmet || r.CutoffState == CutoffState.Unknown)
                         && r.UpgradeAttempts < maxAttempts
                         && (r.LastUpgradeSearchAt == null || r.LastUpgradeSearchAt <= cutoff))

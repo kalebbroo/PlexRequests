@@ -15,13 +15,14 @@ namespace PlexRequestsHosted.Services.Implementations;
 /// Database-backed <see cref="IFulfillmentQueue"/>. SQLite is single-writer, so claims are safe
 /// without extra locking at our scale; swap for Redis/RabbitMQ later without touching callers.
 /// </summary>
-public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, IQualityProfileService profiles, ICustomFormatService formats, ISeasonAvailabilityEvaluator seasonEvaluator) : IFulfillmentQueue
+public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, IQualityProfileService profiles, ICustomFormatService formats, ISeasonAvailabilityEvaluator seasonEvaluator, ILogger<FulfillmentQueue> logger) : IFulfillmentQueue
 {
     private readonly AppDbContext _db = db;
     private readonly IMediaMetadataProvider _metadata = metadata;
     private readonly IQualityProfileService _profiles = profiles;
     private readonly ICustomFormatService _formats = formats;
     private readonly ISeasonAvailabilityEvaluator _seasonEvaluator = seasonEvaluator;
+    private readonly ILogger<FulfillmentQueue> _logger = logger;
 
     public async Task EnqueueAsync(MediaRequestDto request, bool force = false)
     {
@@ -452,6 +453,27 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             .Select(f => f.ResolutionHeight)
             .ToListAsync();
 
+        // Our own import records are the first source, but they are frequently blank: ResolutionHeight was
+        // only populated from a later release, so everything imported before that reads as 0 and the request
+        // ends up permanently Unknown — never claimed met, never upgraded, invisible. Eight requests on the
+        // live deployment sat in exactly that state, including 720p episodes of a show with plentiful 1080p
+        // releases and the "search for better versions" toggle switched on.
+        //
+        // Plex already knows. The library scan records the real resolution per episode, and the UI has been
+        // displaying it the whole time ("720p H.264 · 1.6 GB"). So when our own records cannot answer, ask
+        // the thing that can rather than giving up.
+        if (heights.Count == 0)
+        {
+            var fromPlex = await PlexResolutionHeightsAsync(req);
+            if (fromPlex.Count > 0)
+            {
+                heights = fromPlex;
+                _logger.LogInformation(
+                    "Request {RequestId} \"{Title}\": no resolution in our import records; Plex reports {Count} episode(s), worst {Worst}p",
+                    req.Id, req.Title, fromPlex.Count, fromPlex.Min());
+            }
+        }
+
         // Achieved quality is the WORST video we hold (a single 720p episode leaves a 1080p season below cutoff).
         var achieved = heights.Count == 0 ? Quality.Any : QualityHelper.FromHeight(heights.Min());
         req.AchievedQuality = achieved;
@@ -555,6 +577,82 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
     {
         var job = await _db.FulfillmentJobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == jobId);
         return job is null ? null : Map(job);
+    }
+
+    /// <summary>
+    /// Per-episode resolutions Plex reports for this request's scope, as pixel heights.
+    ///
+    /// Scoped to the episodes the request actually covers: a request for S3E1 must not be judged by the
+    /// quality of S1, or one bad episode elsewhere in the show would drag an unrelated request below cutoff
+    /// forever. When the request names no specific episodes it covers the whole show, and every episode
+    /// counts.
+    /// </summary>
+    private async Task<List<int>> PlexResolutionHeightsAsync(MediaRequestEntity req)
+    {
+        if (req.MediaType is not (MediaType.TvShow or MediaType.Anime)) return new();
+
+        var ratingKey = await _seasonEvaluator.ResolveRatingKeyAsync(req.MediaId);
+        if (string.IsNullOrEmpty(ratingKey)) return new();
+
+        var seasons = await _db.PlexSeasonAvailability.AsNoTracking()
+            .Where(s => s.ShowRatingKey == ratingKey && s.EpisodeQualityJson != null)
+            .ToListAsync();
+        if (seasons.Count == 0) return new();
+
+        var wanted = ParseEpisodeScope(req);   // (season, episode) pairs, or empty for "everything"
+        var heights = new List<int>();
+
+        foreach (var season in seasons)
+        {
+            Dictionary<string, PlexEpisodeQuality>? byEpisode;
+            try
+            {
+                byEpisode = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, PlexEpisodeQuality>>(
+                    season.EpisodeQualityJson!, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch { continue; }   // a malformed blob must not take down the recompute
+            if (byEpisode is null) continue;
+
+            foreach (var (key, q) in byEpisode)
+            {
+                if (!int.TryParse(key, out var episode)) continue;
+                if (wanted.Count > 0 && !wanted.Contains((season.SeasonNumber, episode))) continue;
+
+                var h = HeightFromPlexLabel(q.Resolution);
+                if (h > 0) heights.Add(h);
+            }
+        }
+        return heights;
+    }
+
+    /// <summary>The (season, episode) pairs a request covers. Empty means "the whole show".</summary>
+    private static HashSet<(int Season, int Episode)> ParseEpisodeScope(MediaRequestEntity req)
+    {
+        var set = new HashSet<(int, int)>();
+        if (string.IsNullOrWhiteSpace(req.RequestedEpisodesCsv)) return set;
+
+        foreach (var token in req.RequestedEpisodesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(token, @"^[Ss](\d+)[Ee](\d+)$");
+            if (m.Success && int.TryParse(m.Groups[1].Value, out var s) && int.TryParse(m.Groups[2].Value, out var e))
+                set.Add((s, e));
+        }
+        return set;
+    }
+
+    /// <summary>Plex reports a label ("4K", "1080p", "SD"), not a number.</summary>
+    private static int HeightFromPlexLabel(string? label) => (label ?? string.Empty).Trim().ToLowerInvariant() switch
+    {
+        "4k" or "2160p" => 2160,
+        "1080p" => 1080,
+        "720p" => 720,
+        "480p" or "sd" => 480,
+        _ => 0
+    };
+
+    private sealed class PlexEpisodeQuality
+    {
+        public string? Resolution { get; set; }
     }
 
     private static FulfillmentJobDto Map(FulfillmentJobEntity j) => new()

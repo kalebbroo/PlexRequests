@@ -131,11 +131,24 @@ public class BrowserChallengeSolver(
                 RedirectStandardError = true,
                 UseShellExecute = false
             };
+            // The first version launched a bare headless Chrome and Cloudflare rejected every solve — which
+            // is the expected outcome, not bad luck. Headless Chrome announces itself: --enable-automation
+            // is on by default and sets navigator.webdriver, the AutomationControlled blink feature is
+            // directly detectable, and the default window has no realistic size or language. None of this is
+            // exotic; it is the first thing every anti-bot check looks at, so the challenge was being failed
+            // before its JavaScript even ran.
             foreach (var a in new[]
             {
                 "--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
                 "--remote-debugging-port=0",          // port 0 => the browser picks one and prints it
                 $"--user-data-dir={profile}",
+                // Stop advertising automation.
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+                // A plausible client: real window, real language, no synthetic defaults.
+                "--window-size=1920,1080",
+                "--lang=en-US,en",
+                $"--user-agent={DefaultUserAgent}",
                 "about:blank"
             }) psi.ArgumentList.Add(a);
 
@@ -164,16 +177,29 @@ public class BrowserChallengeSolver(
 
             await SendAsync(ws, ++id, "Page.enable", new { }, cts.Token, session);
             await SendAsync(ws, ++id, "Network.enable", new { }, cts.Token, session);
+
+            // Scrub the remaining automation tells before any page script runs.
+            // addScriptToEvaluateOnNewDocument lands ahead of the challenge's own code, which is the only
+            // moment these are still writable — patching after navigation is too late to matter.
+            await SendAsync(ws, ++id, "Page.addScriptToEvaluateOnNewDocument", new { source = StealthScript },
+                cts.Token, session);
+
             await SendAsync(ws, ++id, "Page.navigate", new { url }, cts.Token, session);
 
             // Let the interstitial run. It is a deliberate delay on Cloudflare's side, so polling faster
             // does not help; this simply has to outlast it.
+            // Poll rather than sleeping once. A challenge that clears in 4 seconds shouldn't cost the full
+            // window, and one that needs 25 shouldn't be abandoned at 15 — a single fixed pause is wrong in
+            // both directions. The cookie read is a local DevTools call, so polling is nearly free.
             var settle = TimeSpan.FromSeconds(Math.Clamp(_opts.ChallengeSettleSeconds, 5, 60));
-            try { await Task.Delay(settle, cts.Token); }
-            catch (OperationCanceledException) { return null; }
-
-            var cookies = await CallAsync(ws, ++id, "Network.getAllCookies", new { }, cts.Token, session);
-            var clearance = FindClearance(cookies);
+            var deadline = DateTime.UtcNow + settle;
+            string? clearance = null;
+            while (clearance is null && DateTime.UtcNow < deadline)
+            {
+                try { await Task.Delay(TimeSpan.FromSeconds(2), cts.Token); }
+                catch (OperationCanceledException) { return null; }
+                clearance = FindClearance(await CallAsync(ws, ++id, "Network.getAllCookies", new { }, cts.Token, session));
+            }
             if (clearance is null)
             {
                 logger.LogWarning("Solve for {Indexer} produced no cf_clearance cookie — the challenge was not satisfied",
@@ -284,6 +310,23 @@ public class BrowserChallengeSolver(
 
         return null;
     }
+
+    /// <summary>
+    /// Runs before any page script. Each line removes a specific, well-known automation tell: a headless
+    /// browser reports navigator.webdriver = true, an empty plugin list, no window.chrome, and a permissions
+    /// API that answers differently from a real one. Any single mismatch is enough to fail the challenge.
+    /// </summary>
+    private const string StealthScript = @"
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+        Object.defineProperty(navigator, 'plugins',   { get: () => [1, 2, 3, 4, 5] });
+        window.chrome = window.chrome || { runtime: {} };
+        const __q = navigator.permissions && navigator.permissions.query;
+        if (__q) navigator.permissions.query = (p) =>
+            p && p.name === 'notifications'
+                ? Promise.resolve({ state: Notification.permission })
+                : __q(p);
+    ";
 
     private const string DefaultUserAgent =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
