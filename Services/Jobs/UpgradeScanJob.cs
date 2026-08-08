@@ -111,15 +111,45 @@ public class UpgradeScanJob(
         var videoFiles = await db.ImportedFiles
             .Where(f => jobIds.Contains(f.FulfillmentJobId) && f.FileType == "video")
             .ToListAsync(ct);
-        var belowTarget = videoFiles.Where(f => f.ResolutionHeight > 0 && f.ResolutionHeight < targetHeight).ToList();
+
+        // Files with no parsed resolution (imported before ResolutionHeight was tracked, or a parse miss)
+        // can't be judged from our own records. Ask Plex — same fallback RecomputeAchievedQualityAsync uses
+        // — scoped to the episodes it names. Without this, an episode stuck at ResolutionHeight=0 reads as
+        // "unknown" forever and can never be seen as below target, no matter how badly it needs an upgrade;
+        // that's precisely how 720p House of the Dragon episodes sat un-upgraded despite plenty of 1080p
+        // releases being available.
+        Dictionary<(int Season, int Episode), int>? plexHeights = null;
+        if (videoFiles.Any(f => f.ResolutionHeight <= 0 && f.SeasonNumber is not null && f.EpisodeNumber is not null))
+        {
+            plexHeights = await queue.GetPlexEpisodeHeightsAsync(new MediaRequestDto
+            {
+                MediaId = req.MediaId, MediaType = req.MediaType, RequestedEpisodesCsv = req.RequestedEpisodesCsv
+            });
+        }
+
+        int EffectiveHeight(ImportedFileEntity f)
+        {
+            if (f.ResolutionHeight > 0) return f.ResolutionHeight;
+            if (plexHeights is not null && f.SeasonNumber is not null && f.EpisodeNumber is not null
+                && plexHeights.TryGetValue((f.SeasonNumber.Value, f.EpisodeNumber.Value), out var h))
+                return h;
+            return 0;
+        }
+
+        var belowTarget = videoFiles.Where(f =>
+        {
+            var h = EffectiveHeight(f);
+            return h > 0 && h < targetHeight;
+        }).ToList();
 
         if (belowTarget.Count == 0)
         {
             // Nothing is *known* to be below target — but that's two very different situations, and the old
-            // code collapsed them by setting CutoffMet = true for both. If no file has a parsed resolution we
-            // simply don't know, and declaring the cutoff met there permanently disqualified the request from
-            // ever being upgraded. Only claim Met when we actually have resolutions to judge.
-            bool anyKnownResolution = videoFiles.Any(f => f.ResolutionHeight > 0);
+            // code collapsed them by setting CutoffMet = true for both. If no file has a resolvable resolution
+            // (our own records or Plex) we simply don't know, and declaring the cutoff met there permanently
+            // disqualified the request from ever being upgraded. Only claim Met when we actually have
+            // resolutions to judge.
+            bool anyKnownResolution = videoFiles.Any(f => EffectiveHeight(f) > 0);
             req.CutoffState = anyKnownResolution ? CutoffState.Met : CutoffState.Unknown;
             req.CutoffMet = req.CutoffState == CutoffState.Met;
             if (!anyKnownResolution)

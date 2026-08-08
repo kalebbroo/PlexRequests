@@ -53,6 +53,13 @@ public interface IFulfillmentQueue
     /// <summary>Recompute a request's <c>AchievedQuality</c>/<c>CutoffMet</c> from its imported files (min
     /// video resolution vs. the resolved target) and persist them. Called after a download or upgrade imports.</summary>
     Task<Quality> RecomputeAchievedQualityAsync(int mediaRequestId);
+
+    /// <summary>Per-episode resolutions Plex reports for a TV/anime request's scope, as (season, episode) ->
+    /// pixel height. Empty for movies or when Plex has no matching availability data. The fallback source of
+    /// truth for episodes whose <c>ImportedFiles.ResolutionHeight</c> is 0 because they were imported before
+    /// that column was populated — otherwise such an episode can never be judged below cutoff, no matter how
+    /// badly it needs an upgrade.</summary>
+    Task<Dictionary<(int Season, int Episode), int>> GetPlexEpisodeHeightsAsync(MediaRequestDto request);
 }
 
 /// <summary>Outcome of parking a job as Deferred, so the endpoint can update the request and decide whether
