@@ -39,7 +39,16 @@ public class UpgradeScanJob(
         // Candidates: available requests known to be below their preferred quality, off cooldown, under the
         // attempt cap. CutoffState is maintained by RecomputeAchievedQualityAsync at each fulfillment.
         var candidates = await db.MediaRequests
-            .Where(r => r.Status == RequestStatus.Available && r.CutoffState == CutoffState.Unmet
+            // Unknown is included deliberately. The tri-state was introduced so an import with no parsed
+            // resolution could not be silently declared satisfied — but the scan then only ever looked at
+            // Unmet, so Unknown became a quieter version of the same dead end: never claimed met, never
+            // upgraded, invisible forever. On the live box that is 8 available requests, including the
+            // 720p House of the Dragon episodes that have plenty of 1080p releases available.
+            //
+            // Evaluating an Unknown request is cheap and self-correcting: TryEnqueueUpgradeAsync resolves
+            // it to Met or Unmet the moment any file's resolution is known, and leaves it Unknown otherwise.
+            .Where(r => r.Status == RequestStatus.Available
+                        && (r.CutoffState == CutoffState.Unmet || r.CutoffState == CutoffState.Unknown)
                         && r.UpgradeAttempts < maxAttempts
                         && (r.LastUpgradeSearchAt == null || r.LastUpgradeSearchAt <= cutoff))
             .OrderBy(r => r.LastUpgradeSearchAt)

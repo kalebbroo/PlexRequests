@@ -11,7 +11,12 @@ public interface IMediaRequestService
     // the default). It's validated against what that user may actually select before it's honoured.
     Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null);
     Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons, int? qualityProfileId = null);
-    Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes, int? qualityProfileId = null);
+    /// <summary>
+    /// Request specific episodes. <paramref name="asUpgrade"/> asks for a better copy of episodes already on
+    /// Plex: it bypasses the already-available guard and force-enqueues, which is the only way to ask for a
+    /// higher-quality version of something you already have.
+    /// </summary>
+    Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes, int? qualityProfileId = null, bool asUpgrade = false);
     Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null);
     Task<MediaRequestResult> CreateMonitoredEpisodesAsync(int anchorRequestId, IReadOnlyList<(int season, int episode)> episodes);
     // Music (scaffold): request an album/artist by its provider id (MusicBrainz MBID or Plex ratingKey).
