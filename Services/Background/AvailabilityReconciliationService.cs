@@ -57,7 +57,12 @@ public class AvailabilityReconciliationService(
         if (open.Count == 0) return 0;
 
         // Title-level availability for movies + whole-series TV, via the proven matcher (external ids).
-        var cards = open.Select(r => new MediaCardDto { Id = r.MediaId, TmdbId = r.MediaId, MediaType = r.MediaType, Title = r.Title }).ToList();
+        // Deduped by (MediaType, MediaId): a show routinely has many open MediaRequest rows at once — one per
+        // monitored episode, plus separate season/whole-series requests — and availability doesn't depend on
+        // which of those rows asked, so building one card per request crashed the dictionary below the moment
+        // any title had more than one open request.
+        var cards = open.Select(r => new MediaCardDto { Id = r.MediaId, TmdbId = r.MediaId, MediaType = r.MediaType, Title = r.Title })
+            .DistinctBy(c => (c.MediaType, c.Id)).ToList();
         await plex.AnnotateAvailabilityAsync(cards);
         var titleAvailable = cards.ToDictionary(c => (c.MediaType, c.Id), c => c.IsAvailable);
 

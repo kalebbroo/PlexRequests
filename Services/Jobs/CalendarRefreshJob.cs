@@ -40,11 +40,24 @@ public class CalendarRefreshJob(
         foreach (var anchor in anchors)
         {
             if (ct.IsCancellationRequested) break;
-            try { rows += await RefreshSeriesAsync(anchor, prefs, ct); }
+            try
+            {
+                rows += await RefreshSeriesAsync(anchor, prefs, ct);
+                // Saved per anchor, not batched to the end. A show is routinely monitored by more than one
+                // MediaRequest row at once (a whole-series monitor plus per-episode children, or two
+                // differently-scoped monitors), and each one calls RefreshSeriesAsync in turn. The "existing"
+                // lookup inside it queries the database, which does NOT see another anchor's Added-but-
+                // unsaved rows from earlier in this same loop — so two anchors for the same show would both
+                // decide the same (season, episode) was new and add it twice, and a single SaveChanges at the
+                // end would fail the whole pass on that show's unique-constraint violation, silently losing
+                // every other show's refresh in the same run. Saving here means the second anchor's query
+                // sees the first anchor's rows and updates them instead of duplicating them, and one show's
+                // failure can no longer take the rest of the pass down with it.
+                await db.SaveChangesAsync(ct);
+            }
             catch (Exception ex) { logger.LogWarning(ex, "Calendar refresh failed for \"{Title}\"", anchor.Title); }
         }
 
-        await db.SaveChangesAsync(ct);
         return rows > 0
             ? JobResult.Ok(rows, $"Refreshed {rows} calendar entry(ies) across {anchors.Count} series")
             : JobResult.Skipped("Nothing changed in the calendar");
