@@ -59,6 +59,36 @@ public class ReleaseEvaluatorTests
         Assert.True(Rejected(cam, RejectionReason.NotInProfile));
     }
 
+    // The cutoff is a ceiling, not just where auto-upgrade searches stop. TestData.Profile marks every
+    // tier from the floor up through 4K "allowed" — exactly what every seeded production profile does —
+    // so without this check a 1080p target would happily accept a 2160p release because nothing said no.
+    [Fact]
+    public void Rejects_a_tier_above_the_profiles_cutoff()
+    {
+        var defs = TestData.Definitions();
+        var profile = TestData.Profile(defs, floor: Quality.HD, cutoff: Quality.FullHD);
+        var r = _eval.Evaluate(
+            TestData.Release("Severance.S02E07.2160p.WEB-DL-NTb"),
+            TestData.Job(),
+            TestData.Context(profile, defs: defs));
+
+        Assert.False(r.Accepted);
+        Assert.True(Rejected(r, RejectionReason.AboveCutoff));
+    }
+
+    [Fact]
+    public void Relaxing_admits_a_tier_above_cutoff_when_nothing_at_target_was_found()
+    {
+        var defs = TestData.Definitions();
+        var profile = TestData.Profile(defs, floor: Quality.HD, cutoff: Quality.FullHD);
+        var r = _eval.Evaluate(
+            TestData.Release("Severance.S02E07.2160p.WEB-DL-NTb"),
+            TestData.Job(),
+            TestData.Context(profile, relax: true, defs: defs));
+
+        Assert.True(r.Accepted);
+    }
+
     [Fact]
     public void Falls_back_to_the_flat_floor_when_a_job_has_no_profile()
     {

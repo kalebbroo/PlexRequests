@@ -9,6 +9,9 @@ public enum RejectionReason
     BelowQualityFloor,
     /// <summary>The release's quality tier isn't in the profile's allowed list.</summary>
     NotInProfile,
+    /// <summary>The release's quality tier ranks above the profile's cutoff — the cutoff is a ceiling, not
+    /// just a point where auto-upgrading stops, so this is not "better", it's not what was asked for.</summary>
+    AboveCutoff,
     /// <summary>An upgrade job found something no better than what's already in the library.</summary>
     NotAnUpgrade,
     TooFewSeeders,
