@@ -852,6 +852,7 @@ public class ApiResponse<T>
 public class MediaRequestResult
 {
     public bool Success { get; set; }
+    public bool JobQueued { get; set; }
     public int? RequestId { get; set; }
     public string? ErrorMessage { get; set; }
     public RequestStatus? NewStatus { get; set; }

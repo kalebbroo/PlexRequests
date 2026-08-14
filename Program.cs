@@ -592,23 +592,32 @@ app.MapPost("/api/fulfillment/rss-grab", async (List<PlexRequestsHosted.Shared.D
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     int queued = 0;
+    var now = DateTime.UtcNow;
     foreach (var group in body.GroupBy(g => g.MediaRequestId))
     {
         var episodes = group.Select(g => (g.Season, g.Episode)).Distinct().ToList();
         var result = await requests.CreateMonitoredEpisodesAsync(group.Key, episodes);
-        if (!result.Success) continue;
-        queued += episodes.Count;
-
-        // Mark them searching so the calendar job doesn't queue the same episodes again.
         foreach (var g in group)
         {
             var row = await db.AirSchedule.FirstOrDefaultAsync(a =>
                 a.MediaRequestId == g.MediaRequestId && a.SeasonNumber == g.Season && a.EpisodeNumber == g.Episode);
             if (row is null) continue;
-            row.SearchState = PlexRequestsHosted.Shared.Enums.AirSearchState.Searching;
-            row.NextSearchAt = null;
-            row.LastSearchedAt = DateTime.UtcNow;
+            row.LastSearchedAt = now;
+            row.SearchAttempts++;
+
+            if (result.Success && result.JobQueued)
+            {
+                row.SearchState = PlexRequestsHosted.Shared.Enums.AirSearchState.Searching;
+                row.NextSearchAt = null; // fulfillment pipeline owns it now
+            }
+            else
+            {
+                // Same conservative backoff as the normal monitor.
+                row.NextSearchAt = now.AddHours(Math.Min(24, Math.Pow(2, Math.Min(row.SearchAttempts, 5))));
+            }
         }
+
+        if (result.Success && result.JobQueued) queued += episodes.Count;
     }
     await db.SaveChangesAsync();
     return Results.Ok(queued);

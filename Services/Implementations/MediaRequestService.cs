@@ -266,7 +266,8 @@ public class MediaRequestService(
     /// through the normal one-request/one-job pipeline, so the fulfilled callback marks THIS child available
     /// (the monitored anchor is untouched). Batching the season's missing episodes into a single request
     /// (rather than one request per episode) lets the downloader satisfy them from a single season pack
-    /// when no standalone episode releases exist, instead of spawning a doomed job per episode.
+    /// when no standalone episode releases exist, instead of spawning a doomed job per episode. Returns
+    /// <see cref="MediaRequestResult.Success"/> only when a fulfillment job was actually persisted.
     /// </summary>
     public async Task<MediaRequestResult> CreateMonitoredEpisodesAsync(int anchorRequestId, IReadOnlyList<(int season, int episode)> episodes)
     {
@@ -300,10 +301,32 @@ public class MediaRequestService(
         _db.MediaRequests.Add(child);
         await _db.SaveChangesAsync();
 
-        if (_config.GetValue<bool>("Fulfillment:Enabled"))
-            await _fulfillment.EnqueueAsync(ToDto(child));
+        var queued = false;
+        try
+        {
+            if (_config.GetValue<bool>("Fulfillment:Enabled"))
+                queued = await _fulfillment.EnqueueAsync(ToDto(child));
+        }
+        catch
+        {
+            _db.MediaRequests.Remove(child);
+            await _db.SaveChangesAsync();
+            throw;
+        }
 
-        return new MediaRequestResult { Success = true, RequestId = child.Id, NewStatus = child.Status };
+        if (!queued)
+        {
+            _db.MediaRequests.Remove(child);
+            await _db.SaveChangesAsync();
+            return new MediaRequestResult
+            {
+                Success = false,
+                JobQueued = false,
+                ErrorMessage = "No fulfillment job was created for monitored episodes right now."
+            };
+        }
+
+        return new MediaRequestResult { Success = true, JobQueued = true, RequestId = child.Id, NewStatus = child.Status };
     }
 
     /// <summary>

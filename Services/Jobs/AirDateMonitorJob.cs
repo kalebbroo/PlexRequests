@@ -58,7 +58,7 @@ public class AirDateMonitorJob(
             {
                 row.LastSearchedAt = now;
                 row.SearchAttempts++;
-                if (result.Success)
+                if (result.Success && result.JobQueued)
                 {
                     row.SearchState = AirSearchState.Searching;
                     row.NextSearchAt = null; // the fulfillment pipeline owns it from here
@@ -72,7 +72,7 @@ public class AirDateMonitorJob(
                 row.UpdatedAt = now;
             }
 
-            if (result.Success)
+            if (result.Success && result.JobQueued)
             {
                 queued += episodes.Count;
                 logger.LogInformation("Air-date monitor queued {Count} episode(s) of request #{RequestId} S{Season}",

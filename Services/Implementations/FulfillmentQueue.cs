@@ -24,14 +24,14 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
     private readonly ISeasonAvailabilityEvaluator _seasonEvaluator = seasonEvaluator;
     private readonly ILogger<FulfillmentQueue> _logger = logger;
 
-    public async Task EnqueueAsync(MediaRequestDto request, bool force = false)
+    public async Task<bool> EnqueueAsync(MediaRequestDto request, bool force = false)
     {
         var active = await _db.FulfillmentJobs.AnyAsync(j =>
             j.MediaRequestId == request.Id &&
             j.Status != FulfillmentStatus.Completed &&
             j.Status != FulfillmentStatus.Failed &&
             j.Status != FulfillmentStatus.Cancelled);
-        if (active) return;
+        if (active) return false;
 
         // Other active jobs for the SAME title from a DIFFERENT request (two users, or one user
         // requesting different seasons at different times) — never let two jobs re-download the same
@@ -43,7 +43,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             .ToListAsync();
 
         if (request.MediaType != MediaType.TvShow && otherActive.Count > 0)
-            return; // no sub-scope for movies/other media — one in-flight job for the title is enough
+            return false; // no sub-scope for movies/other media — one in-flight job for the title is enough
 
         var seasonsCsv = request.RequestedSeasons.Count > 0 ? string.Join(",", request.RequestedSeasons) : null;
         var episodesCsv = request.RequestedEpisodesCsv;
@@ -55,7 +55,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         if (request.MediaType == MediaType.TvShow && !force)
         {
             var (s, e, targets, hasTarget) = await ComputeMissingTvTargetsAsync(request);
-            if (!hasTarget) return;   // everything already on Plex
+            if (!hasTarget) return false;   // everything already on Plex
             seasonsCsv = s;
             episodesCsv = e;
             seasonTargets = targets;
@@ -63,15 +63,22 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             if (otherActive.Count > 0)
             {
                 if (otherActive.Any(j => ExpandJobScope(j).coversEverything))
-                    return; // another in-flight job already covers the whole show — nothing left to add
+                    return false; // another in-flight job already covers the whole show — nothing left to add
 
                 var inFlightSeasons = new HashSet<int>();
                 var inFlightEpisodes = new HashSet<(int season, int episode)>();
                 foreach (var j in otherActive)
                 {
-                    var (js, je, _) = ExpandJobScope(j);
-                    inFlightSeasons.UnionWith(js);
-                    inFlightEpisodes.UnionWith(je);
+                    var scope = ExpandJobScope(j);
+                    switch (scope.scope)
+                    {
+                        case InFlightScope.Season:
+                            inFlightSeasons.UnionWith(scope.seasons);
+                            break;
+                        case InFlightScope.Episode:
+                            inFlightEpisodes.UnionWith(scope.episodes);
+                            break;
+                    }
                 }
 
                 if (!string.IsNullOrWhiteSpace(episodesCsv))
@@ -84,7 +91,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
                             var se = (int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value));
                             return !inFlightEpisodes.Contains(se) && !inFlightSeasons.Contains(se.Item1);
                         }).ToList();
-                    if (remaining.Count == 0) return;
+                    if (remaining.Count == 0) return false;
                     episodesCsv = string.Join(",", remaining);
                 }
                 else if (!string.IsNullOrWhiteSpace(seasonsCsv))
@@ -93,7 +100,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
                         .Select(x => int.TryParse(x, out var n) ? n : -1)
                         .Where(n => n >= 0 && !inFlightSeasons.Contains(n))
                         .ToList();
-                    if (remainingSeasons.Count == 0) return;
+                    if (remainingSeasons.Count == 0) return false;
                     seasonsCsv = string.Join(",", remainingSeasons);
                     seasonTargets = seasonTargets.Where(t => remainingSeasons.Contains(t.Season)).ToList();
                 }
@@ -161,6 +168,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             CreatedAt = DateTime.UtcNow
         });
         await _db.SaveChangesAsync();
+        return true;
     }
 
     /// <summary>
@@ -529,7 +537,14 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
     // explicit episodes/seasons from its CSVs, or — when a job was enqueued pack-only because metadata
     // was unavailable at the time (both CSVs null) — "covers everything", since we can't enumerate what
     // it actually targets and shouldn't risk a duplicate whole-series download.
-    private static (HashSet<int> seasons, HashSet<(int season, int episode)> episodes, bool coversEverything) ExpandJobScope(FulfillmentJobEntity job)
+    private enum InFlightScope
+    {
+        Episode,
+        Season,
+        WholeShow
+    }
+
+    private static (HashSet<int> seasons, HashSet<(int season, int episode)> episodes, bool coversEverything, InFlightScope scope) ExpandJobScope(FulfillmentJobEntity job)
     {
         var seasons = new HashSet<int>();
         var episodes = new HashSet<(int, int)>();
@@ -544,15 +559,15 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
                 episodes.Add((s, e));
                 seasons.Add(s);
             }
-            return (seasons, episodes, false);
+            return (seasons, episodes, false, InFlightScope.Episode);
         }
         if (!string.IsNullOrWhiteSpace(job.RequestedSeasonsCsv))
         {
             foreach (var tok in job.RequestedSeasonsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 if (int.TryParse(tok, out var s)) seasons.Add(s);
-            return (seasons, episodes, false);
+            return (seasons, episodes, false, InFlightScope.Season);
         }
-        return (seasons, episodes, true);
+        return (seasons, episodes, true, InFlightScope.WholeShow);
     }
 
     // Parse "S1E1,S2E5" into episode targets.
