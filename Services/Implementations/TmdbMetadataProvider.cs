@@ -45,7 +45,7 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
     public bool Supports(PlexRequestsHosted.Shared.Enums.MediaType mediaType)
         => mediaType is PlexRequestsHosted.Shared.Enums.MediaType.Movie or PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime;
 
-    private T CacheGetOrNull<T>(string key) where T : class => _mem.TryGetValue(key, out var v) ? v as T : null;
+    private T? CacheGetOrNull<T>(string key) where T : class => _mem.TryGetValue(key, out var v) ? v as T : null;
     private T CacheSet<T>(string key, T value, TimeSpan ttl) { _mem.Set(key, value, ttl); return value; }
 
     public async Task<List<MediaCardDto>> SearchAsync(string query, PlexRequestsHosted.Shared.Enums.MediaType? mediaType = null, int page = 1, int pageSize = 20)

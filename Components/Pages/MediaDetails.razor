@@ -218,7 +218,7 @@ else
                                                 <div class="season-row">
                                                     <MudCheckBox T="bool" Value="@_selectedSeasons.Contains(season.SeasonNumber)"
                                                                  ValueChanged="@((bool v) => ToggleSeason(season.SeasonNumber, v))"
-                                                                 Disabled="@seasonAvailable" Dense="true" />
+                                                                 Disabled="@seasonAvailable" dense="true" />
                                                     <div class="season-meta" @onclick="() => ToggleExpand(season.SeasonNumber)">
                                                         <MudText Typo="Typo.subtitle1">Season @season.SeasonNumber</MudText>
                                                         <MudText Typo="Typo.caption" Class="text-secondary">@season.EpisodeCount episodes</MudText>
@@ -257,7 +257,7 @@ else
                                                                         <MudCheckBox T="bool" Value="@_selectedEpisodes.Contains((ep.SeasonNumber, ep.EpisodeNumber))"
                                                                                      ValueChanged="@((bool v) => ToggleEpisode(ep.SeasonNumber, ep.EpisodeNumber, v))"
                                                                                      Color="@(ep.IsAvailable ? Color.Secondary : Color.Primary)"
-                                                                                     Disabled="@(!ep.HasAired)" Dense="true" />
+                                                                                     Disabled="@(!ep.HasAired)" dense="true" />
                                                                     </MudTooltip>
                                                                     <span class="episode-num">E@(ep.EpisodeNumber)</span>
                                                                     <span class="episode-name">@ep.Name</span>
@@ -412,7 +412,7 @@ else
     <TitleContent><MudText Typo="Typo.h6"><MudIcon Icon="@Icons.Material.Filled.ReportProblem" Class="mr-2" />Report a Problem</MudText></TitleContent>
     <DialogContent>
         <MudText Typo="Typo.body2" Class="mb-3">Something wrong with "@(_media?.Title)" on Plex? Tell us and an admin can re-download or fix it.</MudText>
-        <MudSelect T="string" @bind-Value="_reportReason" Label="What's wrong?" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+        <MudSelect T="string" @bind-Value="_reportReason" Label="What's wrong?" Variant="Variant.Outlined" dense="true" Class="mb-3">
             <MudSelectItem Value="@("Bad quality")">Bad quality / low resolution</MudSelectItem>
             <MudSelectItem Value="@("Playback broken")">Won't play / playback error</MudSelectItem>
             <MudSelectItem Value="@("Wrong version")">Wrong version / cut / language</MudSelectItem>

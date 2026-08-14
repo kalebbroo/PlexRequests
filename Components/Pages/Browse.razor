@@ -45,12 +45,12 @@
             <div class="browse-header-row">
                 <h1 class="browse-title">@GetPageTitle()</h1>
                 <div class="browse-filters">
-                    <MudSelect T="MediaType" Value="_type" ValueChanged="OnTypeChanged" Label="Type" Variant="Variant.Outlined" Dense="true" Class="browse-select">
+                    <MudSelect T="MediaType" Value="_type" ValueChanged="OnTypeChanged" Label="Type" Variant="Variant.Outlined" dense="true" Class="browse-select">
                         <MudSelectItem T="MediaType" Value="MediaType.Movie">Movies</MudSelectItem>
                         <MudSelectItem T="MediaType" Value="MediaType.TvShow">TV Shows</MudSelectItem>
                     </MudSelect>
 
-                    <MudSelect T="string" Value="_genre" ValueChanged="OnGenreChanged" Label="Genre" Variant="Variant.Outlined" Dense="true" Class="browse-select"
+                    <MudSelect T="string" Value="_genre" ValueChanged="OnGenreChanged" Label="Genre" Variant="Variant.Outlined" dense="true" Class="browse-select"
                                ToStringFunc="@(g => string.IsNullOrEmpty(g) ? "All Genres" : g)">
                         <MudSelectItem T="string" Value='""'>All Genres</MudSelectItem>
                         @foreach (var g in _genres)
@@ -61,7 +61,7 @@
 
                     @if (GridMode)
                     {
-                        <MudSelect T="SortOrder" Value="_sort" ValueChanged="OnSortChanged" Label="Sort By" Variant="Variant.Outlined" Dense="true"
+                        <MudSelect T="SortOrder" Value="_sort" ValueChanged="OnSortChanged" Label="Sort By" Variant="Variant.Outlined" dense="true"
                                    ToStringFunc="@(s => SortLabel(s))" Class="browse-select">
                             <MudSelectItem Value="SortOrder.PopularityDescending">Most Popular</MudSelectItem>
                             <MudSelectItem Value="SortOrder.RatingDescending">Highest Rated</MudSelectItem>

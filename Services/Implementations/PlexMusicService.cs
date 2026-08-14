@@ -1,6 +1,5 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using PlexRequestsHosted.Shared.DTOs;
 
@@ -20,7 +19,7 @@ public interface IPlexMusicService
 /// This is the foundation for music requests (request an album/artist); availability is matched by
 /// name since music has no TMDB id.
 /// </summary>
-public class PlexMusicService(HttpClient http, IOptions<PlexConfiguration> options, IMemoryCache cache, ILogger<PlexMusicService> logger) : IPlexMusicService
+public class PlexMusicService(HttpClient http, IOptions<PlexConfiguration> options, ILogger<PlexMusicService> logger) : IPlexMusicService
 {
     private readonly PlexConfiguration _cfg = options.Value;
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };

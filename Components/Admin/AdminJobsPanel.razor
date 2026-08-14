@@ -27,7 +27,7 @@ else
             }
             else
             {
-                <MudTable Items="_missing" Dense="true" Hover="true" Class="elevation-1">
+                <MudTable Items="_missing" dense="true" Hover="true" Class="elevation-1">
                     <HeaderContent>
                         <MudTh>Title</MudTh>
                         <MudTh>Requested by</MudTh>
@@ -94,7 +94,7 @@ else
             }
             else
             {
-                <MudTable Items="_cutoff" Dense="true" Hover="true" Class="elevation-1">
+                <MudTable Items="_cutoff" dense="true" Hover="true" Class="elevation-1">
                     <HeaderContent>
                         <MudTh>Title</MudTh>
                         <MudTh>Requested by</MudTh>
@@ -136,7 +136,7 @@ else
             }
             else
             {
-                <MudTable Items="_scheduled" Dense="true" Hover="true" Class="elevation-1">
+                <MudTable Items="_scheduled" dense="true" Hover="true" Class="elevation-1">
                     <HeaderContent>
                         <MudTh>Name</MudTh>
                         <MudTh>Enabled</MudTh>
@@ -153,7 +153,7 @@ else
                         </MudTd>
                         <MudTd DataLabel="Runs every">
                             @* Editable friendly interval picker; common presets mapped to seconds. *@
-                            <MudSelect T="int" Value="context.IntervalSeconds" Dense="true" Variant="Variant.Outlined"
+                            <MudSelect T="int" Value="context.IntervalSeconds" dense="true" Variant="Variant.Outlined"
                                        Style="min-width:140px;" ValueChanged="@(v => ChangeInterval(context, v))">
                                 @foreach (var opt in _intervalOptions)
                                 {
@@ -236,7 +236,7 @@ else
             }
             else
             {
-                <MudTable Items="_runs" Dense="true" Hover="true" Class="elevation-1">
+                <MudTable Items="_runs" dense="true" Hover="true" Class="elevation-1">
                     <HeaderContent>
                         <MudTh>Job</MudTh>
                         <MudTh>Started</MudTh>

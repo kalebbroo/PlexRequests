@@ -20,13 +20,13 @@
         }
         else if (_status.Status == SearchTaskStatus.Expired)
         {
-            <MudAlert Severity="Severity.Warning" Dense="true">
+            <MudAlert Severity="Severity.Warning" dense="true">
                 The downloader never picked this search up. Check that it's running and connected.
             </MudAlert>
         }
         else if (_status.Results.Count == 0)
         {
-            <MudAlert Severity="Severity.Info" Dense="true">
+            <MudAlert Severity="Severity.Info" dense="true">
                 No indexer returned anything for this title.
                 @if (!string.IsNullOrWhiteSpace(_status.IndexerSummary)) { <span> (@_status.IndexerSummary)</span> }
             </MudAlert>
@@ -42,7 +42,7 @@
                            ValueChanged="@(v => _showRejected = v)" />
             </div>
 
-            <MudTable Items="Visible" Dense="true" Hover="true" Height="440px" FixedHeader="true" Class="elevation-1">
+            <MudTable Items="Visible" dense="true" Hover="true" Height="440px" FixedHeader="true" Class="elevation-1">
                 <HeaderContent>
                     <MudTh>Release</MudTh>
                     <MudTh>Indexer</MudTh>

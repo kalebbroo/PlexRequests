@@ -27,7 +27,7 @@ else
                 <b>Default quality</b>
                 <MudText Typo="Typo.body2" Color="Color.Tertiary">applied when no rule below matches</MudText>
                 <MudSpacer />
-                <MudSelect T="Quality" Value="_default.TargetQuality" ValueChanged="v => OnDefaultQuality(v)" Dense="true" Variant="Variant.Outlined" Style="min-width:160px;">
+                <MudSelect T="Quality" Value="_default.TargetQuality" ValueChanged="v => OnDefaultQuality(v)" dense="true" Variant="Variant.Outlined" Style="min-width:160px;">
                     @foreach (var q in _qualities) { <MudSelectItem Value="q">@QualityLabel(q)</MudSelectItem> }
                 </MudSelect>
             </div>
@@ -46,7 +46,7 @@ else
         <MudPaper Class="pa-4 mb-3" Elevation="1">
             <div class="d-flex align-items-center gap-2 mb-3">
                 <MudChip T="string" Size="Size.Small" Color="Color.Default">#@(idx + 1)</MudChip>
-                <MudTextField @bind-Value="rule.Name" Label="Name" Variant="Variant.Outlined" Dense="true" Style="max-width:240px;" />
+                <MudTextField @bind-Value="rule.Name" Label="Name" Variant="Variant.Outlined" dense="true" Style="max-width:240px;" />
                 <MudSpacer />
                 <MudSwitch T="bool" @bind-Value="rule.Enabled" Color="Color.Primary" Label="Enabled" />
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" Disabled="@(idx == 0)" OnClick="() => Move(rule, true)" />
@@ -54,15 +54,15 @@ else
                 <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="() => Delete(rule)" />
             </div>
             <div class="d-flex gap-3 flex-wrap align-items-center">
-                <MudSelect T="MediaType?" @bind-Value="rule.MatchMediaType" Label="Media type (any)" Dense="true" Variant="Variant.Outlined" Clearable="true" Style="min-width:150px;">
+                <MudSelect T="MediaType?" @bind-Value="rule.MatchMediaType" Label="Media type (any)" dense="true" Variant="Variant.Outlined" Clearable="true" Style="min-width:150px;">
                     <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.Movie)">Movies</MudSelectItem>
                     <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.TvShow)">TV Shows</MudSelectItem>
                     <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.Music)">Music</MudSelectItem>
                 </MudSelect>
-                <MudTextField @bind-Value="rule.MatchGenre" Label="Genre contains (any)" Placeholder="e.g. Animation" Variant="Variant.Outlined" Dense="true" Style="max-width:200px;" />
-                <MudNumericField T="int?" @bind-Value="rule.MatchTmdbId" Label="Specific TMDB id (any)" Variant="Variant.Outlined" Dense="true" Style="max-width:180px;" HideSpinButtons="true" />
+                <MudTextField @bind-Value="rule.MatchGenre" Label="Genre contains (any)" Placeholder="e.g. Animation" Variant="Variant.Outlined" dense="true" Style="max-width:200px;" />
+                <MudNumericField T="int?" @bind-Value="rule.MatchTmdbId" Label="Specific TMDB id (any)" Variant="Variant.Outlined" dense="true" Style="max-width:180px;" HideSpinButtons="true" />
                 <MudIcon Icon="@Icons.Material.Filled.ArrowForward" />
-                <MudSelect T="Quality" @bind-Value="rule.TargetQuality" Label="Quality" Dense="true" Variant="Variant.Outlined" Style="min-width:150px;">
+                <MudSelect T="Quality" @bind-Value="rule.TargetQuality" Label="Quality" dense="true" Variant="Variant.Outlined" Style="min-width:150px;">
                     @foreach (var q in _qualities) { <MudSelectItem Value="q">@QualityLabel(q)</MudSelectItem> }
                 </MudSelect>
                 <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="() => Save(rule)">Save</MudButton>

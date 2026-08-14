@@ -68,9 +68,9 @@ public static class Logs
             return;
         }
         StringBuilder toStore = new();
-        while (LogsToSave.TryDequeue(out string line))
+        while (LogsToSave.TryDequeue(out string? line))
         {
-            toStore.Append($"{line}\n");
+            if (line is not null) toStore.Append($"{line}\n");
         }
         if (toStore.Length > 0)
         {

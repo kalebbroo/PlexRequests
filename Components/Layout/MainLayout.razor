@@ -4,6 +4,7 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @inject PlexRequestsHosted.Services.Abstractions.INotificationBroker Broker
 @inject PlexRequestsHosted.Services.Abstractions.INotificationService Notifications
+@inject IJSRuntime JS
 @implements IDisposable
 
     
@@ -228,6 +229,19 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (firstRender)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("plexui.initHeaderMetrics", ".app-header");
+            }
+            catch
+            {
+                // JS interop is intentionally tolerant here because header metrics are a resilience enhancement,
+                // not a hard app dependency.
+            }
+        }
+
         if (!firstRender || _userId <= 0 || _notificationsLoaded) return;
         _notificationsLoaded = true;
         // Load persisted notifications after the shell has painted, both queries in parallel.

@@ -168,7 +168,10 @@ public static class NetworkMountHelper
         var lines = new List<string> { $"username={c.Username}", $"password={c.Password}" };
         if (!string.IsNullOrWhiteSpace(c.Domain)) lines.Add($"domain={c.Domain}");
         File.WriteAllLines(path, lines);
-        try { File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite); } catch { /* best-effort */ }
+        if (!OperatingSystem.IsWindows())
+        {
+            try { File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite); } catch { /* best-effort */ }
+        }
         return path;
     }
 

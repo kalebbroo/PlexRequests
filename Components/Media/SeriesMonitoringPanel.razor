@@ -12,7 +12,7 @@
 {
     @if (_loaded)
     {
-        <MudAlert Severity="Severity.Info" Dense="true">
+        <MudAlert Severity="Severity.Info" dense="true">
             Request this series to start monitoring it for new episodes.
         </MudAlert>
     }
@@ -60,7 +60,7 @@ else
     @if (_schedule.Count > 0)
     {
         <MudExpansionPanel Text="@($"Episode schedule ({_schedule.Count})")">
-            <MudTable Items="_schedule" Dense="true" Hover="true" Height="380px" FixedHeader="true">
+            <MudTable Items="_schedule" dense="true" Hover="true" Height="380px" FixedHeader="true">
                 <HeaderContent>
                     <MudTh>Episode</MudTh>
                     <MudTh>Title</MudTh>

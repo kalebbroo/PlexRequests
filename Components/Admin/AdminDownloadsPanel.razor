@@ -21,13 +21,13 @@ else
     <MudPaper Class="pa-4 mb-4" Elevation="1">
         <MudText Typo="Typo.h6" Class="mb-3">Season packs vs. episodes</MudText>
         <div class="d-flex gap-3 flex-wrap align-items-center">
-            <MudSelect T="SeasonPackStrategy" @bind-Value="_p.SeasonPackStrategy" Label="Strategy" Dense="true" Variant="Variant.Outlined" Style="min-width:240px;">
+            <MudSelect T="SeasonPackStrategy" @bind-Value="_p.SeasonPackStrategy" Label="Strategy" dense="true" Variant="Variant.Outlined" Style="min-width:240px;">
                 <MudSelectItem Value="SeasonPackStrategy.PreferPack">Prefer full-season pack</MudSelectItem>
                 <MudSelectItem Value="SeasonPackStrategy.PreferEpisodes">Prefer individual episodes</MudSelectItem>
                 <MudSelectItem Value="SeasonPackStrategy.Auto">Auto (pack if within size cap, else episodes)</MudSelectItem>
             </MudSelect>
             <MudSwitch T="bool" @bind-Value="_p.AllowEpisodeFallback" Color="Color.Primary" Label="Fall back to episodes when no acceptable pack" />
-            <MudNumericField T="int" @bind-Value="_p.MaxEpisodesForFanout" Label="Max episodes to fan out" Variant="Variant.Outlined" Dense="true" Min="1" Max="500" Style="max-width:200px;" />
+            <MudNumericField T="int" @bind-Value="_p.MaxEpisodesForFanout" Label="Max episodes to fan out" Variant="Variant.Outlined" dense="true" Min="1" Max="500" Style="max-width:200px;" />
         </div>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
             If a season is missing more episodes than the fan-out cap and no pack exists, the job fails instead of adding many torrents.
@@ -47,11 +47,11 @@ else
     <MudPaper Class="pa-4 mb-4" Elevation="1">
         <MudText Typo="Typo.h6" Class="mb-3">Filters</MudText>
         <div class="d-flex gap-3 flex-wrap align-items-center">
-            <MudNumericField T="int" @bind-Value="_p.MinSeeders" Label="Min seeders" Variant="Variant.Outlined" Dense="true" Min="0" Style="max-width:160px;" />
-            <MudNumericField T="double" @bind-Value="_p.MaxSizeGb" Label="Max size (GB)" Variant="Variant.Outlined" Dense="true" Min="0.05" Style="max-width:180px;" />
-            <MudNumericField T="double" @bind-Value="_p.MaxSeasonPackSizeGb" Label="Max season-pack size (GB)" Variant="Variant.Outlined" Dense="true" Min="0.05" Style="max-width:220px;" />
+            <MudNumericField T="int" @bind-Value="_p.MinSeeders" Label="Min seeders" Variant="Variant.Outlined" dense="true" Min="0" Style="max-width:160px;" />
+            <MudNumericField T="double" @bind-Value="_p.MaxSizeGb" Label="Max size (GB)" Variant="Variant.Outlined" dense="true" Min="0.05" Style="max-width:180px;" />
+            <MudNumericField T="double" @bind-Value="_p.MaxSeasonPackSizeGb" Label="Max season-pack size (GB)" Variant="Variant.Outlined" dense="true" Min="0.05" Style="max-width:220px;" />
             <MudSwitch T="bool" @bind-Value="_p.EnforceQualityFloor" Color="Color.Primary" Label="Hold out for preferred quality first" />
-            <MudNumericField T="double" @bind-Value="_p.MinTitleSimilarity" Label="Min title match (0-1)" Variant="Variant.Outlined" Dense="true" Min="0" Max="1" Step="0.05" Style="max-width:200px;" />
+            <MudNumericField T="double" @bind-Value="_p.MinTitleSimilarity" Label="Min title match (0-1)" Variant="Variant.Outlined" dense="true" Min="0" Max="1" Step="0.05" Style="max-width:200px;" />
         </div>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
             <b>Hold out for preferred quality:</b> on, the first search only accepts the preferred quality or better;
@@ -68,7 +68,7 @@ else
     <MudPaper Class="pa-4 mb-4" Elevation="1">
         <MudText Typo="Typo.h6" Class="mb-3">Release preferences</MudText>
         <div class="d-flex gap-3 flex-wrap align-items-center">
-            <MudTextField @bind-Value="_p.PreferredGroupsCsv" Label="Preferred groups (comma-separated)" Placeholder="e.g. NTb, FLUX" Variant="Variant.Outlined" Dense="true" Style="min-width:280px;" />
+            <MudTextField @bind-Value="_p.PreferredGroupsCsv" Label="Preferred groups (comma-separated)" Placeholder="e.g. NTb, FLUX" Variant="Variant.Outlined" dense="true" Style="min-width:280px;" />
             <MudSwitch T="bool" @bind-Value="_p.PreferX265" Color="Color.Primary" Label="Prefer x265/HEVC" />
             <MudSwitch T="bool" @bind-Value="_p.PreferHdr" Color="Color.Primary" Label="Prefer HDR" />
             <MudSwitch T="bool" @bind-Value="_p.PreferHigherQualitySource" Color="Color.Primary" Label="Prefer higher-quality source (BluRay > WebDL)" />

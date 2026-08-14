@@ -21,16 +21,16 @@
             </div>
         }
         <div class="d-flex gap-2 align-items-center mb-3">
-            <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Title="Up one level"
+            <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" title="Up one level"
                            Disabled="@(_current?.ParentPath is null)" OnClick="GoUp" />
-            <MudTextField T="string" @bind-Value="_pathInput" Label="Path" Variant="Variant.Outlined" Dense="true"
+            <MudTextField T="string" @bind-Value="_pathInput" Label="Path" Variant="Variant.Outlined" dense="true"
                           FullWidth="true" Immediate="true" OnKeyDown="OnPathKeyDown" />
             <MudButton Variant="Variant.Outlined" OnClick="@(() => Navigate(_pathInput))">Go</MudButton>
         </div>
 
         @if (_error is not null)
         {
-            <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2">@_error</MudAlert>
+            <MudAlert Severity="Severity.Warning" dense="true" Class="mb-2">@_error</MudAlert>
         }
 
         <MudPaper Class="pa-2" Elevation="0" Outlined="true" Style="max-height:360px; overflow-y:auto;">

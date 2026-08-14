@@ -55,7 +55,7 @@ public class DatabaseAdminService(AppDbContext db, IPlexApiService plex, ILogger
 
         var target = Path.Combine(dir, $"app-backup-{DateTime.UtcNow:yyyyMMdd-HHmmss}.db");
         // VACUUM INTO writes a compacted, transactionally-consistent copy while the DB stays live.
-        await db.Database.ExecuteSqlRawAsync($"VACUUM INTO '{target.Replace("'", "''")}'");
+        await db.Database.ExecuteSqlRawAsync("VACUUM INTO {0}", target);
         logger.LogInformation("Database backup written to {Path}", target);
         return target;
     }

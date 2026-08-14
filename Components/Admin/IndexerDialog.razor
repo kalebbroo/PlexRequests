@@ -43,7 +43,7 @@
             @* Cloudflare clearance. Shown for every indexer, not just Torznab: the scraped built-ins are
                exactly the ones that get challenged. *@
             <MudItem xs="12">
-                <MudExpansionPanel Text="@ClearanceSummary()" Dense="true">
+                <MudExpansionPanel Text="@ClearanceSummary()" dense="true">
                     <MudText Typo="Typo.caption" Class="text-muted mb-2 d-block">
                         Some sites (1337x among them) serve a Cloudflare interstitial to anything that isn't a
                         real browser, which makes them return nothing at all. Open the site in a browser
@@ -60,7 +60,7 @@
                                   HelperText="Must be byte-for-byte the User-Agent of the browser that earned the cookie." />
                     @if (_model.HasClearance)
                     {
-                        <MudCheckBox T="bool" @bind-Value="_model.ClearClearance" Dense="true" Color="Color.Error"
+                        <MudCheckBox T="bool" @bind-Value="_model.ClearClearance" dense="true" Color="Color.Error"
                                      Label="Delete the stored clearance" Class="mt-1" />
                     }
                 </MudExpansionPanel>
@@ -129,7 +129,7 @@
 
         @if (!string.IsNullOrWhiteSpace(_error))
         {
-            <MudAlert Severity="Severity.Error" Class="mt-3" Dense="true">@_error</MudAlert>
+            <MudAlert Severity="Severity.Error" Class="mt-3" dense="true">@_error</MudAlert>
         }
 
         @if (_testing)
@@ -141,7 +141,7 @@
         }
         else if (_caps is not null)
         {
-            <MudAlert Severity="@(_caps.Reachable ? Severity.Success : Severity.Error)" Class="mt-3" Dense="true">
+            <MudAlert Severity="@(_caps.Reachable ? Severity.Success : Severity.Error)" Class="mt-3" dense="true">
                 @_caps.Message
             </MudAlert>
 

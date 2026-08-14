@@ -23,9 +23,9 @@ else
     <MudPaper Class="pa-4 mb-4" Elevation="1">
         <MudText Typo="Typo.h6" Class="mb-3">Library roots</MudText>
         <div class="d-flex gap-3 flex-wrap align-items-center">
-            <MudTextField @bind-Value="_p.MoviePath" Label="Movie library path" Variant="Variant.Outlined" Dense="true" Style="min-width:320px;"
+            <MudTextField @bind-Value="_p.MoviePath" Label="Movie library path" Variant="Variant.Outlined" dense="true" Style="min-width:320px;"
                           Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="BrowseMoviePath" />
-            <MudTextField @bind-Value="_p.TvPath" Label="TV library path" Variant="Variant.Outlined" Dense="true" Style="min-width:320px;"
+            <MudTextField @bind-Value="_p.TvPath" Label="TV library path" Variant="Variant.Outlined" dense="true" Style="min-width:320px;"
                           Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="BrowseTvPath" />
         </div>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
@@ -39,15 +39,15 @@ else
         <MudText Typo="Typo.h6" Class="mb-3">Naming templates</MudText>
         <div class="d-flex flex-column gap-3">
             <div>
-                <MudTextField @bind-Value="_p.MovieTemplate" @bind-Value:after="Refresh" Label="Movie template" Variant="Variant.Outlined" Dense="true" FullWidth="true" />
+                <MudTextField @bind-Value="_p.MovieTemplate" @bind-Value:after="Refresh" Label="Movie template" Variant="Variant.Outlined" dense="true" FullWidth="true" />
                 <MudText Typo="Typo.caption" Color="Color.Tertiary">Preview: @PreviewMovie()</MudText>
             </div>
             <div>
-                <MudTextField @bind-Value="_p.TvEpisodeTemplate" @bind-Value:after="Refresh" Label="TV episode template" Variant="Variant.Outlined" Dense="true" FullWidth="true" />
+                <MudTextField @bind-Value="_p.TvEpisodeTemplate" @bind-Value:after="Refresh" Label="TV episode template" Variant="Variant.Outlined" dense="true" FullWidth="true" />
                 <MudText Typo="Typo.caption" Color="Color.Tertiary">Preview: @PreviewEpisode()</MudText>
             </div>
             <div>
-                <MudTextField @bind-Value="_p.SeasonPackFolderTemplate" @bind-Value:after="Refresh" Label="Season-pack folder template (used when pack splitting is off)" Variant="Variant.Outlined" Dense="true" FullWidth="true" />
+                <MudTextField @bind-Value="_p.SeasonPackFolderTemplate" @bind-Value:after="Refresh" Label="Season-pack folder template (used when pack splitting is off)" Variant="Variant.Outlined" dense="true" FullWidth="true" />
                 <MudText Typo="Typo.caption" Color="Color.Tertiary">Preview: @PreviewSeasonFolder()</MudText>
             </div>
         </div>
@@ -86,19 +86,19 @@ else
                 var idx = i;
                 var rule = _p.LibraryRootRules[idx];
                 <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
-                    <MudSelect T="MediaType" @bind-Value="rule.MediaType" Label="Media type" Dense="true" Variant="Variant.Outlined" Style="min-width:140px;">
+                    <MudSelect T="MediaType" @bind-Value="rule.MediaType" Label="Media type" dense="true" Variant="Variant.Outlined" Style="min-width:140px;">
                         <MudSelectItem Value="MediaType.Movie">Movie</MudSelectItem>
                         <MudSelectItem Value="MediaType.TvShow">TV Show</MudSelectItem>
                     </MudSelect>
-                    <MudSelect T="bool?" @bind-Value="rule.RequireAnime" Label="Content" Dense="true" Variant="Variant.Outlined" Style="min-width:160px;">
+                    <MudSelect T="bool?" @bind-Value="rule.RequireAnime" Label="Content" dense="true" Variant="Variant.Outlined" Style="min-width:160px;">
                         <MudSelectItem T="bool?" Value="null">Any</MudSelectItem>
                         <MudSelectItem T="bool?" Value="true">Anime only</MudSelectItem>
                         <MudSelectItem T="bool?" Value="false">Non-anime only</MudSelectItem>
                     </MudSelect>
-                    <MudTextField @bind-Value="rule.GenreContains" Label="Genre contains (optional)" Placeholder="e.g. Documentary" Dense="true" Variant="Variant.Outlined" Style="min-width:200px;" />
-                    <MudTextField @bind-Value="rule.RootPath" Label="Root path" Placeholder="/mnt/network-library/Anime/Movies" Dense="true" Variant="Variant.Outlined" Style="min-width:300px;"
+                    <MudTextField @bind-Value="rule.GenreContains" Label="Genre contains (optional)" Placeholder="e.g. Documentary" dense="true" Variant="Variant.Outlined" Style="min-width:200px;" />
+                    <MudTextField @bind-Value="rule.RootPath" Label="Root path" Placeholder="/mnt/network-library/Anime/Movies" dense="true" Variant="Variant.Outlined" Style="min-width:300px;"
                                   Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="@(() => BrowseRule(idx))" />
-                    <MudTextField @bind-Value="rule.TemplateOverride" Label="Template override (optional)" Dense="true" Variant="Variant.Outlined" Style="min-width:280px;" />
+                    <MudTextField @bind-Value="rule.TemplateOverride" Label="Template override (optional)" dense="true" Variant="Variant.Outlined" Style="min-width:280px;" />
                     <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="@(() => RemoveRule(idx))" />
                 </div>
             }
@@ -108,7 +108,7 @@ else
     <MudPaper Class="pa-4 mb-4" Elevation="1">
         <MudText Typo="Typo.h6" Class="mb-3">Transfer behavior</MudText>
         <div class="d-flex gap-3 flex-wrap align-items-center">
-            <MudSelect T="TransferMode" @bind-Value="_p.TransferMode" Label="Transfer mode" Dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
+            <MudSelect T="TransferMode" @bind-Value="_p.TransferMode" Label="Transfer mode" dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
                 <MudSelectItem Value="TransferMode.Hardlink">Hardlink (keeps seeding)</MudSelectItem>
                 <MudSelectItem Value="TransferMode.Copy">Copy</MudSelectItem>
                 <MudSelectItem Value="TransferMode.Move">Move</MudSelectItem>
@@ -125,9 +125,9 @@ else
             </MudText>
         }
         <div class="d-flex gap-3 flex-wrap align-items-center mt-3">
-            <MudTextField @bind-Value="_p.VideoExtensionsCsv" Label="Video extensions (comma-separated)" Variant="Variant.Outlined" Dense="true" Style="min-width:320px;" />
-            <MudTextField @bind-Value="_p.SubtitleExtensionsCsv" Label="Subtitle extensions (comma-separated)" Variant="Variant.Outlined" Dense="true" Style="min-width:320px;" />
-            <MudNumericField T="double" @bind-Value="_p.MinVideoFileSizeMb" Label="Min video file size (MB)" Variant="Variant.Outlined" Dense="true" Min="0" Style="max-width:220px;" />
+            <MudTextField @bind-Value="_p.VideoExtensionsCsv" Label="Video extensions (comma-separated)" Variant="Variant.Outlined" dense="true" Style="min-width:320px;" />
+            <MudTextField @bind-Value="_p.SubtitleExtensionsCsv" Label="Subtitle extensions (comma-separated)" Variant="Variant.Outlined" dense="true" Style="min-width:320px;" />
+            <MudNumericField T="double" @bind-Value="_p.MinVideoFileSizeMb" Label="Min video file size (MB)" Variant="Variant.Outlined" dense="true" Min="0" Style="max-width:220px;" />
         </div>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
             Files below the minimum size are treated as samples/junk, not real episodes/movies.

@@ -11,7 +11,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>Media Requests</h2>
     <div class="d-flex gap-2">
-        <MudSelect T="RequestStatus?" Value="_statusFilter" ValueChanged="OnStatusChanged" Label="Status" Dense="true" Variant="Variant.Outlined" Class="me-2">
+        <MudSelect T="RequestStatus?" Value="_statusFilter" ValueChanged="OnStatusChanged" Label="Status" dense="true" Variant="Variant.Outlined" Class="me-2">
             <MudSelectItem T="RequestStatus?" Value="@( (RequestStatus?)null )">All</MudSelectItem>
             <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Pending)">Pending</MudSelectItem>
             <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Approved)">Approved</MudSelectItem>
@@ -34,7 +34,7 @@ else if (_items.Count == 0)
 }
 else
 {
-    <MudTable Items="_paged" Dense="true" Hover="true" Class="elevation-1">
+    <MudTable Items="_paged" dense="true" Hover="true" Class="elevation-1">
         <HeaderContent>
             <MudTh>Type</MudTh>
             <MudTh>Poster</MudTh>

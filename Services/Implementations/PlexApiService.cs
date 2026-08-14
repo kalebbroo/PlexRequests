@@ -355,7 +355,7 @@ public class PlexApiService : IPlexApiService
             var matched = false;
             // Try external ids first
             string? matchPath = null;
-            string rk = string.Empty;
+            string? rk = null;
             if (it.TmdbId is int tmdb && idx.ByExternal.TryGetValue($"tmdb:{tmdb}", out var rkTmdb)) { matched = true; rk = rkTmdb; matchPath = $"guid:tmdb:{tmdb}"; }
             else if (!string.IsNullOrEmpty(it.ImdbId) && idx.ByExternal.TryGetValue($"imdb:{it.ImdbId}", out var rkImdb)) { matched = true; rk = rkImdb; matchPath = $"guid:imdb:{it.ImdbId}"; }
             else if (it.TvdbId is int tvdb && idx.ByExternal.TryGetValue($"tvdb:{tvdb}", out var rkTvdb)) { matched = true; rk = rkTvdb; matchPath = $"guid:tvdb:{tvdb}"; }
@@ -363,10 +363,16 @@ public class PlexApiService : IPlexApiService
             // Fallback: title+year +/- 1 year
             if (!matched && it.Year is int y)
             {
-                foreach (var yr in new int?[] { y - 1, y, y + 1 })
+                foreach (var yr in new[] { y - 1, y, y + 1 })
                 {
-                    var key = NormalizeTitleYear(it.Title, yr!.Value);
-                    if (idx.ByTitleYear.Contains(key)) { matched = true; matchPath = $"title-year:{yr}"; idx.ByTitleYearKey.TryGetValue(key, out rk); break; }
+                    var key = NormalizeTitleYear(it.Title, yr);
+                    if (idx.ByTitleYear.Contains(key))
+                    {
+                        matched = true;
+                        matchPath = $"title-year:{yr}";
+                        idx.ByTitleYearKey.TryGetValue(key, out rk);
+                        break;
+                    }
                 }
             }
             if (matched)
@@ -443,8 +449,10 @@ public class PlexApiService : IPlexApiService
     // background AvailabilityRefreshService). This never hits Plex, so annotating a page is cheap.
     private async Task<AvailabilityIndex> EnsureAvailabilityIndexAsync()
     {
-        if (_cache.TryGetValue<AvailabilityIndex>(AvailabilityCacheKey, out var cached) && (DateTime.UtcNow - cached.BuiltAt) < TimeSpan.FromMinutes(5))
-            return cached!;
+        if (_cache.TryGetValue<AvailabilityIndex>(AvailabilityCacheKey, out var cached) &&
+            cached is not null &&
+            (DateTime.UtcNow - cached.BuiltAt) < TimeSpan.FromMinutes(5))
+            return cached;
 
         var byTitleYear = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var byTitleYearKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

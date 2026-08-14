@@ -12,7 +12,7 @@
     display: flex;
     align-items: flex-end;
     /* pull up under the transparent header */
-    margin-top: calc(-1 * var(--header-height));
+    margin-top: calc(-1 * var(--header-offset));
 }
 
 .home-hero-scrim {

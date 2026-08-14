@@ -26,7 +26,7 @@
 else
 {
     <MudPaper Class="pa-2" Elevation="1">
-        <MudTable T="IndexerSettingDto" Items="_items" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+        <MudTable T="IndexerSettingDto" Items="_items" dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
             <HeaderContent>
                 <MudTh>Indexer</MudTh>
                 <MudTh>Type</MudTh>
@@ -58,7 +58,7 @@ else
                                ValueChanged="@(v => SetEnabled(context, v))" />
                 </MudTd>
                 <MudTd DataLabel="Priority">
-                    <MudNumericField T="int" Value="@context.Priority" Min="1" Max="50" Dense="true"
+                    <MudNumericField T="int" Value="@context.Priority" Min="1" Max="50" dense="true"
                                      Variant="Variant.Outlined" Style="max-width:90px;"
                                      ValueChanged="@(v => SetPriority(context, v))" />
                 </MudTd>
