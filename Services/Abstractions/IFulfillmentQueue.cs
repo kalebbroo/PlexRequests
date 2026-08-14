@@ -12,8 +12,9 @@ public interface IFulfillmentQueue
 {
     /// <summary>Enqueue a job for an approved request (no-op if one is already active for it).</summary>
     /// <summary>Queue a request for download. When <paramref name="force"/> is true, the on-Plex dedup
-    /// is bypassed (re-fetch even if the content is already present) — used by Report-a-Problem re-downloads.</summary>
-    Task EnqueueAsync(MediaRequestDto request, bool force = false);
+    /// is bypassed (re-fetch even if the content is already present) — used by Report-a-Problem re-downloads.
+    /// Returns <c>true</c> only when a new fulfillment job row was persisted.</summary>
+    Task<bool> EnqueueAsync(MediaRequestDto request, bool force = false);
 
     /// <summary>Atomically claim up to <paramref name="max"/> queued jobs for a worker.</summary>
     Task<List<FulfillmentJobDto>> ClaimNextAsync(string workerId, int max = 1);

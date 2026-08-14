@@ -14,7 +14,8 @@ public partial class ReleaseParser : IReleaseParser
 {
     public ParsedRelease Parse(string releaseName)
     {
-        var name = releaseName ?? string.Empty;
+        var original = releaseName ?? string.Empty;
+        var name = NormalizeForParsing(original);
 
         int resolution =
             Rx(name, @"\b(2160p|4k|uhd)\b") ? 2160 :
@@ -25,8 +26,8 @@ public partial class ReleaseParser : IReleaseParser
         ReleaseSource source =
             Rx(name, @"\bremux\b") ? ReleaseSource.Remux :
             Rx(name, @"\b(bluray|blu-ray|bdrip|brrip)\b") ? ReleaseSource.BluRay :
-            Rx(name, @"\b(web-?dl|webdl|amzn|nf|dsnp|hmax)\b") ? ReleaseSource.WebDl :
-            Rx(name, @"\bweb-?rip\b") ? ReleaseSource.WebRip :
+            Rx(name, @"\b(web[\s._-]*dl|webdl|amzn|nf|dsnp|hmax)\b") ? ReleaseSource.WebDl :
+            Rx(name, @"\bweb[\s._-]*rip\b") ? ReleaseSource.WebRip :
             Rx(name, @"\b(hdtv|pdtv)\b") ? ReleaseSource.Hdtv :
             Rx(name, @"\b(cam|ts|telesync|hdcam)\b") ? ReleaseSource.Cam :
             ReleaseSource.Unknown;
@@ -47,7 +48,7 @@ public partial class ReleaseParser : IReleaseParser
 
         // Group: trailing "-GROUP" token.
         string? group = null;
-        var m = GroupRegex().Match(name);
+        var m = GroupRegex().Match(original);
         if (m.Success) group = m.Groups[1].Value;
 
         var (season, seasonEnd, episode, isPack, looksLikeComplete, epStart, epEnd) = ParseSeasonEpisode(name);
@@ -84,6 +85,16 @@ public partial class ReleaseParser : IReleaseParser
             LooksLikeCompleteSeries = looksLikeComplete,
             Year = year
         };
+    }
+
+    private static string NormalizeForParsing(string? releaseName)
+    {
+        if (string.IsNullOrWhiteSpace(releaseName)) return string.Empty;
+
+        // Canonicalize underscores to spaces and collapse whitespace.
+        // Underscores are regex word chars, so they break many \b boundaries used by parsing.
+        var normalized = releaseName.Replace('_', ' ');
+        return Regex.Replace(normalized, @"\s+", " ").Trim();
     }
 
     /// <summary>
@@ -241,6 +252,6 @@ public partial class ReleaseParser : IReleaseParser
     private static bool Rx(string input, string pattern) =>
         Regex.IsMatch(input, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    [GeneratedRegex(@"-([A-Za-z0-9]+)(?:\.[A-Za-z0-9]+)?$")]
+    [GeneratedRegex(@"(?:-|_)([A-Za-z0-9]+)(?:\.[A-Za-z0-9]+)?$")]
     private static partial Regex GroupRegex();
 }

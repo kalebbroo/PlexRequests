@@ -98,7 +98,7 @@ public static partial class ReleaseTokens
         yield return @"19\d{2}";
         yield return @"20\d{2}";
         foreach (var t in new[] { "480p", "576p", "720p", "1080p", "2160p", "4k", "uhd" }) yield return t;
-        foreach (var t in new[] { "bluray", "blu-ray", "bdrip", "brrip", "web-?dl", "webdl", "web-?rip", "hdtv", "pdtv", "remux" }) yield return t;
+        foreach (var t in new[] { "bluray", "blu-ray", "bdrip", "brrip", "web[\\s._-]*dl", "webdl", "web[\\s._-]*rip", "hdtv", "pdtv", "remux" }) yield return t;
         foreach (var t in new[] { "x264", "x265", @"h\.?264", @"h\.?265", "hevc", "avc" }) yield return t;
         foreach (var t in new[] { "hdr", "hdr10", "dv", "amzn", "nf", "dsnp", "hmax" }) yield return t;
 

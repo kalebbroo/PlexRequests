@@ -23,6 +23,8 @@ public class ReleaseParserTests
     [InlineData("Show.S01E01.1080p.REMUX-GRP", ReleaseSource.Remux)]
     [InlineData("Show.S01E01.1080p.HDTV-GRP", ReleaseSource.Hdtv)]
     [InlineData("Movie.2024.CAM.x264", ReleaseSource.Cam)]
+    [InlineData("Show_S01E01_1080p_WEB_DL-GRP", ReleaseSource.WebDl)]
+    [InlineData("Show_S01E01_1080p_web-rip-GRP", ReleaseSource.WebRip)]
     [InlineData("Show.S01E01.1080p-GRP", ReleaseSource.Unknown)]
     public void Parses_source(string name, ReleaseSource expected) =>
         Assert.Equal(expected, _parser.Parse(name).Source);
@@ -30,6 +32,7 @@ public class ReleaseParserTests
     [Theory]
     [InlineData("Severance.S02E07.1080p", 2, 7)]
     [InlineData("Severance.2x07.1080p", 2, 7)]
+    [InlineData("Show_S02_E07_1080p", 2, 7)]
     public void Parses_single_episode(string name, int season, int episode)
     {
         var p = _parser.Parse(name);
@@ -65,6 +68,7 @@ public class ReleaseParserTests
     [InlineData("Show.S01E01-E06.1080p.WEB-DL", 1, 1, 6)]
     [InlineData("Show.S02E01-E12.1080p", 2, 1, 12)]
     [InlineData("Show.S01E01-06.720p", 1, 1, 6)]
+    [InlineData("Show_S01E01-E06_1080p", 1, 1, 6)]
     public void Parses_episode_range_as_partial_pack(string name, int season, int start, int end)
     {
         var p = _parser.Parse(name);
@@ -88,6 +92,8 @@ public class ReleaseParserTests
     [InlineData("Lucky.2011.1080p.BluRay", "Lucky")]
     [InlineData("The.Office.US.S01.1080p", "The Office US")]
     [InlineData("Severance.S02E07.1080p.WEB-DL", "Severance")]
+    [InlineData("Lucky_Star.S01.1080p-GRP", "Lucky Star")]
+    [InlineData("Lucky_Star.1080p", "Lucky Star")]
     public void Extracts_core_title(string name, string expected) =>
         Assert.Equal(expected, _parser.Parse(name).Title);
 
@@ -98,5 +104,8 @@ public class ReleaseParserTests
         Assert.True(p.ProperOrRepack);
         Assert.Equal("x265", p.Codec);
         Assert.Equal("GRP", p.Group);
+
+        var p2 = _parser.Parse("Show.S01E01_1080p_WEB-DL_GRP");
+        Assert.Equal("GRP", p2.Group);
     }
 }
