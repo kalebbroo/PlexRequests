@@ -62,6 +62,10 @@
     --font-size-4xl: 2.5rem;
     /* Layout */
     --header-height: 68px;
+    --header-offset: var(--header-height);
+    --safe-area-top: env(safe-area-inset-top, 0px);
+    --safe-area-right: env(safe-area-inset-right, 0px);
+    --safe-area-left: env(safe-area-inset-left, 0px);
     --container-max-width: 1920px;
     /* Legacy aliases — several scoped page stylesheets reference these names.
        Kept here so those var() lookups resolve instead of collapsing to

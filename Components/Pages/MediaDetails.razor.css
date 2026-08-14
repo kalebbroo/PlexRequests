@@ -1,7 +1,7 @@
 .details-container {
     min-height: 100vh;
     background-color: var(--dark-bg);
-    margin-top: calc(-1 * var(--header-height));
+    margin-top: calc(-1 * var(--header-offset));
 }
 
 .loading-skeleton {

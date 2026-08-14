@@ -93,12 +93,12 @@ builder.Services.AddHttpContextAccessor();
 // forwarded scheme so HttpsRedirection doesn't loop, the auth cookie gets its Secure flag, and Plex
 // OAuth redirect URLs come out as https. cloudflared/the proxy is the only origin client, so trust
 // all proxies. If you expose the origin directly to untrusted networks, restrict KnownProxies instead.
-builder.Services.Configure<ForwardedHeadersOptions>(options =>
-{
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    options.KnownNetworks.Clear();
-    options.KnownProxies.Clear();
-});
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+    });
 // Session support for OAuth PIN storage
 // Persist Data Protection keys so session/cookie protection can be unprotected across app restarts
 var keysDir = Path.Combine(builder.Environment.ContentRootPath, "keys");
@@ -291,8 +291,7 @@ builder.Services.AddScoped<IMediaMetadataProvider>(sp =>
     return new PlexRequestsHosted.Services.Implementations.CachingMetadataProvider(
         innerProvider,
         sp.GetRequiredService<IDbContextFactory<AppDbContext>>(),
-        sp.GetRequiredService<PlexRequestsHosted.Services.Abstractions.IMetadataRefreshCoordinator>(),
-        sp.GetRequiredService<ILogger<PlexRequestsHosted.Services.Implementations.CachingMetadataProvider>>());
+        sp.GetRequiredService<PlexRequestsHosted.Services.Abstractions.IMetadataRefreshCoordinator>());
 });
 
 // Persistence: SQLite. Resolve an absolute path so the DB doesn't depend on the current

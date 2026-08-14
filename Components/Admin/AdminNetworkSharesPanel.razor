@@ -31,7 +31,7 @@ else if (_shares.Count == 0)
 else
 {
     <MudPaper Elevation="1">
-        <MudList T="NetworkShareDto" Dense="false">
+        <MudList T="NetworkShareDto" dense="false">
             @foreach (var s in _shares)
             {
                 <MudListItem T="NetworkShareDto">
@@ -74,8 +74,8 @@ else
                         </div>
                         <div class="d-flex align-items-center gap-1">
                             <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.NetworkCheck" OnClick="@(() => Test(s))" Disabled="_busy">Test</MudButton>
-                            <MudIconButton Icon="@Icons.Material.Filled.Edit" OnClick="@(() => Edit(s))" Title="Edit" />
-                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="@(() => Delete(s))" Title="Delete" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" OnClick="@(() => Edit(s))" title="Edit" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="@(() => Delete(s))" title="Delete" />
                         </div>
                     </div>
                 </MudListItem>

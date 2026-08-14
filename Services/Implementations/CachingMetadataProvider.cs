@@ -21,8 +21,7 @@ namespace PlexRequestsHosted.Services.Implementations;
 public sealed class CachingMetadataProvider(
     IMediaMetadataProvider inner,
     IDbContextFactory<AppDbContext> dbf,
-    IMetadataRefreshCoordinator refresh,
-    ILogger<CachingMetadataProvider> log) : IMediaMetadataProvider
+    IMetadataRefreshCoordinator refresh) : IMediaMetadataProvider
 {
     internal static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
     private static readonly TimeSpan OngoingTtl = TimeSpan.FromHours(6);   // Status == "Returning Series"

@@ -58,12 +58,12 @@
                          job.Status is FulfillmentStatus.Failed or FulfillmentStatus.PartiallyCompleted)
                     {
                         <MudAlert Severity="@(job.Status == FulfillmentStatus.Failed ? Severity.Error : Severity.Warning)"
-                                  Dense="true" Class="mt-1">@job.LastError</MudAlert>
+                                  dense="true" Class="mt-1">@job.LastError</MudAlert>
                     }
 
                     @if (job.Torrents.Count > 0)
                     {
-                        <MudSimpleTable Dense="true" Hover="true" Elevation="0" Class="mt-1">
+                        <MudSimpleTable dense="true" Hover="true" Elevation="0" Class="mt-1">
                             <thead>
                                 <tr>
                                     <th>Torrent</th>

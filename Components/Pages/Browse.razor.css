@@ -13,7 +13,7 @@
 /* Grid/discovery-without-hero view: pin the filter bar below the app header while scrolling. */
 .browse-header.solid {
     position: sticky;
-    top: var(--header-height);
+    top: var(--header-offset);
     z-index: var(--z-sticky);
     backdrop-filter: blur(6px);
 }
@@ -92,7 +92,7 @@
     background-position: center 20%;
     display: flex;
     align-items: flex-end;
-    margin-top: calc(-1 * var(--header-height));
+    margin-top: calc(-1 * var(--header-offset));
 }
 .browse-hero-scrim {
     position: absolute; inset: 0;

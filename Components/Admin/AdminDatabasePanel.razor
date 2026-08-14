@@ -30,7 +30,7 @@ else
             <MudButton Color="Color.Secondary" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Compress"
                        OnClick="Compact" Disabled="_busy">Compact file</MudButton>
         </div>
-        <MudTable T="DbTableCountDto" Items="_overview.Tables" Dense="true" Breakpoint="Breakpoint.Sm">
+        <MudTable T="DbTableCountDto" Items="_overview.Tables" dense="true" Breakpoint="Breakpoint.Sm">
             <HeaderContent>
                 <MudTh>Table</MudTh>
                 <MudTh>Rows</MudTh>
@@ -84,7 +84,7 @@ else
             "All statuses" to empty the whole request list.
         </MudText>
         <div class="d-flex gap-3 align-items-center flex-wrap">
-            <MudSelect T="RequestStatus?" @bind-Value="_deleteStatus" Label="Status" Dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
+            <MudSelect T="RequestStatus?" @bind-Value="_deleteStatus" Label="Status" dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
                 <MudSelectItem T="RequestStatus?" Value="@((RequestStatus?)null)">All statuses</MudSelectItem>
                 <MudSelectItem T="RequestStatus?" Value="@((RequestStatus?)RequestStatus.Failed)">Failed</MudSelectItem>
                 <MudSelectItem T="RequestStatus?" Value="@((RequestStatus?)RequestStatus.Cancelled)">Cancelled</MudSelectItem>
@@ -108,7 +108,7 @@ else
         </MudText>
         <div class="d-flex gap-3 align-items-center flex-wrap">
             <MudSwitch T="bool" @bind-Value="_keepUsers" Color="Color.Primary" Label="Keep user accounts" />
-            <MudTextField T="string" @bind-Value="_resetConfirm" Immediate="true" Label="Type RESET to confirm" Variant="Variant.Outlined" Dense="true" Style="max-width:220px;" />
+            <MudTextField T="string" @bind-Value="_resetConfirm" Immediate="true" Label="Type RESET to confirm" Variant="Variant.Outlined" dense="true" Style="max-width:220px;" />
             <MudButton Color="Color.Error" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.DeleteForever"
                        Disabled="@(_busy || _resetConfirm != "RESET")" OnClick="FactoryReset">Factory reset database</MudButton>
         </div>

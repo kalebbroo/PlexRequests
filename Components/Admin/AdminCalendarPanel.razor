@@ -29,7 +29,7 @@ else
             @day.Key.ToLocalTime().ToString("dddd, d MMMM")
             @if (day.Key.Date == DateTime.UtcNow.Date) { <MudChip T="string" Size="Size.Small" Color="Color.Primary">today</MudChip> }
         </MudText>
-        <MudTable Items="day" Dense="true" Hover="true" Class="elevation-1">
+        <MudTable Items="day" dense="true" Hover="true" Class="elevation-1">
             <ColGroup><col style="width:38%" /><col style="width:12%" /><col /><col style="width:16%" /></ColGroup>
             <RowTemplate>
                 <MudTd>@context.Title</MudTd>

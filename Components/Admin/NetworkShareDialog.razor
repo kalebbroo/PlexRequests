@@ -5,39 +5,39 @@
 <MudDialog>
     <DialogContent>
         <div class="d-flex flex-column gap-3" style="min-width:420px;">
-            <MudTextField @bind-Value="_name" Label="Name" Variant="Variant.Outlined" Dense="true" Required="true"
+            <MudTextField @bind-Value="_name" Label="Name" Variant="Variant.Outlined" dense="true" Required="true"
                           HelperText="A friendly name, e.g. &quot;Media NAS&quot;." />
 
-            <MudSelect T="NetworkShareProtocol" @bind-Value="_protocol" Label="Protocol" Variant="Variant.Outlined" Dense="true">
+            <MudSelect T="NetworkShareProtocol" @bind-Value="_protocol" Label="Protocol" Variant="Variant.Outlined" dense="true">
                 <MudSelectItem Value="NetworkShareProtocol.Smb">SMB / CIFS (Windows, Synology, QNAP, unRAID, TrueNAS)</MudSelectItem>
                 <MudSelectItem Value="NetworkShareProtocol.Nfs">NFS (Linux/Unix export)</MudSelectItem>
             </MudSelect>
 
-            <MudTextField @bind-Value="_server" Label="Server" Variant="Variant.Outlined" Dense="true" Required="true"
+            <MudTextField @bind-Value="_server" Label="Server" Variant="Variant.Outlined" dense="true" Required="true"
                           Placeholder="192.168.1.10"
                           HelperText="Use the NAS IP address — it avoids a DNS lookup and keeps everything on your LAN." />
             @if (!ServerLooksPrivate)
             {
-                <MudAlert Severity="Severity.Warning" Dense="true">
+                <MudAlert Severity="Severity.Warning" dense="true">
                     That doesn't look like a private LAN address. SMB/NFS to a public address sends traffic
                     (and credentials) over the internet — only continue if you really mean to.
                 </MudAlert>
             }
 
-            <MudTextField @bind-Value="_shareName" Variant="Variant.Outlined" Dense="true" Required="true"
+            <MudTextField @bind-Value="_shareName" Variant="Variant.Outlined" dense="true" Required="true"
                           Label="@(_protocol == NetworkShareProtocol.Nfs ? "Export path" : "Share name")"
                           Placeholder="@(_protocol == NetworkShareProtocol.Nfs ? "/volume1/media" : "media")" />
 
             @if (_protocol == NetworkShareProtocol.Smb)
             {
-                <MudTextField @bind-Value="_username" Label="Username (blank = guest)" Variant="Variant.Outlined" Dense="true" />
-                <MudTextField @bind-Value="_password" Label="@PasswordLabel" Variant="Variant.Outlined" Dense="true"
+                <MudTextField @bind-Value="_username" Label="Username (blank = guest)" Variant="Variant.Outlined" dense="true" />
+                <MudTextField @bind-Value="_password" Label="@PasswordLabel" Variant="Variant.Outlined" dense="true"
                               InputType="InputType.Password" Disabled="_clearPassword" />
                 @if (_hasPassword)
                 {
                     <MudSwitch T="bool" @bind-Value="_clearPassword" Color="Color.Warning" Label="Remove saved password (connect as guest)" />
                 }
-                <MudTextField @bind-Value="_domain" Label="Domain / workgroup (optional)" Variant="Variant.Outlined" Dense="true" />
+                <MudTextField @bind-Value="_domain" Label="Domain / workgroup (optional)" Variant="Variant.Outlined" dense="true" />
             }
             else
             {

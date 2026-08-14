@@ -15,7 +15,6 @@ namespace PlexRequestsHosted.Services.Jobs;
 /// </summary>
 public class JobAdminService(
     AppDbContext db,
-    IFulfillmentQueue queue,
     IQualityProfileService profiles,
     UpgradeScanJob upgradeScan,
     ILogger<JobAdminService> logger) : IJobAdminService

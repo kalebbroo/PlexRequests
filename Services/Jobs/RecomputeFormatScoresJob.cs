@@ -29,7 +29,6 @@ namespace PlexRequestsHosted.Services.Jobs;
 public class RecomputeFormatScoresJob(
     AppDbContext db,
     ICustomFormatService formats,
-    IQualityProfileService profiles,
     ILogger<RecomputeFormatScoresJob> logger) : IJobHandler
 {
     public JobType Type => JobType.RecomputeFormatScores;
