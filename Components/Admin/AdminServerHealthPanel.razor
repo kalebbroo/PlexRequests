@@ -1,231 +1,297 @@
 @using PlexRequestsHosted.Services.Abstractions
+@using PlexRequestsHosted.Shared.Enums
+@implements IDisposable
 @inject IPlexApiService PlexApi
 @inject IToastService Toast
 
-<MudStack Spacing="3">
-    <MudText Typo="Typo.h5">Plex Server Health</MudText>
+<div class="server-dashboard">
+    <div class="dashboard-toolbar">
+        <div>
+            <MudText Typo="Typo.h5" HtmlTag="h3">Plex server</MudText>
+            <MudText Typo="Typo.body2" Class="text-secondary">Library health, viewing activity, and active transfers in one place.</MudText>
+        </div>
+        <MudTooltip Text="Refresh Plex status">
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Color="Color.Primary" Disabled="@_loading" OnClick="LoadDashboardAsync" aria-label="Refresh Plex status" />
+        </MudTooltip>
+    </div>
 
-    <MudPaper Class="pa-4" Elevation="2">
-        @if (_loading)
-        {
-            <MudProgressCircular Indeterminate="true" />
-        }
-        else if (_error is not null)
-        {
-            <MudAlert Severity="Severity.Error">@_error</MudAlert>
-        }
-        else if (_info is not null)
-        {
-            <MudStack Spacing="2">
-                <MudStack Row="true" Spacing="3" Class="flex-wrap">
-                    <MudChip T="string" Color="@(_info.IsOnline ? Color.Success : Color.Error)" Variant="Variant.Filled">
-                        @(_info.IsOnline ? "Online" : "Offline")
-                    </MudChip>
-                    <MudText Typo="Typo.subtitle1">Name: @_info.Name</MudText>
-                    <MudText Typo="Typo.subtitle1">Version: @_info.Version</MudText>
-                    @if (!string.IsNullOrWhiteSpace(_info.Platform))
+    @if (_loading && _dashboard is null)
+    {
+        <div class="dashboard-loading" role="status">
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            <MudText Typo="Typo.body2" Class="text-secondary">Reading Plex server activity…</MudText>
+        </div>
+    }
+    else if (_dashboard?.Server is null)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+            Plex is not configured. Add PLEX_URL and PLEX_TOKEN to enable server and library insights.
+        </MudAlert>
+    }
+    else
+    {
+        var server = _dashboard.Server;
+        <section class="server-summary-card @(server.IsOnline ? "online" : "offline")">
+            <div class="server-summary-main">
+                <div class="server-mark" aria-hidden="true"><MudIcon Icon="@Icons.Material.Filled.Dns" /></div>
+                <div class="server-identity">
+                    <div class="server-status-line">
+                        <span class="status-dot"></span>
+                        <span>@(server.IsOnline ? "Online" : "Offline")</span>
+                    </div>
+                    <MudText Typo="Typo.h4" HtmlTag="h4">@server.Name</MudText>
+                    <MudText Typo="Typo.body2" Class="text-secondary">@ServerDescription(server)</MudText>
+                </div>
+            </div>
+            <div class="summary-metrics">
+                <div class="summary-metric"><MudIcon Icon="@Icons.Material.Filled.VideoLibrary" /><strong>@Metric(TotalTitles)</strong><span>library titles</span></div>
+                <div class="summary-metric"><MudIcon Icon="@Icons.Material.Filled.CollectionsBookmark" /><strong>@Metric(TotalCollections)</strong><span>collections</span></div>
+                <div class="summary-metric"><MudIcon Icon="@Icons.Material.Filled.PlayCircle" /><strong>@_dashboard.Sessions.Count</strong><span>active streams</span></div>
+                <div class="summary-metric"><MudIcon Icon="@Icons.Material.Filled.History" /><strong>@(_dashboard.Usage.IsAvailable ? _dashboard.Usage.PlayCount.ToString("N0") : "—")</strong><span>plays · @_dashboard.Usage.PeriodDays days</span></div>
+            </div>
+        </section>
+
+        <section class="dashboard-section" aria-labelledby="plex-libraries-heading">
+            <div class="section-heading">
+                <div>
+                    <MudText Typo="Typo.h5" HtmlTag="h3" id="plex-libraries-heading">Libraries</MudText>
+                    <MudText Typo="Typo.body2" Class="text-secondary">Live totals from each Plex section, including collections and child media.</MudText>
+                </div>
+                <span class="section-count">@_dashboard.Libraries.Count @Plural(_dashboard.Libraries.Count, "library", "libraries")</span>
+            </div>
+
+            @if (_dashboard.Libraries.Count == 0)
+            {
+                <div class="dashboard-empty"><MudIcon Icon="@Icons.Material.Filled.VideoLibrary" /><span>No libraries found.</span></div>
+            }
+            else
+            {
+                <div class="library-grid">
+                    @foreach (var library in _dashboard.Libraries)
                     {
-                        <MudText Typo="Typo.subtitle1">Platform: @_info.Platform @_info.PlatformVersion</MudText>
-                    }
-                </MudStack>
-
-                <MudDivider Class="my-2" />
-                <MudText Typo="Typo.h6">Libraries</MudText>
-                @if (_libraries.Count == 0)
-                {
-                    <MudText>No libraries found.</MudText>
-                }
-                else
-                {
-                    <MudTable Items="_libraries" dense="true">
-                        <HeaderContent>
-                            <MudTh>Title</MudTh>
-                            <MudTh>Type</MudTh>
-                            <MudTh>Items</MudTh>
-                            <MudTh>Actions</MudTh>
-                        </HeaderContent>
-                        <RowTemplate>
-                            <MudTd DataLabel="Title">@context.Title</MudTd>
-                            <MudTd DataLabel="Type">@context.Type</MudTd>
-                            <MudTd DataLabel="Items">@context.ItemCount</MudTd>
-                            <MudTd DataLabel="Actions">
+                        <article class="library-card">
+                            <div class="library-art" aria-hidden="true">
+                                @if (library.RecentlyAdded.Count > 0)
+                                {
+                                    @foreach (var recent in library.RecentlyAdded.Take(4))
+                                    {
+                                        <img src="@ArtworkUrl(recent.ThumbPath, 220, 330)" alt="" loading="lazy" onerror="this.style.visibility='hidden'" />
+                                    }
+                                }
+                                else
+                                {
+                                    <div class="library-art-placeholder"><MudIcon Icon="@LibraryIcon(library.Type)" /></div>
+                                }
+                                <div class="library-art-shade"></div>
+                                <div class="library-title">
+                                    <MudIcon Icon="@LibraryIcon(library.Type)" />
+                                    <div>
+                                        <MudText Typo="Typo.h6" HtmlTag="h4">@library.Title</MudText>
+                                        <span>@LibraryTypeLabel(library.Type)</span>
+                                    </div>
+                                </div>
+                                @if (library.IsRefreshing) { <span class="scanning-badge">Scanning</span> }
                                 <MudTooltip Text="Ask Plex to scan this library for new files">
-                                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
-                                                   Disabled="@(_refreshingLibraryKey == context.Key)"
-                                                   OnClick="() => RefreshLibrary(context)" />
+                                    <MudIconButton Class="library-refresh" Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
+                                                   Disabled="@(_refreshingLibraryKey == library.Key)"
+                                                   OnClick="() => RefreshLibraryAsync(library)" aria-label="@($"Refresh {library.Title}")" />
                                 </MudTooltip>
-                            </MudTd>
-                        </RowTemplate>
-                    </MudTable>
-                }
+                            </div>
+                            <div class="library-metrics">
+                                <div><strong>@Metric(library.ItemCount)</strong><span>@library.ItemLabel</span></div>
+                                @if (library.ChildItemLabel is not null)
+                                {
+                                    <div><strong>@Metric(library.ChildItemCount)</strong><span>@library.ChildItemLabel</span></div>
+                                }
+                                <div><strong>@Metric(library.CollectionCount)</strong><span>collections</span></div>
+                            </div>
+                            <div class="library-footer"><MudIcon Icon="@Icons.Material.Filled.Schedule" Size="Size.Small" /><span>@(library.LastScannedAt is DateTime scanned ? $"Scanned {RelativeTime(scanned)}" : "Scan time unavailable")</span></div>
+                        </article>
+                    }
+                </div>
+            }
+        </section>
 
-                <MudStack Row="true" Spacing="2">
-                    <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="RefreshAllAsync">Refresh</MudButton>
-                    <MudButton Color="Color.Secondary" Variant="Variant.Text" Href="/admin?tab=requests&sub=approvals">Manage Requests</MudButton>
-                    <MudButton Color="Color.Secondary" Variant="Variant.Text" Href="/browse">Go Home</MudButton>
-                </MudStack>
-            </MudStack>
-        }
-    </MudPaper>
+        <section class="dashboard-section" aria-labelledby="now-playing-heading">
+            <div class="section-heading">
+                <div>
+                    <MudText Typo="Typo.h5" HtmlTag="h3" id="now-playing-heading">Now playing</MudText>
+                    <MudText Typo="Typo.body2" Class="text-secondary">Updates every @SessionPollSeconds seconds while this page is open.</MudText>
+                </div>
+                @if (_dashboard.Sessions.Count > 0) { <span class="live-label"><span></span>Live</span> }
+            </div>
 
-    <MudText Typo="Typo.h5" Class="mt-4">Now Playing</MudText>
-    <MudPaper Class="pa-4" Elevation="2">
-        @if (_sessionsLoading)
+            @if (_dashboard.Sessions.Count == 0)
+            {
+                <div class="dashboard-empty compact"><MudIcon Icon="@Icons.Material.Filled.Weekend" /><span>No active streams right now.</span></div>
+            }
+            else
+            {
+                <div class="session-grid">
+                    @foreach (var session in _dashboard.Sessions)
+                    {
+                        <article class="session-card">
+                            <div class="session-poster">
+                                <img src="@ArtworkUrl(session.ThumbPath, 240, 360)" alt="" loading="lazy" onerror="this.src='/img/poster-placeholder.svg'" />
+                                <span class="play-state"><MudIcon Icon="@(session.State == "paused" ? Icons.Material.Filled.Pause : Icons.Material.Filled.PlayArrow)" Size="Size.Small" /></span>
+                            </div>
+                            <div class="session-body">
+                                <div class="session-title-row">
+                                    <div><MudText Typo="Typo.subtitle1" HtmlTag="h4">@session.Title</MudText>@if (!string.IsNullOrWhiteSpace(session.Subtitle)) { <span class="session-subtitle">@session.Subtitle</span> }</div>
+                                    <span class="playback-badge @(session.IsTranscoding ? "transcode" : "direct")">@session.PlaybackMode</span>
+                                </div>
+                                <div class="session-viewer">
+                                    <span class="viewer-avatar"><span>@Initial(session.Username)</span>@if (!string.IsNullOrWhiteSpace(session.UserThumbPath)) { <img src="@ArtworkUrl(session.UserThumbPath, 80, 80)" alt="" loading="lazy" onerror="this.style.display='none'" /> }</span>
+                                    <div><strong>@session.Username</strong><span>@PlayerLabel(session)</span></div>
+                                </div>
+                                <div class="session-progress-label"><span>@Duration(session.PositionMilliseconds)</span><strong>@session.ProgressPercent%</strong><span>@Duration(session.DurationMilliseconds)</span></div>
+                                <div class="visual-progress" role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@session.ProgressPercent"><span style="width:@($"{session.ProgressPercent}%")"></span></div>
+                                <div class="session-meta">
+                                    @if (!string.IsNullOrWhiteSpace(session.Location)) { <span><MudIcon Icon="@Icons.Material.Filled.LocationOn" Size="Size.Small" />@TitleCase(session.Location)</span> }
+                                    @if (session.BitrateKbps is int kb) { <span><MudIcon Icon="@Icons.Material.Filled.Speed" Size="Size.Small" />@Bitrate(kb)</span> }
+                                </div>
+                            </div>
+                        </article>
+                    }
+                </div>
+            }
+        </section>
+
+        @if (_dashboard.Usage.IsAvailable)
         {
-            <MudProgressCircular Indeterminate="true" />
+            <section class="dashboard-section" aria-labelledby="watch-insights-heading">
+                <div class="section-heading">
+                    <div><MudText Typo="Typo.h5" HtmlTag="h3" id="watch-insights-heading">Watch insights</MudText><MudText Typo="Typo.body2" Class="text-secondary">A cached @_dashboard.Usage.PeriodDays-day view of Plex history—refreshed without slowing live status.</MudText></div>
+                </div>
+                <div class="insights-grid">
+                    <article class="insight-card">
+                        <div class="insight-title"><MudIcon Icon="@Icons.Material.Filled.People" /><span>Top viewers</span></div>
+                        @if (_dashboard.Usage.TopViewers.Count == 0) { <div class="insight-empty">No viewing history in this period.</div> }
+                        @foreach (var viewer in _dashboard.Usage.TopViewers)
+                        {
+                            <div class="ranking-row">
+                                <span class="rank">@(_dashboard.Usage.TopViewers.IndexOf(viewer) + 1)</span>
+                                <span class="ranking-thumb avatar"><span>@Initial(viewer.Name)</span>@if (!string.IsNullOrWhiteSpace(viewer.ThumbPath)) { <img src="@ArtworkUrl(viewer.ThumbPath, 80, 80)" alt="" loading="lazy" onerror="this.style.display='none'" /> }</span>
+                                <strong>@viewer.Name</strong><span>@viewer.Plays @Plural(viewer.Plays, "play", "plays")</span>
+                            </div>
+                        }
+                    </article>
+                    <article class="insight-card">
+                        <div class="insight-title"><MudIcon Icon="@Icons.Material.Filled.LocalFireDepartment" /><span>Most watched</span></div>
+                        @if (_dashboard.Usage.TopTitles.Count == 0) { <div class="insight-empty">No title history in this period.</div> }
+                        @foreach (var title in _dashboard.Usage.TopTitles)
+                        {
+                            <div class="ranking-row">
+                                <span class="rank">@(_dashboard.Usage.TopTitles.IndexOf(title) + 1)</span>
+                                <span class="ranking-thumb poster">@if (!string.IsNullOrWhiteSpace(title.ThumbPath)) { <img src="@ArtworkUrl(title.ThumbPath, 80, 120)" alt="" loading="lazy" onerror="this.style.display='none'" /> } else { <MudIcon Icon="@Icons.Material.Filled.Movie" Size="Size.Small" /> }</span>
+                                <strong>@title.Title</strong><span>@title.Plays @Plural(title.Plays, "play", "plays")</span>
+                            </div>
+                        }
+                    </article>
+                </div>
+            </section>
         }
-        else if (_sessions.Count == 0)
-        {
-            <MudText>No active streams.</MudText>
-        }
-        else
-        {
-            <MudTable Items="_sessions" dense="true">
-                <HeaderContent>
-                    <MudTh>User</MudTh>
-                    <MudTh>Title</MudTh>
-                    <MudTh>Progress</MudTh>
-                    <MudTh>Playback</MudTh>
-                    <MudTh>Bitrate</MudTh>
-                </HeaderContent>
-                <RowTemplate>
-                    <MudTd DataLabel="User">@context.Username</MudTd>
-                    <MudTd DataLabel="Title">@context.Title</MudTd>
-                    <MudTd DataLabel="Progress">@context.ProgressPercent%</MudTd>
-                    <MudTd DataLabel="Playback">
-                        <MudChip T="string" Size="Size.Small" Color="@(context.IsTranscoding ? Color.Warning : Color.Success)">
-                            @(context.IsTranscoding ? "Transcode" : "Direct Play")
-                        </MudChip>
-                    </MudTd>
-                    <MudTd DataLabel="Bitrate">@(context.BitrateKbps is int kb ? $"{kb / 1000.0:0.#} Mbps" : "—")</MudTd>
-                </RowTemplate>
-            </MudTable>
-        }
-    </MudPaper>
+    }
 
     <AdminDownloadsMonitorPanel />
 
-    <MudText Typo="Typo.h5" Class="mt-4">Availability Index</MudText>
-    <MudPaper Class="pa-4" Elevation="2">
+    <section class="dashboard-section availability-section" aria-labelledby="availability-heading">
+        <div class="section-heading">
+            <div><MudText Typo="Typo.h5" HtmlTag="h3" id="availability-heading">Availability index</MudText><MudText Typo="Typo.body2" Class="text-secondary">The local Plex map that prevents duplicate downloads and tracks episode completeness.</MudText></div>
+        </div>
         @if (_availabilityLoading)
         {
-            <MudProgressCircular Indeterminate="true" />
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
         }
         else if (_availability is not null)
         {
-            @if (!_availability.Configured)
-            {
-                <MudAlert Severity="Severity.Warning" Class="mb-3">
-                    Plex is not configured (PLEX_URL / PLEX_TOKEN) — the availability index will never build, so
-                    requested episodes/seasons will never show as already on Plex.
-                </MudAlert>
-            }
-            <MudStack Row="true" Spacing="4" Class="flex-wrap mb-2">
-                <MudText Typo="Typo.body1">
-                    Last built: @(_availability.LastRebuildAt is DateTime at ? at.ToLocalTime().ToString("g") : "never")
-                </MudText>
-                <MudText Typo="Typo.body1">Matched titles: @_availability.TitleYearCount</MudText>
-                <MudText Typo="Typo.body1">External ids: @_availability.ExternalIdCount</MudText>
-            </MudStack>
-            @if (_availability.LastRebuildAt is not null)
-            {
-                <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-2">
-                    Last scan: @_availability.LastMaps id-maps, @_availability.LastSeasons seasons, @_availability.LastEpisodes episodes
-                    (pruned @_availability.LastPrunedMaps maps / @_availability.LastPrunedSeasons seasons).
-                </MudText>
-            }
-            <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="RebuildIndex" Disabled="@(_rebuilding || !_availability.Configured)">
-                @(_rebuilding ? "Rebuilding..." : "Rebuild now")
-            </MudButton>
+            @if (!_availability.Configured) { <MudAlert Severity="Severity.Warning" Class="mb-3">Plex is not configured, so the availability index cannot rebuild.</MudAlert> }
+            <div class="availability-card">
+                <div class="availability-status"><span class="availability-icon"><MudIcon Icon="@Icons.Material.Filled.FactCheck" /></span><div><strong>@(_availability.LastRebuildAt is null ? "Never indexed" : "Index healthy")</strong><span>@(_availability.LastRebuildAt is DateTime at ? $"Last built {RelativeTime(at)}" : "Run the first library scan")</span></div></div>
+                <div class="availability-metrics">
+                    <div><strong>@_availability.TitleYearCount.ToString("N0")</strong><span>matched titles</span></div>
+                    <div><strong>@_availability.ExternalIdCount.ToString("N0")</strong><span>external IDs</span></div>
+                    <div><strong>@_availability.LastEpisodes.ToString("N0")</strong><span>episodes scanned</span></div>
+                </div>
+                <MudButton Color="Color.Primary" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Sync" OnClick="RebuildIndexAsync" Disabled="@(_rebuilding || !_availability.Configured)">@(_rebuilding ? "Rebuilding…" : "Rebuild index")</MudButton>
+            </div>
         }
-    </MudPaper>
-</MudStack>
+    </section>
+</div>
 
 @code {
+    private const int SessionPollSeconds = 15;
     private bool _loading = true;
-    private string? _error;
-    private PlexServerInfo? _info;
-    private List<PlexLibrary> _libraries = new();
+    private PlexServerDashboard? _dashboard;
     private string? _refreshingLibraryKey;
-
-    private bool _sessionsLoading = true;
-    private List<PlexSessionInfo> _sessions = new();
-
     private bool _availabilityLoading = true;
     private PlexAvailabilityStatus? _availability;
     private bool _rebuilding;
+    private PeriodicTimer? _sessionTimer;
+    private CancellationTokenSource? _sessionCts;
+    private bool _sessionRefreshInProgress;
+
+    private int? TotalTitles => Aggregate(_dashboard?.Libraries.Select(x => x.ItemCount));
+    private int? TotalCollections => Aggregate(_dashboard?.Libraries.Select(x => x.CollectionCount));
 
     protected override async Task OnInitializedAsync()
     {
-        await Task.WhenAll(LoadServerAsync(), LoadSessionsAsync(), LoadAvailabilityAsync());
+        await Task.WhenAll(LoadDashboardAsync(), LoadAvailabilityAsync());
+        _sessionCts = new CancellationTokenSource();
+        _sessionTimer = new PeriodicTimer(TimeSpan.FromSeconds(SessionPollSeconds));
+        _ = PollSessionsAsync(_sessionCts.Token);
     }
 
-    // The Refresh button now reloads Now Playing too, not just server info/libraries (it previously left
-    // the sessions table stale). The Downloads panel below refreshes itself on its own timer.
-    private Task RefreshAllAsync() => Task.WhenAll(LoadServerAsync(), LoadSessionsAsync());
-
-    private async Task LoadServerAsync()
+    private async Task LoadDashboardAsync()
     {
-        _error = null; _loading = true;
+        _loading = true;
         StateHasChanged();
+        try { _dashboard = await PlexApi.GetServerDashboardAsync(); }
+        catch (Exception ex) { await Toast.ShowErrorAsync($"Could not load Plex status: {ex.Message}"); }
+        finally { _loading = false; StateHasChanged(); }
+    }
+
+    private async Task PollSessionsAsync(CancellationToken cancellationToken)
+    {
         try
         {
-            var infoTask = PlexApi.GetServerInfoAsync();
-            var libsTask = PlexApi.GetLibrariesAsync();
-            await Task.WhenAll(infoTask, libsTask);
-            _info = infoTask.Result;
-            _libraries = libsTask.Result;
-            if (_info is null) _error = "No server configuration found. Check .env or appsettings.";
-            else _info = _info with { LibraryCount = _libraries.Count };
+            while (await _sessionTimer!.WaitForNextTickAsync(cancellationToken))
+                await InvokeAsync(RefreshSessionsAsync);
         }
-        catch (Exception ex)
-        {
-            _error = $"Failed to query Plex server: {ex.Message}";
-        }
-        finally
-        {
-            _loading = false;
-            StateHasChanged();
-        }
+        catch (OperationCanceledException) { }
     }
 
-    private async Task LoadSessionsAsync()
+    private async Task RefreshSessionsAsync()
     {
-        _sessionsLoading = true;
-        StateHasChanged();
-        try { _sessions = await PlexApi.GetActiveSessionsAsync(); }
-        finally { _sessionsLoading = false; StateHasChanged(); }
+        if (_sessionRefreshInProgress || _dashboard is null) return;
+        _sessionRefreshInProgress = true;
+        try { _dashboard = _dashboard with { Sessions = await PlexApi.GetActiveSessionsAsync() }; }
+        catch { }
+        finally { _sessionRefreshInProgress = false; StateHasChanged(); }
     }
 
     private async Task LoadAvailabilityAsync()
     {
         _availabilityLoading = true;
-        StateHasChanged();
         try { _availability = await PlexApi.GetAvailabilityStatusAsync(); }
         finally { _availabilityLoading = false; StateHasChanged(); }
     }
 
-    private async Task RefreshLibrary(PlexLibrary lib)
+    private async Task RefreshLibraryAsync(PlexLibrary library)
     {
-        _refreshingLibraryKey = lib.Key;
+        _refreshingLibraryKey = library.Key;
         StateHasChanged();
         try
         {
-            await PlexApi.RefreshLibraryAsync(lib.Key);
-            await Toast.ShowSuccessAsync($"Asked Plex to scan '{lib.Title}'.");
+            await PlexApi.RefreshLibraryAsync(library.Key);
+            await Toast.ShowSuccessAsync($"Plex is scanning '{library.Title}'.");
+            await LoadDashboardAsync();
         }
-        catch (Exception ex)
-        {
-            await Toast.ShowErrorAsync($"Failed to refresh '{lib.Title}': {ex.Message}");
-        }
-        finally
-        {
-            _refreshingLibraryKey = null;
-            StateHasChanged();
-        }
+        catch (Exception ex) { await Toast.ShowErrorAsync($"Failed to refresh '{library.Title}': {ex.Message}"); }
+        finally { _refreshingLibraryKey = null; StateHasChanged(); }
     }
 
-    private async Task RebuildIndex()
+    private async Task RebuildIndexAsync()
     {
         _rebuilding = true;
         StateHasChanged();
@@ -233,16 +299,56 @@
         {
             await PlexApi.RebuildAvailabilityIndexAsync();
             _availability = await PlexApi.GetAvailabilityStatusAsync();
-            await Toast.ShowSuccessAsync($"Availability index rebuilt: {_availability.LastMaps} id-maps, {_availability.LastEpisodes} episodes.");
+            await Toast.ShowSuccessAsync($"Availability index rebuilt with {_availability.LastEpisodes:N0} episodes.");
         }
-        catch (Exception ex)
-        {
-            await Toast.ShowErrorAsync($"Rebuild failed: {ex.Message}");
-        }
-        finally
-        {
-            _rebuilding = false;
-            StateHasChanged();
-        }
+        catch (Exception ex) { await Toast.ShowErrorAsync($"Rebuild failed: {ex.Message}"); }
+        finally { _rebuilding = false; StateHasChanged(); }
+    }
+
+    private static int? Aggregate(IEnumerable<int?>? values)
+    {
+        if (values is null) return null;
+        var metrics = values.ToList();
+        return metrics.Count == 0 || metrics.Any(x => !x.HasValue)
+            ? null
+            : metrics.Sum(x => x!.Value);
+    }
+
+    private static string Metric(int? value) => value?.ToString("N0") ?? "—";
+    private static string Plural(int count, string singular, string plural) => count == 1 ? singular : plural;
+    private static string ServerDescription(PlexServerInfo server)
+    {
+        var platform = string.Join(' ', new[] { server.Platform, server.PlatformVersion }.Where(x => !string.IsNullOrWhiteSpace(x)));
+        return string.IsNullOrWhiteSpace(platform) ? $"Plex {server.Version}" : $"{platform} · Plex {server.Version}";
+    }
+    private static string LibraryTypeLabel(MediaType type) => type switch { MediaType.TvShow => "TV library", MediaType.Music => "Music library", _ => "Movie library" };
+    private static string LibraryIcon(MediaType type) => type switch { MediaType.TvShow => Icons.Material.Filled.Tv, MediaType.Music => Icons.Material.Filled.MusicNote, _ => Icons.Material.Filled.Movie };
+    private static string ArtworkUrl(string? source, int width, int height) => string.IsNullOrWhiteSpace(source) ? "/img/poster-placeholder.svg" : $"/api/plex/artwork?source={Uri.EscapeDataString(source)}&width={width}&height={height}";
+    private static string Initial(string value) => string.IsNullOrWhiteSpace(value) ? "?" : value.Trim()[0].ToString().ToUpperInvariant();
+    private static string Duration(long milliseconds)
+    {
+        if (milliseconds <= 0) return "0:00";
+        var time = TimeSpan.FromMilliseconds(milliseconds);
+        return time.TotalHours >= 1 ? $"{(int)time.TotalHours}:{time.Minutes:00}:{time.Seconds:00}" : $"{time.Minutes}:{time.Seconds:00}";
+    }
+    private static string Bitrate(int kbps) => kbps >= 1000 ? $"{kbps / 1000d:0.#} Mbps" : $"{kbps} Kbps";
+    private static string PlayerLabel(PlexSessionInfo session) => string.Join(" · ", new[] { session.PlayerName, session.Device, session.Platform }.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase));
+    private static string TitleCase(string value) => string.IsNullOrWhiteSpace(value) ? value : char.ToUpperInvariant(value[0]) + value[1..];
+
+    private static string RelativeTime(DateTime value)
+    {
+        var elapsed = DateTime.UtcNow - value.ToUniversalTime();
+        if (elapsed.TotalMinutes < 1) return "just now";
+        if (elapsed.TotalHours < 1) return $"{Math.Max(1, (int)elapsed.TotalMinutes)}m ago";
+        if (elapsed.TotalDays < 1) return $"{(int)elapsed.TotalHours}h ago";
+        if (elapsed.TotalDays < 7) return $"{(int)elapsed.TotalDays}d ago";
+        return value.ToLocalTime().ToString("MMM d, yyyy");
+    }
+
+    public void Dispose()
+    {
+        _sessionCts?.Cancel();
+        _sessionTimer?.Dispose();
+        _sessionCts?.Dispose();
     }
 }

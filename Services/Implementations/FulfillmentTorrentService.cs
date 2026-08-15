@@ -58,6 +58,8 @@ public class FulfillmentTorrentService(AppDbContext db, ILogger<FulfillmentTorre
                 // reconciler owns state transitions.
                 row.ReleaseName ??= t.ReleaseName;
                 row.InfoHash ??= t.InfoHash;
+                row.Source ??= Trim(t.Source, 128);
+                row.IndexerId ??= t.IndexerId;
                 continue;
             }
 
@@ -67,6 +69,8 @@ public class FulfillmentTorrentService(AppDbContext db, ILogger<FulfillmentTorre
                 TorrentId = t.TorrentId,
                 InfoHash = t.InfoHash,
                 ReleaseName = t.ReleaseName,
+                Source = Trim(t.Source, 128),
+                IndexerId = t.IndexerId,
                 Season = t.Season,
                 Episode = t.Episode,
                 IsPack = t.IsPack,
@@ -206,6 +210,8 @@ public class FulfillmentTorrentService(AppDbContext db, ILogger<FulfillmentTorre
         TorrentId = t.TorrentId,
         InfoHash = t.InfoHash,
         ReleaseName = t.ReleaseName,
+        Source = t.Source,
+        IndexerId = t.IndexerId,
         Season = t.Season,
         Episode = t.Episode,
         IsPack = t.IsPack,

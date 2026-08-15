@@ -146,6 +146,12 @@ builder.Services.AddHttpClient<IPlexApiService, PlexApiService>(c => c.Timeout =
         ServerCertificateCustomValidationCallback = (msg, cert, chain, errors) =>
             allowInvalidCerts ? true : errors == SslPolicyErrors.None
     });
+builder.Services.AddHttpClient<IPlexArtworkService, PlexArtworkService>(c => c.Timeout = TimeSpan.FromSeconds(15))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        ServerCertificateCustomValidationCallback = (msg, cert, chain, errors) =>
+            allowInvalidCerts ? true : errors == SslPolicyErrors.None
+    });
 // Plex music library access (artist/album/track) — foundation for music requests.
 builder.Services.AddHttpClient<PlexRequestsHosted.Services.Implementations.IPlexMusicService, PlexRequestsHosted.Services.Implementations.PlexMusicService>(c => c.Timeout = TimeSpan.FromSeconds(15))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
@@ -400,6 +406,21 @@ app.MapGet("/api/plex/health", async (IPlexApiService plex) =>
     var info = await plex.GetServerInfoAsync();
     return Results.Ok(new { online = info?.IsOnline == true, name = info?.Name, version = info?.Version });
 }).RequireAuthorization();
+
+// Admin-only same-origin artwork proxy: keeps the Plex token/private URL out of rendered image tags.
+app.MapGet("/api/plex/artwork", async (
+    [FromQuery] string source,
+    [FromQuery] int? width,
+    [FromQuery] int? height,
+    HttpContext context,
+    IPlexArtworkService artwork,
+    CancellationToken cancellationToken) =>
+{
+    var image = await artwork.GetAsync(source, width ?? 320, height ?? 480, cancellationToken);
+    if (image is null) return Results.NotFound();
+    context.Response.Headers.CacheControl = "private,max-age=86400";
+    return Results.File(image.Bytes, image.ContentType);
+}).RequireAuthorization("AdminOnly");
 
 // Diagnostics: index stats
 app.MapGet("/api/plex/index/stats", async (IPlexApiService plex) =>
