@@ -3,8 +3,7 @@
 @inject PlexRequestsHosted.Services.Implementations.IMediaIssueService IssueService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h2>Reported Problems</h2>
+<div class="d-flex justify-content-end align-items-center mb-4">
     <div class="d-flex gap-2 align-items-center">
         <MudSwitch T="bool" Value="_openOnly" Label="Open only" Color="Color.Primary" ValueChanged="OnOpenOnlyChanged" />
         <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="Load">Refresh</MudButton>

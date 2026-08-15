@@ -1,33 +1,261 @@
-.admin-page-intro {
-    margin-bottom: var(--spacing-lg);
+.admin-page {
+    padding-top: clamp(1.5rem, 4vw, 3rem);
+    padding-bottom: var(--spacing-3xl);
 }
 
-.admin-settings-panels ::deep .mud-expansion-panel {
-    margin-bottom: var(--spacing-md);
-    border: 1px solid var(--bg-tertiary);
-    border-radius: var(--radius-md);
+.admin-hero {
+    margin-bottom: var(--spacing-xl);
+}
+
+.admin-hero ::deep .admin-hero-kicker {
+    color: var(--plex-orange) !important;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+}
+
+.admin-hero-copy {
+    margin-top: var(--spacing-xs);
+    max-width: 680px;
+}
+
+.admin-layout {
+    display: grid;
+    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--spacing-xl);
+}
+
+.admin-sidebar,
+.admin-content {
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: var(--radius-lg);
     background: var(--bg-secondary);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
 }
 
-.admin-settings-panels ::deep .mud-expansion-panel-content {
-    padding: var(--spacing-md);
+.admin-sidebar {
+    position: sticky;
+    top: calc(var(--header-offset, 72px) + var(--spacing-md));
+    max-height: calc(100vh - var(--header-offset, 72px) - 2 * var(--spacing-md));
+    overflow-y: auto;
+    padding: var(--spacing-sm);
 }
 
-.admin-sub-panels ::deep .mud-expansion-panel {
-    margin-bottom: var(--spacing-sm);
+.admin-sidebar-title {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    min-height: 44px;
+    padding: 0.65rem 0.75rem;
+    font-size: 0.95rem;
+    font-weight: 700;
 }
 
-.admin-sub-panels ::deep .mud-expansion-panel-content {
-    padding: var(--spacing-sm) 0 0;
+.admin-nav-group {
+    margin-top: var(--spacing-md);
 }
 
-@media (max-width: 768px) {
-    .admin-page-intro .mud-text {
-        line-height: 1.25;
+.admin-nav-group:first-child {
+    margin-top: var(--spacing-xs);
+}
+
+.admin-nav-group-label {
+    padding: 0.35rem 0.75rem;
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.admin-nav-item {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    align-items: center;
+    gap: 0.65rem;
+    width: 100%;
+    min-height: 42px;
+    margin: 2px 0;
+    padding: 0.55rem 0.75rem;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 0.875rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.admin-nav-item:hover {
+    background: rgba(255, 255, 255, 0.055);
+    color: var(--text-primary);
+}
+
+.admin-nav-item:focus-visible {
+    outline: 2px solid var(--plex-orange);
+    outline-offset: 2px;
+}
+
+.admin-nav-item.active {
+    background: rgba(229, 160, 13, 0.12);
+    color: var(--plex-orange);
+    font-weight: 650;
+}
+
+.admin-content {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.admin-content-header {
+    padding: clamp(1.25rem, 2.5vw, 2rem);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(145deg, rgba(229, 160, 13, 0.055), transparent 48%);
+}
+
+.admin-breadcrumb {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: 0.65rem;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.admin-content-heading {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-md);
+}
+
+.admin-content-icon {
+    display: grid;
+    flex: 0 0 42px;
+    width: 42px;
+    height: 42px;
+    place-items: center;
+    border: 1px solid rgba(229, 160, 13, 0.25);
+    border-radius: 10px;
+    background: rgba(229, 160, 13, 0.1);
+    color: var(--plex-orange);
+}
+
+.admin-content-description {
+    max-width: 760px;
+    margin-top: var(--spacing-xs);
+    line-height: 1.55;
+}
+
+.admin-content-body {
+    min-width: 0;
+    padding: clamp(1rem, 2.5vw, 2rem);
+}
+
+.admin-mobile-picker {
+    display: none;
+}
+
+/* Child panels were built at different times. The shell supplies one consistent content rhythm. */
+.admin-content-body ::deep > .d-flex:first-child,
+.admin-content-body ::deep > .mud-stack:first-child,
+.admin-content-body ::deep > .mud-typography:first-child {
+    margin-top: 0;
+}
+
+.admin-content-body ::deep .mud-paper {
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    background-color: rgba(255, 255, 255, 0.018);
+}
+
+.admin-content-body ::deep .mud-table-container {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+@media (max-width: 960px) {
+    .admin-layout {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--spacing-md);
     }
 
-    .admin-settings-panels ::deep .mud-expansion-panel-content,
-    .admin-sub-panels ::deep .mud-expansion-panel-content {
+    .admin-sidebar {
+        display: none;
+    }
+
+    .admin-mobile-picker {
+        display: block;
+        position: sticky;
+        top: calc(var(--header-offset, 72px) + var(--spacing-sm));
+        z-index: 10;
+        margin-bottom: var(--spacing-md);
         padding: var(--spacing-sm);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--radius-lg);
+        background: rgba(24, 24, 24, 0.97);
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+        backdrop-filter: blur(12px);
+    }
+}
+
+@media (max-width: 600px) {
+    .admin-page {
+        padding-top: var(--spacing-lg);
+        padding-right: var(--spacing-md);
+        padding-left: var(--spacing-md);
+    }
+
+    .admin-hero {
+        margin-bottom: var(--spacing-lg);
+    }
+
+    .admin-hero ::deep .mud-typography-h3 {
+        font-size: 2rem;
+    }
+
+    .admin-content-header {
+        padding: var(--spacing-lg) var(--spacing-md);
+    }
+
+    .admin-content-heading {
+        gap: 0.75rem;
+    }
+
+    .admin-content-icon {
+        flex-basis: 38px;
+        width: 38px;
+        height: 38px;
+    }
+
+    .admin-content-header ::deep .mud-typography-h4 {
+        font-size: 1.5rem;
+        line-height: 1.2;
+    }
+
+    .admin-content-body {
+        padding: var(--spacing-md);
+    }
+
+    .admin-content-body ::deep .d-flex.justify-content-between,
+    .admin-content-body ::deep .d-flex.align-items-center {
+        flex-wrap: wrap;
+        gap: var(--spacing-sm);
+    }
+
+    .admin-content-body ::deep .mud-input-control {
+        max-width: 100%;
+    }
+
+    .admin-content-body ::deep .mud-table-cell {
+        overflow-wrap: anywhere;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .admin-nav-item {
+        transition: none;
     }
 }
