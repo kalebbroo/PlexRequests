@@ -1,0 +1,33 @@
+.admin-page-intro {
+    margin-bottom: var(--spacing-lg);
+}
+
+.admin-settings-panels ::deep .mud-expansion-panel {
+    margin-bottom: var(--spacing-md);
+    border: 1px solid var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+}
+
+.admin-settings-panels ::deep .mud-expansion-panel-content {
+    padding: var(--spacing-md);
+}
+
+.admin-sub-panels ::deep .mud-expansion-panel {
+    margin-bottom: var(--spacing-sm);
+}
+
+.admin-sub-panels ::deep .mud-expansion-panel-content {
+    padding: var(--spacing-sm) 0 0;
+}
+
+@media (max-width: 768px) {
+    .admin-page-intro .mud-text {
+        line-height: 1.25;
+    }
+
+    .admin-settings-panels ::deep .mud-expansion-panel-content,
+    .admin-sub-panels ::deep .mud-expansion-panel-content {
+        padding: var(--spacing-sm);
+    }
+}
