@@ -8,8 +8,7 @@
     <div class="mb-4 admin-page-intro">
         <MudText Typo="Typo.h4">Admin</MudText>
         <MudText Typo="Typo.body2" Class="text-secondary">
-            Settings are now organized by type: workflow, acquisition, library, operations, and maintenance.
-            Expand a section and update only what you need.
+            Settings are grouped by outcome, not by page route. Expand one section and stay in the workflow.
         </MudText>
     </div>
 
@@ -18,7 +17,7 @@
                            Expanded="@IsPlatformOpen"
                            ExpandedChanged="@(expanded => ToggleSection(expanded, "platform", null))">
             <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                Plex server state, active sessions, live downloads, and availability index status.
+                Server status, active sessions, live download activity, and availability index.
             </MudText>
             <AdminServerHealthPanel />
         </MudExpansionPanel>
@@ -27,7 +26,7 @@
                            Expanded="@IsRequestsOpen"
                            ExpandedChanged="@(expanded => ToggleSection(expanded, "requests", "approvals"))">
             <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                Incoming user requests and manual issue reports.
+                Incoming user queue and manual issue queue.
             </MudText>
 
             <MudExpansionPanels MultiExpansion="false" Class="admin-sub-panels">
@@ -45,11 +44,11 @@
             </MudExpansionPanels>
         </MudExpansionPanel>
 
-        <MudExpansionPanel Text="Acquisition and quality"
+        <MudExpansionPanel Text="Acquisition and matching"
                            Expanded="@IsAcquisitionOpen"
                            ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "preferences"))">
             <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                Controls that affect what gets found, ranked, filtered, and matched to a request.
+                Settings that determine what is searched, ranked, filtered, and selected.
             </MudText>
 
             <MudExpansionPanels MultiExpansion="false" Class="admin-sub-panels">
@@ -65,19 +64,19 @@
                     <AdminQualityProfilesPanel />
                 </MudExpansionPanel>
 
-                <MudExpansionPanel Text="Quality profile assignment"
+                <MudExpansionPanel Text="Auto quality assignment rules"
                                    Expanded="@IsProfileAssignmentOpen"
                                    ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "assignment"))">
                     <AdminProfileAssignmentPanel />
                 </MudExpansionPanel>
 
-                <MudExpansionPanel Text="Custom formats"
+                <MudExpansionPanel Text="Custom format rules"
                                    Expanded="@IsCustomFormatsOpen"
                                    ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "formats"))">
                     <AdminCustomFormatsPanel />
                 </MudExpansionPanel>
 
-                <MudExpansionPanel Text="Indexer configuration"
+                <MudExpansionPanel Text="Indexer sources"
                                    Expanded="@IsIndexersOpen"
                                    ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "indexers"))">
                     <AdminIndexersPanel />
@@ -85,21 +84,21 @@
             </MudExpansionPanels>
         </MudExpansionPanel>
 
-        <MudExpansionPanel Text="Library organization"
+        <MudExpansionPanel Text="Library destination"
                            Expanded="@IsLibraryOpen"
                            ExpandedChanged="@(expanded => ToggleSection(expanded, "library", "organization"))">
             <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                How media lands in Plex and where it goes.
+                Where completed media is written and how it is named.
             </MudText>
 
             <MudExpansionPanels MultiExpansion="false" Class="admin-sub-panels">
-                <MudExpansionPanel Text="Default library structure"
+                <MudExpansionPanel Text="Naming, paths, and transfer"
                                    Expanded="@IsLibraryOrganizationOpen"
                                    ExpandedChanged="@(expanded => ToggleSection(expanded, "library", "organization"))">
                     <AdminLibraryOrganizationPanel />
                 </MudExpansionPanel>
 
-                <MudExpansionPanel Text="Network drives"
+                <MudExpansionPanel Text="Network shares"
                                    Expanded="@IsNetworkSharesOpen"
                                    ExpandedChanged="@(expanded => ToggleSection(expanded, "library", "network"))">
                     <AdminNetworkSharesPanel />
@@ -111,7 +110,7 @@
                            Expanded="@IsOperationsOpen"
                            ExpandedChanged="@(expanded => ToggleSection(expanded, "operations", null))">
             <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                Background jobs, retry queues, calendar-driven checks, blocklist, and upgrade scans.
+                Retry queues, upgrade scans, schedule jobs, and runtime activity.
             </MudText>
             <AdminJobsPanel />
         </MudExpansionPanel>
@@ -129,7 +128,7 @@
                            Expanded="@IsMaintenanceOpen"
                            ExpandedChanged="@(expanded => ToggleSection(expanded, "maintenance", null))">
             <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                DB inspection, cleanup, and factory-reset operations.
+                Safe cleanup, backups, compaction, and factory reset.
             </MudText>
             <AdminDatabasePanel />
         </MudExpansionPanel>
