@@ -8,6 +8,8 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject NavigationManager Navigation
+@inject IConfiguration Configuration
+@inject IWebHostEnvironment Environment
 @inject PlexRequestsHosted.Services.Abstractions.IMediaMetadataProvider MetadataProvider
 @using Microsoft.AspNetCore.WebUtilities
 
@@ -40,6 +42,12 @@
                         <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large" FullWidth="true" StartIcon="@Icons.Material.Filled.Login" @onclick="SignInWithPlex" Class="plex-button hover-scale">
                             <MudText Typo="Typo.button">Sign in with Plex</MudText>
                         </MudButton>
+                        @if (_showDeveloperLogin)
+                        {
+                            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Medium" FullWidth="true" OnClick="SignInWithDeveloper" Class="developer-login-button mt-3">
+                                <MudText Typo="Typo.button">Sign in as local admin</MudText>
+                            </MudButton>
+                        }
                     </div>
 
                     <div class="login-info">
@@ -68,6 +76,8 @@
     private bool _isProcessing;
     private string _processingMessage = "Connecting to Plex...";
     private string _returnUrl = "/browse";
+    private bool _showDeveloperLogin;
+    private string _developerLoginUrl = "/auth/dev-login";
     private List<string> _backdrops = new();
     private int _backdropIndex = 0;
     private System.Timers.Timer? _bgTimer;
@@ -129,6 +139,8 @@
             }
 
             // Backdrops are loaded in OnAfterRender so the sign-in card paints without waiting on TMDB.
+            _showDeveloperLogin = Environment.IsDevelopment() && Configuration.GetValue<bool>("DevelopmentAuth:Enabled", true);
+            _developerLoginUrl = $"/auth/dev-login?returnUrl={Uri.EscapeDataString(_returnUrl)}";
         }
         catch (Exception ex)
         {
@@ -173,6 +185,12 @@
             Logs.Error($"SignInWithPlex exception: {ex}");
             _isProcessing = false;
         }
+    }
+
+    private void SignInWithDeveloper()
+    {
+        Logs.Info("SignInWithDeveloper clicked");
+        Navigation.NavigateTo(_developerLoginUrl, forceLoad: true);
     }
 
     private async Task LoadBackgroundImages()

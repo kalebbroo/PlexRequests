@@ -115,6 +115,25 @@ public class CustomAuthStateProvider(
         }
     }
 
+    public Task<AuthenticationResult> AuthenticateAsDeveloperAsync(
+        string username,
+        string? displayName = null,
+        string? email = null,
+        string? avatarUrl = null,
+        string roles = "User,Admin",
+        string token = "dev-token")
+    {
+        return AuthenticateWithUserDataAsync(
+            username: username,
+            displayName: string.IsNullOrWhiteSpace(displayName) ? username : displayName,
+            email: email ?? string.Empty,
+            avatarUrl: avatarUrl,
+            profileRoles: roles,
+            token: token,
+            plexUserId: "development",
+            overwriteProfileRoles: true);
+    }
+
     public async Task<AuthenticationResult> AuthenticateWithPlexAsync(string plexToken, string plexUsername)
     {
         try
@@ -146,38 +165,116 @@ public class CustomAuthStateProvider(
             // Upsert profile row
             var isConfiguredAdmin = IsConfiguredAdmin(plexUser.Username);
             var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == existing.Id);
+            var configuredRoles = isConfiguredAdmin ? EnsureRole("User", "Admin") : "User";
+            if (profile is not null)
+            {
+                configuredRoles = isConfiguredAdmin
+                    ? EnsureRole(profile.Roles, "Admin")
+                    : profile.Roles;
+            }
+            await _db.SaveChangesAsync();
+
+            return await AuthenticateWithUserDataAsync(
+                existing.Username,
+                existing.DisplayName,
+                existing.Email ?? string.Empty,
+                existing.AvatarUrl,
+                configuredRoles,
+                plexToken,
+                plexUser.Id,
+                overwriteProfileRoles: false);
+        }
+        catch (Exception ex)
+        {
+            Logs.Error($"AuthenticateWithPlex failed: {ex.Message}");
+            return new AuthenticationResult { Success = false, ErrorMessage = "Auth failed" };
+        }
+    }
+
+    private async Task<AuthenticationResult> AuthenticateWithUserDataAsync(
+        string username,
+        string? displayName,
+        string? email,
+        string? avatarUrl,
+        string profileRoles,
+        string token,
+        string? plexUserId,
+        bool overwriteProfileRoles)
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+            var normalizedUsername = username?.Trim();
+            if (string.IsNullOrWhiteSpace(normalizedUsername))
+            {
+                return new AuthenticationResult { Success = false, ErrorMessage = "Invalid username" };
+            }
+
+            var roleCsv = NormalizeRoleCsv(profileRoles);
+            if (string.IsNullOrWhiteSpace(roleCsv))
+            {
+                roleCsv = "User";
+            }
+
+            // Upsert user
+            var existing = await _db.Users.FirstOrDefaultAsync(u => u.Username == normalizedUsername);
+            if (existing is null)
+            {
+                existing = new UserEntity
+                {
+                    Username = normalizedUsername,
+                    DisplayName = displayName,
+                    Email = email,
+                    AvatarUrl = avatarUrl
+                };
+                _db.Users.Add(existing);
+            }
+            else
+            {
+                existing.DisplayName = displayName;
+                existing.Email = email;
+                existing.AvatarUrl = avatarUrl;
+            }
+            await _db.SaveChangesAsync();
+
+            // Upsert profile row
+            var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == existing.Id);
             if (profile is null)
             {
-                profile = new Infrastructure.Entities.UserProfileEntity
+                profile = new UserProfileEntity
                 {
                     UserId = existing.Id,
-                    PlexId = plexUser.Id,
-                    PlexUsername = plexUser.Username,
-                    Roles = isConfiguredAdmin ? "User,Admin" : "User",
-                    LastLoginAt = DateTime.UtcNow
+                    PlexId = plexUserId,
+                    PlexUsername = normalizedUsername,
+                    Roles = roleCsv,
+                    LastLoginAt = now
                 };
                 _db.UserProfiles.Add(profile);
             }
             else
             {
-                profile.PlexId = plexUser.Id;
-                profile.PlexUsername = plexUser.Username;
-                profile.LastLoginAt = DateTime.UtcNow;
-                // Self-heal: a configured admin always regains the Admin role on login.
-                if (isConfiguredAdmin) profile.Roles = EnsureRole(profile.Roles, "Admin");
+                profile.PlexId = plexUserId ?? profile.PlexId;
+                profile.PlexUsername = normalizedUsername;
+                profile.LastLoginAt = now;
+                if (overwriteProfileRoles || string.IsNullOrWhiteSpace(profile.Roles))
+                {
+                    profile.Roles = roleCsv;
+                }
             }
             await _db.SaveChangesAsync();
 
             // Store token and user info in session storage (best-effort; may fail during server-only callback)
             try
             {
-                await _sessionStorage.SetItemAsStringAsync(AUTH_TOKEN_KEY, plexToken);
+                await _sessionStorage.SetItemAsStringAsync(AUTH_TOKEN_KEY, token);
                 await _sessionStorage.SetItemAsync(TOKEN_EXPIRY_KEY, DateTime.UtcNow.AddHours(8));
             }
             catch (Exception ex)
             {
                 Logs.Warning($"SessionStorage write skipped (not fatal): {ex.Message}");
             }
+
+            var roles = (profile.Roles ?? "User").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
             var userDto = new UserDto
             {
                 Id = existing.Id,
@@ -185,7 +282,7 @@ public class CustomAuthStateProvider(
                 DisplayName = existing.DisplayName,
                 Email = existing.Email ?? string.Empty,
                 AvatarUrl = existing.AvatarUrl,
-                Roles = (profile.Roles ?? "User").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
+                Roles = roles
             };
             try
             {
@@ -205,17 +302,14 @@ public class CustomAuthStateProvider(
             if (!string.IsNullOrEmpty(userDto.Email)) claims.Add(new Claim(ClaimTypes.Email, userDto.Email));
             if (!string.IsNullOrEmpty(userDto.DisplayName)) claims.Add(new Claim("display_name", userDto.DisplayName));
             if (!string.IsNullOrEmpty(userDto.AvatarUrl)) claims.Add(new Claim("avatar_url", userDto.AvatarUrl));
-            if (userDto.Roles is not null)
+            foreach (var r in roles)
             {
-                foreach (var r in userDto.Roles)
-                {
-                    if (!string.IsNullOrWhiteSpace(r)) claims.Add(new Claim(ClaimTypes.Role, r));
-                }
+                if (!string.IsNullOrWhiteSpace(r)) claims.Add(new Claim(ClaimTypes.Role, r));
             }
 
             var identity = new ClaimsIdentity(claims, "plex");
             var principal = new ClaimsPrincipal(identity);
-            _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", plexToken);
+            _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
             // CRITICAL: Set cookie authentication FIRST, before any other operations
             if (_http.HttpContext is not null)
@@ -247,13 +341,24 @@ public class CustomAuthStateProvider(
             _cacheExpiry = DateTime.MinValue;
             NotifyAuthenticationStateChanged(Task.FromResult(new AuthenticationState(principal)));
 
-            return new AuthenticationResult { Success = true, User = userDto };
+            return new AuthenticationResult { Success = true, User = userDto, Roles = roles };
         }
         catch (Exception ex)
         {
-            Logs.Error($"AuthenticateWithPlex failed: {ex.Message}");
+            Logs.Error($"AuthenticateWithUserDataAsync failed: {ex.Message}");
             return new AuthenticationResult { Success = false, ErrorMessage = "Auth failed" };
         }
+    }
+
+    private static string NormalizeRoleCsv(string? roles)
+    {
+        if (string.IsNullOrWhiteSpace(roles)) return "User";
+
+        var set = roles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        set.Add("User");
+        return string.Join(",", set);
     }
 
     public async Task SignOutAsync()

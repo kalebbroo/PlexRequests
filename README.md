@@ -309,6 +309,20 @@ dotnet run --project PlexRequests.Downloader
 For local dev, put your keys in environment variables or `appsettings.Development.json` (which is
 gitignored) instead of `.env`. The database migrates itself on startup (EF Core migrations).
 
+You can also run a local fake admin account and skip Plex OAuth entirely:
+
+```bash
+ASPNETCORE_ENVIRONMENT=Development
+DEV_AUTH_ENABLED=true
+DEV_AUTH_USERNAME=dev-admin
+DEV_AUTH_DISPLAY_NAME=Development Admin
+DEV_AUTH_EMAIL=dev-admin@example.local
+DEV_AUTH_ROLES=User,Admin
+```
+
+When enabled, use the login page’s **“Sign in as local admin”** button and the app will create/read the
+configured local user directly and log you in with admin role.
+
 ---
 
 ## 11. Troubleshooting

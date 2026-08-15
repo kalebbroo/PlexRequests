@@ -19,6 +19,7 @@ using PlexRequestsHosted.Shared.DTOs;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
+using PlexRequestsHosted.Utils;
 
 // Load .env if present and map PLEX_* variables to ASP.NET config keys
 static void LoadDotEnvFrom(string rootPath)
@@ -66,6 +67,20 @@ static void LoadDotEnvFrom(string rootPath)
             Environment.SetEnvironmentVariable("Bridge__Enabled", val);
         else if (key.Equals("BRIDGE_API_KEY", StringComparison.OrdinalIgnoreCase))
             Environment.SetEnvironmentVariable("Bridge__ApiKey", val);
+        else if (key.Equals("DEV_AUTH_ENABLED", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("DevelopmentAuth__Enabled", val);
+        else if (key.Equals("DEV_AUTH_USERNAME", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("DevelopmentAuth__Username", val);
+        else if (key.Equals("DEV_AUTH_DISPLAY_NAME", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("DevelopmentAuth__DisplayName", val);
+        else if (key.Equals("DEV_AUTH_EMAIL", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("DevelopmentAuth__Email", val);
+        else if (key.Equals("DEV_AUTH_AVATAR_URL", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("DevelopmentAuth__AvatarUrl", val);
+        else if (key.Equals("DEV_AUTH_ROLES", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("DevelopmentAuth__Roles", val);
+        else if (key.Equals("DEV_AUTH_TOKEN", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("DevelopmentAuth__Token", val);
     }
 }
 
@@ -450,6 +465,14 @@ static bool IsAuthorizedWorker(HttpContext ctx, IConfiguration cfg)
     var b = Encoding.UTF8.GetBytes(configured);
     return a.Length == b.Length &&
            System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(a, b);
+}
+
+static string NormalizeLocalReturnUrl(string? returnUrl)
+{
+    if (string.IsNullOrWhiteSpace(returnUrl)) return "/browse";
+    if (!returnUrl.StartsWith('/') || returnUrl.StartsWith("//")) return "/browse";
+    if (returnUrl == "/" || returnUrl.StartsWith("/login", StringComparison.OrdinalIgnoreCase)) return "/browse";
+    return returnUrl;
 }
 
 static PlexRequestsHosted.Shared.DTOs.MediaRequestDto ToRequestDto(PlexRequestsHosted.Infrastructure.Entities.MediaRequestEntity r) => new()
@@ -1061,6 +1084,50 @@ app.MapGet("/api/bridge/events", async (long? since, int? max, HttpContext ctx, 
         events.Add(dto);
     }
     return Results.Ok(events);
+});
+
+// Local dev-only login shortcut - bypass Plex auth for UI development.
+// Requires ASPNETCORE_ENVIRONMENT=Development and DevelopmentAuth:Enabled=true.
+app.MapGet("/auth/dev-login", async (
+    [FromQuery] string? returnUrl,
+    [FromServices] CustomAuthStateProvider authProvider,
+    IConfiguration configuration) =>
+{
+    if (!app.Environment.IsDevelopment())
+    {
+        Logs.Warning("Blocked development login: environment is not Development");
+        return Results.NotFound();
+    }
+
+    if (!configuration.GetValue<bool>("DevelopmentAuth:Enabled", false))
+    {
+        Logs.Warning("Blocked development login: DevelopmentAuth:Enabled is false");
+        return Results.NotFound();
+    }
+
+    var username = configuration["DevelopmentAuth:Username"]?.Trim();
+    if (string.IsNullOrWhiteSpace(username))
+    {
+        username = "dev-admin";
+    }
+
+    var result = await authProvider.AuthenticateAsDeveloperAsync(
+        username: username,
+        displayName: configuration["DevelopmentAuth:DisplayName"]?.Trim(),
+        email: configuration["DevelopmentAuth:Email"]?.Trim(),
+        avatarUrl: configuration["DevelopmentAuth:AvatarUrl"]?.Trim(),
+        roles: configuration["DevelopmentAuth:Roles"] ?? "User,Admin",
+        token: configuration["DevelopmentAuth:Token"] ?? "dev-token");
+
+    if (!result.Success)
+    {
+        Logs.Error($"Development login failed for {username}: {result.ErrorMessage}");
+        return Results.Problem("Failed to sign in with development account", statusCode: 500);
+    }
+
+    var target = NormalizeLocalReturnUrl(returnUrl);
+    Logs.Info($"Development login succeeded for {username}; redirecting to {target}");
+    return Results.Redirect(target);
 });
 
 // OAuth callback endpoint - handle authentication BEFORE any response starts
