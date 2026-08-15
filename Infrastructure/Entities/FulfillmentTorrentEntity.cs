@@ -29,6 +29,8 @@ public class FulfillmentTorrentEntity
     /// <summary>v1 infohash from the magnet, for blocklisting. May differ from <see cref="TorrentId"/>.</summary>
     [MaxLength(64)] public string? InfoHash { get; set; }
     [MaxLength(512)] public string? ReleaseName { get; set; }
+    [MaxLength(128)] public string? Source { get; set; }
+    public int? IndexerId { get; set; }
 
     // --- What this torrent is meant to satisfy -----------------------------------------------------
     public int? Season { get; set; }

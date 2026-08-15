@@ -94,6 +94,11 @@ public interface IPlexApiService
     Task<Dictionary<int, MediaQualityDto>> GetSeasonQualitySummariesAsync(int tvShowId);
     Task<PlexServerInfo?> GetServerInfoAsync();
     Task<List<PlexLibrary>> GetLibrariesAsync();
+    /// <summary>
+    /// Admin-facing Plex overview assembled from independent, failure-isolated server queries. Usage
+    /// history is cached because it is comparatively expensive; active sessions remain live.
+    /// </summary>
+    Task<PlexServerDashboard> GetServerDashboardAsync();
     Task AnnotateAvailabilityAsync(List<MediaCardDto> items);
     // Diagnostics
     Task<object> GetIndexStatsAsync();
@@ -229,16 +234,78 @@ public record PlexLibrary
     public string Key { get; init; } = string.Empty;
     public string Title { get; init; } = string.Empty;
     public MediaType Type { get; init; }
-    public int ItemCount { get; init; }
+    /// <summary>Top-level titles in the section (movies, shows, or artists). Null means Plex could not return the metric.</summary>
+    public int? ItemCount { get; init; }
+    public string ItemLabel { get; init; } = "titles";
+    /// <summary>Useful child total for hierarchical libraries (episodes for TV, tracks for music).</summary>
+    public int? ChildItemCount { get; init; }
+    public string? ChildItemLabel { get; init; }
+    public int? CollectionCount { get; init; }
+    public bool IsRefreshing { get; init; }
+    public DateTime? LastScannedAt { get; init; }
+    public List<PlexMediaPreview> RecentlyAdded { get; init; } = new();
+}
+
+public record PlexMediaPreview
+{
+    public string Title { get; init; } = string.Empty;
+    public string? Subtitle { get; init; }
+    public string? ThumbPath { get; init; }
+    public DateTime? AddedAt { get; init; }
 }
 
 public record PlexSessionInfo
 {
     public string Title { get; init; } = string.Empty;
+    public string? Subtitle { get; init; }
     public string Username { get; init; } = string.Empty;
+    public string? UserThumbPath { get; init; }
+    public string? ThumbPath { get; init; }
+    public string? ArtPath { get; init; }
     public int ProgressPercent { get; init; }
+    public long PositionMilliseconds { get; init; }
+    public long DurationMilliseconds { get; init; }
     public bool IsTranscoding { get; init; }
+    public string PlaybackMode { get; init; } = "Direct Play";
     public int? BitrateKbps { get; init; }
+    public string? PlayerName { get; init; }
+    public string? Device { get; init; }
+    public string? Platform { get; init; }
+    public string? Location { get; init; }
+    public string State { get; init; } = "playing";
+}
+
+public record PlexUsageInsights
+{
+    public int PeriodDays { get; init; } = 30;
+    public int PlayCount { get; init; }
+    public bool IsAvailable { get; init; }
+    public DateTime? UpdatedAt { get; init; }
+    public List<PlexTopViewer> TopViewers { get; init; } = new();
+    public List<PlexTopTitle> TopTitles { get; init; } = new();
+}
+
+public record PlexTopViewer
+{
+    public string Name { get; init; } = string.Empty;
+    public string? ThumbPath { get; init; }
+    public int Plays { get; init; }
+}
+
+public record PlexTopTitle
+{
+    public string Title { get; init; } = string.Empty;
+    public string? Subtitle { get; init; }
+    public string? ThumbPath { get; init; }
+    public int Plays { get; init; }
+}
+
+public record PlexServerDashboard
+{
+    public PlexServerInfo? Server { get; init; }
+    public List<PlexLibrary> Libraries { get; init; } = new();
+    public List<PlexSessionInfo> Sessions { get; init; } = new();
+    public PlexUsageInsights Usage { get; init; } = new();
 }
 
 public record PlexAvailabilityStatus

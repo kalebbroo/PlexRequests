@@ -338,6 +338,9 @@ public class DownloadTorrentTelemetry
 {
     /// <summary>Torrent display name (from the release/magnet), for the admin row label.</summary>
     public string Name { get; set; } = string.Empty;
+    /// <summary>Indexer/provider that supplied the selected release, when known.</summary>
+    public string? Source { get; set; }
+    public int? IndexerId { get; set; }
     /// <summary>Where this torrent is in its lifecycle: Downloading, Finishing, Importing, or Imported.</summary>
     public DownloadTorrentStage Stage { get; set; } = DownloadTorrentStage.Downloading;
     /// <summary>0-100 completion for this torrent.</summary>
@@ -368,6 +371,8 @@ public class TrackedTorrentDto
     /// <summary>v1 infohash from the magnet, for blocklisting. Differs from TorrentId for v2 torrents.</summary>
     public string? InfoHash { get; set; }
     public string? ReleaseName { get; set; }
+    public string? Source { get; set; }
+    public int? IndexerId { get; set; }
     public int? Season { get; set; }
     public int? Episode { get; set; }
     public bool IsPack { get; set; }
@@ -411,7 +416,11 @@ public enum DownloadTorrentStage
     /// <summary>Files resolved; being renamed and moved/hardlinked into the Plex library.</summary>
     Importing = 2,
     /// <summary>Imported into the library; the torrent is being (or has been) removed and kept seeding.</summary>
-    Imported = 3
+    Imported = 3,
+    /// <summary>The client or import pipeline rejected this release.</summary>
+    Failed = 4,
+    /// <summary>The persisted torrent is no longer present in the download client.</summary>
+    Missing = 5
 }
 
 /// <summary>

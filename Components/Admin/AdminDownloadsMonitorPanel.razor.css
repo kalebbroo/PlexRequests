@@ -1,0 +1,66 @@
+.downloads-section { display:grid; gap:1rem; }
+.downloads-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }
+.downloads-heading > div:first-child { min-width:0; }
+.downloads-live { display:flex; flex:0 0 auto; align-items:center; gap:.35rem; }
+.downloads-live > span { display:inline-flex; align-items:center; gap:.45rem; color:var(--text-secondary); font-size:.7rem; white-space:nowrap; }
+.downloads-live i { width:6px; height:6px; border-radius:50%; background:#66d18f; box-shadow:0 0 0 4px rgba(102,209,143,.1); }
+.downloads-loading { min-height:120px; display:grid; place-items:center; }
+.downloads-empty { min-height:130px; display:grid; place-content:center; justify-items:center; gap:.35rem; border:1px dashed rgba(255,255,255,.1); border-radius:14px; color:var(--text-secondary); }
+.downloads-empty ::deep svg { margin-bottom:.25rem; color:rgba(229,160,13,.65); font-size:2rem; }
+.downloads-empty strong { color:var(--text-primary); font-size:.85rem; }
+.downloads-empty span { font-size:.75rem; text-align:center; }
+.download-list { display:grid; gap:.8rem; }
+.download-card { display:grid; grid-template-columns:92px minmax(0,1fr); gap:1rem; padding:.8rem; border:1px solid rgba(255,255,255,.08); border-radius:16px; background:rgba(255,255,255,.018); }
+.download-poster { position:relative; overflow:hidden; height:138px; border-radius:10px; background:#111; }
+.download-poster img { width:100%; height:100%; object-fit:cover; }
+.download-poster > span { position:absolute; right:.4rem; bottom:.4rem; display:grid; width:27px; height:27px; place-items:center; border-radius:50%; background:rgba(9,9,9,.78); color:var(--plex-orange); }
+.download-body { min-width:0; display:grid; align-content:start; gap:.7rem; }
+.download-title-row { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }
+.download-title-row > div { min-width:0; }
+.download-title-row ::deep h4 { display:inline; margin-left:.45rem; font-weight:700; }
+.stage-pill, .torrent-stage { display:inline-block; padding:.25rem .48rem; border-radius:6px; font-size:.63rem; font-weight:750; line-height:1.2; }
+.stage-pill.active, .torrent-stage.active { background:rgba(66,165,245,.13); color:#74b9f5; }
+.stage-pill.success, .torrent-stage.success { background:rgba(102,209,143,.12); color:#73d99a; }
+.stage-pill.warning, .torrent-stage.warning { background:rgba(255,183,77,.13); color:#ffbd62; }
+.stage-pill.error, .torrent-stage.error { background:rgba(239,83,80,.13); color:#f27d7a; }
+.stage-pill.waiting, .stage-pill.queued, .torrent-stage.queued { background:rgba(255,255,255,.07); color:var(--text-secondary); }
+.download-requester { display:flex; flex-wrap:wrap; gap:.75rem; margin-top:.35rem; color:var(--text-secondary); font-size:.68rem; }
+.download-percent { flex:0 0 auto; font-size:1.05rem; font-variant-numeric:tabular-nums; }
+.download-progress { height:8px; overflow:hidden; border-radius:999px; background:rgba(255,255,255,.08); }
+.download-progress span { display:block; height:100%; border-radius:inherit; background:var(--plex-orange); transition:width .35s ease; }
+.download-progress span.active { background:#42a5f5; }
+.download-progress span.success { background:#66d18f; }
+.download-progress span.warning { background:#ffb74d; }
+.download-progress span.error { background:#ef5350; }
+.download-progress span.waiting, .download-progress span.queued { background:#8d8d8d; }
+.download-alert { margin-top:.15rem; }
+.transfer-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.5rem; }
+.transfer-stats > div { display:grid; grid-template-columns:auto 1fr; align-items:center; column-gap:.4rem; padding:.55rem .65rem; border:1px solid rgba(255,255,255,.055); border-radius:9px; background:rgba(0,0,0,.12); }
+.transfer-stats ::deep svg { grid-row:1/3; color:var(--plex-orange); }
+.transfer-stats span { color:var(--text-secondary); font-size:.62rem; }
+.transfer-stats strong { overflow:hidden; font-size:.73rem; text-overflow:ellipsis; white-space:nowrap; }
+.release-details { border-top:1px solid rgba(255,255,255,.06); }
+.release-details summary { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.65rem 0 0; color:var(--text-secondary); font-size:.7rem; cursor:pointer; list-style:none; }
+.release-details summary::-webkit-details-marker { display:none; }
+.release-details summary > span:first-child { display:inline-flex; align-items:center; gap:.35rem; color:var(--text-primary); font-weight:650; }
+.release-table-wrap { max-width:100%; overflow-x:auto; padding-top:.6rem; }
+.release-table-wrap table { width:100%; min-width:720px; border-collapse:collapse; font-size:.68rem; }
+.release-table-wrap th { padding:.5rem; color:var(--text-secondary); font-size:.61rem; text-align:left; text-transform:uppercase; letter-spacing:.05em; }
+.release-table-wrap td { max-width:280px; padding:.55rem .5rem; border-top:1px solid rgba(255,255,255,.05); vertical-align:middle; }
+.release-table-wrap td:nth-child(n+4) { font-variant-numeric:tabular-nums; }
+.release-table-wrap small { display:block; margin-top:.15rem; color:var(--text-secondary); }
+.episode-tag { display:inline-block; margin-right:.35rem; padding:.18rem .3rem; border-radius:4px; background:rgba(229,160,13,.1); color:var(--plex-orange); font-size:.58rem; font-weight:700; }
+.release-name { word-break:break-word; }
+
+@media (max-width: 760px) {
+    .download-card { grid-template-columns:72px minmax(0,1fr); gap:.75rem; padding:.65rem; }
+    .download-poster { height:108px; }
+    .transfer-stats { grid-template-columns:repeat(2,1fr); }
+}
+@media (max-width: 520px) {
+    .download-title-row ::deep h4 { display:block; margin:.35rem 0 0; line-height:1.25; }
+    .download-percent { font-size:.9rem; }
+    .download-requester span:last-child { display:none; }
+    .download-card { grid-template-columns:58px minmax(0,1fr); }
+    .download-poster { height:87px; }
+}

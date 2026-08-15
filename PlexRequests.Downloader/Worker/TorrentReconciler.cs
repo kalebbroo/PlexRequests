@@ -208,7 +208,10 @@ public class TorrentReconciler(
             return (TorrentTrackingState.Finished, "Waiting: files not on disk yet");
 
         var item = new TorrentItem(t.TorrentId, t.Season, t.Episode, t.IsPack,
-            NeededEpisodes: t.NeededEpisodes.Count > 0 ? t.NeededEpisodes : null, Resolution: t.Resolution);
+            NeededEpisodes: t.NeededEpisodes.Count > 0 ? t.NeededEpisodes : null,
+            Resolution: t.Resolution,
+            Source: t.Source,
+            IndexerId: t.IndexerId);
 
         var result = await importer.ImportAsync(job, item, sourcePath, ct);
         if (!result.Success)

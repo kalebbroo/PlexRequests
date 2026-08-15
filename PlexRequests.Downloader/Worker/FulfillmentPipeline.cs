@@ -98,7 +98,15 @@ public class FulfillmentPipeline(
                     logger.LogWarning("Failed to add magnet for job {JobId} (S{Season}E{Episode})", job.Id, item.Season, item.Episode);
                     continue;
                 }
-                torrents.Add(new TorrentItem(torrentId, item.Season, item.Episode, item.IsPack, NeededEpisodes: item.NeededEpisodes, Resolution: item.Resolution));
+                torrents.Add(new TorrentItem(
+                    torrentId,
+                    item.Season,
+                    item.Episode,
+                    item.IsPack,
+                    NeededEpisodes: item.NeededEpisodes,
+                    Resolution: item.Resolution,
+                    Source: item.Candidate.Source,
+                    IndexerId: item.Candidate.IndexerId > 0 ? item.Candidate.IndexerId : null));
             }
 
             if (torrents.Count == 0)
@@ -124,6 +132,10 @@ public class FulfillmentPipeline(
                 InfoHash = MagnetUtil.InfoHashFromMagnet(plan.Items.ElementAtOrDefault(i)?.Candidate.Magnet ?? string.Empty)
                            ?? MagnetUtil.Normalize(t.TorrentId),
                 ReleaseName = plan.Items.ElementAtOrDefault(i)?.Candidate.ReleaseName,
+                Source = plan.Items.ElementAtOrDefault(i)?.Candidate.Source,
+                IndexerId = plan.Items.ElementAtOrDefault(i)?.Candidate.IndexerId is > 0
+                    ? plan.Items[i].Candidate.IndexerId
+                    : null,
                 Season = t.Season,
                 Episode = t.Episode,
                 IsPack = t.IsPack,
@@ -221,6 +233,8 @@ public class FulfillmentPipeline(
                 list.Add(new DownloadTorrentTelemetry
                 {
                     Name = string.IsNullOrWhiteSpace(st?.Name) ? job.Title : st!.Name,
+                    Source = it.Source,
+                    IndexerId = it.IndexerId,
                     Stage = stage,
                     ProgressPercent = it.Imported ? 100 : (st?.Progress ?? 0),
                     DownloadRateBytesPerSec = stage == DownloadTorrentStage.Downloading ? (st?.DownloadRate ?? 0) : 0,

@@ -12,7 +12,7 @@ public sealed class DownloadMonitorService(AppDbContext db, IDownloadTelemetrySt
 {
     // Jobs the worker is still working on — always shown.
     private static readonly FulfillmentStatus[] Active =
-        { FulfillmentStatus.Queued, FulfillmentStatus.Claimed, FulfillmentStatus.Downloading };
+        { FulfillmentStatus.Queued, FulfillmentStatus.Claimed, FulfillmentStatus.Downloading, FulfillmentStatus.Deferred };
 
     public async Task<List<DownloadJobView>> GetActiveAndRecentAsync(int recentMinutes = 30)
     {
@@ -25,13 +25,27 @@ public sealed class DownloadMonitorService(AppDbContext db, IDownloadTelemetrySt
             .Where(j => Active.Contains(j.Status) || (j.CompletedAt != null && j.CompletedAt >= cutoff))
             .OrderByDescending(j => j.CompletedAt ?? j.LastUpdatedAt ?? j.CreatedAt)
             .ToListAsync();
+        var jobIds = jobs.Select(job => job.Id).ToList();
+        var persistedTorrents = jobIds.Count == 0
+            ? new List<FulfillmentTorrentEntity>()
+            : await db.FulfillmentTorrents.AsNoTracking()
+                .Where(torrent => jobIds.Contains(torrent.FulfillmentJobId))
+                .OrderBy(torrent => torrent.Id)
+                .ToListAsync();
+        var persistedByJob = persistedTorrents
+            .GroupBy(torrent => torrent.FulfillmentJobId)
+            .ToDictionary(group => group.Key, group => group.ToList());
 
         var views = new List<DownloadJobView>(jobs.Count);
         foreach (var j in jobs)
         {
             var isActive = Array.IndexOf(Active, j.Status) >= 0;
-            // Live per-torrent rows only matter while in flight; terminal jobs show their final job status.
             var torrents = isActive ? telemetry.Get(j.Id).ToList() : new List<DownloadTorrentTelemetry>();
+            // The in-memory snapshot is the freshest source, but it is deliberately lost on a web/worker
+            // restart. Fall back to durable tracking rows so the panel self-heals instead of turning blank,
+            // and so recently completed jobs retain release/source details.
+            if (torrents.Count == 0 && persistedByJob.TryGetValue(j.Id, out var persisted))
+                torrents = persisted.Select(ToTelemetry).ToList();
             views.Add(new DownloadJobView
             {
                 JobId = j.Id,
@@ -54,6 +68,28 @@ public sealed class DownloadMonitorService(AppDbContext db, IDownloadTelemetrySt
         return views;
     }
 
+    private static DownloadTorrentTelemetry ToTelemetry(FulfillmentTorrentEntity torrent) => new()
+    {
+        Name = torrent.ReleaseName ?? torrent.TorrentId,
+        Source = torrent.Source,
+        IndexerId = torrent.IndexerId,
+        Stage = torrent.State switch
+        {
+            TorrentTrackingState.Finished => DownloadTorrentStage.Finishing,
+            TorrentTrackingState.Imported => DownloadTorrentStage.Imported,
+            TorrentTrackingState.Failed => DownloadTorrentStage.Failed,
+            TorrentTrackingState.Missing => DownloadTorrentStage.Missing,
+            _ => DownloadTorrentStage.Downloading
+        },
+        ProgressPercent = torrent.Progress,
+        DownloadRateBytesPerSec = torrent.DownloadRateBytesPerSec,
+        Seeds = torrent.Seeds,
+        Peers = torrent.Peers,
+        TotalSizeBytes = torrent.TotalSizeBytes,
+        Season = torrent.Season,
+        Episode = torrent.Episode
+    };
+
     // Human lifecycle label spanning approved → downloading → renaming/moving → available.
     private static string StageLabel(FulfillmentStatus status, List<DownloadTorrentTelemetry> torrents) => status switch
     {
@@ -64,6 +100,7 @@ public sealed class DownloadMonitorService(AppDbContext db, IDownloadTelemetrySt
         FulfillmentStatus.Downloading when torrents.Count > 0 && torrents.All(t => t.Stage is DownloadTorrentStage.Finishing or DownloadTorrentStage.Imported)
             => "Finishing",
         FulfillmentStatus.Downloading => "Downloading",
+        FulfillmentStatus.Deferred => "Waiting for a release",
         FulfillmentStatus.Completed => "Available",
         FulfillmentStatus.PartiallyCompleted => "Partially available",
         FulfillmentStatus.Failed => "Failed",

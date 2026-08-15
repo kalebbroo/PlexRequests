@@ -20,6 +20,8 @@
     <!-- The downloader is referenced only for pure, host-free helpers such as DelugeError. A classification
          bug there caused a live outage, so it needs pinning; nothing here constructs a worker or a client. -->
     <ProjectReference Include="../../PlexRequests.Downloader/PlexRequests.Downloader.csproj" />
+    <!-- Plex response parsing is server-side and must be pinned against real PMS response shapes. -->
+    <ProjectReference Include="../../PlexRequestsHosted.csproj" />
   </ItemGroup>
 
 </Project>
