@@ -32,7 +32,7 @@
             <div class="header-right">
                 <div class="search-container desktop-only">
                     <MudIcon Icon="@Icons.Material.Filled.Search" Class="search-icon" Size="Size.Small" />
-                    <input type="text" class="search-input" placeholder="Titles, genres, people" @onkeydown="HandleSearchKeyDown" @bind-value="_searchQuery" />
+                    <input type="text" class="search-input" placeholder="Titles, genres, people" @onkeydown="HandleSearchKeyDown" @bind-value="_searchQuery" @bind-value:event="oninput" />
                 </div>
 
                 <MudBadge Content="_unreadCount" Color="Color.Error" Overlap="true" Bordered="true"

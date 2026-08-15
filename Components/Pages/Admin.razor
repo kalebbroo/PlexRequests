@@ -4,102 +4,163 @@
 
 <PageTitle>Admin - Plex Requests</PageTitle>
 
-@* Admin is organized by what you're doing, not one tab per feature:
-   Overview   - is everything healthy right now (Plex, streams, live downloads, availability index)
-   Requests   - the two human queues: approvals + reported problems
-   Downloads  - everything that decides WHAT gets grabbed: preferences, quality rules, indexers
-   Library    - everything that decides WHERE files land: organization rules, network drives
-   Jobs       - background automation: still-searching list, upgrade queue, schedule, history
-   Users      - accounts & roles
-   System     - database maintenance: overview, backup, targeted cleanup, factory reset *@
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6">
-    <MudTabs ActivePanelIndex="_activeIndex" ActivePanelIndexChanged="OnTabChanged" Elevation="0" Rounded="false" SliderColor="Color.Primary" Class="custom-tabs">
-        <MudTabPanel Text="Overview">
-            <div class="pt-4"><AdminServerHealthPanel /></div>
-        </MudTabPanel>
-        <MudTabPanel Text="Requests">
-            <div class="pt-4">
-                <MudTabs ActivePanelIndex="_requestsSub" ActivePanelIndexChanged="OnRequestsSubChanged" Elevation="0" Rounded="false" SliderColor="Color.Primary" Class="custom-tabs custom-subtabs">
-                    <MudTabPanel Text="Approvals">
-                        <div class="pt-4"><AdminApprovalsPanel /></div>
-                    </MudTabPanel>
-                    <MudTabPanel Text="Issues">
-                        <div class="pt-4"><AdminIssuesPanel /></div>
-                    </MudTabPanel>
-                </MudTabs>
-            </div>
-        </MudTabPanel>
-        <MudTabPanel Text="Downloads">
-            <div class="pt-4">
-                <MudTabs ActivePanelIndex="_downloadsSub" ActivePanelIndexChanged="OnDownloadsSubChanged" Elevation="0" Rounded="false" SliderColor="Color.Primary" Class="custom-tabs custom-subtabs">
-                    <MudTabPanel Text="Preferences">
-                        <div class="pt-4"><AdminDownloadsPanel /></div>
-                    </MudTabPanel>
-                    <MudTabPanel Text="Quality Profiles">
-                        <div class="pt-4"><AdminQualityProfilesPanel /></div>
-                    </MudTabPanel>
-                    <MudTabPanel Text="Profile Assignment">
-                        <div class="pt-4"><AdminProfileAssignmentPanel /></div>
-                    </MudTabPanel>
-                    <MudTabPanel Text="Custom Formats">
-                        <div class="pt-4"><AdminCustomFormatsPanel /></div>
-                    </MudTabPanel>
-                    <MudTabPanel Text="Indexers">
-                        <div class="pt-4"><AdminIndexersPanel /></div>
-                    </MudTabPanel>
-                </MudTabs>
-            </div>
-        </MudTabPanel>
-        <MudTabPanel Text="Library">
-            <div class="pt-4">
-                <MudTabs ActivePanelIndex="_librarySub" ActivePanelIndexChanged="OnLibrarySubChanged" Elevation="0" Rounded="false" SliderColor="Color.Primary" Class="custom-tabs custom-subtabs">
-                    <MudTabPanel Text="Organization">
-                        <div class="pt-4"><AdminLibraryOrganizationPanel /></div>
-                    </MudTabPanel>
-                    <MudTabPanel Text="Network Drives">
-                        <div class="pt-4"><AdminNetworkSharesPanel /></div>
-                    </MudTabPanel>
-                </MudTabs>
-            </div>
-        </MudTabPanel>
-        <MudTabPanel Text="Jobs">
-            <div class="pt-4"><AdminJobsPanel /></div>
-        </MudTabPanel>
-        <MudTabPanel Text="Users">
-            <div class="pt-4"><AdminUsersPanel /></div>
-        </MudTabPanel>
-        <MudTabPanel Text="System">
-            <div class="pt-4"><AdminDatabasePanel /></div>
-        </MudTabPanel>
-    </MudTabs>
+    <div class="mb-4 admin-page-intro">
+        <MudText Typo="Typo.h4">Admin</MudText>
+        <MudText Typo="Typo.body2" Class="text-secondary">
+            Settings are grouped by outcome, not by page route. Expand one section and stay in the workflow.
+        </MudText>
+    </div>
+
+    <MudExpansionPanels MultiExpansion="false" Class="admin-settings-panels">
+        <MudExpansionPanel Text="Platform health"
+                           Expanded="@IsPlatformOpen"
+                           ExpandedChanged="@(expanded => ToggleSection(expanded, "platform", null))">
+            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+                Server status, active sessions, live download activity, and availability index.
+            </MudText>
+            <AdminServerHealthPanel />
+        </MudExpansionPanel>
+
+        <MudExpansionPanel Text="Request workflow"
+                           Expanded="@IsRequestsOpen"
+                           ExpandedChanged="@(expanded => ToggleSection(expanded, "requests", "approvals"))">
+            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+                Incoming user queue and manual issue queue.
+            </MudText>
+
+            <MudExpansionPanels MultiExpansion="false" Class="admin-sub-panels">
+                <MudExpansionPanel Text="Media requests"
+                                   Expanded="@IsApprovalsOpen"
+                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "requests", "approvals"))">
+                    <AdminApprovalsPanel />
+                </MudExpansionPanel>
+
+                <MudExpansionPanel Text="Reported issues"
+                                   Expanded="@IsIssuesOpen"
+                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "requests", "issues"))">
+                    <AdminIssuesPanel />
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        </MudExpansionPanel>
+
+        <MudExpansionPanel Text="Acquisition and matching"
+                           Expanded="@IsAcquisitionOpen"
+                           ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "preferences"))">
+            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+                Settings that determine what is searched, ranked, filtered, and selected.
+            </MudText>
+
+            <MudExpansionPanels MultiExpansion="false" Class="admin-sub-panels">
+                <MudExpansionPanel Text="Download preferences"
+                                   Expanded="@IsPreferencesOpen"
+                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "preferences"))">
+                    <AdminDownloadsPanel />
+                </MudExpansionPanel>
+
+                <MudExpansionPanel Text="Quality profiles"
+                                   Expanded="@IsQualityOpen"
+                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "quality"))">
+                    <AdminQualityProfilesPanel />
+                </MudExpansionPanel>
+
+                <MudExpansionPanel Text="Auto quality assignment rules"
+                                   Expanded="@IsProfileAssignmentOpen"
+                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "assignment"))">
+                    <AdminProfileAssignmentPanel />
+                </MudExpansionPanel>
+
+                <MudExpansionPanel Text="Custom format rules"
+                                   Expanded="@IsCustomFormatsOpen"
+                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "formats"))">
+                    <AdminCustomFormatsPanel />
+                </MudExpansionPanel>
+
+                <MudExpansionPanel Text="Indexer sources"
+                                   Expanded="@IsIndexersOpen"
+                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "indexers"))">
+                    <AdminIndexersPanel />
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        </MudExpansionPanel>
+
+        <MudExpansionPanel Text="Library destination"
+                           Expanded="@IsLibraryOpen"
+                           ExpandedChanged="@(expanded => ToggleSection(expanded, "library", "organization"))">
+            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+                Where completed media is written and how it is named.
+            </MudText>
+
+            <MudExpansionPanels MultiExpansion="false" Class="admin-sub-panels">
+                <MudExpansionPanel Text="Naming, paths, and transfer"
+                                   Expanded="@IsLibraryOrganizationOpen"
+                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "library", "organization"))">
+                    <AdminLibraryOrganizationPanel />
+                </MudExpansionPanel>
+
+                <MudExpansionPanel Text="Network shares"
+                                   Expanded="@IsNetworkSharesOpen"
+                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "library", "network"))">
+                    <AdminNetworkSharesPanel />
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        </MudExpansionPanel>
+
+        <MudExpansionPanel Text="Jobs and schedules"
+                           Expanded="@IsOperationsOpen"
+                           ExpandedChanged="@(expanded => ToggleSection(expanded, "operations", null))">
+            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+                Retry queues, upgrade scans, schedule jobs, and runtime activity.
+            </MudText>
+            <AdminJobsPanel />
+        </MudExpansionPanel>
+
+        <MudExpansionPanel Text="Users and roles"
+                           Expanded="@IsUsersOpen"
+                           ExpandedChanged="@(expanded => ToggleSection(expanded, "users", null))">
+            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+                Roles, auto-approval permissions, and who can act as an admin.
+            </MudText>
+            <AdminUsersPanel />
+        </MudExpansionPanel>
+
+        <MudExpansionPanel Text="Maintenance and database"
+                           Expanded="@IsMaintenanceOpen"
+                           ExpandedChanged="@(expanded => ToggleSection(expanded, "maintenance", null))">
+            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+                Safe cleanup, backups, compaction, and factory reset.
+            </MudText>
+            <AdminDatabasePanel />
+        </MudExpansionPanel>
+    </MudExpansionPanels>
 </MudContainer>
 
 @code {
-    // Top-level tab keys — must match the MudTabPanel order above. Used for ?tab= deep links.
-    private static readonly string[] TabKeys = { "overview", "requests", "downloads", "library", "jobs", "users", "system" };
-    // Sub-tab keys per group — must match each nested MudTabPanel order. Used for ?sub= deep links.
     private static readonly string[] RequestsSubKeys = { "approvals", "issues" };
-    // "quality" is kept as the key for the profiles tab so existing ?sub=quality bookmarks and the legacy
-    // ?tab=quality alias below still land on the right place after Quality Rules became Quality Profiles.
-    private static readonly string[] DownloadsSubKeys = { "preferences", "quality", "assignment", "formats", "indexers" };
+    private static readonly string[] AcquisitionSubKeys = { "preferences", "quality", "assignment", "formats", "indexers" };
     private static readonly string[] LibrarySubKeys = { "organization", "network" };
 
-    // Pre-consolidation single-level keys: old bookmarks and cross-links (e.g. /admin?tab=quality)
-    // land on the right nested tab instead of falling back to Overview.
-    private static readonly Dictionary<string, (string Tab, string? Sub)> LegacyKeys = new()
+    // Keep legacy links and short aliases from older admin routes working.
+    private static readonly Dictionary<string, (string Section, string? Sub)> LegacyKeys = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["health"] = ("overview", null),
+        ["health"] = ("platform", null),
+        ["overview"] = ("platform", null),
         ["approvals"] = ("requests", "approvals"),
         ["issues"] = ("requests", "issues"),
-        ["quality"] = ("downloads", "quality"),
-        ["indexers"] = ("downloads", "indexers"),
+        ["downloads"] = ("acquisition", "preferences"),
+        ["quality"] = ("acquisition", "quality"),
+        ["assignment"] = ("acquisition", "assignment"),
+        ["formats"] = ("acquisition", "formats"),
+        ["indexers"] = ("acquisition", "indexers"),
+        ["library"] = ("library", "organization"),
         ["network"] = ("library", "network"),
+        ["jobs"] = ("operations", null),
+        ["users"] = ("users", null),
+        ["system"] = ("maintenance", null),
     };
 
-    private int _activeIndex;
-    private int _requestsSub;
-    private int _downloadsSub;
-    private int _librarySub;
+    private string _activeSection = "platform";
+    private string? _activeSub;
 
     [SupplyParameterFromQuery(Name = "tab")]
     public string? Tab { get; set; }
@@ -109,43 +170,349 @@
 
     protected override void OnParametersSet()
     {
-        var tab = Tab?.ToLowerInvariant() ?? string.Empty;
-        var sub = Sub?.ToLowerInvariant();
-        if (LegacyKeys.TryGetValue(tab, out var mapped)) (tab, sub) = (mapped.Tab, mapped.Sub ?? sub);
-
-        var idx = Array.IndexOf(TabKeys, tab);
-        if (idx >= 0) _activeIndex = idx;
-
-        if (sub is not null)
+        var tab = (Tab ?? string.Empty).ToLowerInvariant();
+        var sub = (Sub ?? string.Empty).ToLowerInvariant();
+        if (LegacyKeys.TryGetValue(tab, out var mapped))
         {
-            SetSub(RequestsSubKeys, sub, ref _requestsSub);
-            SetSub(DownloadsSubKeys, sub, ref _downloadsSub);
-            SetSub(LibrarySubKeys, sub, ref _librarySub);
+            tab = mapped.Section;
+            if (mapped.Sub is not null) sub = mapped.Sub;
+        }
+
+        switch (tab)
+        {
+            case "platform":
+            case "health":
+            case "overview":
+                OpenSection("platform");
+                break;
+            case "requests":
+                OpenSection("requests", NormalizeSub(sub, RequestsSubKeys, "approvals"));
+                break;
+            case "downloads":
+            case "acquisition":
+                OpenSection("acquisition", NormalizeSub(sub, AcquisitionSubKeys, "preferences"));
+                break;
+            case "library":
+                OpenSection("library", NormalizeSub(sub, LibrarySubKeys, "organization"));
+                break;
+            case "jobs":
+            case "operations":
+                OpenSection("operations");
+                break;
+            case "users":
+                OpenSection("users");
+                break;
+            case "system":
+            case "maintenance":
+                OpenSection("maintenance");
+                break;
+            default:
+                OpenSection("platform");
+                break;
         }
     }
 
-    private static void SetSub(string[] keys, string sub, ref int field)
+    private bool IsPlatformOpen
     {
-        var i = Array.IndexOf(keys, sub);
-        if (i >= 0) field = i;
+        get => _activeSection == "platform";
+        set
+        {
+            if (value) OpenSection("platform");
+            else if (_activeSection == "platform")
+            {
+                _activeSection = string.Empty;
+                _activeSub = null;
+                SyncUrl();
+            }
+        }
     }
 
-    private void OnTabChanged(int index) { _activeIndex = index; SyncUrl(); }
-    private void OnRequestsSubChanged(int index) { _requestsSub = index; SyncUrl(); }
-    private void OnDownloadsSubChanged(int index) { _downloadsSub = index; SyncUrl(); }
-    private void OnLibrarySubChanged(int index) { _librarySub = index; SyncUrl(); }
+    private bool IsRequestsOpen
+    {
+        get => _activeSection == "requests";
+        set
+        {
+            if (value) OpenSection("requests", _activeSub is null ? "approvals" : _activeSub);
+            else if (_activeSection == "requests")
+            {
+                _activeSection = string.Empty;
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
 
-    // Keep the URL in sync so refresh/share lands on the same (sub-)tab.
+    private bool IsApprovalsOpen
+    {
+        get => _activeSection == "requests" && _activeSub == "approvals";
+        set
+        {
+            if (value) OpenSection("requests", "approvals");
+            else if (_activeSection == "requests" && _activeSub == "approvals")
+            {
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private bool IsIssuesOpen
+    {
+        get => _activeSection == "requests" && _activeSub == "issues";
+        set
+        {
+            if (value) OpenSection("requests", "issues");
+            else if (_activeSection == "requests" && _activeSub == "issues")
+            {
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private bool IsAcquisitionOpen
+    {
+        get => _activeSection == "acquisition";
+        set
+        {
+            if (value) OpenSection("acquisition", _activeSub is null ? "preferences" : _activeSub);
+            else if (_activeSection == "acquisition")
+            {
+                _activeSection = string.Empty;
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private bool IsPreferencesOpen
+    {
+        get => _activeSection == "acquisition" && _activeSub == "preferences";
+        set
+        {
+            if (value) OpenSection("acquisition", "preferences");
+            else if (_activeSection == "acquisition" && _activeSub == "preferences")
+            {
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private bool IsQualityOpen
+    {
+        get => _activeSection == "acquisition" && _activeSub == "quality";
+        set
+        {
+            if (value) OpenSection("acquisition", "quality");
+            else if (_activeSection == "acquisition" && _activeSub == "quality")
+            {
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private bool IsProfileAssignmentOpen
+    {
+        get => _activeSection == "acquisition" && _activeSub == "assignment";
+        set
+        {
+            if (value) OpenSection("acquisition", "assignment");
+            else if (_activeSection == "acquisition" && _activeSub == "assignment")
+            {
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private bool IsCustomFormatsOpen
+    {
+        get => _activeSection == "acquisition" && _activeSub == "formats";
+        set
+        {
+            if (value) OpenSection("acquisition", "formats");
+            else if (_activeSection == "acquisition" && _activeSub == "formats")
+            {
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private bool IsIndexersOpen
+    {
+        get => _activeSection == "acquisition" && _activeSub == "indexers";
+        set
+        {
+            if (value) OpenSection("acquisition", "indexers");
+            else if (_activeSection == "acquisition" && _activeSub == "indexers")
+            {
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private bool IsLibraryOpen
+    {
+        get => _activeSection == "library";
+        set
+        {
+            if (value) OpenSection("library", _activeSub is null ? "organization" : _activeSub);
+            else if (_activeSection == "library")
+            {
+                _activeSection = string.Empty;
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private bool IsLibraryOrganizationOpen
+    {
+        get => _activeSection == "library" && _activeSub == "organization";
+        set
+        {
+            if (value) OpenSection("library", "organization");
+            else if (_activeSection == "library" && _activeSub == "organization")
+            {
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private bool IsNetworkSharesOpen
+    {
+        get => _activeSection == "library" && _activeSub == "network";
+        set
+        {
+            if (value) OpenSection("library", "network");
+            else if (_activeSection == "library" && _activeSub == "network")
+            {
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private bool IsOperationsOpen
+    {
+        get => _activeSection == "operations";
+        set
+        {
+            if (value) OpenSection("operations");
+            else if (_activeSection == "operations")
+            {
+                _activeSection = string.Empty;
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private bool IsUsersOpen
+    {
+        get => _activeSection == "users";
+        set
+        {
+            if (value) OpenSection("users");
+            else if (_activeSection == "users")
+            {
+                _activeSection = string.Empty;
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private bool IsMaintenanceOpen
+    {
+        get => _activeSection == "maintenance";
+        set
+        {
+            if (value) OpenSection("maintenance");
+            else if (_activeSection == "maintenance")
+            {
+                _activeSection = string.Empty;
+                _activeSub = string.Empty;
+                SyncUrl();
+            }
+        }
+    }
+
+    private void ToggleSection(bool expanded, string section, string? sub)
+    {
+        if (expanded) OpenSection(section, sub);
+        else if (_activeSection == section)
+        {
+            _activeSection = string.IsNullOrWhiteSpace(sub) ? string.Empty : section;
+            _activeSub = string.IsNullOrWhiteSpace(sub) ? string.Empty : string.Empty;
+            SyncUrl();
+        }
+    }
+
+    private void OpenSection(string section, string? sub = null)
+    {
+        _activeSection = section;
+        _activeSub = NormalizeSub(sub, GetSubKeys(section), GetDefaultSub(section));
+        SyncUrl();
+    }
+
+    private static string GetDefaultSub(string section) => section switch
+    {
+        "requests" => "approvals",
+        "acquisition" => "preferences",
+        "library" => "organization",
+        _ => string.Empty
+    };
+
+    private static string[] GetSubKeys(string section) => section switch
+    {
+        "requests" => RequestsSubKeys,
+        "acquisition" => AcquisitionSubKeys,
+        "library" => LibrarySubKeys,
+        _ => Array.Empty<string>()
+    };
+
+    private static string NormalizeSub(string? sub, string[] keys, string defaultSub)
+    {
+        if (string.IsNullOrWhiteSpace(sub)) return defaultSub;
+        if (keys.Length == 0) return string.Empty;
+        var n = sub.Trim().ToLowerInvariant();
+        return keys.Contains(n) ? n : defaultSub;
+    }
+
     private void SyncUrl()
     {
-        var tab = TabKeys[_activeIndex];
-        var sub = tab switch
+        if (string.IsNullOrWhiteSpace(_activeSection))
         {
-            "requests" => RequestsSubKeys[_requestsSub],
-            "downloads" => DownloadsSubKeys[_downloadsSub],
-            "library" => LibrarySubKeys[_librarySub],
+            Nav.NavigateTo("/admin", forceLoad: false, replace: true);
+            return;
+        }
+
+        var tab = _activeSection switch
+        {
+            "platform" => "overview",
+            "requests" => "requests",
+            "acquisition" => "downloads",
+            "library" => "library",
+            "operations" => "jobs",
+            "users" => "users",
+            "maintenance" => "system",
+            _ => "overview"
+        };
+
+        var sub = _activeSection switch
+        {
+            "requests" => NormalizeSub(_activeSub, RequestsSubKeys, "approvals"),
+            "acquisition" => NormalizeSub(_activeSub, AcquisitionSubKeys, "preferences"),
+            "library" => NormalizeSub(_activeSub, LibrarySubKeys, "organization"),
             _ => null
         };
+
         Nav.NavigateTo(sub is null ? $"/admin?tab={tab}" : $"/admin?tab={tab}&sub={sub}", forceLoad: false, replace: true);
     }
 }
