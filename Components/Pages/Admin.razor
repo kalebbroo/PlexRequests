@@ -2,165 +2,176 @@
 @attribute [Authorize(Roles = "Admin")]
 @inject NavigationManager Nav
 
-<PageTitle>Admin - Plex Requests</PageTitle>
+<PageTitle>@ActiveDestination.Label - Admin - Plex Requests</PageTitle>
 
-<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6">
-    <div class="mb-4 admin-page-intro">
-        <MudText Typo="Typo.h4">Admin</MudText>
-        <MudText Typo="Typo.body2" Class="text-secondary">
-            Settings are grouped by outcome, not by page route. Expand one section and stay in the workflow.
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="admin-page">
+    <header class="admin-hero">
+        <MudText Typo="Typo.overline" Class="admin-hero-kicker">Settings</MudText>
+        <MudText Typo="Typo.h3" HtmlTag="h1">Admin</MudText>
+        <MudText Typo="Typo.body1" Class="text-secondary admin-hero-copy">
+            Configure requests, downloads, your library, and the services that keep everything running.
         </MudText>
+    </header>
+
+    <div class="admin-mobile-picker">
+        <MudSelect T="string"
+                   Label="Admin section"
+                   Value="_activeKey"
+                   ValueChanged="OnMobileSelectionChanged"
+                   Variant="Variant.Outlined"
+                   FullWidth="true"
+                   aria-label="Admin section"
+                   Adornment="Adornment.Start"
+                   AdornmentIcon="@Icons.Material.Filled.Settings">
+            @foreach (var group in NavigationGroups)
+            {
+                @foreach (var destination in group.Destinations)
+                {
+                    <MudSelectItem T="string" Value="@destination.Key">
+                        @group.Label · @destination.Label
+                    </MudSelectItem>
+                }
+            }
+        </MudSelect>
     </div>
 
-    <MudExpansionPanels MultiExpansion="false" Class="admin-settings-panels">
-        <MudExpansionPanel Text="Platform health"
-                           Expanded="@IsPlatformOpen"
-                           ExpandedChanged="@(expanded => ToggleSection(expanded, "platform", null))">
-            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                Server status, active sessions, live download activity, and availability index.
-            </MudText>
-            <AdminServerHealthPanel />
-        </MudExpansionPanel>
+    <div class="admin-layout">
+        <aside class="admin-sidebar" aria-label="Admin settings">
+            <div class="admin-sidebar-title">
+                <MudIcon Icon="@Icons.Material.Filled.Settings" Size="Size.Small" />
+                <span>Admin settings</span>
+            </div>
 
-        <MudExpansionPanel Text="Request workflow"
-                           Expanded="@IsRequestsOpen"
-                           ExpandedChanged="@(expanded => ToggleSection(expanded, "requests", "approvals"))">
-            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                Incoming user queue and manual issue queue.
-            </MudText>
+            <nav>
+                @foreach (var group in NavigationGroups)
+                {
+                    <section class="admin-nav-group" aria-labelledby="@($"admin-group-{group.Key}")">
+                        <div id="@($"admin-group-{group.Key}")" class="admin-nav-group-label">@group.Label</div>
+                        @foreach (var destination in group.Destinations)
+                        {
+                            <button type="button"
+                                    class="@NavItemClass(destination)"
+                                    aria-current="@(destination.Key == _activeKey ? "page" : null)"
+                                    @onclick="() => NavigateTo(destination)">
+                                <MudIcon Icon="@destination.Icon" Size="Size.Small" />
+                                <span>@destination.Label</span>
+                            </button>
+                        }
+                    </section>
+                }
+            </nav>
+        </aside>
 
-            <MudExpansionPanels MultiExpansion="false" Class="admin-sub-panels">
-                <MudExpansionPanel Text="Media requests"
-                                   Expanded="@IsApprovalsOpen"
-                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "requests", "approvals"))">
-                    <AdminApprovalsPanel />
-                </MudExpansionPanel>
+        <main class="admin-content" aria-labelledby="admin-content-title">
+            <header class="admin-content-header">
+                <div class="admin-breadcrumb">Admin <span aria-hidden="true">/</span> @ActiveDestination.Group</div>
+                <div class="admin-content-heading">
+                    <div class="admin-content-icon" aria-hidden="true">
+                        <MudIcon Icon="@ActiveDestination.Icon" />
+                    </div>
+                    <div>
+                        <MudText Typo="Typo.h4" HtmlTag="h2" id="admin-content-title">@ActiveDestination.Label</MudText>
+                        <MudText Typo="Typo.body2" Class="text-secondary admin-content-description">
+                            @ActiveDestination.Description
+                        </MudText>
+                    </div>
+                </div>
+            </header>
 
-                <MudExpansionPanel Text="Reported issues"
-                                   Expanded="@IsIssuesOpen"
-                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "requests", "issues"))">
-                    <AdminIssuesPanel />
-                </MudExpansionPanel>
-            </MudExpansionPanels>
-        </MudExpansionPanel>
-
-        <MudExpansionPanel Text="Acquisition and matching"
-                           Expanded="@IsAcquisitionOpen"
-                           ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "preferences"))">
-            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                Settings that determine what is searched, ranked, filtered, and selected.
-            </MudText>
-
-            <MudExpansionPanels MultiExpansion="false" Class="admin-sub-panels">
-                <MudExpansionPanel Text="Download preferences"
-                                   Expanded="@IsPreferencesOpen"
-                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "preferences"))">
-                    <AdminDownloadsPanel />
-                </MudExpansionPanel>
-
-                <MudExpansionPanel Text="Quality profiles"
-                                   Expanded="@IsQualityOpen"
-                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "quality"))">
-                    <AdminQualityProfilesPanel />
-                </MudExpansionPanel>
-
-                <MudExpansionPanel Text="Auto quality assignment rules"
-                                   Expanded="@IsProfileAssignmentOpen"
-                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "assignment"))">
-                    <AdminProfileAssignmentPanel />
-                </MudExpansionPanel>
-
-                <MudExpansionPanel Text="Custom format rules"
-                                   Expanded="@IsCustomFormatsOpen"
-                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "formats"))">
-                    <AdminCustomFormatsPanel />
-                </MudExpansionPanel>
-
-                <MudExpansionPanel Text="Indexer sources"
-                                   Expanded="@IsIndexersOpen"
-                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "acquisition", "indexers"))">
-                    <AdminIndexersPanel />
-                </MudExpansionPanel>
-            </MudExpansionPanels>
-        </MudExpansionPanel>
-
-        <MudExpansionPanel Text="Library destination"
-                           Expanded="@IsLibraryOpen"
-                           ExpandedChanged="@(expanded => ToggleSection(expanded, "library", "organization"))">
-            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                Where completed media is written and how it is named.
-            </MudText>
-
-            <MudExpansionPanels MultiExpansion="false" Class="admin-sub-panels">
-                <MudExpansionPanel Text="Naming, paths, and transfer"
-                                   Expanded="@IsLibraryOrganizationOpen"
-                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "library", "organization"))">
-                    <AdminLibraryOrganizationPanel />
-                </MudExpansionPanel>
-
-                <MudExpansionPanel Text="Network shares"
-                                   Expanded="@IsNetworkSharesOpen"
-                                   ExpandedChanged="@(expanded => ToggleSection(expanded, "library", "network"))">
-                    <AdminNetworkSharesPanel />
-                </MudExpansionPanel>
-            </MudExpansionPanels>
-        </MudExpansionPanel>
-
-        <MudExpansionPanel Text="Jobs and schedules"
-                           Expanded="@IsOperationsOpen"
-                           ExpandedChanged="@(expanded => ToggleSection(expanded, "operations", null))">
-            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                Retry queues, upgrade scans, schedule jobs, and runtime activity.
-            </MudText>
-            <AdminJobsPanel />
-        </MudExpansionPanel>
-
-        <MudExpansionPanel Text="Users and roles"
-                           Expanded="@IsUsersOpen"
-                           ExpandedChanged="@(expanded => ToggleSection(expanded, "users", null))">
-            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                Roles, auto-approval permissions, and who can act as an admin.
-            </MudText>
-            <AdminUsersPanel />
-        </MudExpansionPanel>
-
-        <MudExpansionPanel Text="Maintenance and database"
-                           Expanded="@IsMaintenanceOpen"
-                           ExpandedChanged="@(expanded => ToggleSection(expanded, "maintenance", null))">
-            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                Safe cleanup, backups, compaction, and factory reset.
-            </MudText>
-            <AdminDatabasePanel />
-        </MudExpansionPanel>
-    </MudExpansionPanels>
+            <div class="admin-content-body" @key="_activeKey">
+                @switch (_activeKey)
+                {
+                    case "overview":
+                        <AdminServerHealthPanel />
+                        break;
+                    case "requests":
+                        <AdminApprovalsPanel />
+                        break;
+                    case "issues":
+                        <AdminIssuesPanel />
+                        break;
+                    case "download-rules":
+                        <AdminDownloadsPanel />
+                        break;
+                    case "quality-profiles":
+                        <AdminQualityProfilesPanel />
+                        break;
+                    case "profile-assignment":
+                        <AdminProfileAssignmentPanel />
+                        break;
+                    case "custom-formats":
+                        <AdminCustomFormatsPanel />
+                        break;
+                    case "indexers":
+                        <AdminIndexersPanel />
+                        break;
+                    case "organization":
+                        <AdminLibraryOrganizationPanel />
+                        break;
+                    case "network-shares":
+                        <AdminNetworkSharesPanel />
+                        break;
+                    case "jobs":
+                        <AdminJobsPanel />
+                        break;
+                    case "users":
+                        <AdminUsersPanel />
+                        break;
+                    case "maintenance":
+                        <AdminDatabasePanel />
+                        break;
+                }
+            </div>
+        </main>
+    </div>
 </MudContainer>
 
 @code {
-    private static readonly string[] RequestsSubKeys = { "approvals", "issues" };
-    private static readonly string[] AcquisitionSubKeys = { "preferences", "quality", "assignment", "formats", "indexers" };
-    private static readonly string[] LibrarySubKeys = { "organization", "network" };
+    private const string DefaultKey = "overview";
 
-    // Keep legacy links and short aliases from older admin routes working.
-    private static readonly Dictionary<string, (string Section, string? Sub)> LegacyKeys = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly AdminNavGroup[] NavigationGroups =
     {
-        ["health"] = ("platform", null),
-        ["overview"] = ("platform", null),
-        ["approvals"] = ("requests", "approvals"),
-        ["issues"] = ("requests", "issues"),
-        ["downloads"] = ("acquisition", "preferences"),
-        ["quality"] = ("acquisition", "quality"),
-        ["assignment"] = ("acquisition", "assignment"),
-        ["formats"] = ("acquisition", "formats"),
-        ["indexers"] = ("acquisition", "indexers"),
-        ["library"] = ("library", "organization"),
-        ["network"] = ("library", "network"),
-        ["jobs"] = ("operations", null),
-        ["users"] = ("users", null),
-        ["system"] = ("maintenance", null),
+        new("overview", "Overview",
+        [
+            new("overview", "Overview", "System status", "See Plex connectivity, active streams, downloads, and library availability at a glance.", Icons.Material.Filled.Dashboard, "/admin?tab=overview")
+        ]),
+        new("moderation", "Request management",
+        [
+            new("requests", "Request management", "Request queue", "Review incoming requests and make approval decisions from one queue.", Icons.Material.Filled.Assignment, "/admin?tab=requests&sub=approvals"),
+            new("issues", "Request management", "Reported issues", "Resolve playback problems and retry media that needs attention.", Icons.Material.Filled.ReportProblem, "/admin?tab=requests&sub=issues")
+        ]),
+        new("acquisition", "Acquisition",
+        [
+            new("download-rules", "Acquisition", "Download rules", "Set global release filters, series monitoring behavior, and pack preferences.", Icons.Material.Filled.Download, "/admin?tab=downloads&sub=preferences"),
+            new("quality-profiles", "Acquisition", "Quality profiles", "Choose acceptable quality tiers, upgrade cutoffs, size limits, and format scores.", Icons.Material.Filled.HighQuality, "/admin?tab=downloads&sub=quality"),
+            new("profile-assignment", "Acquisition", "Profile assignment", "Automatically apply quality profiles by media type, genre, or title.", Icons.Material.Filled.AutoAwesome, "/admin?tab=downloads&sub=assignment"),
+            new("custom-formats", "Acquisition", "Custom formats", "Rank or reject releases using reusable matching rules and profile-specific scores.", Icons.Material.Filled.Tune, "/admin?tab=downloads&sub=formats"),
+            new("indexers", "Acquisition", "Indexers", "Manage release sources, priorities, categories, and connection health.", Icons.Material.Filled.TravelExplore, "/admin?tab=downloads&sub=indexers")
+        ]),
+        new("library", "Library",
+        [
+            new("organization", "Library", "Organization", "Control destination paths, naming templates, routing rules, and file transfers.", Icons.Material.Filled.Folder, "/admin?tab=library&sub=organization"),
+            new("network-shares", "Library", "Network storage", "Add, test, and monitor NAS or other network-backed library locations.", Icons.Material.Filled.Storage, "/admin?tab=library&sub=network")
+        ]),
+        new("operations", "Operations",
+        [
+            new("jobs", "Operations", "Jobs and activity", "Inspect missing media, upcoming episodes, retries, upgrades, schedules, and run history.", Icons.Material.Filled.Schedule, "/admin?tab=jobs")
+        ]),
+        new("access", "Access",
+        [
+            new("users", "Access", "Users and permissions", "Manage administrator access, approval behavior, and user roles.", Icons.Material.Filled.Group, "/admin?tab=users")
+        ]),
+        new("system", "System",
+        [
+            new("maintenance", "System", "Database and maintenance", "Back up data, clear stale state, repair indexes, or perform a controlled reset.", Icons.Material.Filled.SettingsBackupRestore, "/admin?tab=system")
+        ])
     };
 
-    private string _activeSection = "platform";
-    private string? _activeSub;
+    private static readonly IReadOnlyDictionary<string, AdminDestination> Destinations = NavigationGroups
+        .SelectMany(group => group.Destinations)
+        .ToDictionary(destination => destination.Key, StringComparer.OrdinalIgnoreCase);
+
+    private string _activeKey = DefaultKey;
 
     [SupplyParameterFromQuery(Name = "tab")]
     public string? Tab { get; set; }
@@ -168,351 +179,56 @@
     [SupplyParameterFromQuery(Name = "sub")]
     public string? Sub { get; set; }
 
-    protected override void OnParametersSet()
-    {
-        var tab = (Tab ?? string.Empty).ToLowerInvariant();
-        var sub = (Sub ?? string.Empty).ToLowerInvariant();
-        if (LegacyKeys.TryGetValue(tab, out var mapped))
-        {
-            tab = mapped.Section;
-            if (mapped.Sub is not null) sub = mapped.Sub;
-        }
+    private AdminDestination ActiveDestination => Destinations[_activeKey];
 
-        switch (tab)
-        {
-            case "platform":
-            case "health":
-            case "overview":
-                OpenSection("platform");
-                break;
-            case "requests":
-                OpenSection("requests", NormalizeSub(sub, RequestsSubKeys, "approvals"));
-                break;
-            case "downloads":
-            case "acquisition":
-                OpenSection("acquisition", NormalizeSub(sub, AcquisitionSubKeys, "preferences"));
-                break;
-            case "library":
-                OpenSection("library", NormalizeSub(sub, LibrarySubKeys, "organization"));
-                break;
-            case "jobs":
-            case "operations":
-                OpenSection("operations");
-                break;
-            case "users":
-                OpenSection("users");
-                break;
-            case "system":
-            case "maintenance":
-                OpenSection("maintenance");
-                break;
-            default:
-                OpenSection("platform");
-                break;
-        }
-    }
+    protected override void OnParametersSet() => _activeKey = ResolveKey(Tab, Sub);
 
-    private bool IsPlatformOpen
+    private static string ResolveKey(string? tab, string? sub)
     {
-        get => _activeSection == "platform";
-        set
+        var normalizedTab = tab?.Trim().ToLowerInvariant() ?? string.Empty;
+        var normalizedSub = sub?.Trim().ToLowerInvariant() ?? string.Empty;
+
+        return normalizedTab switch
         {
-            if (value) OpenSection("platform");
-            else if (_activeSection == "platform")
+            "requests" => normalizedSub == "issues" ? "issues" : "requests",
+            "downloads" or "acquisition" => normalizedSub switch
             {
-                _activeSection = string.Empty;
-                _activeSub = null;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsRequestsOpen
-    {
-        get => _activeSection == "requests";
-        set
-        {
-            if (value) OpenSection("requests", _activeSub is null ? "approvals" : _activeSub);
-            else if (_activeSection == "requests")
-            {
-                _activeSection = string.Empty;
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsApprovalsOpen
-    {
-        get => _activeSection == "requests" && _activeSub == "approvals";
-        set
-        {
-            if (value) OpenSection("requests", "approvals");
-            else if (_activeSection == "requests" && _activeSub == "approvals")
-            {
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsIssuesOpen
-    {
-        get => _activeSection == "requests" && _activeSub == "issues";
-        set
-        {
-            if (value) OpenSection("requests", "issues");
-            else if (_activeSection == "requests" && _activeSub == "issues")
-            {
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsAcquisitionOpen
-    {
-        get => _activeSection == "acquisition";
-        set
-        {
-            if (value) OpenSection("acquisition", _activeSub is null ? "preferences" : _activeSub);
-            else if (_activeSection == "acquisition")
-            {
-                _activeSection = string.Empty;
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsPreferencesOpen
-    {
-        get => _activeSection == "acquisition" && _activeSub == "preferences";
-        set
-        {
-            if (value) OpenSection("acquisition", "preferences");
-            else if (_activeSection == "acquisition" && _activeSub == "preferences")
-            {
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsQualityOpen
-    {
-        get => _activeSection == "acquisition" && _activeSub == "quality";
-        set
-        {
-            if (value) OpenSection("acquisition", "quality");
-            else if (_activeSection == "acquisition" && _activeSub == "quality")
-            {
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsProfileAssignmentOpen
-    {
-        get => _activeSection == "acquisition" && _activeSub == "assignment";
-        set
-        {
-            if (value) OpenSection("acquisition", "assignment");
-            else if (_activeSection == "acquisition" && _activeSub == "assignment")
-            {
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsCustomFormatsOpen
-    {
-        get => _activeSection == "acquisition" && _activeSub == "formats";
-        set
-        {
-            if (value) OpenSection("acquisition", "formats");
-            else if (_activeSection == "acquisition" && _activeSub == "formats")
-            {
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsIndexersOpen
-    {
-        get => _activeSection == "acquisition" && _activeSub == "indexers";
-        set
-        {
-            if (value) OpenSection("acquisition", "indexers");
-            else if (_activeSection == "acquisition" && _activeSub == "indexers")
-            {
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsLibraryOpen
-    {
-        get => _activeSection == "library";
-        set
-        {
-            if (value) OpenSection("library", _activeSub is null ? "organization" : _activeSub);
-            else if (_activeSection == "library")
-            {
-                _activeSection = string.Empty;
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsLibraryOrganizationOpen
-    {
-        get => _activeSection == "library" && _activeSub == "organization";
-        set
-        {
-            if (value) OpenSection("library", "organization");
-            else if (_activeSection == "library" && _activeSub == "organization")
-            {
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsNetworkSharesOpen
-    {
-        get => _activeSection == "library" && _activeSub == "network";
-        set
-        {
-            if (value) OpenSection("library", "network");
-            else if (_activeSection == "library" && _activeSub == "network")
-            {
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsOperationsOpen
-    {
-        get => _activeSection == "operations";
-        set
-        {
-            if (value) OpenSection("operations");
-            else if (_activeSection == "operations")
-            {
-                _activeSection = string.Empty;
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsUsersOpen
-    {
-        get => _activeSection == "users";
-        set
-        {
-            if (value) OpenSection("users");
-            else if (_activeSection == "users")
-            {
-                _activeSection = string.Empty;
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private bool IsMaintenanceOpen
-    {
-        get => _activeSection == "maintenance";
-        set
-        {
-            if (value) OpenSection("maintenance");
-            else if (_activeSection == "maintenance")
-            {
-                _activeSection = string.Empty;
-                _activeSub = string.Empty;
-                SyncUrl();
-            }
-        }
-    }
-
-    private void ToggleSection(bool expanded, string section, string? sub)
-    {
-        if (expanded) OpenSection(section, sub);
-        else if (_activeSection == section)
-        {
-            _activeSection = string.IsNullOrWhiteSpace(sub) ? string.Empty : section;
-            _activeSub = string.IsNullOrWhiteSpace(sub) ? string.Empty : string.Empty;
-            SyncUrl();
-        }
-    }
-
-    private void OpenSection(string section, string? sub = null)
-    {
-        _activeSection = section;
-        _activeSub = NormalizeSub(sub, GetSubKeys(section), GetDefaultSub(section));
-        SyncUrl();
-    }
-
-    private static string GetDefaultSub(string section) => section switch
-    {
-        "requests" => "approvals",
-        "acquisition" => "preferences",
-        "library" => "organization",
-        _ => string.Empty
-    };
-
-    private static string[] GetSubKeys(string section) => section switch
-    {
-        "requests" => RequestsSubKeys,
-        "acquisition" => AcquisitionSubKeys,
-        "library" => LibrarySubKeys,
-        _ => Array.Empty<string>()
-    };
-
-    private static string NormalizeSub(string? sub, string[] keys, string defaultSub)
-    {
-        if (string.IsNullOrWhiteSpace(sub)) return defaultSub;
-        if (keys.Length == 0) return string.Empty;
-        var n = sub.Trim().ToLowerInvariant();
-        return keys.Contains(n) ? n : defaultSub;
-    }
-
-    private void SyncUrl()
-    {
-        if (string.IsNullOrWhiteSpace(_activeSection))
-        {
-            Nav.NavigateTo("/admin", forceLoad: false, replace: true);
-            return;
-        }
-
-        var tab = _activeSection switch
-        {
-            "platform" => "overview",
-            "requests" => "requests",
-            "acquisition" => "downloads",
-            "library" => "library",
-            "operations" => "jobs",
+                "quality" => "quality-profiles",
+                "assignment" => "profile-assignment",
+                "formats" => "custom-formats",
+                "indexers" => "indexers",
+                _ => "download-rules"
+            },
+            "library" => normalizedSub == "network" ? "network-shares" : "organization",
+            "jobs" or "operations" => "jobs",
             "users" => "users",
-            "maintenance" => "system",
-            _ => "overview"
+            "system" or "maintenance" => "maintenance",
+            "approvals" => "requests",
+            "issues" => "issues",
+            "quality" => "quality-profiles",
+            "assignment" => "profile-assignment",
+            "formats" => "custom-formats",
+            "indexers" => "indexers",
+            "network" => "network-shares",
+            "health" or "overview" or "platform" or "" => DefaultKey,
+            _ => DefaultKey
         };
-
-        var sub = _activeSection switch
-        {
-            "requests" => NormalizeSub(_activeSub, RequestsSubKeys, "approvals"),
-            "acquisition" => NormalizeSub(_activeSub, AcquisitionSubKeys, "preferences"),
-            "library" => NormalizeSub(_activeSub, LibrarySubKeys, "organization"),
-            _ => null
-        };
-
-        Nav.NavigateTo(sub is null ? $"/admin?tab={tab}" : $"/admin?tab={tab}&sub={sub}", forceLoad: false, replace: true);
     }
+
+    private string NavItemClass(AdminDestination destination) =>
+        destination.Key == _activeKey ? "admin-nav-item active" : "admin-nav-item";
+
+    private void OnMobileSelectionChanged(string key)
+    {
+        if (Destinations.TryGetValue(key, out var destination)) NavigateTo(destination);
+    }
+
+    private void NavigateTo(AdminDestination destination)
+    {
+        _activeKey = destination.Key;
+        Nav.NavigateTo(destination.Url);
+    }
+
+    private sealed record AdminNavGroup(string Key, string Label, AdminDestination[] Destinations);
+    private sealed record AdminDestination(string Key, string Group, string Label, string Description, string Icon, string Url);
 }

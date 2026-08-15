@@ -3,8 +3,7 @@
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 @inject IDialogService Dialogs
 
-<div class="d-flex justify-content-between align-items-center mb-2">
-    <h2>Indexers</h2>
+<div class="d-flex justify-content-end align-items-center mb-2">
     <div class="d-flex gap-2">
         <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Add"
                    OnClick="() => OpenDialog(null)">Add indexer</MudButton>
