@@ -13,10 +13,11 @@ namespace PlexRequestsHosted.Services.Implementations;
 /// Model note: MusicBrainz keys entities by MBID (a GUID string), so music flows through the pipeline
 /// on the string <c>ExternalId</c> (not the TMDb int). See MediaRequestEntity.ExternalId.
 /// </summary>
-public class MusicBrainzMetadataProvider(ILogger<MusicBrainzMetadataProvider> logger) : IMediaMetadataProvider
+public class MusicBrainzMetadataProvider(HttpClient http, ILogger<MusicBrainzMetadataProvider> logger) : IMediaMetadataProvider
 {
     private const string ApiBase = "https://musicbrainz.org/ws/2";
     // MusicBrainz requires a descriptive User-Agent; set on the typed client at registration.
+    private readonly HttpClient _http = http;
 
     public string ProviderKey => "musicbrainz";
     public bool RequiresApiKey => false;                 // keyless -> good default fallback for music

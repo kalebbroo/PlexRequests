@@ -105,55 +105,58 @@ public class FulfillmentTorrentService(AppDbContext db, ILogger<FulfillmentTorre
     {
         if (updates.Count == 0) return 0;
 
-        var ids = updates.Select(u => u.TorrentId).ToList();
+        var ids = updates.Select(u => u.TorrentId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var rows = await db.FulfillmentTorrents.Where(t => ids.Contains(t.TorrentId)).ToListAsync();
-        var byId = rows.ToDictionary(r => r.TorrentId, StringComparer.OrdinalIgnoreCase);
+        // A physical torrent can legitimately back more than one fulfillment job. The database therefore
+        // guarantees uniqueness by (job, torrent), not by torrent alone. Keep every job mapping so one
+        // Deluge update advances them all instead of throwing while building a one-row dictionary.
+        var byId = rows
+            .GroupBy(r => r.TorrentId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
         var now = DateTime.UtcNow;
         var changed = 0;
 
         foreach (var u in updates)
         {
-            if (!byId.TryGetValue(u.TorrentId, out var row)) continue;
+            if (!byId.TryGetValue(u.TorrentId, out var matchingRows)) continue;
 
-            // ProgressChangedAt tracks when the number MOVED, not when we last looked — stall detection is
-            // meaningless otherwise, since polling frequently would keep a dead torrent looking fresh.
-            if (Math.Abs(u.Progress - row.Progress) > 0.01) row.ProgressChangedAt = now;
-
-            row.Progress = u.Progress;
-            row.Seeds = u.Seeds;
-            row.Peers = u.Peers;
-            row.DownloadRateBytesPerSec = u.DownloadRateBytesPerSec;
-            if (u.TotalSizeBytes > 0) row.TotalSizeBytes = u.TotalSizeBytes;
-            row.TrackerStatus = Trim(u.TrackerStatus, 512);
-            row.LastSeenAt = now;
-
-            // "Gone from the client" and "lost" are not the same thing. The overwhelmingly common reason a
-            // torrent disappears is that it was imported and removed — by this reconciler, or by the
-            // pipeline, or by an operator tidying up after the files were already in the library. Writing
-            // that off as Missing would eventually have the job re-plan and re-download content already on
-            // disk, so the import audit is consulted before believing the loss.
             var state = u.State;
-            if (state == TorrentTrackingState.Missing && await WasImportedAsync(row.TorrentId))
+            if (state == TorrentTrackingState.Missing && await WasImportedAsync(u.TorrentId))
             {
                 state = TorrentTrackingState.Imported;
                 logger.LogDebug("Torrent {Torrent} is gone from the client but its files were imported — recording Imported, not Missing",
-                    row.TorrentId);
+                    u.TorrentId);
             }
 
-            // A promotion to Imported carries no failure reason — it isn't one.
-            var reason = state == TorrentTrackingState.Imported ? null : u.Reason;
-
-            if (state != row.State)
+            foreach (var row in matchingRows)
             {
-                row.State = state;
-                if (state == TorrentTrackingState.Imported) row.ImportedAt = now;
-                if (state is TorrentTrackingState.Failed or TorrentTrackingState.Missing)
-                    row.FailReason = Trim(reason, 512);
-                logger.LogInformation("Torrent {Torrent} (job {JobId}) -> {State}{Reason}",
-                    row.TorrentId[..Math.Min(12, row.TorrentId.Length)], row.FulfillmentJobId, state,
-                    string.IsNullOrWhiteSpace(reason) ? "" : $": {reason}");
+                // ProgressChangedAt tracks when the number MOVED, not when we last looked — stall detection is
+                // meaningless otherwise, since polling frequently would keep a dead torrent looking fresh.
+                if (Math.Abs(u.Progress - row.Progress) > 0.01) row.ProgressChangedAt = now;
+
+                row.Progress = u.Progress;
+                row.Seeds = u.Seeds;
+                row.Peers = u.Peers;
+                row.DownloadRateBytesPerSec = u.DownloadRateBytesPerSec;
+                if (u.TotalSizeBytes > 0) row.TotalSizeBytes = u.TotalSizeBytes;
+                row.TrackerStatus = Trim(u.TrackerStatus, 512);
+                row.LastSeenAt = now;
+
+                // A promotion to Imported carries no failure reason — it isn't one.
+                var reason = state == TorrentTrackingState.Imported ? null : u.Reason;
+
+                if (state != row.State)
+                {
+                    row.State = state;
+                    if (state == TorrentTrackingState.Imported) row.ImportedAt = now;
+                    if (state is TorrentTrackingState.Failed or TorrentTrackingState.Missing)
+                        row.FailReason = Trim(reason, 512);
+                    logger.LogInformation("Torrent {Torrent} (job {JobId}) -> {State}{Reason}",
+                        row.TorrentId[..Math.Min(12, row.TorrentId.Length)], row.FulfillmentJobId, state,
+                        string.IsNullOrWhiteSpace(reason) ? "" : $": {reason}");
+                }
+                changed++;
             }
-            changed++;
         }
 
         await db.SaveChangesAsync();
