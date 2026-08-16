@@ -38,7 +38,6 @@ public class MonitoringPreferencesService(AppDbContext db) : IMonitoringPreferen
         row.AssumedAirTimeLocal = prefs.AssumedAirTimeLocal;
         row.AirTimeZoneId = prefs.AirTimeZoneId;
         row.PostAirDelayMinutes = Math.Clamp(prefs.PostAirDelayMinutes, 0, 1440);
-        row.RssSweepIntervalSeconds = Math.Clamp(prefs.RssSweepIntervalSeconds, 60, 86400);
         row.MaxSearchAttemptsPerEpisode = Math.Clamp(prefs.MaxSearchAttemptsPerEpisode, 1, 100);
         row.CalendarHorizonDays = Math.Clamp(prefs.CalendarHorizonDays, 1, 365);
         row.CalendarBackfillDays = Math.Clamp(prefs.CalendarBackfillDays, 0, 365);

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Api;
 
@@ -177,6 +178,73 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         }
     }
 
+    public async Task<CatalogCheckpointDto?> GetCatalogCheckpointAsync(int indexerId, CancellationToken ct)
+    {
+        try
+        {
+            var response = await _http.GetAsync($"/api/fulfillment/catalog/checkpoints/{indexerId}", ct);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadFromJsonAsync<CatalogCheckpointDto>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Catalog checkpoint {IndexerId} unavailable", indexerId);
+            return null;
+        }
+    }
+
+    public async Task<CatalogUpsertResultDto?> PushCatalogBatchAsync(CatalogBatchDto batch, CancellationToken ct)
+    {
+        try
+        {
+            var response = await _http.PostAsJsonAsync("/api/fulfillment/catalog/batches", batch, ct);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadFromJsonAsync<CatalogUpsertResultDto>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not commit catalog batch {BatchId}", batch.BatchId);
+            return null;
+        }
+    }
+
+    public async Task<CatalogCheckpointDto?> ReportCatalogFailureAsync(CatalogFailureDto failure, CancellationToken ct)
+    {
+        try
+        {
+            var response = await _http.PostAsJsonAsync("/api/fulfillment/catalog/failures", failure, ct);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadFromJsonAsync<CatalogCheckpointDto>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not report catalog failure for {Source}", failure.Source);
+            return null;
+        }
+    }
+
+    public async Task<IReadOnlyList<ReleaseCandidate>?> SearchCatalogAsync(FulfillmentJobDto job, CancellationToken ct)
+    {
+        try
+        {
+            var response = await _http.PostAsJsonAsync("/api/fulfillment/catalog/search", new CatalogQueryDto
+            {
+                Title = job.Title,
+                ImdbId = job.ImdbId,
+                MediaType = job.MediaType,
+                Year = job.Year,
+                Limit = 500
+            }, ct);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadFromJsonAsync<List<ReleaseCandidate>>(cancellationToken: ct) ?? new();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Catalog search unavailable for {Title}", job.Title);
+            return null;
+        }
+    }
+
     public async Task<int> ReportRssGrabsAsync(IReadOnlyList<RssGrabDto> grabs, CancellationToken ct)
     {
         try
@@ -265,21 +333,6 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
             // An empty list means "do nothing this pass", which is the correct response to not knowing.
             _logger.LogDebug(ex, "Active torrent list unavailable");
             return new();
-        }
-    }
-
-    public async Task<bool> SaveIndexerClearanceAsync(int indexerId, string cookieHeader, string userAgent, CancellationToken ct)
-    {
-        try
-        {
-            var resp = await _http.PostAsJsonAsync($"/api/fulfillment/indexers/{indexerId}/clearance",
-                new { CookieHeader = cookieHeader, UserAgent = userAgent }, ct);
-            return resp.IsSuccessStatusCode;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogDebug(ex, "Could not save clearance for indexer {IndexerId}", indexerId);
-            return false;
         }
     }
 

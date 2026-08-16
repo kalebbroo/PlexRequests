@@ -607,13 +607,13 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Property<bool>("EnableAutomaticSearch")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("EnableIngestion")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("EnableInteractiveSearch")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("EnableRecommendedFeed")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("EnableRss")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("Enabled")
@@ -676,6 +676,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.Property<int>("RateLimitPerMinute")
                         .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("SearchCircuitOpenUntil")
+                        .HasColumnType("TEXT");
 
                     b.Property<int?>("SeasonPackSeedTimeMinutes")
                         .HasColumnType("INTEGER");
@@ -1139,9 +1142,6 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("PostAirDelayMinutes")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("RssSweepIntervalSeconds")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("UpdatedAt")

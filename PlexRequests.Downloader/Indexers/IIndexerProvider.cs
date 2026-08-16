@@ -65,10 +65,20 @@ public interface IIndexerImplementation
 /// outcome breakdown (see <see cref="IndexerSearchResult"/>).</summary>
 public interface IIndexerClient
 {
-    Task<IndexerSearchResult> SearchAsync(FulfillmentJobDto job, CancellationToken ct);
+    Task<IndexerSearchResult> SearchAsync(
+        FulfillmentJobDto job,
+        CancellationToken ct,
+        IndexerSearchPurpose purpose = IndexerSearchPurpose.Automatic);
 
     /// <summary>Probe one configured indexer by id. Never throws — a failed probe is a result, not an error.</summary>
     Task<IndexerCapabilitiesDto> TestAsync(int indexerId, CancellationToken ct);
+}
+
+public enum IndexerSearchPurpose
+{
+    Automatic,
+    Interactive,
+    Monitoring
 }
 
 /// <summary>Shared JSON options: snake_case (EZTV/YTS) + numbers that may arrive as strings (EZTV).</summary>

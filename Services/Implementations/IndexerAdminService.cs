@@ -100,7 +100,7 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
         row.SupportsTv = dto.SupportsTv;
         row.SupportsAnime = dto.SupportsAnime;
         row.AnimeOnly = dto.AnimeOnly;
-        row.EnableRss = dto.EnableRss;
+        row.EnableIngestion = dto.EnableIngestion;
         row.EnableAutomaticSearch = dto.EnableAutomaticSearch;
         row.EnableInteractiveSearch = dto.EnableInteractiveSearch;
         row.EnableRecommendedFeed = dto.EnableRecommendedFeed;
@@ -231,10 +231,11 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
             SupportsTv = i.SupportsTv,
             SupportsAnime = i.SupportsAnime,
             AnimeOnly = i.AnimeOnly,
-            EnableRss = i.EnableRss,
+            EnableIngestion = i.EnableIngestion,
             EnableAutomaticSearch = i.EnableAutomaticSearch,
             EnableInteractiveSearch = i.EnableInteractiveSearch,
             EnableRecommendedFeed = i.EnableRecommendedFeed,
+            SearchCircuitOpenUntil = i.SearchCircuitOpenUntil,
             MinSeeders = i.MinSeeders,
             TimeoutSeconds = i.TimeoutSeconds,
             RateLimitPerMinute = i.RateLimitPerMinute,
@@ -242,26 +243,6 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
             MaxDetailFetches = i.MaxDetailFetches,
             MaxAgeDays = i.MaxAgeDays
         }).ToList();
-    }
-
-    /// <summary>
-    /// Store a clearance the downloader's solver earned. Encrypted like the API key, stamped so the panel
-    /// can show its age, and it clears the block state — the indexer is by definition no longer blocked.
-    /// </summary>
-    public async Task<bool> SaveClearanceAsync(int indexerId, string cookieHeader, string userAgent)
-    {
-        var row = await db.Indexers.FirstOrDefaultAsync(i => i.Id == indexerId);
-        if (row is null || string.IsNullOrWhiteSpace(cookieHeader)) return false;
-
-        row.ClearanceCookieEncrypted = _protector.Protect(cookieHeader.Trim());
-        row.UserAgent = string.IsNullOrWhiteSpace(userAgent) ? row.UserAgent : userAgent.Trim();
-        row.ClearanceObtainedAt = DateTime.UtcNow;
-        row.LastBlockReason = IndexerBlockReason.None;
-        row.LastBlockedAt = null;
-        row.UpdatedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync();
-        logger.LogInformation("Stored a solved clearance for indexer \"{Name}\"", row.Name);
-        return true;
     }
 
     public async Task ReportStatusAsync(List<IndexerStatusReportDto> reports)
@@ -300,6 +281,7 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
                 row.LastSuccessAt = row.LastSearchAt;
                 row.ConsecutiveFailures = 0;
                 row.LastError = null;
+                row.SearchCircuitOpenUntil = null;
             }
             else
             {
@@ -309,7 +291,10 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
                 {
                     row.LastBlockReason = r.BlockReason;
                     row.LastBlockedAt = row.LastSearchAt;
+                    row.SearchCircuitOpenUntil = row.LastSearchAt + SearchFailureDelay(r.BlockReason, row.ConsecutiveFailures);
                 }
+                else if (row.ConsecutiveFailures >= 3)
+                    row.SearchCircuitOpenUntil = row.LastSearchAt + SearchFailureDelay(IndexerBlockReason.None, row.ConsecutiveFailures);
             }
             // A block clears only on a genuine success, so the panel keeps showing "Blocked by Cloudflare"
             // until the indexer actually answers again rather than flickering on the next unrelated error.
@@ -365,7 +350,7 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
         AnimeCategoriesCsv = i.AnimeCategoriesCsv,
         SupportsMovie = i.SupportsMovie, SupportsTv = i.SupportsTv, SupportsAnime = i.SupportsAnime,
         AnimeOnly = i.AnimeOnly,
-        EnableRss = i.EnableRss, EnableAutomaticSearch = i.EnableAutomaticSearch,
+        EnableIngestion = i.EnableIngestion, EnableAutomaticSearch = i.EnableAutomaticSearch,
         EnableInteractiveSearch = i.EnableInteractiveSearch, EnableRecommendedFeed = i.EnableRecommendedFeed,
         MinSeeders = i.MinSeeders, TimeoutSeconds = i.TimeoutSeconds,
         RateLimitPerMinute = i.RateLimitPerMinute, CacheSeconds = i.CacheSeconds,
@@ -374,6 +359,7 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
         LastSuccessAt = i.LastSuccessAt, LastError = i.LastError,
         ConsecutiveFailures = i.ConsecutiveFailures,
         LastBlockReason = i.LastBlockReason, LastBlockedAt = i.LastBlockedAt,
+        SearchCircuitOpenUntil = i.SearchCircuitOpenUntil,
         HasClearance = !string.IsNullOrWhiteSpace(i.ClearanceCookieEncrypted),
         ClearanceObtainedAt = i.ClearanceObtainedAt,
         UserAgent = i.UserAgent,
@@ -390,6 +376,15 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
     }
 
     private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    internal static TimeSpan SearchFailureDelay(IndexerBlockReason reason, int consecutiveFailures) => reason switch
+    {
+        IndexerBlockReason.CloudflareChallenge => TimeSpan.FromHours(6),
+        IndexerBlockReason.IpBanned => TimeSpan.FromHours(12),
+        IndexerBlockReason.Forbidden => TimeSpan.FromHours(6),
+        IndexerBlockReason.RateLimited => TimeSpan.FromMinutes(30),
+        _ => TimeSpan.FromMinutes(Math.Min(60, Math.Pow(2, Math.Clamp(consecutiveFailures - 3, 0, 6))))
+    };
 
     /// <summary>Compare endpoint URLs ignoring trailing slashes and case, so the legacy import can't
     /// re-add an endpoint that's already present under a cosmetically different URL.</summary>

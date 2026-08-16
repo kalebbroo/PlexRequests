@@ -1,5 +1,6 @@
 @using PlexRequestsHosted.Shared.DTOs
 @inject PlexRequestsHosted.Services.Abstractions.IIndexerAdminService Indexers
+@inject PlexRequestsHosted.Services.Abstractions.IReleaseCatalogService Catalog
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 @inject IDialogService Dialogs
 
@@ -17,6 +18,48 @@
     when candidates are otherwise comparable. Health columns update each time the downloader searches —
     a failure streak usually means the site is down or blocking.
 </MudText>
+
+@if (_catalog is { Enabled: true })
+{
+    <MudPaper Class="pa-3 mb-4" Elevation="0" Outlined="true">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <div>
+                <MudText Typo="Typo.subtitle2">Release catalog · @CatalogMode(_catalog)</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                    @CatalogModeHelp(_catalog)
+                </MudText>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <MudChip T="string" Size="Size.Small" Color="Color.Primary">@_catalog.Releases releases</MudChip>
+                <MudChip T="string" Size="Size.Small">@_catalog.Sightings sightings</MudChip>
+                @if (_catalog.UnresolvedSightings > 0)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Warning">@_catalog.UnresolvedSightings awaiting detail</MudChip>
+                }
+                <MudChip T="string" Size="Size.Small">@FormatBytes(_catalog.DatabaseSizeBytes)</MudChip>
+            </div>
+        </div>
+        @if (_catalog.Sources.Count > 0)
+        {
+            <MudStack Row="true" Spacing="1" Class="mt-3 flex-wrap">
+                @foreach (var source in _catalog.Sources)
+                {
+                    <MudTooltip Text="@CatalogSourceHelp(source)">
+                        <MudChip T="string" Size="Size.Small" Color="@CatalogSourceColor(source)">
+                            @source.Source · @source.Sightings
+                        </MudChip>
+                    </MudTooltip>
+                }
+            </MudStack>
+        }
+    </MudPaper>
+}
+else if (!_loading)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Text" dense="true" Class="mb-3">
+        The optional release catalog is off. Live indexer search and automatic monitoring continue normally.
+    </MudAlert>
+}
 
 @if (_loading)
 {
@@ -141,10 +184,8 @@ else
     private static string BlockHelp(IndexerSettingDto i) => i.LastBlockReason switch
     {
         IndexerBlockReason.CloudflareChallenge =>
-            "The site served a Cloudflare interstitial instead of results, so this indexer is contributing nothing. "
-            + (i.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase)
-                ? "Edit 1337x and open its persistent downloader browser to complete the check."
-                : "Edit the indexer to refresh its browser clearance."),
+            "The site served a Cloudflare interstitial instead of results. Plex Requests records the block and "
+            + $"backs off until {i.SearchCircuitOpenUntil?.ToLocalTime():g}; use another enabled provider or a Torznab-compatible source while it is unavailable.",
         IndexerBlockReason.IpBanned =>
             "The site has banned this exit IP outright (Cloudflare error 1020). A clearance cookie won't help — "
             + "this needs a different egress.",
@@ -157,13 +198,18 @@ else
 
     private bool _loading = true;
     private List<IndexerSettingDto> _items = new();
+    private CatalogStatsDto? _catalog;
 
     protected override async Task OnInitializedAsync() => await Load();
 
     private async Task Load()
     {
         _loading = true; StateHasChanged();
-        try { _items = await Indexers.GetAllAsync(); }
+        try
+        {
+            _items = await Indexers.GetAllAsync();
+            _catalog = await Catalog.GetStatsAsync(CancellationToken.None);
+        }
         finally { _loading = false; StateHasChanged(); }
     }
 
@@ -192,6 +238,44 @@ else
         if (span.TotalDays < 1) return $"{(int)span.TotalHours}h ago";
         return $"{(int)span.TotalDays}d ago";
     }
+
+    private static Color CatalogSourceColor(CatalogSourceStatsDto source) => source.CircuitState switch
+    {
+        "Open" => Color.Warning,
+        "Disabled" => Color.Default,
+        _ => Color.Success
+    };
+
+    private static string CatalogSourceHelp(CatalogSourceStatsDto source)
+    {
+        if (source.CircuitState == "Open")
+            return $"Circuit open until {source.NextAttemptAt?.ToLocalTime():g}. {source.LastError}";
+        return $"Last successful ingestion: {Relative(source.LastSuccessAt)}. "
+             + $"Resolved {source.TotalItemsResolved} of {source.TotalItemsSeen} observations.";
+    }
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1_073_741_824 => $"{bytes / 1_073_741_824d:F1} GB",
+        >= 1_048_576 => $"{bytes / 1_048_576d:F1} MB",
+        >= 1024 => $"{bytes / 1024d:F1} KB",
+        _ => $"{bytes} B"
+    };
+
+    private static string CatalogMode(CatalogStatsDto catalog) => catalog switch
+    {
+        { UseForMonitoring: true, UseForSearch: true } => "search + monitoring active",
+        { UseForMonitoring: true } => "monitoring active",
+        { UseForSearch: true } => "search assist active",
+        _ => "shadow mode"
+    };
+
+    private static string CatalogModeHelp(CatalogStatsDto catalog) => catalog switch
+    {
+        { UseForMonitoring: true } => "New-episode monitoring matches this local catalog instead of repeatedly searching every upstream source.",
+        { UseForSearch: true } => "Catalog candidates supplement live fulfillment; upstream sources remain the fallback.",
+        _ => "Stores each feed item once for comparison; live fulfillment remains authoritative."
+    };
     private async Task OpenDialog(IndexerSettingDto? existing)
     {
         var parameters = new DialogParameters<IndexerDialog> { { x => x.Existing, existing } };

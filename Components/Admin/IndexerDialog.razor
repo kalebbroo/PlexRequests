@@ -3,7 +3,6 @@
 @inject PlexRequestsHosted.Services.Abstractions.IIndexerAdminService Indexers
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
 @inject PlexRequestsHosted.Services.Implementations.IInteractiveSearchService Search
-@inject IDialogService Dialogs
 
 @* Add/edit one indexer. Unlike the rest of the panel this uses an explicit Save rather than immediate-write:
    a half-typed URL or API key must never be persisted and then searched against. Modelled on
@@ -45,42 +44,22 @@
                exactly the ones that get challenged. *@
             <MudItem xs="12">
                 <MudExpansionPanel Text="@ClearanceSummary()" dense="true">
-                    @if (IsBrowserBacked)
+                    <MudText Typo="Typo.caption" Class="text-muted mb-2 d-block">
+                        Optional advanced override for a scraper that accepts reusable clearance. The cookie,
+                        User-Agent, and downloader egress IP must match. Plex Requests does not launch a browser
+                        or automatically solve challenges; a refused request remains visible as blocked.
+                    </MudText>
+                    <MudTextField T="string" Label="Cookie header" @bind-Value="_model.ClearanceCookie"
+                                  Variant="Variant.Outlined" Placeholder="cf_clearance=abc123..."
+                                  HelperText="@(_model.HasClearance ? $"A clearance is stored ({Age(_model.ClearanceObtainedAt)}). Leave blank to keep it." : "Paste the raw Cookie header value.")" />
+                    <MudTextField T="string" Label="User-Agent" @bind-Value="_model.UserAgent" Class="mt-2"
+                                  Variant="Variant.Outlined"
+                                  Placeholder="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ..."
+                                  HelperText="Must exactly match the client that obtained the cookie." />
+                    @if (_model.HasClearance)
                     {
-                        <MudText Typo="Typo.caption" Class="text-muted mb-3 d-block">
-                            1337x uses a persistent Chrome profile inside the downloader's VPN. Open it here,
-                            complete the human check yourself, and verify the page. Scheduled searches then use
-                            that same browser session; there is no cookie to copy or User-Agent to match.
-                        </MudText>
-                        <MudButton Color="Color.Primary" Variant="Variant.Filled"
-                                   StartIcon="@Icons.Material.Filled.OpenInBrowser" OnClick="OpenBrowser">
-                            Open 1337x browser
-                        </MudButton>
-                        @if (_model.HasClearance)
-                        {
-                            <MudCheckBox T="bool" @bind-Value="_model.ClearClearance" dense="true" Color="Color.Error"
-                                         Label="Delete the old cookie-based clearance (no longer used by 1337x)" Class="mt-2" />
-                        }
-                    }
-                    else
-                    {
-                        <MudText Typo="Typo.caption" Class="text-muted mb-2 d-block">
-                            For a scraper that issues reusable clearance, paste the <code>cf_clearance</code>
-                            cookie and the exact User-Agent that earned it. Both must come from this server's
-                            network route.
-                        </MudText>
-                        <MudTextField T="string" Label="Cookie header" @bind-Value="_model.ClearanceCookie"
-                                      Variant="Variant.Outlined" Placeholder="cf_clearance=abc123..."
-                                      HelperText="@(_model.HasClearance ? $"A clearance is stored ({Age(_model.ClearanceObtainedAt)}). Leave blank to keep it." : "Paste the raw Cookie header value.")" />
-                        <MudTextField T="string" Label="User-Agent" @bind-Value="_model.UserAgent" Class="mt-2"
-                                      Variant="Variant.Outlined"
-                                      Placeholder="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ..."
-                                      HelperText="Must be byte-for-byte the User-Agent of the browser that earned the cookie." />
-                        @if (_model.HasClearance)
-                        {
-                            <MudCheckBox T="bool" @bind-Value="_model.ClearClearance" dense="true" Color="Color.Error"
-                                         Label="Delete the stored clearance" Class="mt-1" />
-                        }
+                        <MudCheckBox T="bool" @bind-Value="_model.ClearClearance" dense="true" Color="Color.Error"
+                                     Label="Delete the stored clearance" Class="mt-1" />
                     }
                 </MudExpansionPanel>
             </MudItem>
@@ -112,7 +91,9 @@
                 <MudText Typo="Typo.caption" Class="text-muted">When it's used</MudText>
                 <div class="d-flex flex-column">
                     <MudSwitch T="bool" Label="Automatic search" @bind-Value="_model.EnableAutomaticSearch" Color="Color.Primary" />
-                    <MudSwitch T="bool" Label="RSS sweep" @bind-Value="_model.EnableRss" Color="Color.Primary" />
+                    <MudTooltip Text="Ingest this source's incremental feed when supported and use it for automatic release monitoring.">
+                        <MudSwitch T="bool" Label="Release monitoring" @bind-Value="_model.EnableIngestion" Color="Color.Primary" />
+                    </MudTooltip>
                     <MudSwitch T="bool" Label="Interactive search" @bind-Value="_model.EnableInteractiveSearch" Color="Color.Primary" />
                     <MudTooltip Text="Use this indexer's newest uploads for the home page's Recommended row. Only sources that can browse (not just search) can serve it.">
                         <MudSwitch T="bool" Label="Recommended feed" @bind-Value="_model.EnableRecommendedFeed" Color="Color.Secondary" />
@@ -216,7 +197,6 @@
     private bool _saving;
     private bool _testing;
     private IndexerCapabilitiesDto? _caps;
-    private bool IsBrowserBacked => _model.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase);
 
     protected override void OnInitialized()
     {
@@ -232,7 +212,7 @@
                 AnimeCategoriesCsv = Existing.AnimeCategoriesCsv,
                 SupportsMovie = Existing.SupportsMovie, SupportsTv = Existing.SupportsTv,
                 SupportsAnime = Existing.SupportsAnime, AnimeOnly = Existing.AnimeOnly,
-                EnableRss = Existing.EnableRss, EnableAutomaticSearch = Existing.EnableAutomaticSearch,
+                EnableIngestion = Existing.EnableIngestion, EnableAutomaticSearch = Existing.EnableAutomaticSearch,
                 EnableInteractiveSearch = Existing.EnableInteractiveSearch,
                 EnableRecommendedFeed = Existing.EnableRecommendedFeed,
                 HasClearance = Existing.HasClearance, ClearanceObtainedAt = Existing.ClearanceObtainedAt,
@@ -301,21 +281,6 @@
         }
     }
 
-    private async Task OpenBrowser()
-    {
-        var options = new DialogOptions
-        {
-            MaxWidth = MaxWidth.ExtraLarge,
-            FullWidth = true,
-            CloseButton = false,
-            BackdropClick = false
-        };
-        var dialog = await Dialogs.ShowAsync<IndexerBrowserDialog>("Verify 1337x", options);
-        var result = await dialog.Result;
-        if (result is { Canceled: false, Data: true })
-            await Toasts.ShowSuccessAsync("1337x browser session verified. Scheduled searches will use it automatically.");
-    }
-
     /// <summary>
     /// Fill the category fields from what the endpoint reported. Torznab numbers movies in 2000-2999 and TV
     /// in 5000-5999, so the ranges classify the standard ones; but a tracker's own categories are exactly
@@ -345,9 +310,7 @@
         StateHasChanged();
     }
 
-    private string ClearanceSummary() => IsBrowserBacked
-        ? "1337x browser session"
-        : _model.HasClearance
+    private string ClearanceSummary() => _model.HasClearance
         ? $"Cloudflare clearance — stored {Age(_model.ClearanceObtainedAt)}"
         : "Cloudflare clearance — none stored";
 

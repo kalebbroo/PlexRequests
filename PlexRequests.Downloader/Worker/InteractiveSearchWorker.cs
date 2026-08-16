@@ -87,7 +87,7 @@ public class InteractiveSearchWorker(
             // An interactive search is scoped by its own toggle: an admin may want a slow or noisy indexer
             // available for a manual look without it slowing every automatic search.
             var job = ToJob(task);
-            var search = await indexer.SearchAsync(job, ct);
+            var search = await indexer.SearchAsync(job, ct, IndexerSearchPurpose.Interactive);
             result.IndexerSummary = search.Summary;
 
             var context = new RankingContext

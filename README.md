@@ -223,10 +223,17 @@ per-source health (result counts, failure streaks, latency) updated live from ev
 run **Jackett** or **Prowlarr**, point the downloader at it via `TORZNAB_URL`/`TORZNAB_API_KEY` (see
 `docker/.env.example`) and everything configured there joins the search too.
 
-1337x uses a persistent Chrome profile inside the downloader's network namespace. If its health shows a
-Cloudflare challenge, edit 1337x and select **Open 1337x browser**; the admin-only modal streams that exact
-browser so you can complete the check. The profile survives restarts on `downloader-state`, and scheduled
-1337x searches continue through the same browser session. No browser port is published by Docker.
+Scraped sources such as 1337x may refuse automated requests. PlexRequests reports those responses as
+**blocked** and backs off instead of turning them into misleading empty results or launching a browser.
+For deployments with stable egress, a reusable cookie and its matching User-Agent can be supplied under
+the indexer's advanced settings; neither is required for the structured API/RSS providers.
+
+The optional release catalog is disabled by default. Set `CATALOG_ENABLED=true` on both web and downloader
+to start shadow ingestion into a separate, rebuildable `catalog.db`. Shadow mode does not change which
+release is downloaded; it exists so ingestion coverage can be measured safely before catalog-first matching.
+After validating coverage in **Admin → Downloads → Indexers**, set `CATALOG_USE_FOR_SEARCH=true` to let
+catalog candidates supplement live searches. Set `CATALOG_USE_FOR_MONITORING=true` only after that to make
+new-episode monitoring use the local catalog instead of issuing a live search per wanted show.
 
 Set `FULFILLMENT_API_KEY` (the same value on web + downloader) and pick a scenario:
 
@@ -236,7 +243,7 @@ Set `FULFILLMENT_API_KEY` (the same value on web + downloader) and pick a scenar
 | **Managed torrent client** | `docker compose --profile torrent up -d` | + a Deluge container the downloader auto-uses (`http://deluge:8112`). |
 | **Managed VPN + client (kill-switch)** | `docker compose -f docker-compose.vpn.yml up -d` | web + gluetun + Deluge + downloader, with the torrent stack locked to the VPN tunnel. |
 
-Full design, the worker API contract, indexer notes (including the Cloudflare caveat for 1337x/ext.to),
+Full design, the worker API contract, indexer notes (including the Cloudflare caveat for scraped sources),
 and VPN details are in **[docs/fulfillment-pipeline.md](docs/fulfillment-pipeline.md)**.
 
 > **Legal note:** you are responsible for what you download and for complying with your local laws and
@@ -271,6 +278,10 @@ All settings are read from `.env` (mapped to the app's config keys). Only the fi
 | `FULFILLMENT_API_KEY` | ▲ | Shared secret between web app and downloader. Required to use §6. |
 | `FULFILLMENT_ENABLED` | | Queue jobs on approval (default on in the compose files). |
 | `BRIDGE_ENABLED` / `BRIDGE_API_KEY` | ▲ | Enable + secure the Discord bridge API. Required for §7. |
+| `CATALOG_ENABLED` | | Ingest structured feeds into the separate `catalog.db` in shadow mode. |
+| `CATALOG_USE_FOR_SEARCH` | | Supplement normal fulfillment searches from the local catalog. |
+| `CATALOG_USE_FOR_MONITORING` | | Match wanted episodes locally instead of repeatedly searching upstream sources. |
+| `CATALOG_POLL_MINUTES` | | Structured-feed polling interval; default `15`. |
 | `DELUGE_URL` / `DELUGE_PASSWORD` | | Your torrent client's Web API (downloader). |
 | `VPN_ENABLED` | | Only meaningful when the downloader runs inside a VPN namespace. |
 | `VPN_PROVIDER`, `WIREGUARD_*`, `VPN_COUNTRIES`, `DOCKER_SUBNET` | | Managed-VPN stack only (`docker-compose.vpn.yml`). |

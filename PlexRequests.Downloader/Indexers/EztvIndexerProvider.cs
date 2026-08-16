@@ -9,7 +9,8 @@ namespace PlexRequests.Downloader.Indexers;
 /// EZTV public JSON API (TV/anime), keyed by IMDb id: GET /api/get-torrents?imdb_id={digits}.
 /// Returns magnet links + seeds/peers + size directly.
 /// </summary>
-public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> logger) : IIndexerImplementation
+public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> logger)
+    : IIndexerImplementation, IReleaseFeedSource
 {
     private readonly HttpClient _http = http;
     private readonly ILogger<EztvIndexerProvider> _logger = logger;
@@ -40,20 +41,7 @@ public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> l
             foreach (var t in torrents)
             {
                 if (string.IsNullOrWhiteSpace(t.MagnetUrl)) continue;
-                candidates.Add(new ReleaseCandidate
-                {
-                    ReleaseName = t.Title ?? string.Empty,
-                    Magnet = t.MagnetUrl!,
-                    InfoHash = t.Hash,
-                    ImdbId = string.IsNullOrWhiteSpace(t.ImdbId) ? job.ImdbId : t.ImdbId, // EZTV is queried BY imdb id
-                    Seeders = t.Seeds,
-                    Leechers = t.Peers,
-                    SizeBytes = t.SizeBytes,
-                    IndexerId = indexer.Id,
-                    Source = indexer.Name,
-                    Season = t.Season > 0 ? t.Season : null,
-                    Episode = t.Episode > 0 ? t.Episode : null
-                });
+                candidates.Add(ToCandidate(t, indexer, job.ImdbId));
             }
             if (torrents.Count < 100) break;
             page++;
@@ -82,6 +70,70 @@ public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> l
         return candidates;
     }
 
+    public async Task<ReleaseFeedPage> FetchAsync(
+        IndexerConfigDto indexer,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var items = new List<CatalogItemDto>();
+        const int pageSize = 100;
+        const int maxPages = 10;
+        for (var page = 1; page <= maxPages; page++)
+        {
+            var response = await _http.GetFromJsonAsync<EztvResponse>(
+                $"/api/get-torrents?limit={pageSize}&page={page}",
+                IndexerJson.Options,
+                cancellationToken);
+            var rows = response?.Torrents ?? new();
+            foreach (var row in rows)
+            {
+                if (string.IsNullOrWhiteSpace(row.Title) || string.IsNullOrWhiteSpace(row.MagnetUrl)) continue;
+                var externalId = row.Id > 0 ? row.Id.ToString() : MagnetUtil.Normalize(row.Hash)
+                    ?? MagnetUtil.InfoHashFromMagnet(row.MagnetUrl);
+                if (string.IsNullOrWhiteSpace(externalId)) continue;
+                var published = row.DateReleasedUnix > 0
+                    ? DateTimeOffset.FromUnixTimeSeconds(row.DateReleasedUnix).UtcDateTime
+                    : (DateTime?)null;
+                items.Add(new CatalogItemDto
+                {
+                    ExternalId = externalId,
+                    ReleaseName = row.Title,
+                    SourceUrl = row.TorrentUrl,
+                    InfoHash = row.Hash,
+                    MagnetUri = row.MagnetUrl,
+                    ImdbId = row.ImdbId,
+                    Seeders = row.Seeds,
+                    Leechers = row.Peers,
+                    SizeBytes = row.SizeBytes > 0 ? row.SizeBytes : null,
+                    PublishedAt = published,
+                    MediaType = MediaType.TvShow
+                });
+            }
+            if (string.IsNullOrWhiteSpace(cursor) || rows.Count < pageSize
+                || items.Any(x => string.Equals(x.ExternalId, cursor, StringComparison.OrdinalIgnoreCase)))
+                break;
+        }
+        return ReleaseFeedCursor.Select(items, cursor, limit);
+    }
+
+    private static ReleaseCandidate ToCandidate(EztvTorrent torrent, IndexerConfigDto indexer, string? fallbackImdbId) => new()
+    {
+        ReleaseName = torrent.Title ?? string.Empty,
+        Magnet = torrent.MagnetUrl!,
+        InfoHash = torrent.Hash,
+        ImdbId = string.IsNullOrWhiteSpace(torrent.ImdbId) ? fallbackImdbId : torrent.ImdbId,
+        Seeders = torrent.Seeds,
+        Leechers = torrent.Peers,
+        SizeBytes = torrent.SizeBytes,
+        IndexerId = indexer.Id,
+        Source = indexer.Name,
+        Season = torrent.Season > 0 ? torrent.Season : null,
+        Episode = torrent.Episode > 0 ? torrent.Episode : null,
+        PublishDate = torrent.DateReleasedUnix > 0
+            ? DateTimeOffset.FromUnixTimeSeconds(torrent.DateReleasedUnix).UtcDateTime : null
+    };
+
     private sealed class EztvResponse
     {
         public List<EztvTorrent>? Torrents { get; set; }
@@ -89,6 +141,7 @@ public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> l
 
     private sealed class EztvTorrent
     {
+        public int Id { get; set; }
         public string? Title { get; set; }
         public string? ImdbId { get; set; }
         public string? MagnetUrl { get; set; }
@@ -98,5 +151,7 @@ public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> l
         public long SizeBytes { get; set; }
         public int Season { get; set; }
         public int Episode { get; set; }
+        public long DateReleasedUnix { get; set; }
+        public string? TorrentUrl { get; set; }
     }
 }

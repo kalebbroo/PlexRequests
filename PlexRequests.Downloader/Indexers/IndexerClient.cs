@@ -1,5 +1,8 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Diagnostics;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Api;
 using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
@@ -45,6 +48,7 @@ public class IndexerClient(
     IIndexerRateLimiter rateLimiter,
     IMemoryCache cache,
     IPlexRequestsApiClient api,
+    IOptions<CatalogWorkerOptions> catalogOptions,
     ILogger<IndexerClient> logger) : IIndexerClient
 {
     // Kept modest: these all egress through one VPN tunnel, and several are public sites that respond
@@ -54,12 +58,19 @@ public class IndexerClient(
     private readonly Dictionary<string, IIndexerImplementation> _byKey =
         implementations.ToDictionary(i => i.Key, StringComparer.OrdinalIgnoreCase);
 
-    public async Task<IndexerSearchResult> SearchAsync(FulfillmentJobDto job, CancellationToken ct)
+    public async Task<IndexerSearchResult> SearchAsync(
+        FulfillmentJobDto job,
+        CancellationToken ct,
+        IndexerSearchPurpose purpose = IndexerSearchPurpose.Automatic)
     {
         await settings.RefreshAsync(ct); // pick up admin changes (throttled internally)
+        var catalogCandidates = catalogOptions.Value.Enabled && catalogOptions.Value.UseForSearch
+            ? await SearchCatalogWithBudgetAsync(job, ct)
+            : Array.Empty<ReleaseCandidate>();
 
+        var now = DateTime.UtcNow;
         var applicable = settings.All
-            .Where(i => i.Enabled && i.EnableAutomaticSearch)
+            .Where(i => IsEnabledFor(i, purpose, now))
             .Where(i => i.Supports(job.MediaType))
             // Anime-only sources (Nyaa) are skipped unless the job was classified as anime, so a plain
             // movie/TV request never matches an anime release with a coincidentally overlapping title.
@@ -72,9 +83,10 @@ public class IndexerClient(
 
         if (applicable.Count == 0)
         {
-            logger.LogWarning("No enabled indexer supports media type {Type} for \"{Title}\" (anime={IsAnime})",
-                job.MediaType, job.Title, job.IsAnime);
-            return IndexerSearchResult.Empty;
+            if (catalogCandidates.Count == 0)
+                logger.LogWarning("No enabled indexer supports media type {Type} for \"{Title}\" (anime={IsAnime})",
+                    job.MediaType, job.Title, job.IsAnime);
+            return new IndexerSearchResult(catalogCandidates, Array.Empty<ProviderSearchOutcome>());
         }
 
         var searchedAt = DateTime.UtcNow;
@@ -91,9 +103,46 @@ public class IndexerClient(
 
         var outcomes = results.Select(r => r.Outcome).ToList();
         await ReportHealthAsync(outcomes, searchedAt, ct);
+        if (catalogOptions.Value.Enabled)
+            await WriteThroughAsync(results.SelectMany(x => x.Candidates), job.MediaType, searchedAt, ct);
 
-        var merged = Deduplicate(results.SelectMany(r => r.Candidates));
+        var merged = Deduplicate(catalogCandidates.Concat(results.SelectMany(r => r.Candidates)));
         return new IndexerSearchResult(merged, outcomes);
+    }
+
+    internal static bool IsEnabledFor(IndexerConfigDto indexer, IndexerSearchPurpose purpose, DateTime now) =>
+        indexer.Enabled
+        && (indexer.SearchCircuitOpenUntil is null || indexer.SearchCircuitOpenUntil <= now)
+        && (purpose switch
+        {
+            IndexerSearchPurpose.Interactive => indexer.EnableInteractiveSearch,
+            IndexerSearchPurpose.Monitoring => indexer.EnableIngestion,
+            _ => indexer.EnableAutomaticSearch
+        });
+
+    private async Task<IReadOnlyList<ReleaseCandidate>> SearchCatalogWithBudgetAsync(
+        FulfillmentJobDto job,
+        CancellationToken cancellationToken)
+    {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(2));
+        try
+        {
+            var candidates = await api.SearchCatalogAsync(job, budget.Token);
+            if (candidates is { Count: > 0 })
+                logger.LogInformation("Catalog: {Count} candidate(s) for \"{Title}\"", candidates.Count, job.Title);
+            return candidates ?? Array.Empty<ReleaseCandidate>();
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogDebug("Catalog search exceeded its two-second budget for {Title}", job.Title);
+            return Array.Empty<ReleaseCandidate>();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug(ex, "Catalog search skipped for {Title}", job.Title);
+            return Array.Empty<ReleaseCandidate>();
+        }
     }
 
     public async Task<IndexerCapabilitiesDto> TestAsync(int indexerId, CancellationToken ct)
@@ -220,6 +269,65 @@ public class IndexerClient(
             }).ToList(), ct);
         }
         catch (Exception ex) { logger.LogDebug(ex, "Indexer status report skipped"); }
+    }
+
+    private async Task WriteThroughAsync(
+        IEnumerable<ReleaseCandidate> candidates,
+        MediaType mediaType,
+        DateTime observedAt,
+        CancellationToken cancellationToken)
+    {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(3));
+        try
+        {
+            foreach (var source in candidates.GroupBy(x => new { x.IndexerId, x.Source }))
+            {
+                var items = source.Select(candidate =>
+                {
+                    var infoHash = MagnetUtil.Normalize(candidate.InfoHash)
+                                   ?? MagnetUtil.InfoHashFromMagnet(candidate.Magnet);
+                    var externalId = infoHash ?? Convert.ToHexString(
+                        SHA256.HashData(Encoding.UTF8.GetBytes(candidate.Magnet)));
+                    return new CatalogItemDto
+                    {
+                        ExternalId = externalId,
+                        ReleaseName = candidate.ReleaseName,
+                        InfoHash = infoHash,
+                        MagnetUri = candidate.Magnet,
+                        ImdbId = candidate.ImdbId,
+                        Seeders = candidate.SeedersKnown ? candidate.Seeders : null,
+                        Leechers = candidate.SeedersKnown ? candidate.Leechers : null,
+                        SizeBytes = candidate.SizeKnown ? candidate.SizeBytes : null,
+                        PublishedAt = candidate.PublishDate,
+                        MediaType = mediaType
+                    };
+                }).GroupBy(x => x.ExternalId, StringComparer.OrdinalIgnoreCase).Select(x => x.First()).ToList();
+                if (items.Count == 0) continue;
+
+                foreach (var chunk in items.Chunk(Math.Clamp(catalogOptions.Value.MaxBatchSize, 1, 1000)))
+                {
+                    await api.PushCatalogBatchAsync(new CatalogBatchDto
+                    {
+                        IndexerId = source.Key.IndexerId,
+                        Source = source.Key.Source,
+                        BatchId = Guid.NewGuid().ToString("N"),
+                        AdvanceCheckpoint = false,
+                        ObservedAt = observedAt,
+                        Items = chunk.ToList()
+                    }, budget.Token);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogDebug("Catalog write-through exceeded its three-second budget");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Catalog write-through is enrichment; it must never change the live search outcome.
+            logger.LogDebug(ex, "Catalog write-through skipped");
+        }
     }
 
     /// <summary>Identity of a search for caching: same title/season/episode scope = same query.</summary>

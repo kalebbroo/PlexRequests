@@ -28,38 +28,21 @@ public class WorkerOptions
     public int FinishSettleSeconds { get; set; } = 45;
 }
 
+/// <summary>Opt-in catalog ingestion with separately staged search and monitoring read paths.</summary>
+public sealed class CatalogWorkerOptions
+{
+    public const string Section = "Catalog";
+    public bool Enabled { get; set; }
+    public bool UseForSearch { get; set; }
+    public bool UseForMonitoring { get; set; }
+    public int PollIntervalMinutes { get; set; } = 15;
+    public int StartDelaySeconds { get; set; } = 120;
+    public int MaxBatchSize { get; set; } = 250;
+}
+
 /// <summary>Indexer endpoints (public JSON APIs keyed by IMDb id).</summary>
 public class IndexerOptions
 {
-    /// <summary>Path to a Chromium/Chrome binary for solving interstitial challenges. Blank = auto-detect,
-    /// and if none is found the solver reports itself unavailable rather than failing searches.</summary>
-    public string? BrowserPath { get; set; }
-
-    /// <summary>Hard ceiling on one solve. A browser launch plus a Cloudflare interstitial is tens of
-    /// seconds; beyond this it is not going to succeed.</summary>
-    public int ChallengeSolveTimeoutSeconds { get; set; } = 90;
-
-    /// <summary>How long to let the interstitial run before reading cookies. Cloudflare imposes the delay
-    /// deliberately, so polling faster does not help — this simply has to outlast it.</summary>
-    public int ChallengeSettleSeconds { get; set; } = 15;
-
-    /// <summary>Internal-only WebSocket listener used by the admin UI to view and control the persistent
-    /// 1337x browser. The port is never published by either compose stack; the web container proxies it
-    /// after enforcing the AdminOnly policy.</summary>
-    public string BrowserControlPrefix { get; set; } = "http://*:9225/browser/";
-
-    /// <summary>Persistent Chrome profile. It lives on downloader-state so a manually verified session
-    /// survives both Chrome and container restarts.</summary>
-    public string BrowserProfilePath { get; set; } = "state/browser/1337x";
-
-    /// <summary>Browser viewport streamed into the admin modal.</summary>
-    public int BrowserViewportWidth { get; set; } = 1280;
-    public int BrowserViewportHeight { get; set; } = 800;
-
-    /// <summary>Maximum time one admin may hold the interactive viewer open. Searches wait for that one
-    /// page, so an abandoned tab must release it automatically.</summary>
-    public int BrowserSessionTimeoutMinutes { get; set; } = 5;
-
     public const string Section = "Indexer";
     public int TimeoutSeconds { get; set; } = 20;
     public string EztvBaseUrl { get; set; } = "https://eztvx.to";   // TV (JSON API)
