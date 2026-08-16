@@ -25,7 +25,7 @@ public class AirScheduleEntity
 
     /// <summary>
     /// When to start looking, in UTC: the air date plus an assumed local air time plus a post-air delay.
-    /// Necessarily an estimate, because the metadata source gives a date and nothing finer. The RSS sweep
+    /// Necessarily an estimate, because the metadata source gives a date and nothing finer. Release monitoring
     /// is the safety net that makes the imprecision tolerable.
     /// </summary>
     public DateTime? AirsAtUtc { get; set; }

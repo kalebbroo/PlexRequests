@@ -145,7 +145,7 @@ public class CalendarRefreshJob(
     /// <summary>
     /// When to start looking. TMDB gives a date and no time, so this is an assumption: the configured local
     /// broadcast time (or a per-series override) plus a delay for releases to actually appear. Deliberately
-    /// approximate — the RSS sweep is what catches anything this misses.
+    /// approximate — release monitoring is what catches anything this misses.
     /// </summary>
     internal static DateTime? ComputeAirsAt(DateTime? airDate, MediaRequestEntity anchor, MonitoringPreferencesEntity prefs)
     {

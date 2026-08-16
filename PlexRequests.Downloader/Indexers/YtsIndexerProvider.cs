@@ -14,7 +14,8 @@ namespace PlexRequests.Downloader.Indexers;
 /// domain has a history of going dark/changing, and previously a single hardcoded dead domain meant
 /// silent zero movie coverage with no fallback.
 /// </summary>
-public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> options, ILogger<YtsIndexerProvider> logger) : IIndexerImplementation
+public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> options, ILogger<YtsIndexerProvider> logger)
+    : IIndexerImplementation, IReleaseFeedSource
 {
     private readonly HttpClient _http = http;
     private readonly IndexerOptions _opts = options.Value;
@@ -37,26 +38,10 @@ public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> option
     public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(IndexerConfigDto indexer, FulfillmentJobDto job, CancellationToken ct)
     {
         var term = string.IsNullOrWhiteSpace(job.ImdbId) ? job.Title : job.ImdbId!;
-        var mirrors = (_opts.YtsBaseUrlsCsv ?? string.Empty)
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        YtsResponse? resp = null;
-        foreach (var mirror in mirrors)
-        {
-            var url = $"{mirror.TrimEnd('/')}/api/v2/list_movies.json?query_term={Uri.EscapeDataString(term)}&limit=50";
-            try
-            {
-                resp = await _http.GetFromJsonAsync<YtsResponse>(url, IndexerJson.Options, ct);
-                break; // first mirror that responds wins
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogWarning(ex, "YTS mirror {Mirror} unreachable/failed; trying next configured mirror if any", mirror);
-            }
-        }
-
-        if (resp is null && mirrors.Length > 0)
-            _logger.LogWarning("All {Count} configured YTS mirror(s) failed for \"{Title}\" — no movie coverage from YTS this search", mirrors.Length, job.Title);
+        var resp = await FetchFromMirrorsAsync(
+            $"/api/v2/list_movies.json?query_term={Uri.EscapeDataString(term)}&limit=50",
+            $"search for \"{job.Title}\"",
+            ct);
 
         var movies = resp?.Data?.Movies;
         if (movies is null || movies.Count == 0) return Array.Empty<ReleaseCandidate>();
@@ -86,6 +71,82 @@ public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> option
         return candidates;
     }
 
+    public async Task<ReleaseFeedPage> FetchAsync(
+        IndexerConfigDto indexer,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var items = new List<CatalogItemDto>();
+        const int pageSize = 50;
+        const int maxPages = 10;
+        for (var page = 1; page <= maxPages; page++)
+        {
+            var response = await FetchFromMirrorsAsync(
+                $"/api/v2/list_movies.json?sort_by=date_added&order_by=desc&limit={pageSize}&page={page}",
+                "latest-release ingestion",
+                cancellationToken);
+            var movies = response.Data?.Movies ?? new();
+            foreach (var movie in movies)
+            {
+                foreach (var torrent in movie.Torrents ?? new())
+                {
+                    var hash = MagnetUtil.Normalize(torrent.Hash);
+                    if (hash is null) continue;
+                    var name = $"{movie.TitleLong} {torrent.Quality} {torrent.Type}".Trim();
+                    items.Add(new CatalogItemDto
+                    {
+                        ExternalId = hash,
+                        ReleaseName = name,
+                        SourceUrl = movie.Url,
+                        InfoHash = hash,
+                        MagnetUri = BuildMagnet(hash, name),
+                        ImdbId = movie.ImdbCode,
+                        Seeders = torrent.Seeds,
+                        Leechers = torrent.Peers,
+                        SizeBytes = torrent.SizeBytes > 0 ? torrent.SizeBytes : null,
+                        PublishedAt = torrent.DateUploadedUnix > 0
+                            ? DateTimeOffset.FromUnixTimeSeconds(torrent.DateUploadedUnix).UtcDateTime : null,
+                        MediaType = MediaType.Movie
+                    });
+                }
+            }
+            if (string.IsNullOrWhiteSpace(cursor) || movies.Count < pageSize
+                || items.Any(x => string.Equals(x.ExternalId, cursor, StringComparison.OrdinalIgnoreCase)))
+                break;
+        }
+        return ReleaseFeedCursor.Select(items, cursor, limit);
+    }
+
+    private async Task<YtsResponse> FetchFromMirrorsAsync(
+        string pathAndQuery,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        var mirrors = (_opts.YtsBaseUrlsCsv ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (mirrors.Length == 0) throw new InvalidOperationException("No YTS API mirrors are configured.");
+
+        Exception? lastError = null;
+        foreach (var mirror in mirrors)
+        {
+            try
+            {
+                return await _http.GetFromJsonAsync<YtsResponse>(
+                    mirror.TrimEnd('/') + pathAndQuery,
+                    IndexerJson.Options,
+                    cancellationToken) ?? new YtsResponse();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                lastError = ex;
+                _logger.LogWarning(ex, "YTS mirror {Mirror} failed during {Operation}; trying the next mirror",
+                    mirror, operation);
+            }
+        }
+        throw new HttpRequestException($"All {mirrors.Length} configured YTS mirrors failed during {operation}.", lastError);
+    }
+
     private static string BuildMagnet(string hash, string name)
     {
         var tr = string.Concat(Trackers.Select(t => "&tr=" + Uri.EscapeDataString(t)));
@@ -98,6 +159,7 @@ public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> option
     {
         public string? TitleLong { get; set; }
         public string? ImdbCode { get; set; }
+        public string? Url { get; set; }
         public List<YtsTorrent>? Torrents { get; set; }
     }
     private sealed class YtsTorrent
@@ -108,5 +170,6 @@ public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> option
         public int Seeds { get; set; }
         public int Peers { get; set; }
         public long SizeBytes { get; set; }
+        public long DateUploadedUnix { get; set; }
     }
 }

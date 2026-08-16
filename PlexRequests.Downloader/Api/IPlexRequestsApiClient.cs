@@ -18,8 +18,12 @@ public interface IPlexRequestsApiClient
     /// <summary>Report per-indexer outcomes for one search pass (drives the admin Indexers panel's health).</summary>
     Task<bool> ReportIndexerStatusAsync(IReadOnlyList<IndexerStatusReportDto> reports, CancellationToken ct);
 
-    /// <summary>Store a clearance the solver earned, so it outlives this process and is shared by later searches.</summary>
-    Task<bool> SaveIndexerClearanceAsync(int indexerId, string cookieHeader, string userAgent, CancellationToken ct);
+    Task<CatalogCheckpointDto?> GetCatalogCheckpointAsync(int indexerId, CancellationToken ct);
+    Task<CatalogUpsertResultDto?> PushCatalogBatchAsync(CatalogBatchDto batch, CancellationToken ct);
+    Task<CatalogCheckpointDto?> ReportCatalogFailureAsync(CatalogFailureDto failure, CancellationToken ct);
+    Task<IReadOnlyList<PlexRequestsHosted.Shared.Releases.ReleaseCandidate>?> SearchCatalogAsync(
+        FulfillmentJobDto job,
+        CancellationToken ct);
 
     /// <summary>
     /// One-time push of Torznab endpoints found in this container's own environment, so the admin doesn't
@@ -50,7 +54,7 @@ public interface IPlexRequestsApiClient
     /// <summary>Push the titles currently trending on an indexer. Returns how many resolved to metadata.</summary>
     Task<int> PushRecommendedAsync(IReadOnlyList<RecommendedFeedItemDto> items, CancellationToken ct);
 
-    /// <summary>Episodes the RSS sweep should be watching for.</summary>
+    /// <summary>Episodes automatic release monitoring should be watching for.</summary>
     Task<List<WantedEpisodeDto>> GetWantedAsync(CancellationToken ct);
 
     /// <summary>Report releases the sweep matched. Returns how many were queued.</summary>

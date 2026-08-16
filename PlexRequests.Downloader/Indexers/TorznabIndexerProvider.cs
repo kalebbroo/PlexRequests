@@ -18,8 +18,8 @@ namespace PlexRequests.Downloader.Indexers;
 /// Only results that yield a magnet (magneturl attr, magnet link, or an info hash to build one from)
 /// are returned — the download client is magnet-only.
 /// </summary>
-public class TorznabIndexerProvider(HttpClient http, ILogger<TorznabIndexerProvider> logger)
-    : IIndexerImplementation
+public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogger<TorznabIndexerProvider> logger)
+    : IIndexerImplementation, IReleaseFeedSource
 {
     private static readonly XNamespace TorznabNs = "http://torznab.com/schemas/2015/feed";
 
@@ -34,6 +34,7 @@ public class TorznabIndexerProvider(HttpClient http, ILogger<TorznabIndexerProvi
     };
 
     private readonly HttpClient _http = http;
+    private readonly IIndexerFetch _fetch = fetch;
     private readonly ILogger<TorznabIndexerProvider> _logger = logger;
 
     public string Key => "Torznab";
@@ -49,22 +50,58 @@ public class TorznabIndexerProvider(HttpClient http, ILogger<TorznabIndexerProvi
         foreach (var url in BuildQueryUrls(indexer, job))
         {
             if (ct.IsCancellationRequested) break;
-            string xml;
-            try
-            {
-                xml = await _http.GetStringAsync(url, ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogWarning(ex, "Torznab endpoint \"{Endpoint}\" failed for \"{Title}\"; skipping its remaining queries",
-                    indexer.Name, job.Title);
-                break; // endpoint unreachable — its other queries will fail the same way
-            }
+            var xml = await _fetch.GetStringAsync(_http, indexer, url, ct);
 
-            foreach (var c in ParseFeed(xml, indexer, job.Title))
+            foreach (var c in ParseFeed(xml, indexer))
                 byKey.TryAdd(c.InfoHash ?? c.Magnet, c);
         }
         return byKey.Values.ToList();
+    }
+
+    public async Task<ReleaseFeedPage> FetchAsync(
+        IndexerConfigDto indexer,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(indexer.Url))
+            throw new InvalidOperationException("The Torznab API URL is not configured.");
+
+        var items = new List<CatalogItemDto>();
+        const int pageSize = 100;
+        const int maxPages = 10;
+        for (var page = 0; page < maxPages; page++)
+        {
+            var separator = indexer.Url.Contains('?') ? "&" : "?";
+            var url = $"{indexer.Url.TrimEnd('/')}{separator}apikey={Uri.EscapeDataString(indexer.ApiKey ?? string.Empty)}" +
+                      $"&t=search&limit={pageSize}&offset={page * pageSize}";
+            var xml = await _fetch.GetStringAsync(_http, indexer, url, cancellationToken);
+            var candidates = ParseFeed(xml, indexer, out var rawItemCount);
+            foreach (var candidate in candidates)
+            {
+                var hash = MagnetUtil.Normalize(candidate.InfoHash)
+                           ?? MagnetUtil.InfoHashFromMagnet(candidate.Magnet);
+                if (hash is null) continue;
+                items.Add(new CatalogItemDto
+                {
+                    ExternalId = hash,
+                    ReleaseName = candidate.ReleaseName,
+                    InfoHash = hash,
+                    MagnetUri = candidate.Magnet,
+                    ImdbId = candidate.ImdbId,
+                    Seeders = candidate.SeedersKnown ? candidate.Seeders : null,
+                    Leechers = candidate.SeedersKnown ? candidate.Leechers : null,
+                    SizeBytes = candidate.SizeKnown ? candidate.SizeBytes : null,
+                    PublishedAt = candidate.PublishDate
+                });
+            }
+            // A Torznab page may contain .torrent-only rows that this magnet-only client intentionally
+            // discards. Pagination is determined by the server's raw row count, not the usable subset.
+            if (string.IsNullOrWhiteSpace(cursor) || rawItemCount < pageSize
+                || items.Any(x => string.Equals(x.ExternalId, cursor, StringComparison.OrdinalIgnoreCase)))
+                break;
+        }
+        return ReleaseFeedCursor.Select(items, cursor, limit);
     }
 
     private static IEnumerable<string> BuildQueryUrls(IndexerConfigDto indexer, FulfillmentJobDto job)
@@ -99,60 +136,67 @@ public class TorznabIndexerProvider(HttpClient http, ILogger<TorznabIndexerProvi
             yield return Base("tvsearch", cat) + text + $"&season={s}";
     }
 
-    private List<ReleaseCandidate> ParseFeed(string xml, IndexerConfigDto indexer, string jobTitle)
+    private static List<ReleaseCandidate> ParseFeed(string xml, IndexerConfigDto indexer) =>
+        ParseFeed(xml, indexer, out _);
+
+    private static List<ReleaseCandidate> ParseFeed(
+        string xml,
+        IndexerConfigDto indexer,
+        out int rawItemCount)
     {
         var candidates = new List<ReleaseCandidate>();
-        try
+        var doc = XDocument.Parse(xml);
+        var error = doc.Descendants("error").FirstOrDefault();
+        if (error is not null)
         {
-            var doc = XDocument.Parse(xml);
-            foreach (var item in doc.Descendants("item"))
-            {
-                var title = ((string?)item.Element("title"))?.Trim();
-                if (string.IsNullOrWhiteSpace(title)) continue;
-
-                string? Attr(string name) => item.Elements(TorznabNs + "attr")
-                    .FirstOrDefault(a => string.Equals((string?)a.Attribute("name"), name, StringComparison.OrdinalIgnoreCase))
-                    ?.Attribute("value")?.Value;
-
-                var infoHash = Attr("infohash");
-                var link = (string?)item.Element("link");
-                var magnet = Attr("magneturl");
-                if (string.IsNullOrWhiteSpace(magnet) && link?.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase) == true)
-                    magnet = link;
-                if (string.IsNullOrWhiteSpace(magnet) && !string.IsNullOrWhiteSpace(infoHash))
-                    magnet = IndexerParsing.BuildMagnet(infoHash!, title!, Trackers);
-                if (string.IsNullOrWhiteSpace(magnet)) continue; // .torrent-file-only result; client is magnet-only
-
-                var sizeRaw = Attr("size") ?? (string?)item.Element("size");
-                bool sizeKnown = long.TryParse(sizeRaw, out var sz);
-                long size = sizeKnown ? sz : 0;
-                var seedersRaw = Attr("seeders");
-                DateTime? published = DateTime.TryParse((string?)item.Element("pubDate"), out var pd) ? pd.ToUniversalTime() : null;
-                int? season = int.TryParse(Attr("season"), out var sn) && sn > 0 ? sn : null;
-                int? episode = int.TryParse(Attr("episode"), out var ep) && ep > 0 ? ep : null;
-
-                candidates.Add(new ReleaseCandidate
-                {
-                    ReleaseName = title!,
-                    Magnet = magnet!,
-                    InfoHash = infoHash,
-                    ImdbId = Attr("imdbid") ?? Attr("imdb"),
-                    Seeders = IndexerParsing.ParseInt(seedersRaw),
-                    Leechers = IndexerParsing.ParseInt(Attr("peers") ?? Attr("leechers")),
-                    SizeBytes = size,
-                    SeedersKnown = !string.IsNullOrWhiteSpace(seedersRaw),
-                    SizeKnown = sizeKnown,
-                    IndexerId = indexer.Id,
-                    Source = indexer.Name,
-                    PublishDate = published,
-                    Season = season,
-                    Episode = episode
-                });
-            }
+            var description = (string?)error.Attribute("description") ?? "The Torznab endpoint returned an error.";
+            throw new InvalidDataException(description);
         }
-        catch (Exception ex)
+        var items = doc.Descendants("item").ToList();
+        rawItemCount = items.Count;
+        foreach (var item in items)
         {
-            _logger.LogWarning(ex, "Torznab feed parse failed for endpoint \"{Endpoint}\" (search for \"{Title}\")", indexer.Name, jobTitle);
+            var title = ((string?)item.Element("title"))?.Trim();
+            if (string.IsNullOrWhiteSpace(title)) continue;
+
+            string? Attr(string name) => item.Elements(TorznabNs + "attr")
+                .FirstOrDefault(a => string.Equals((string?)a.Attribute("name"), name, StringComparison.OrdinalIgnoreCase))
+                ?.Attribute("value")?.Value;
+
+            var infoHash = Attr("infohash");
+            var link = (string?)item.Element("link");
+            var magnet = Attr("magneturl");
+            if (string.IsNullOrWhiteSpace(magnet) && link?.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase) == true)
+                magnet = link;
+            if (string.IsNullOrWhiteSpace(magnet) && !string.IsNullOrWhiteSpace(infoHash))
+                magnet = IndexerParsing.BuildMagnet(infoHash!, title!, Trackers);
+            if (string.IsNullOrWhiteSpace(magnet)) continue; // .torrent-file-only result; client is magnet-only
+
+            var sizeRaw = Attr("size") ?? (string?)item.Element("size");
+            bool sizeKnown = long.TryParse(sizeRaw, out var sz);
+            long size = sizeKnown ? sz : 0;
+            var seedersRaw = Attr("seeders");
+            DateTime? published = DateTime.TryParse((string?)item.Element("pubDate"), out var pd) ? pd.ToUniversalTime() : null;
+            int? season = int.TryParse(Attr("season"), out var sn) && sn > 0 ? sn : null;
+            int? episode = int.TryParse(Attr("episode"), out var ep) && ep > 0 ? ep : null;
+
+            candidates.Add(new ReleaseCandidate
+            {
+                ReleaseName = title!,
+                Magnet = magnet!,
+                InfoHash = infoHash,
+                ImdbId = Attr("imdbid") ?? Attr("imdb"),
+                Seeders = IndexerParsing.ParseInt(seedersRaw),
+                Leechers = IndexerParsing.ParseInt(Attr("peers") ?? Attr("leechers")),
+                SizeBytes = size,
+                SeedersKnown = !string.IsNullOrWhiteSpace(seedersRaw),
+                SizeKnown = sizeKnown,
+                IndexerId = indexer.Id,
+                Source = indexer.Name,
+                PublishDate = published,
+                Season = season,
+                Episode = episode
+            });
         }
         return candidates;
     }
@@ -182,7 +226,7 @@ public class TorznabIndexerProvider(HttpClient http, ILogger<TorznabIndexerProvi
         string xml;
         try
         {
-            xml = await _http.GetStringAsync(url, ct);
+            xml = await _fetch.GetStringAsync(_http, indexer, url, ct);
             started.Stop();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

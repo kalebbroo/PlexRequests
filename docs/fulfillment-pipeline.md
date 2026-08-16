@@ -108,10 +108,9 @@ sized to the box's concurrency. Persist claimed jobs locally so a worker restart
 Release candidates come from a pluggable set of `IIndexerProvider`s, merged by `IndexerClient`. Built in:
 - **EZTV** (`EztvIndexerProvider`) — TV, public JSON API keyed by IMDb id.
 - **YTS** (`YtsIndexerProvider`) — movies, public JSON API keyed by IMDb id; magnet built from the hash.
-- **1337x** (`X1337xIndexerProvider`) — movies + TV, **browser-backed HTML scrape** (no API): the
-  category-search page lists rows, and each torrent's magnet is fetched from its detail page. Its persistent
-  Chrome profile and admin viewer are isolated behind `IInteractiveBrowserTransport`; other indexers do not
-  pay the browser cost.
+- **1337x** (`X1337xIndexerProvider`) — movies + TV, **HTML scrape** (no API): the category-search page
+  lists rows, and each torrent's magnet is fetched from its detail page. Requests use the shared
+  `IIndexerFetch` seam so a refusal is recorded as blocked rather than returned as an empty search.
 - **Nyaa** (`NyaaIndexerProvider`) — anime, via the **RSS feed** (no scraping): parses
   `nyaa:infoHash`/`nyaa:seeders`/`nyaa:size` and builds a magnet from the hash. Runs for Anime/TV/Movie
   (TMDB has no anime type), returning nothing for non-anime titles.
@@ -119,11 +118,23 @@ Release candidates come from a pluggable set of `IIndexerProvider`s, merged by `
   their detail pages and extracts magnet + labelled Seeders/Size (falls back to inline magnets on the
   search page). Search path is configurable (`ExtToSearchPath`, `{query}` substituted) for tuning.
 
-  ⚠️ **Cloudflare:** 1337x searches and manual verification use the same headed Chrome session, persistent
-  profile, and VPN namespace. When challenged, the admin opens that browser from the indexer dialog and
-  completes the check; an abandoned viewer is closed after five minutes so fulfillment cannot remain
-  blocked behind it. ext.to keeps the lightweight clearance-cookie path. EZTV/YTS/Nyaa use APIs/RSS and
-  aren't affected.
+  ⚠️ **Cloudflare:** a challenged scraper is opened as a circuit and retried later; the downloader does not
+  launch Chrome or attempt to automate a human challenge. A manually supplied reusable cookie/User-Agent is
+  an optional advanced override for stable-egress deployments. EZTV/YTS/Nyaa use APIs/RSS and are not
+  dependent on that path.
+
+### Optional release catalog (shadow rollout)
+
+`IReleaseFeedSource` is an independent optional capability alongside live search. `ReleaseIngestionWorker`
+polls each enabled feed once, resumes from the checkpoint in the web service, and submits at-least-once
+batches to the separate `catalog.db`. Releases are unique by normalized infohash; source sightings remain
+separate. The batch receipt, items, and cursor commit in one transaction, so restarts and replay cannot
+duplicate rows or advance past uncommitted data. Structured adapters currently cover Nyaa RSS, EZTV, YTS,
+and every configured Torznab endpoint; successful results from other providers are written through as well.
+
+Set `CATALOG_ENABLED=true` to enable shadow ingestion. Then stage `CATALOG_USE_FOR_SEARCH=true` and finally
+`CATALOG_USE_FOR_MONITORING=true`; the latter replaces the per-wanted-show upstream sweep with local catalog
+matching while retaining live fulfillment fallback.
 
 To add more trackers, drop in another `IIndexerProvider` (or front a **Prowlarr/Jackett** aggregator).
 - Movies: one query for the film (title + year).
@@ -215,5 +226,9 @@ requests page shows these states; a failed request is re-approvable to re-enqueu
 |----------------|------------|---------|
 | `FULFILLMENT_ENABLED` | `Fulfillment:Enabled` | Enqueue jobs on approve. Off ⇒ approvals are manual-only. |
 | `FULFILLMENT_API_KEY` | `Fulfillment:ApiKey` | Shared secret for the worker API. Unset ⇒ endpoints reject all calls. |
+| `CATALOG_ENABLED` | `Catalog:Enabled` | Create and ingest the optional rebuildable release catalog. |
+| `CATALOG_USE_FOR_SEARCH` | `Catalog:UseForSearch` | Include catalog candidates in normal search. |
+| `CATALOG_USE_FOR_MONITORING` | `Catalog:UseForMonitoring` | Use catalog-only wanted-episode monitoring, with live fallback if the catalog API is unavailable. |
+| `CATALOG_POLL_MINUTES` | `Catalog:PollIntervalMinutes` | Structured feed cadence; default 15 minutes. |
 
 Both are mapped from `.env` by `LoadDotEnvFrom` in `Program.cs`.

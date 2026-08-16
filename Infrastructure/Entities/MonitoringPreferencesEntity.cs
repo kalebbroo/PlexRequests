@@ -24,10 +24,6 @@ public class MonitoringPreferencesEntity
     /// <summary>How long after the assumed air time to start looking. Releases don't appear instantly.</summary>
     public int PostAirDelayMinutes { get; set; } = 90;
 
-    /// <summary>How often the downloader sweeps indexer RSS for anything wanted. This is the real safety
-    /// net for the air-time estimate being off.</summary>
-    public int RssSweepIntervalSeconds { get; set; } = 900;
-
     /// <summary>Give up searching one episode after this many attempts; it stays visible in the calendar.</summary>
     public int MaxSearchAttemptsPerEpisode { get; set; } = 12;
 

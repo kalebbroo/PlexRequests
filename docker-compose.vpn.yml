@@ -18,6 +18,10 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__AppDb: /data/app.db
+      ConnectionStrings__CatalogDb: /data/catalog.db
+      Catalog__Enabled: ${CATALOG_ENABLED:-false}
+      Catalog__UseForSearch: ${CATALOG_USE_FOR_SEARCH:-false}
+      Catalog__UseForMonitoring: ${CATALOG_USE_FOR_MONITORING:-false}
       Fulfillment__Enabled: "true"
       Fulfillment__ApiKey: ${FULFILLMENT_API_KEY}
       Bridge__Enabled: ${BRIDGE_ENABLED:-false}
@@ -26,8 +30,6 @@ services:
       Admin__Usernames: ${ADMIN_USERNAMES}
       Plex__PrimaryServerUrl: ${PLEX_URL}
       Plex__ServerToken: ${PLEX_TOKEN}
-      # Chrome listens inside Gluetun's namespace; only the authenticated web proxy can reach it.
-      Browser__Endpoint: http://gluetun:9225/browser/
     volumes:
       - appdata:/data
       - ./keys:/app/keys
@@ -47,7 +49,6 @@ services:
       WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES}
       SERVER_COUNTRIES: ${VPN_COUNTRIES}
       FIREWALL_OUTBOUND_SUBNETS: ${DOCKER_SUBNET}
-      FIREWALL_INPUT_PORTS: "9225"
     ports:
       - "8112:8112"            # Deluge web UI, published via gluetun's namespace
     restart: unless-stopped
@@ -76,6 +77,10 @@ services:
     environment:
       Api__BaseUrl: http://web:8080
       Api__Key: ${FULFILLMENT_API_KEY}
+      Catalog__Enabled: ${CATALOG_ENABLED:-false}
+      Catalog__UseForSearch: ${CATALOG_USE_FOR_SEARCH:-false}
+      Catalog__UseForMonitoring: ${CATALOG_USE_FOR_MONITORING:-false}
+      Catalog__PollIntervalMinutes: ${CATALOG_POLL_MINUTES:-15}
       Deluge__Url: http://localhost:8112     # same namespace as gluetun/deluge
       Deluge__Password: ${DELUGE_PASSWORD:-deluge}
       Library__MoviePath: /data/library/movies
@@ -85,7 +90,6 @@ services:
       Indexer__Torznab__0__Name: ${TORZNAB_NAME:-torznab}
       Indexer__Torznab__0__Url: ${TORZNAB_URL:-}
       Indexer__Torznab__0__ApiKey: ${TORZNAB_API_KEY:-}
-      Indexer__BrowserProfilePath: /app/state/browser/1337x
       Vpn__Enabled: "true"                   # guard blocks work if the tunnel drops
       Vpn__HealthCheckUrl: https://api.ipify.org
     volumes:

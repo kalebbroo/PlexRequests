@@ -14,7 +14,6 @@ using System.Text.Json;
 using System.IO;
 using System.Net.Http;
 using System.Net.Security;
-using System.Net.WebSockets;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.DTOs;
 using Microsoft.AspNetCore.Mvc;
@@ -224,9 +223,18 @@ builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IReleaseB
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IRecommendedFeedService, PlexRequestsHosted.Services.Implementations.RecommendedFeedService>();
 // Per-indexer admin control (enable/priority) + rolling health from downloader search telemetry.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IIndexerAdminService, PlexRequestsHosted.Services.Implementations.IndexerAdminService>();
+// Optional, rebuildable release catalog. It is a singleton writer over short-lived contexts so concurrent
+// worker batches cannot race unique infohash/source constraints. Disabled by default during shadow rollout.
+builder.Services.Configure<PlexRequestsHosted.Infrastructure.Catalog.CatalogOptions>(
+    builder.Configuration.GetSection(PlexRequestsHosted.Infrastructure.Catalog.CatalogOptions.Section));
+builder.Services.AddSingleton<PlexRequestsHosted.Shared.Releases.IReleaseParser,
+    PlexRequestsHosted.Shared.Releases.ReleaseParser>();
+builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.IReleaseCatalogService,
+    PlexRequestsHosted.Services.Implementations.ReleaseCatalogService>();
 // Database maintenance: overview/backup/targeted cleanup/factory reset (the System → Database panel).
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IDatabaseAdminService, PlexRequestsHosted.Services.Implementations.DatabaseAdminService>();
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.JobSchedulerService>();
+builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.CatalogMaintenanceWorker>();
 
 // AuthN/AuthZ
 builder.Services
@@ -332,6 +340,18 @@ builder.Services.AddDbContextFactory<AppDbContext>(options =>
 builder.Services.AddScoped<AppDbContext>(sp =>
     sp.GetRequiredService<IDbContextFactory<AppDbContext>>().CreateDbContext());
 
+// Catalog persistence is deliberately separate from app.db: it is bounded derived data that can be
+// pruned or rebuilt without touching requests, users, jobs, or application backups.
+var configuredCatalogDbPath = builder.Configuration["ConnectionStrings:CatalogDb"];
+var catalogDbPath = string.IsNullOrWhiteSpace(configuredCatalogDbPath)
+    ? Path.Combine(Path.GetDirectoryName(dbPath) ?? builder.Environment.ContentRootPath, "catalog.db")
+    : (Path.IsPathRooted(configuredCatalogDbPath)
+        ? configuredCatalogDbPath
+        : Path.Combine(builder.Environment.ContentRootPath, configuredCatalogDbPath));
+builder.Services.AddDbContextFactory<PlexRequestsHosted.Infrastructure.Catalog.CatalogDbContext>(options =>
+    options.UseSqlite($"Data Source={catalogDbPath}")
+        .AddInterceptors(new PlexRequestsHosted.Infrastructure.Data.SqlitePragmaInterceptor()));
+
 var app = builder.Build();
 
 // Apply forwarded headers first so every downstream component (HSTS, HttpsRedirection, auth cookie,
@@ -350,8 +370,6 @@ app.UseHttpsRedirection();
 
 // Serve static files before authentication to prevent JS/CSS from being blocked
 app.UseStaticFiles();
-app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
-
 app.UseSession();
 app.UseAuthentication();
 app.UseAuthorization();
@@ -367,6 +385,17 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
+
+    var catalogOptions = scope.ServiceProvider
+        .GetRequiredService<Microsoft.Extensions.Options.IOptions<PlexRequestsHosted.Infrastructure.Catalog.CatalogOptions>>()
+        .Value;
+    if (catalogOptions.Enabled)
+    {
+        var catalog = scope.ServiceProvider
+            .GetRequiredService<IDbContextFactory<PlexRequestsHosted.Infrastructure.Catalog.CatalogDbContext>>();
+        await using var catalogDb = await catalog.CreateDbContextAsync();
+        await catalogDb.Database.MigrateAsync();
+    }
 
     // Seed the quality-tier catalog, the stock profiles, and (first run only) convert the legacy quality
     // rules into profiles + assignment rules, backfilling everything that needs a profile. Idempotent, so
@@ -402,40 +431,11 @@ app.MapGet("/api/admin/db/backup", async (PlexRequestsHosted.Services.Abstractio
     return Results.File(path, "application/octet-stream", Path.GetFileName(path));
 }).RequireAuthorization("AdminOnly");
 
-// Admin-only relay to Chrome inside the downloader's network namespace. The browser listener is not
-// published by Docker, and the shared fulfillment key is added here server-side rather than exposed to JS.
-app.MapGet("/api/admin/indexers/browser", async (HttpContext context, IConfiguration configuration) =>
-{
-    if (!context.WebSockets.IsWebSocketRequest) return Results.BadRequest("A WebSocket upgrade is required.");
-
-    var configured = configuration["Browser:Endpoint"] ?? "http://downloader:9225/browser/";
-    if (!Uri.TryCreate(configured, UriKind.Absolute, out var endpoint)
-        || endpoint.Scheme is not ("http" or "https"))
-        return Results.Problem("The internal browser endpoint is invalid.", statusCode: 503);
-
-    var builder = new UriBuilder(endpoint) { Scheme = endpoint.Scheme == "https" ? "wss" : "ws" };
-    using var worker = new ClientWebSocket();
-    var key = configuration["Fulfillment:ApiKey"];
-    if (string.IsNullOrWhiteSpace(key)) return Results.Problem("The fulfillment API key is not configured.", statusCode: 503);
-    worker.Options.SetRequestHeader("X-Fulfillment-Key", key);
-
-    try { await worker.ConnectAsync(builder.Uri, context.RequestAborted); }
-    catch (Exception ex) when (ex is not OperationCanceledException)
-    {
-        app.Logger.LogWarning(ex, "Could not connect to the downloader's interactive browser");
-        return Results.Problem("The downloader browser is unavailable. Check that the downloader is running.", statusCode: 503);
-    }
-
-    using var admin = await context.WebSockets.AcceptWebSocketAsync();
-    using var relayLifetime = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
-    var upstream = RelayWebSocketAsync(admin, worker, relayLifetime.Token);
-    var downstream = RelayWebSocketAsync(worker, admin, relayLifetime.Token);
-    await Task.WhenAny(upstream, downstream);
-    relayLifetime.Cancel();
-    try { await Task.WhenAll(upstream, downstream); }
-    catch (Exception ex) when (ex is OperationCanceledException or WebSocketException or IOException) { }
-    return Results.Empty;
-}).RequireAuthorization("AdminOnly");
+app.MapGet("/api/admin/catalog/stats", async (
+    PlexRequestsHosted.Services.Abstractions.IReleaseCatalogService catalog,
+    CancellationToken cancellationToken) =>
+    Results.Ok(await catalog.GetStatsAsync(cancellationToken)))
+    .RequireAuthorization("AdminOnly");
 
 // Simple health endpoint for Plex connectivity
 app.MapGet("/api/plex/health", async (IPlexApiService plex) =>
@@ -525,24 +525,6 @@ static bool IsAuthorizedWorker(HttpContext ctx, IConfiguration cfg)
            System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(a, b);
 }
 
-static async Task RelayWebSocketAsync(WebSocket source, WebSocket destination, CancellationToken cancellationToken)
-{
-    var buffer = new byte[64 * 1024];
-    while (!cancellationToken.IsCancellationRequested && source.State == WebSocketState.Open)
-    {
-        var result = await source.ReceiveAsync(buffer, cancellationToken);
-        if (result.MessageType == WebSocketMessageType.Close)
-        {
-            if (destination.State == WebSocketState.Open)
-                await destination.CloseOutputAsync(result.CloseStatus ?? WebSocketCloseStatus.NormalClosure,
-                    result.CloseStatusDescription, CancellationToken.None);
-            return;
-        }
-        if (destination.State != WebSocketState.Open) return;
-        await destination.SendAsync(buffer.AsMemory(0, result.Count), result.MessageType, result.EndOfMessage, cancellationToken);
-    }
-}
-
 static string NormalizeLocalReturnUrl(string? returnUrl)
 {
     if (string.IsNullOrWhiteSpace(returnUrl)) return "/browse";
@@ -613,11 +595,60 @@ app.MapPost("/api/fulfillment/{jobId:int}/torrents", async (int jobId, List<Plex
     return Results.Ok(await svc.RegisterAsync(jobId, body));
 });
 
-app.MapPost("/api/fulfillment/indexers/{indexerId:int}/clearance", async (int indexerId, ClearanceRequest body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Abstractions.IIndexerAdminService indexers) =>
+// Release catalog ingestion uses at-least-once batches. The catalog service advances the opaque source
+// cursor in the same transaction as its releases and receipt, so a worker crash can safely replay.
+app.MapPost("/api/fulfillment/catalog/batches", async (
+    CatalogBatchDto body,
+    HttpContext ctx,
+    IConfiguration cfg,
+    Microsoft.Extensions.Options.IOptions<PlexRequestsHosted.Infrastructure.Catalog.CatalogOptions> options,
+    PlexRequestsHosted.Services.Abstractions.IReleaseCatalogService catalog,
+    CancellationToken cancellationToken) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
-    return await indexers.SaveClearanceAsync(indexerId, body.CookieHeader ?? "", body.UserAgent ?? "")
-        ? Results.Ok() : Results.NotFound();
+    if (!options.Value.Enabled) return Results.NotFound();
+    try { return Results.Ok(await catalog.UpsertBatchAsync(body, cancellationToken)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+
+app.MapGet("/api/fulfillment/catalog/checkpoints/{indexerId:int}", async (
+    int indexerId,
+    HttpContext ctx,
+    IConfiguration cfg,
+    Microsoft.Extensions.Options.IOptions<PlexRequestsHosted.Infrastructure.Catalog.CatalogOptions> options,
+    PlexRequestsHosted.Services.Abstractions.IReleaseCatalogService catalog,
+    CancellationToken cancellationToken) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    if (!options.Value.Enabled) return Results.NotFound();
+    return Results.Ok(await catalog.GetCheckpointAsync(indexerId, cancellationToken));
+});
+
+app.MapPost("/api/fulfillment/catalog/failures", async (
+    CatalogFailureDto body,
+    HttpContext ctx,
+    IConfiguration cfg,
+    Microsoft.Extensions.Options.IOptions<PlexRequestsHosted.Infrastructure.Catalog.CatalogOptions> options,
+    PlexRequestsHosted.Services.Abstractions.IReleaseCatalogService catalog,
+    CancellationToken cancellationToken) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    if (!options.Value.Enabled) return Results.NotFound();
+    try { return Results.Ok(await catalog.ReportFailureAsync(body, cancellationToken)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+
+app.MapPost("/api/fulfillment/catalog/search", async (
+    CatalogQueryDto body,
+    HttpContext ctx,
+    IConfiguration cfg,
+    Microsoft.Extensions.Options.IOptions<PlexRequestsHosted.Infrastructure.Catalog.CatalogOptions> options,
+    PlexRequestsHosted.Services.Abstractions.IReleaseCatalogService catalog,
+    CancellationToken cancellationToken) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    if (!options.Value.Enabled) return Results.NotFound();
+    return Results.Ok(await catalog.SearchAsync(body, cancellationToken));
 });
 
 app.MapGet("/api/fulfillment/jobs/{jobId:int}", async (int jobId, HttpContext ctx, IConfiguration cfg, IFulfillmentQueue queue) =>
@@ -661,7 +692,7 @@ app.MapPost("/api/fulfillment/{jobId:int}/blocklist", async (int jobId, PlexRequ
     return await blocklist.BlockAsync(jobId, body) ? Results.Ok() : Results.NotFound();
 });
 
-// Episodes the RSS sweep should watch for: monitored, aired (or undated), and not yet on Plex.
+// Episodes automatic release monitoring should watch for: monitored, aired (or undated), and not yet on Plex.
 app.MapGet("/api/fulfillment/wanted", async (HttpContext ctx, IConfiguration cfg, AppDbContext db) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
@@ -678,6 +709,12 @@ app.MapGet("/api/fulfillment/wanted", async (HttpContext ctx, IConfiguration cfg
                             MediaRequestId = a.MediaRequestId!.Value,
                             ShowTmdbId = a.ShowTmdbId,
                             Title = r.Title,
+                            ImdbId = db.FulfillmentJobs
+                                .Where(j => j.MediaRequestId == r.Id && j.ImdbId != null)
+                                .OrderByDescending(j => j.Id)
+                                .Select(j => j.ImdbId)
+                                .FirstOrDefault(),
+                            IsAnime = db.FulfillmentJobs.Any(j => j.MediaRequestId == r.Id && j.IsAnime),
                             Season = a.SeasonNumber,
                             Episode = a.EpisodeNumber,
                             QualityProfileId = r.QualityProfileId

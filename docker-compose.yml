@@ -29,6 +29,10 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__AppDb: /appdata/app.db
+      ConnectionStrings__CatalogDb: /appdata/catalog.db
+      Catalog__Enabled: ${CATALOG_ENABLED:-false}
+      Catalog__UseForSearch: ${CATALOG_USE_FOR_SEARCH:-false}
+      Catalog__UseForMonitoring: ${CATALOG_USE_FOR_MONITORING:-false}
       Fulfillment__Enabled: "true"
       Fulfillment__ApiKey: ${FULFILLMENT_API_KEY}
       Bridge__Enabled: ${BRIDGE_ENABLED:-false}
@@ -37,8 +41,6 @@ services:
       Admin__Usernames: ${ADMIN_USERNAMES}
       Plex__PrimaryServerUrl: ${PLEX_URL}
       Plex__ServerToken: ${PLEX_TOKEN}
-      # Internal downloader browser endpoint. The admin WebSocket proxy is the only public route to it.
-      Browser__Endpoint: http://downloader:9225/browser/
     volumes:
       - appdata:/appdata       # app.db (moved off /data so the library volumes below can use it)
       - ./keys:/app/keys       # persisted DataProtection keys (auth cookies survive restarts)
@@ -81,6 +83,10 @@ services:
     environment:
       Api__BaseUrl: http://web:8080
       Api__Key: ${FULFILLMENT_API_KEY}
+      Catalog__Enabled: ${CATALOG_ENABLED:-false}
+      Catalog__UseForSearch: ${CATALOG_USE_FOR_SEARCH:-false}
+      Catalog__UseForMonitoring: ${CATALOG_USE_FOR_MONITORING:-false}
+      Catalog__PollIntervalMinutes: ${CATALOG_POLL_MINUTES:-15}
       # Point at your own client, or leave the default to use the --profile torrent Deluge.
       Deluge__Url: ${DELUGE_URL:-http://deluge:8112}
       Deluge__Password: ${DELUGE_PASSWORD:-deluge}
@@ -92,7 +98,6 @@ services:
       Indexer__Torznab__0__Name: ${TORZNAB_NAME:-torznab}
       Indexer__Torznab__0__Url: ${TORZNAB_URL:-}
       Indexer__Torznab__0__ApiKey: ${TORZNAB_API_KEY:-}
-      Indexer__BrowserProfilePath: /app/state/browser/1337x
       # No managed VPN in this file; the app-level guard stays off (it never blocks a normally
       # connected box anyway — it only matters when the downloader is inside the VPN namespace).
       Vpn__Enabled: ${VPN_ENABLED:-false}

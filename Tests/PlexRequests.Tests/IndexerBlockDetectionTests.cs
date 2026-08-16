@@ -12,9 +12,8 @@ namespace PlexRequests.Tests;
 /// *successful search that found nothing*. 1337x and ext.to each ran 13 searches that way and still showed
 /// a clean health record in the admin panel — the single reason the outage went unnoticed for weeks.
 ///
-/// The distinction between a solvable challenge and a hard IP ban matters just as much: one is worth
-/// escalating to a browser for, the other is worth surfacing so the operator stops waiting for it to fix
-/// itself.
+/// The distinction between a challenge and a hard IP ban matters just as much because they require
+/// different backoff windows and operator guidance.
 /// </summary>
 public class IndexerBlockDetectionTests
 {
@@ -28,7 +27,7 @@ public class IndexerBlockDetectionTests
         "<form id=\"challenge-form\" action=\"/?__cf_chl_f_tk=abc\"></form>Enable JavaScript and cookies to continue</body></html>";
 
     [Fact]
-    public void The_real_1337x_response_is_a_solvable_challenge()
+    public void The_real_1337x_response_is_a_cloudflare_challenge()
     {
         var reason = IndexerFetch.DetectBlock(
             HttpStatusCode.Forbidden,
@@ -41,7 +40,7 @@ public class IndexerBlockDetectionTests
     [Fact]
     public void A_hard_ip_ban_is_not_reported_as_a_solvable_challenge()
     {
-        // Escalating to a headless browser for this would burn seconds per search and never succeed.
+        // Retrying this with a heavier client would burn time per search and never succeed.
         var reason = IndexerFetch.DetectBlock(
             HttpStatusCode.Forbidden,
             H(("server", "cloudflare")),

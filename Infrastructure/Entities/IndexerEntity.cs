@@ -56,7 +56,8 @@ public class IndexerEntity
     /// ("cf_clearance=…") and encrypted at rest like the API key. Paired with <see cref="UserAgent"/>
     /// because Cloudflare binds the cookie to the exact User-Agent AND the client IP that earned it —
     /// replaying it under a different UA is worse than sending nothing, since it reads as a stolen cookie.
-    /// This is the manual escape hatch; the headless-browser solver populates the same two fields.
+    /// This is an optional manual override for deployments with stable egress; the application does not
+    /// attempt to solve browser challenges automatically.
     /// </summary>
     [MaxLength(4096)] public string? ClearanceCookieEncrypted { get; set; }
     [MaxLength(512)] public string? UserAgent { get; set; }
@@ -79,8 +80,8 @@ public class IndexerEntity
     public bool AnimeOnly { get; set; }
 
     // --- Independent toggles, mirroring what the search paths actually need ------------------------
-    /// <summary>Include in the periodic RSS sweep for monitored content.</summary>
-    public bool EnableRss { get; set; } = true;
+    /// <summary>Include in incremental catalog ingestion and periodic monitoring.</summary>
+    public bool EnableIngestion { get; set; } = true;
     /// <summary>Include when the downloader searches for a queued request.</summary>
     public bool EnableAutomaticSearch { get; set; } = true;
     /// <summary>Include when an admin runs a manual search.</summary>
@@ -106,7 +107,7 @@ public class IndexerEntity
     public int RateLimitPerMinute { get; set; } = 30;
 
     /// <summary>How long an identical query's results are reused. Matters most for repeated manual searches
-    /// and the RSS sweep, which would otherwise re-hit every site each pass.</summary>
+    /// and legacy live monitoring, which would otherwise re-hit every site each pass.</summary>
     public int CacheSeconds { get; set; } = 300;
 
     /// <summary>For scrapers that must open a detail page per result to find a magnet: how many to open.
@@ -135,6 +136,8 @@ public class IndexerEntity
     /// </summary>
     public IndexerBlockReason LastBlockReason { get; set; }
     public DateTime? LastBlockedAt { get; set; }
+    /// <summary>Durable live-search circuit. The worker skips this source until the probe time.</summary>
+    public DateTime? SearchCircuitOpenUntil { get; set; }
     public long TotalSearches { get; set; }
     public long TotalResults { get; set; }
     public int LastLatencyMs { get; set; }

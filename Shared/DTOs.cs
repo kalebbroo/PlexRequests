@@ -319,8 +319,6 @@ public class UserDto : BaseDto
 // Wire types for the fulfillment worker API — shared by the web app (endpoints) and the downloader (client).
 public record ClaimRequest(string? WorkerId, int? Max);
 
-/// <summary>A clearance the downloader's challenge solver earned, on its way to being stored.</summary>
-public record ClearanceRequest(string? CookieHeader, string? UserAgent);
 public record ProgressRequest(int Progress, string? WorkerId, List<DownloadTorrentTelemetry>? Torrents = null);
 /// <param name="CandidatesRejected">
 /// True when the search DID return releases but none were acceptable. That is the only situation in which
@@ -643,7 +641,7 @@ public class IndexerSettingDto
     public bool SupportsAnime { get; set; } = true;
     public bool AnimeOnly { get; set; }
 
-    public bool EnableRss { get; set; } = true;
+    public bool EnableIngestion { get; set; } = true;
     public bool EnableAutomaticSearch { get; set; } = true;
     public bool EnableInteractiveSearch { get; set; } = true;
     public bool EnableRecommendedFeed { get; set; }
@@ -669,6 +667,7 @@ public class IndexerSettingDto
     /// say "Blocked by Cloudflare" and offer the remedy instead of showing a healthy source finding nothing.</summary>
     public IndexerBlockReason LastBlockReason { get; set; }
     public DateTime? LastBlockedAt { get; set; }
+    public DateTime? SearchCircuitOpenUntil { get; set; }
 
     // --- Cloudflare clearance (write-only cookie, like the API key) --------------------------------
     /// <summary>Raw Cookie header to send, e.g. "cf_clearance=…". Never returned to the browser.</summary>
@@ -700,7 +699,7 @@ public class IndexerConfigDto
     public string? BaseUrlOverride { get; set; }
 
     /// <summary>
-    /// A Cloudflare clearance cookie harvested from a real browser, as a raw Cookie header
+    /// An optional clearance cookie supplied by an operator, as a raw Cookie header
     /// ("cf_clearance=…"), together with the User-Agent that earned it. Cloudflare binds the cookie to the
     /// exact UA *and* the client IP, so the two travel together and are useless apart — which is why this
     /// is one paired setting rather than two independent fields.
@@ -716,10 +715,11 @@ public class IndexerConfigDto
     public bool SupportsAnime { get; set; } = true;
     public bool AnimeOnly { get; set; }
 
-    public bool EnableRss { get; set; } = true;
+    public bool EnableIngestion { get; set; } = true;
     public bool EnableAutomaticSearch { get; set; } = true;
     public bool EnableInteractiveSearch { get; set; } = true;
     public bool EnableRecommendedFeed { get; set; }
+    public DateTime? SearchCircuitOpenUntil { get; set; }
 
     public int? MinSeeders { get; set; }
     public int? TimeoutSeconds { get; set; }
@@ -1265,19 +1265,20 @@ public class RecommendedFeedItemDto
     public int IndexerId { get; set; }
 }
 
-/// <summary>One episode the RSS sweep should be watching for.</summary>
+/// <summary>One episode automatic release monitoring should be watching for.</summary>
 public class WantedEpisodeDto
 {
     public int MediaRequestId { get; set; }
     public int ShowTmdbId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string? ImdbId { get; set; }
+    public bool IsAnime { get; set; }
     public int Season { get; set; }
     public int Episode { get; set; }
     public int? QualityProfileId { get; set; }
 }
 
-/// <summary>A release the RSS sweep matched against something wanted.</summary>
+/// <summary>A release automatic monitoring matched against something wanted.</summary>
 public class RssGrabDto
 {
     public int MediaRequestId { get; set; }

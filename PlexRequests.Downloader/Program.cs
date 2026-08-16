@@ -15,6 +15,7 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.Services.Configure<ApiOptions>(builder.Configuration.GetSection(ApiOptions.Section));
 builder.Services.Configure<WorkerOptions>(builder.Configuration.GetSection(WorkerOptions.Section));
 builder.Services.Configure<IndexerOptions>(builder.Configuration.GetSection(IndexerOptions.Section));
+builder.Services.Configure<CatalogWorkerOptions>(builder.Configuration.GetSection(CatalogWorkerOptions.Section));
 builder.Services.Configure<DelugeOptions>(builder.Configuration.GetSection(DelugeOptions.Section));
 builder.Services.Configure<LibraryOptions>(builder.Configuration.GetSection(LibraryOptions.Section));
 builder.Services.Configure<QualityOptions>(builder.Configuration.GetSection(QualityOptions.Section));
@@ -113,6 +114,10 @@ builder.Services.AddTransient<IIndexerImplementation>(sp => sp.GetRequiredServic
 builder.Services.AddTransient<IIndexerImplementation>(sp => sp.GetRequiredService<ExtToIndexerProvider>());
 builder.Services.AddTransient<IIndexerImplementation>(sp => sp.GetRequiredService<PirateBayIndexerProvider>());
 builder.Services.AddTransient<IIndexerImplementation>(sp => sp.GetRequiredService<TorrentsCsvIndexerProvider>());
+builder.Services.AddTransient<IReleaseFeedSource>(sp => sp.GetRequiredService<NyaaIndexerProvider>());
+builder.Services.AddTransient<IReleaseFeedSource>(sp => sp.GetRequiredService<EztvIndexerProvider>());
+builder.Services.AddTransient<IReleaseFeedSource>(sp => sp.GetRequiredService<YtsIndexerProvider>());
+builder.Services.AddTransient<IReleaseFeedSource>(sp => sp.GetRequiredService<TorznabIndexerProvider>());
 builder.Services.AddTransient<IIndexerClient, IndexerClient>();
 // Per-(indexer, query) result cache and the per-indexer request throttle the client sits on top of.
 builder.Services.AddMemoryCache();
@@ -120,15 +125,6 @@ builder.Services.AddSingleton<IIndexerRateLimiter, IndexerRateLimiter>();
 // The single fetch seam every scraped indexer goes through: applies stored clearance credentials and turns
 // a refusal into a typed IndexerBlockedException instead of an empty result set.
 builder.Services.AddSingleton<IIndexerFetch, IndexerFetch>();
-// Solving a Cloudflare interstitial needs a browser engine — no header or TLS trick substitutes for running
-// the challenge. Registered unconditionally; it reports itself unavailable when no browser is installed, so
-// a deployment without one degrades to "blocked, here's why" rather than failing oddly.
-builder.Services.AddSingleton<IChallengeSolver, BrowserChallengeSolver>();
-// 1337x needs more than cookie replay: its manually verified Chrome profile is the transport itself.
-// The control server is internal-only and lets the authenticated web UI stream that exact browser.
-builder.Services.AddSingleton<PersistentBrowserTransport>();
-builder.Services.AddSingleton<IInteractiveBrowserTransport>(sp => sp.GetRequiredService<PersistentBrowserTransport>());
-builder.Services.AddHostedService<BrowserControlServer>();
 // One-time migration of Indexer__Torznab__* env config into the admin-managed Indexers table.
 builder.Services.AddHostedService<PlexRequests.Downloader.Worker.LegacyTorznabImporter>();
 // Serves admin-initiated searches on a short poll, separate from the fulfillment loop — someone is waiting.
@@ -144,6 +140,8 @@ builder.Services.AddHostedService<PlexRequests.Downloader.Worker.LegacyTorrentSt
 builder.Services.AddHostedService<PlexRequests.Downloader.Worker.RecommendedFeedWorker>();
 // Watches indexers for anything currently wanted — the low-latency safety net behind the air-date estimate.
 builder.Services.AddHostedService<PlexRequests.Downloader.Worker.RssSweepWorker>();
+// Durable, source-once catalog ingestion. Search and monitoring reads have separate rollout flags.
+builder.Services.AddHostedService<PlexRequests.Downloader.Worker.ReleaseIngestionWorker>();
 
 // Admin-configured download preferences, fetched from the web app (appsettings QualityOptions fallback).
 builder.Services.AddSingleton<IDownloadPreferencesProvider, DownloadPreferencesProvider>();
