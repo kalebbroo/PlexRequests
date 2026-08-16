@@ -108,8 +108,10 @@ sized to the box's concurrency. Persist claimed jobs locally so a worker restart
 Release candidates come from a pluggable set of `IIndexerProvider`s, merged by `IndexerClient`. Built in:
 - **EZTV** (`EztvIndexerProvider`) — TV, public JSON API keyed by IMDb id.
 - **YTS** (`YtsIndexerProvider`) — movies, public JSON API keyed by IMDb id; magnet built from the hash.
-- **1337x** (`X1337xIndexerProvider`) — movies + TV, **HTML scrape** (no API): the category-search page
-  lists rows, and each torrent's magnet is fetched from its detail page (top N rows only, `X1337xMaxDetail`).
+- **1337x** (`X1337xIndexerProvider`) — movies + TV, **browser-backed HTML scrape** (no API): the
+  category-search page lists rows, and each torrent's magnet is fetched from its detail page. Its persistent
+  Chrome profile and admin viewer are isolated behind `IInteractiveBrowserTransport`; other indexers do not
+  pay the browser cost.
 - **Nyaa** (`NyaaIndexerProvider`) — anime, via the **RSS feed** (no scraping): parses
   `nyaa:infoHash`/`nyaa:seeders`/`nyaa:size` and builds a magnet from the hash. Runs for Anime/TV/Movie
   (TMDB has no anime type), returning nothing for non-anime titles.
@@ -117,11 +119,11 @@ Release candidates come from a pluggable set of `IIndexerProvider`s, merged by `
   their detail pages and extracts magnet + labelled Seeders/Size (falls back to inline magnets on the
   search page). Search path is configurable (`ExtToSearchPath`, `{query}` substituted) for tuning.
 
-  ⚠️ **Cloudflare (1337x & ext.to):** both are usually behind Cloudflare, which blocks plain HTTP
-  clients from datacenter IPs (each provider detects the challenge page and returns nothing, logging a
-  warning). They generally work from a residential/VPN egress; if your exit IP is blocked, front them
-  with a solver proxy (e.g. FlareSolverr) and point `X1337xBaseUrl`/`ExtToBaseUrl` at it, or disable
-  them (`X1337xEnabled`/`ExtToEnabled: false`). EZTV/YTS/Nyaa use APIs/RSS and aren't affected.
+  ⚠️ **Cloudflare:** 1337x searches and manual verification use the same headed Chrome session, persistent
+  profile, and VPN namespace. When challenged, the admin opens that browser from the indexer dialog and
+  completes the check; an abandoned viewer is closed after five minutes so fulfillment cannot remain
+  blocked behind it. ext.to keeps the lightweight clearance-cookie path. EZTV/YTS/Nyaa use APIs/RSS and
+  aren't affected.
 
 To add more trackers, drop in another `IIndexerProvider` (or front a **Prowlarr/Jackett** aggregator).
 - Movies: one query for the film (title + year).

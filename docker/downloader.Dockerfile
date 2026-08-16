@@ -19,9 +19,9 @@ WORKDIR /app
 # cifs/nfs helpers as above, plus a real browser for the Cloudflare challenge solver.
 #
 # The browser is the only way past a JS interstitial — it is what FlareSolverr is, and why Jackett
-# deployments end up running one. Including it here avoids a second service. It runs ONCE per site per
-# clearance lifetime to earn a cf_clearance cookie; every search after that is plain HTTP carrying the
-# cookie, so the cost is image size rather than search latency.
+# deployments end up running one. Including it here avoids a second service. 1337x keeps one persistent,
+# manually verifiable profile and uses that browser as its transport; other challenged scrapers can still
+# use the lightweight one-shot clearance solver.
 #
 # Google Chrome rather than chromium, because this base is Ubuntu noble: apt has no real `chromium`
 # package there (candidate: none), and `chromium-browser` is a stub that refuses to run and tells you to
@@ -40,7 +40,7 @@ RUN apt-get update \
          && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
               > /etc/apt/sources.list.d/google-chrome.list \
          && apt-get update \
-         && apt-get install -y --no-install-recommends google-chrome-stable fonts-liberation; \
+         && apt-get install -y --no-install-recommends google-chrome-stable fonts-liberation xvfb; \
        fi \
     && apt-get purge -y curl gnupg \
     && apt-get autoremove -y \

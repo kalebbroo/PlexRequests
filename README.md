@@ -223,6 +223,11 @@ per-source health (result counts, failure streaks, latency) updated live from ev
 run **Jackett** or **Prowlarr**, point the downloader at it via `TORZNAB_URL`/`TORZNAB_API_KEY` (see
 `docker/.env.example`) and everything configured there joins the search too.
 
+1337x uses a persistent Chrome profile inside the downloader's network namespace. If its health shows a
+Cloudflare challenge, edit 1337x and select **Open 1337x browser**; the admin-only modal streams that exact
+browser so you can complete the check. The profile survives restarts on `downloader-state`, and scheduled
+1337x searches continue through the same browser session. No browser port is published by Docker.
+
 Set `FULFILLMENT_API_KEY` (the same value on web + downloader) and pick a scenario:
 
 | Scenario | Command | What runs |

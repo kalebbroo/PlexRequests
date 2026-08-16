@@ -43,6 +43,23 @@ public class IndexerOptions
     /// deliberately, so polling faster does not help — this simply has to outlast it.</summary>
     public int ChallengeSettleSeconds { get; set; } = 15;
 
+    /// <summary>Internal-only WebSocket listener used by the admin UI to view and control the persistent
+    /// 1337x browser. The port is never published by either compose stack; the web container proxies it
+    /// after enforcing the AdminOnly policy.</summary>
+    public string BrowserControlPrefix { get; set; } = "http://*:9225/browser/";
+
+    /// <summary>Persistent Chrome profile. It lives on downloader-state so a manually verified session
+    /// survives both Chrome and container restarts.</summary>
+    public string BrowserProfilePath { get; set; } = "state/browser/1337x";
+
+    /// <summary>Browser viewport streamed into the admin modal.</summary>
+    public int BrowserViewportWidth { get; set; } = 1280;
+    public int BrowserViewportHeight { get; set; } = 800;
+
+    /// <summary>Maximum time one admin may hold the interactive viewer open. Searches wait for that one
+    /// page, so an abandoned tab must release it automatically.</summary>
+    public int BrowserSessionTimeoutMinutes { get; set; } = 5;
+
     public const string Section = "Indexer";
     public int TimeoutSeconds { get; set; } = 20;
     public string EztvBaseUrl { get; set; } = "https://eztvx.to";   // TV (JSON API)

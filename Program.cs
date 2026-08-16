@@ -14,6 +14,7 @@ using System.Text.Json;
 using System.IO;
 using System.Net.Http;
 using System.Net.Security;
+using System.Net.WebSockets;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.DTOs;
 using Microsoft.AspNetCore.Mvc;
@@ -349,6 +350,7 @@ app.UseHttpsRedirection();
 
 // Serve static files before authentication to prevent JS/CSS from being blocked
 app.UseStaticFiles();
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
 
 app.UseSession();
 app.UseAuthentication();
@@ -398,6 +400,41 @@ app.MapGet("/api/admin/db/backup", async (PlexRequestsHosted.Services.Abstractio
 {
     var path = await dbAdmin.CreateBackupAsync();
     return Results.File(path, "application/octet-stream", Path.GetFileName(path));
+}).RequireAuthorization("AdminOnly");
+
+// Admin-only relay to Chrome inside the downloader's network namespace. The browser listener is not
+// published by Docker, and the shared fulfillment key is added here server-side rather than exposed to JS.
+app.MapGet("/api/admin/indexers/browser", async (HttpContext context, IConfiguration configuration) =>
+{
+    if (!context.WebSockets.IsWebSocketRequest) return Results.BadRequest("A WebSocket upgrade is required.");
+
+    var configured = configuration["Browser:Endpoint"] ?? "http://downloader:9225/browser/";
+    if (!Uri.TryCreate(configured, UriKind.Absolute, out var endpoint)
+        || endpoint.Scheme is not ("http" or "https"))
+        return Results.Problem("The internal browser endpoint is invalid.", statusCode: 503);
+
+    var builder = new UriBuilder(endpoint) { Scheme = endpoint.Scheme == "https" ? "wss" : "ws" };
+    using var worker = new ClientWebSocket();
+    var key = configuration["Fulfillment:ApiKey"];
+    if (string.IsNullOrWhiteSpace(key)) return Results.Problem("The fulfillment API key is not configured.", statusCode: 503);
+    worker.Options.SetRequestHeader("X-Fulfillment-Key", key);
+
+    try { await worker.ConnectAsync(builder.Uri, context.RequestAborted); }
+    catch (Exception ex) when (ex is not OperationCanceledException)
+    {
+        app.Logger.LogWarning(ex, "Could not connect to the downloader's interactive browser");
+        return Results.Problem("The downloader browser is unavailable. Check that the downloader is running.", statusCode: 503);
+    }
+
+    using var admin = await context.WebSockets.AcceptWebSocketAsync();
+    using var relayLifetime = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+    var upstream = RelayWebSocketAsync(admin, worker, relayLifetime.Token);
+    var downstream = RelayWebSocketAsync(worker, admin, relayLifetime.Token);
+    await Task.WhenAny(upstream, downstream);
+    relayLifetime.Cancel();
+    try { await Task.WhenAll(upstream, downstream); }
+    catch (Exception ex) when (ex is OperationCanceledException or WebSocketException or IOException) { }
+    return Results.Empty;
 }).RequireAuthorization("AdminOnly");
 
 // Simple health endpoint for Plex connectivity
@@ -486,6 +523,24 @@ static bool IsAuthorizedWorker(HttpContext ctx, IConfiguration cfg)
     var b = Encoding.UTF8.GetBytes(configured);
     return a.Length == b.Length &&
            System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(a, b);
+}
+
+static async Task RelayWebSocketAsync(WebSocket source, WebSocket destination, CancellationToken cancellationToken)
+{
+    var buffer = new byte[64 * 1024];
+    while (!cancellationToken.IsCancellationRequested && source.State == WebSocketState.Open)
+    {
+        var result = await source.ReceiveAsync(buffer, cancellationToken);
+        if (result.MessageType == WebSocketMessageType.Close)
+        {
+            if (destination.State == WebSocketState.Open)
+                await destination.CloseOutputAsync(result.CloseStatus ?? WebSocketCloseStatus.NormalClosure,
+                    result.CloseStatusDescription, CancellationToken.None);
+            return;
+        }
+        if (destination.State != WebSocketState.Open) return;
+        await destination.SendAsync(buffer.AsMemory(0, result.Count), result.MessageType, result.EndOfMessage, cancellationToken);
+    }
 }
 
 static string NormalizeLocalReturnUrl(string? returnUrl)
