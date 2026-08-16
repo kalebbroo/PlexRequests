@@ -37,6 +37,8 @@ services:
       Admin__Usernames: ${ADMIN_USERNAMES}
       Plex__PrimaryServerUrl: ${PLEX_URL}
       Plex__ServerToken: ${PLEX_TOKEN}
+      # Internal downloader browser endpoint. The admin WebSocket proxy is the only public route to it.
+      Browser__Endpoint: http://downloader:9225/browser/
     volumes:
       - appdata:/appdata       # app.db (moved off /data so the library volumes below can use it)
       - ./keys:/app/keys       # persisted DataProtection keys (auth cookies survive restarts)
@@ -90,6 +92,7 @@ services:
       Indexer__Torznab__0__Name: ${TORZNAB_NAME:-torznab}
       Indexer__Torznab__0__Url: ${TORZNAB_URL:-}
       Indexer__Torznab__0__ApiKey: ${TORZNAB_API_KEY:-}
+      Indexer__BrowserProfilePath: /app/state/browser/1337x
       # No managed VPN in this file; the app-level guard stays off (it never blocks a normally
       # connected box anyway — it only matters when the downloader is inside the VPN namespace).
       Vpn__Enabled: ${VPN_ENABLED:-false}

@@ -1,0 +1,42 @@
+.browser-frame {
+    position: relative;
+    width: 100%;
+    min-height: min(62vh, 800px);
+    overflow: hidden;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 10px;
+    background: #111;
+}
+
+.browser-canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    min-height: min(62vh, 800px);
+    outline: none;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.browser-canvas:focus-visible {
+    box-shadow: inset 0 0 0 3px var(--mud-palette-primary);
+}
+
+.browser-loading {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: white;
+}
+
+@media (max-width: 600px) {
+    .browser-frame,
+    .browser-canvas {
+        min-height: 52vh;
+    }
+}

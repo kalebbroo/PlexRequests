@@ -26,6 +26,8 @@ services:
       Admin__Usernames: ${ADMIN_USERNAMES}
       Plex__PrimaryServerUrl: ${PLEX_URL}
       Plex__ServerToken: ${PLEX_TOKEN}
+      # Chrome listens inside Gluetun's namespace; only the authenticated web proxy can reach it.
+      Browser__Endpoint: http://gluetun:9225/browser/
     volumes:
       - appdata:/data
       - ./keys:/app/keys
@@ -45,6 +47,7 @@ services:
       WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES}
       SERVER_COUNTRIES: ${VPN_COUNTRIES}
       FIREWALL_OUTBOUND_SUBNETS: ${DOCKER_SUBNET}
+      FIREWALL_INPUT_PORTS: "9225"
     ports:
       - "8112:8112"            # Deluge web UI, published via gluetun's namespace
     restart: unless-stopped
@@ -82,6 +85,7 @@ services:
       Indexer__Torznab__0__Name: ${TORZNAB_NAME:-torznab}
       Indexer__Torznab__0__Url: ${TORZNAB_URL:-}
       Indexer__Torznab__0__ApiKey: ${TORZNAB_API_KEY:-}
+      Indexer__BrowserProfilePath: /app/state/browser/1337x
       Vpn__Enabled: "true"                   # guard blocks work if the tunnel drops
       Vpn__HealthCheckUrl: https://api.ipify.org
     volumes:

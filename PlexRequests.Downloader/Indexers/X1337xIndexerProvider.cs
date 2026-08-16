@@ -12,18 +12,17 @@ using PlexRequestsHosted.Shared.Releases;
 namespace PlexRequests.Downloader.Indexers;
 
 /// <summary>
-/// 1337x provider (movies + TV). 1337x has no API, so this scrapes the HTML: the category-search
-/// page lists rows (name/seeds/leeches/size) but the magnet lives on each torrent's detail page, so
-/// we open the top rows to fetch magnets. Two caveats vs the API providers: it's more fragile (page
-/// layout changes break parsing) and 1337x is often behind Cloudflare, which can block a plain
-/// HttpClient from a datacenter IP. Runs fine from a residential/VPN egress.
+/// 1337x provider (movies + TV). 1337x has no API, so this parses HTML loaded by the persistent browser:
+/// the category-search page lists rows (name/seeds/leeches/size), while magnets live on detail pages.
+/// Browser transport is isolated behind an interface because layout changes remain scraper-specific and
+/// no other provider should inherit Chrome's cost or lifecycle.
 /// </summary>
-public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parser, IIndexerFetch fetch, ILogger<X1337xIndexerProvider> logger)
+public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parser, IInteractiveBrowserTransport browser, ILogger<X1337xIndexerProvider> logger)
     : IIndexerImplementation
 {
     private readonly HttpClient _http = http;
     private readonly IReleaseParser _parser = parser;
-    private readonly IIndexerFetch _fetch = fetch;
+    private readonly IInteractiveBrowserTransport _browser = browser;
     private readonly ILogger<X1337xIndexerProvider> _logger = logger;
 
     public string Key => "1337x";
@@ -61,7 +60,7 @@ public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parse
             // and reported upward as "search succeeded, zero results", so a permanently blocked indexer was
             // indistinguishable from a quiet one and stayed green in the admin panel for weeks. Let the
             // block propagate; IndexerClient records it as a failure with a reason.
-            var html = await _fetch.GetStringAsync(_http, indexer, $"/category-search/{query}/{category}/1/", ct);
+            var html = await BrowserGetStringAsync($"/category-search/{query}/{category}/1/", ct);
 
             if (LooksLikeChallenge(html))
                 throw new IndexerBlockedException(IndexerBlockReason.CloudflareChallenge,
@@ -127,7 +126,7 @@ public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parse
     {
         try
         {
-            var detailHtml = await _http.GetStringAsync(row.DetailPath, ct);
+            var detailHtml = await BrowserGetStringAsync(row.DetailPath, ct);
             var doc = new HtmlDocument();
             doc.LoadHtml(detailHtml);
             var magnet = doc.DocumentNode.SelectSingleNode("//a[starts-with(@href,'magnet:')]")?.GetAttributeValue("href", null);
@@ -174,7 +173,7 @@ public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parse
         try
         {
             // The category listing is already newest-first, which is exactly what "latest" wants.
-            html = await _http.GetStringAsync($"/cat/{category}/1/", ct);
+            html = await BrowserGetStringAsync($"/cat/{category}/1/", ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -244,6 +243,12 @@ public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parse
         html.Contains("Just a moment", StringComparison.OrdinalIgnoreCase) ||
         html.Contains("cf-browser-verification", StringComparison.OrdinalIgnoreCase) ||
         html.Contains("Checking your browser", StringComparison.OrdinalIgnoreCase);
+
+    private Task<string> BrowserGetStringAsync(string path, CancellationToken ct)
+    {
+        var target = _http.BaseAddress is null ? path : new Uri(_http.BaseAddress, path).ToString();
+        return _browser.GetStringAsync(target, ct);
+    }
 
     // Size/count parsing lives in IndexerParsing — this file used to carry byte-identical private copies.
     private static int ParseInt(HtmlNode? node) => node is null ? 0 : IndexerParsing.ParseInt(node.InnerText);

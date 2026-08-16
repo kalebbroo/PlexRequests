@@ -142,8 +142,9 @@ else
     {
         IndexerBlockReason.CloudflareChallenge =>
             "The site served a Cloudflare interstitial instead of results, so this indexer is contributing nothing. "
-            + "It's solvable: open the site in a browser from this server, then paste the cf_clearance cookie and "
-            + "that browser's User-Agent into this indexer's settings.",
+            + (i.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase)
+                ? "Edit 1337x and open its persistent downloader browser to complete the check."
+                : "Edit the indexer to refresh its browser clearance."),
         IndexerBlockReason.IpBanned =>
             "The site has banned this exit IP outright (Cloudflare error 1020). A clearance cookie won't help — "
             + "this needs a different egress.",

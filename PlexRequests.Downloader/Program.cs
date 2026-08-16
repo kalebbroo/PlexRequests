@@ -124,6 +124,11 @@ builder.Services.AddSingleton<IIndexerFetch, IndexerFetch>();
 // the challenge. Registered unconditionally; it reports itself unavailable when no browser is installed, so
 // a deployment without one degrades to "blocked, here's why" rather than failing oddly.
 builder.Services.AddSingleton<IChallengeSolver, BrowserChallengeSolver>();
+// 1337x needs more than cookie replay: its manually verified Chrome profile is the transport itself.
+// The control server is internal-only and lets the authenticated web UI stream that exact browser.
+builder.Services.AddSingleton<PersistentBrowserTransport>();
+builder.Services.AddSingleton<IInteractiveBrowserTransport>(sp => sp.GetRequiredService<PersistentBrowserTransport>());
+builder.Services.AddHostedService<BrowserControlServer>();
 // One-time migration of Indexer__Torznab__* env config into the admin-managed Indexers table.
 builder.Services.AddHostedService<PlexRequests.Downloader.Worker.LegacyTorznabImporter>();
 // Serves admin-initiated searches on a short poll, separate from the fulfillment loop — someone is waiting.
