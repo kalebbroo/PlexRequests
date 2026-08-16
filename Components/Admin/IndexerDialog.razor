@@ -18,8 +18,8 @@
             <MudItem xs="12" sm="6">
                 <MudSelect T="string" Label="Type" @bind-Value="_model.Implementation" Variant="Variant.Outlined"
                            Disabled="_model.IsBuiltIn"
-                           HelperText="@(_model.IsBuiltIn ? "Built-in indexers have a fixed type." : "Torznab covers Jackett and Prowlarr.")">
-                    <MudSelectItem Value="@("Torznab")">Torznab (Jackett / Prowlarr)</MudSelectItem>
+                           HelperText="@(_model.IsBuiltIn ? "Built-in indexers have a fixed type." : "A Torznab-compatible API endpoint.")">
+                    <MudSelectItem Value="@("Torznab")">Torznab-compatible API</MudSelectItem>
                 </MudSelect>
             </MudItem>
 
@@ -28,7 +28,7 @@
                 <MudItem xs="12">
                     <MudTextField T="string" Label="API URL" @bind-Value="_model.Url" Required="true"
                                   Variant="Variant.Outlined"
-                                  Placeholder="https://prowlarr.local/1/api"
+                                  Placeholder="https://indexer.example/api"
                                   HelperText="The endpoint's full Torznab API URL." />
                 </MudItem>
                 <MudItem xs="12">
@@ -40,28 +40,35 @@
 
             <MudItem xs="12"><MudDivider Class="my-2" /></MudItem>
 
-            @* Cloudflare clearance. Shown for every indexer, not just Torznab: the scraped built-ins are
-               exactly the ones that get challenged. *@
             <MudItem xs="12">
-                <MudExpansionPanel Text="@ClearanceSummary()" dense="true">
-                    <MudText Typo="Typo.caption" Class="text-muted mb-2 d-block">
-                        Optional advanced override for a scraper that accepts reusable clearance. The cookie,
-                        User-Agent, and downloader egress IP must match. Plex Requests does not launch a browser
-                        or automatically solve challenges; a refused request remains visible as blocked.
-                    </MudText>
-                    <MudTextField T="string" Label="Cookie header" @bind-Value="_model.ClearanceCookie"
-                                  Variant="Variant.Outlined" Placeholder="cf_clearance=abc123..."
-                                  HelperText="@(_model.HasClearance ? $"A clearance is stored ({Age(_model.ClearanceObtainedAt)}). Leave blank to keep it." : "Paste the raw Cookie header value.")" />
-                    <MudTextField T="string" Label="User-Agent" @bind-Value="_model.UserAgent" Class="mt-2"
-                                  Variant="Variant.Outlined"
-                                  Placeholder="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ..."
-                                  HelperText="Must exactly match the client that obtained the cookie." />
-                    @if (_model.HasClearance)
-                    {
-                        <MudCheckBox T="bool" @bind-Value="_model.ClearClearance" dense="true" Color="Color.Error"
-                                     Label="Delete the stored clearance" Class="mt-1" />
-                    }
-                </MudExpansionPanel>
+                @if (_model.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase))
+                {
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Text" dense="true">
+                        1337x browser sessions are captured through the Firefox extension instead of copying
+                        clearance cookies. Close this dialog and use the extension button on the 1337x row.
+                    </MudAlert>
+                }
+                else
+                {
+                    <MudExpansionPanel Text="@ClearanceSummary()" dense="true">
+                        <MudText Typo="Typo.caption" Class="text-muted mb-2 d-block">
+                            Optional advanced override for a scraper that accepts reusable clearance. The cookie,
+                            User-Agent, and downloader egress IP must match. A refused request remains visible as blocked.
+                        </MudText>
+                        <MudTextField T="string" Label="Cookie header" @bind-Value="_model.ClearanceCookie"
+                                      Variant="Variant.Outlined" Placeholder="cf_clearance=abc123..."
+                                      HelperText="@(_model.HasClearance ? $"A clearance is stored ({Age(_model.ClearanceObtainedAt)}). Leave blank to keep it." : "Paste the raw Cookie header value.")" />
+                        <MudTextField T="string" Label="User-Agent" @bind-Value="_model.UserAgent" Class="mt-2"
+                                      Variant="Variant.Outlined"
+                                      Placeholder="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ..."
+                                      HelperText="Must exactly match the client that obtained the cookie." />
+                        @if (_model.HasClearance)
+                        {
+                            <MudCheckBox T="bool" @bind-Value="_model.ClearClearance" dense="true" Color="Color.Error"
+                                         Label="Delete the stored clearance" Class="mt-1" />
+                        }
+                    </MudExpansionPanel>
+                }
             </MudItem>
 
             <MudItem xs="12" sm="4">

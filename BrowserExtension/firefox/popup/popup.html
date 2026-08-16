@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Plex Requests Capture</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header>
+      <img src="../icons/capture.svg" alt="">
+      <div><h1>Plex Requests</h1><p>Firefox capture</p></div>
+    </header>
+
+    <section id="pairing">
+      <label>Server URL<input id="server-url" type="url" value="https://plexrequests.kalebbroo.dev" spellcheck="false"></label>
+      <label>Pairing code<input id="pairing-code" type="text" maxlength="14" autocomplete="one-time-code" placeholder="ABCD-EFGH-IJKL"></label>
+      <label>Device name<input id="device-name" type="text" maxlength="128" value="Firefox"></label>
+      <button id="pair">Pair Firefox</button>
+    </section>
+
+    <section id="connected" hidden>
+      <div class="status-line"><span id="status-dot"></span><strong id="connection-label">Connected</strong></div>
+      <p id="source"></p>
+      <dl>
+        <div><dt>Captured</dt><dd id="accepted">0</dd></div>
+        <div><dt>Queued</dt><dd id="queued">0</dd></div>
+        <div><dt>Needs attention</dt><dd id="failed">0</dd></div>
+      </dl>
+      <label class="toggle"><input id="capture-enabled" type="checkbox" checked> Capture pages as I browse</label>
+      <button id="retry" class="secondary">Retry queued pages</button>
+      <button id="repair" class="secondary">Pair again</button>
+    </section>
+
+    <p id="message" role="status"></p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

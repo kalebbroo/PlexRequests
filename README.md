@@ -218,15 +218,15 @@ built-in indexers (EZTV, YTS, 1337x, Nyaa, ext.to, The Pirate Bay, Torrents-CSV)
 quality/seeders, hands the best magnet to a torrent client, hardlinks the finished files into your
 library, and calls back so the app marks the request **Available** and reindexes Plex.
 
-Indexers are managed in **Admin → Downloads → Indexers**: enable/disable each source, set its priority, and watch
-per-source health (result counts, failure streaks, latency) updated live from every search. If you also
-run **Jackett** or **Prowlarr**, point the downloader at it via `TORZNAB_URL`/`TORZNAB_API_KEY` (see
-`docker/.env.example`) and everything configured there joins the search too.
+Indexers are managed in **Admin → Acquisition → Indexers**: enable/disable each native source, set its priority,
+and watch per-source health (result counts, failure streaks, latency) updated live from every search. An
+optional standards-compatible endpoint can be added with `TORZNAB_URL`/`TORZNAB_API_KEY`.
 
 Scraped sources such as 1337x may refuse automated requests. PlexRequests reports those responses as
-**blocked** and backs off instead of turning them into misleading empty results or launching a browser.
-For deployments with stable egress, a reusable cookie and its matching User-Agent can be supplied under
-the indexer's advanced settings; neither is required for the structured API/RSS providers.
+**blocked** and backs off instead of turning them into misleading empty results. For 1337x, the optional
+Firefox capture extension reads structured release information from pages you browse successfully and
+writes it into the catalog without exporting browser cookies. Enable the catalog in shadow mode, then use
+the extension button on the 1337x row to download and pair it.
 
 The optional release catalog is disabled by default. Set `CATALOG_ENABLED=true` on both web and downloader
 to start shadow ingestion into a separate, rebuildable `catalog.db`. Shadow mode does not change which
@@ -282,6 +282,7 @@ All settings are read from `.env` (mapped to the app's config keys). Only the fi
 | `CATALOG_USE_FOR_SEARCH` | | Supplement normal fulfillment searches from the local catalog. |
 | `CATALOG_USE_FOR_MONITORING` | | Match wanted episodes locally instead of repeatedly searching upstream sources. |
 | `CATALOG_POLL_MINUTES` | | Structured-feed polling interval; default `15`. |
+| `FIREFOX_CAPTURE_ENABLED` | | Permit paired Firefox profiles to submit rendered 1337x releases; requires the catalog. |
 | `DELUGE_URL` / `DELUGE_PASSWORD` | | Your torrent client's Web API (downloader). |
 | `VPN_ENABLED` | | Only meaningful when the downloader runs inside a VPN namespace. |
 | `VPN_PROVIDER`, `WIREGUARD_*`, `VPN_COUNTRIES`, `DOCKER_SUBNET` | | Managed-VPN stack only (`docker-compose.vpn.yml`). |

@@ -36,6 +36,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<CustomFormatEntity> CustomFormats => Set<CustomFormatEntity>();
     public DbSet<CustomFormatScoreEntity> CustomFormatScores => Set<CustomFormatScoreEntity>();
     public DbSet<MonitoringPreferencesEntity> MonitoringPreferences => Set<MonitoringPreferencesEntity>();
+    public DbSet<FirefoxCapturePairingEntity> FirefoxCapturePairings => Set<FirefoxCapturePairingEntity>();
+    public DbSet<FirefoxCaptureDeviceEntity> FirefoxCaptureDevices => Set<FirefoxCaptureDeviceEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -324,6 +326,27 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasIndex(x => x.Name).IsUnique();          // display names are the admin's handle on a row
             b.HasIndex(x => new { x.Enabled, x.Priority }); // the downloader's fan-out query
             b.HasIndex(x => x.Implementation);
+        });
+
+        modelBuilder.Entity<FirefoxCapturePairingEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.CodeHash).IsUnique();
+            b.HasIndex(x => x.ExpiresAt);
+            b.HasOne(x => x.Indexer).WithMany().HasForeignKey(x => x.IndexerId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FirefoxCaptureDeviceEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.TokenHash).IsUnique();
+            b.HasIndex(x => x.PairingId).IsUnique();
+            b.HasIndex(x => new { x.IndexerId, x.RevokedAt, x.ExpiresAt });
+            b.HasOne(x => x.Pairing).WithMany().HasForeignKey(x => x.PairingId)
+                .OnDelete(DeleteBehavior.Cascade);
+            b.HasOne(x => x.Indexer).WithMany().HasForeignKey(x => x.IndexerId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

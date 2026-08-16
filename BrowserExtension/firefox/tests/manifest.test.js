@@ -1,0 +1,16 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+test("manifest is Firefox MV3 and never requests cookie or browsing-history access", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8"));
+  assert.equal(manifest.manifest_version, 3);
+  assert.ok(manifest.background.scripts.includes("background.js"));
+  assert.ok(!manifest.permissions.includes("cookies"));
+  assert.ok(!manifest.permissions.includes("history"));
+  assert.ok(!manifest.permissions.includes("webRequest"));
+  assert.ok(manifest.content_scripts.every(script => script.matches.every(pattern => pattern.includes("1337x"))));
+});
