@@ -1,0 +1,203 @@
+@using PlexRequestsHosted.Shared.DTOs
+@inject PlexRequestsHosted.Services.Abstractions.IFirefoxCaptureService Capture
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
+@inject IJSRuntime JavaScript
+@inject NavigationManager Navigation
+
+<MudDialog>
+    <DialogContent>
+        @if (_loading)
+        {
+            <div class="d-flex justify-content-center py-6">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else if (_status is not null)
+        {
+            @if (!_status.Enabled)
+            {
+                <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+                    Firefox browser capture is disabled by the server configuration.
+                </MudAlert>
+            }
+            else if (!_status.CatalogEnabled)
+            {
+                <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+                    Enable <code>CATALOG_ENABLED=true</code> first. Search and monitoring can remain off while
+                    captured releases are evaluated in shadow mode.
+                </MudAlert>
+            }
+            else
+            {
+                <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+                    Firefox reads only structured release details from rendered 1337x pages. Your browser
+                    cookies and Cloudflare session remain inside Firefox and are never sent to Plex Requests.
+                </MudText>
+
+                <MudPaper Outlined="true" Class="pa-3 mb-3">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <div>
+                            <MudText Typo="Typo.subtitle2">1. Install the Firefox extension</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                                Development XPI · use about:debugging → This Firefox → Load Temporary Add-on.
+                            </MudText>
+                        </div>
+                        <MudButton Href="/api/admin/browser-capture/firefox-extension"
+                                   Target="_blank"
+                                   Variant="Variant.Outlined"
+                                   StartIcon="@Icons.Material.Filled.Download">
+                            Download XPI
+                        </MudButton>
+                    </div>
+                </MudPaper>
+
+                <MudPaper Outlined="true" Class="pa-3 mb-3">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <div>
+                            <MudText Typo="Typo.subtitle2">2. Pair this server</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                                Generate a single-use code, then enter it with <code>@ServerOrigin</code> in the extension.
+                            </MudText>
+                        </div>
+                        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_creating"
+                                   StartIcon="@Icons.Material.Filled.Link" OnClick="CreatePairing">
+                            Generate code
+                        </MudButton>
+                    </div>
+
+                    @if (_pairing is not null)
+                    {
+                        <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Class="mt-3">
+                            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                                <div>
+                                    <MudText Typo="Typo.h5" Style="font-family:monospace;letter-spacing:.08em">
+                                        @_pairing.Code
+                                    </MudText>
+                                    <MudText Typo="Typo.caption">Expires @RelativeExpiry(_pairing.ExpiresAt) and works once.</MudText>
+                                </div>
+                                <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" OnClick="CopyPairingCode"
+                                               aria-label="Copy pairing code" />
+                            </div>
+                        </MudAlert>
+                    }
+                </MudPaper>
+
+                <MudText Typo="Typo.subtitle2" Class="mb-2">Paired Firefox devices</MudText>
+                @if (_status.Devices.Count == 0)
+                {
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Text" dense="true">
+                        No Firefox profile has been paired yet.
+                    </MudAlert>
+                }
+                else
+                {
+                    <MudStack Spacing="2">
+                        @foreach (var device in _status.Devices)
+                        {
+                            <MudPaper Outlined="true" Class="pa-3">
+                                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+                                    <div>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <MudText Typo="Typo.subtitle2">@device.Name</MudText>
+                                            <MudChip T="string" Size="Size.Small"
+                                                     Color="@(device.IsActive ? Color.Success : Color.Default)">
+                                                @(device.IsActive ? "active" : device.RevokedAt is null ? "expired" : "revoked")
+                                            </MudChip>
+                                        </div>
+                                        <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                                            Extension @device.ExtensionVersion · last seen @Relative(device.LastSeenAt) ·
+                                            last capture @Relative(device.LastCaptureAt)
+                                        </MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                                            @device.ItemsReceived items in @device.BatchesReceived batches
+                                            @if (device.LastParserVersion is int parserVersion)
+                                            {
+                                                <span> · parser v@parserVersion</span>
+                                            }
+                                        </MudText>
+                                    </div>
+                                    @if (device.IsActive)
+                                    {
+                                        <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text"
+                                                   StartIcon="@Icons.Material.Filled.LinkOff"
+                                                   OnClick="() => Revoke(device)">
+                                            Revoke
+                                        </MudButton>
+                                    }
+                                </div>
+                            </MudPaper>
+                        }
+                    </MudStack>
+                }
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter, EditorRequired] public int IndexerId { get; set; }
+
+    private bool _loading = true;
+    private bool _creating;
+    private FirefoxCaptureAdminStatusDto? _status;
+    private FirefoxCapturePairingDto? _pairing;
+    private string ServerOrigin => new Uri(Navigation.BaseUri).GetLeftPart(UriPartial.Authority);
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _loading = true;
+        try { _status = await Capture.GetAdminStatusAsync(IndexerId); }
+        catch (Exception ex) { await Toast.ShowErrorAsync(ex.Message); }
+        finally { _loading = false; }
+    }
+
+    private async Task CreatePairing()
+    {
+        _creating = true;
+        try
+        {
+            _pairing = await Capture.CreatePairingAsync(IndexerId);
+            await Toast.ShowSuccessAsync("Pairing code created.");
+        }
+        catch (Exception ex) { await Toast.ShowErrorAsync(ex.Message); }
+        finally { _creating = false; }
+    }
+
+    private async Task CopyPairingCode()
+    {
+        if (_pairing is null) return;
+        await JavaScript.InvokeVoidAsync("navigator.clipboard.writeText", _pairing.Code);
+        await Toast.ShowSuccessAsync("Pairing code copied.");
+    }
+
+    private async Task Revoke(FirefoxCaptureDeviceDto device)
+    {
+        if (await Capture.RevokeDeviceAsync(device.Id))
+            await Toast.ShowSuccessAsync($"Revoked {device.Name}.");
+        await Load();
+    }
+
+    private static string Relative(DateTime? utc)
+    {
+        if (utc is null) return "never";
+        var span = DateTime.UtcNow - utc.Value;
+        if (span.TotalMinutes < 1) return "just now";
+        if (span.TotalHours < 1) return $"{(int)span.TotalMinutes}m ago";
+        if (span.TotalDays < 1) return $"{(int)span.TotalHours}h ago";
+        return $"{(int)span.TotalDays}d ago";
+    }
+
+    private static string RelativeExpiry(DateTime utc)
+    {
+        var span = utc - DateTime.UtcNow;
+        return span.TotalSeconds <= 0 ? "now" : $"in {Math.Max(1, (int)Math.Ceiling(span.TotalMinutes))} minutes";
+    }
+
+    private void Close() => MudDialog.Close();
+}

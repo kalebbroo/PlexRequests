@@ -33,6 +33,7 @@ services:
       Catalog__Enabled: ${CATALOG_ENABLED:-false}
       Catalog__UseForSearch: ${CATALOG_USE_FOR_SEARCH:-false}
       Catalog__UseForMonitoring: ${CATALOG_USE_FOR_MONITORING:-false}
+      FirefoxCapture__Enabled: ${FIREFOX_CAPTURE_ENABLED:-true}
       Fulfillment__Enabled: "true"
       Fulfillment__ApiKey: ${FULFILLMENT_API_KEY}
       Bridge__Enabled: ${BRIDGE_ENABLED:-false}
@@ -93,8 +94,7 @@ services:
       Library__MoviePath: /data/library/movies
       Library__TvPath: /data/library/tv
       Library__Hardlink: "true"
-      # Optional Torznab endpoint (Jackett/Prowlarr) — widens indexer coverage beyond the built-in
-      # public sources; set TORZNAB_URL/TORZNAB_API_KEY in .env (see .env.example). Empty = disabled.
+      # Optional standards-compatible Torznab endpoint. Empty = disabled.
       Indexer__Torznab__0__Name: ${TORZNAB_NAME:-torznab}
       Indexer__Torznab__0__Url: ${TORZNAB_URL:-}
       Indexer__Torznab__0__ApiKey: ${TORZNAB_API_KEY:-}

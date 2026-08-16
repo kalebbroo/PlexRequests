@@ -1,0 +1,82 @@
+namespace PlexRequestsHosted.Shared.DTOs;
+
+/// <summary>A short-lived, single-use code created by an authenticated administrator.</summary>
+public sealed class FirefoxCapturePairingDto
+{
+    public string Code { get; set; } = string.Empty;
+    public DateTime ExpiresAt { get; set; }
+}
+
+/// <summary>Sent by the Firefox extension when it exchanges a pairing code for a device token.</summary>
+public sealed class FirefoxCapturePairRequestDto
+{
+    public string PairingCode { get; set; } = string.Empty;
+    public string DeviceName { get; set; } = string.Empty;
+    public string ExtensionVersion { get; set; } = string.Empty;
+}
+
+/// <summary>The raw token is returned exactly once. Only its SHA-256 hash is persisted by the server.</summary>
+public sealed class FirefoxCapturePairResponseDto
+{
+    public string Token { get; set; } = string.Empty;
+    public DateTime ExpiresAt { get; set; }
+    public int IndexerId { get; set; }
+    public string Source { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// One rendered page observation. The server derives the indexer and source from the device token; the
+/// extension is deliberately not allowed to choose either security boundary.
+/// </summary>
+public sealed class FirefoxCaptureBatchDto
+{
+    public string BatchId { get; set; } = string.Empty;
+    public string PageUrl { get; set; } = string.Empty;
+    public string PageType { get; set; } = string.Empty;
+    public int ParserVersion { get; set; }
+    public DateTime CapturedAt { get; set; }
+    public List<CatalogItemDto> Items { get; set; } = new();
+}
+
+public sealed class FirefoxCaptureIngestResponseDto
+{
+    public bool DuplicateBatch { get; set; }
+    public int AcceptedItems { get; set; }
+    public int ReleasesInserted { get; set; }
+    public int SightingsInserted { get; set; }
+    public int UnresolvedSightings { get; set; }
+}
+
+public sealed class FirefoxCaptureConnectionDto
+{
+    public bool Connected { get; set; }
+    public DateTime ServerTime { get; set; }
+    public DateTime ExpiresAt { get; set; }
+    public string Source { get; set; } = string.Empty;
+}
+
+public sealed class FirefoxCaptureDeviceDto
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string ExtensionVersion { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+    public DateTime ExpiresAt { get; set; }
+    public DateTime? LastSeenAt { get; set; }
+    public DateTime? LastCaptureAt { get; set; }
+    public long BatchesReceived { get; set; }
+    public long ItemsReceived { get; set; }
+    public int? LastParserVersion { get; set; }
+    public string? LastPageUrl { get; set; }
+    public DateTime? RevokedAt { get; set; }
+    public bool IsActive { get; set; }
+}
+
+public sealed class FirefoxCaptureAdminStatusDto
+{
+    public bool Enabled { get; set; }
+    public bool CatalogEnabled { get; set; }
+    public int IndexerId { get; set; }
+    public string IndexerName { get; set; } = string.Empty;
+    public List<FirefoxCaptureDeviceDto> Devices { get; set; } = new();
+}

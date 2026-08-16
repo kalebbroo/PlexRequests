@@ -19,7 +19,9 @@ using PlexRequestsHosted.Shared.DTOs;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
 using PlexRequestsHosted.Utils;
+using System.Threading.RateLimiting;
 
 // Load .env if present and map PLEX_* variables to ASP.NET config keys
 static void LoadDotEnvFrom(string rootPath)
@@ -103,6 +105,32 @@ builder.Services.AddBlazoredSessionStorage();
 builder.Services.AddHttpClient();
 // HttpContext accessor for cookie sign-in from AuthStateProvider
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton(TimeProvider.System);
+
+// Public extension endpoints authenticate with single-purpose device tokens rather than the browser's
+// application cookie. Bound abusive guessing and upload loops before either reaches SQLite.
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("firefox-capture-pair", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
+    options.AddPolicy("firefox-capture-ingest", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 120,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
+});
 
 // Behind a reverse proxy / Cloudflare Tunnel (TLS at the edge, plain HTTP to the origin): trust the
 // forwarded scheme so HttpsRedirection doesn't loop, the auth cookie gets its Secure flag, and Plex
@@ -223,6 +251,10 @@ builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IReleaseB
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IRecommendedFeedService, PlexRequestsHosted.Services.Implementations.RecommendedFeedService>();
 // Per-indexer admin control (enable/priority) + rolling health from downloader search telemetry.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IIndexerAdminService, PlexRequestsHosted.Services.Implementations.IndexerAdminService>();
+builder.Services.Configure<PlexRequestsHosted.Infrastructure.Capture.FirefoxCaptureOptions>(
+    builder.Configuration.GetSection(PlexRequestsHosted.Infrastructure.Capture.FirefoxCaptureOptions.Section));
+builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IFirefoxCaptureService,
+    PlexRequestsHosted.Services.Implementations.FirefoxCaptureService>();
 // Optional, rebuildable release catalog. It is a singleton writer over short-lived contexts so concurrent
 // worker batches cannot race unique infohash/source constraints. Disabled by default during shadow rollout.
 builder.Services.Configure<PlexRequestsHosted.Infrastructure.Catalog.CatalogOptions>(
@@ -357,6 +389,7 @@ var app = builder.Build();
 // Apply forwarded headers first so every downstream component (HSTS, HttpsRedirection, auth cookie,
 // OAuth URL building) sees the real client scheme/IP from the proxy.
 app.UseForwardedHeaders();
+app.UseRateLimiter();
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
@@ -436,6 +469,92 @@ app.MapGet("/api/admin/catalog/stats", async (
     CancellationToken cancellationToken) =>
     Results.Ok(await catalog.GetStatsAsync(cancellationToken)))
     .RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/admin/browser-capture/firefox-extension", (IWebHostEnvironment environment) =>
+    Results.File(
+        PlexRequestsHosted.Services.Implementations.FirefoxExtensionArchive.Create(environment.ContentRootPath),
+        "application/x-xpinstall",
+        "plexrequests-firefox-capture.xpi"))
+    .RequireAuthorization("AdminOnly");
+
+// Firefox capture uses a two-stage credential: an admin creates a short-lived one-time pairing code in
+// the Blazor circuit, then the extension exchanges it for a revocable device token. Neither route accepts
+// or returns the Firefox session cookies that got through the upstream challenge.
+static string? CaptureBearerToken(HttpContext context)
+{
+    var value = context.Request.Headers.Authorization.ToString();
+    return value.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+        ? value[7..].Trim()
+        : null;
+}
+
+app.MapPost("/api/browser-capture/pair", async (
+    FirefoxCapturePairRequestDto body,
+    PlexRequestsHosted.Services.Abstractions.IFirefoxCaptureService capture,
+    HttpContext context,
+    CancellationToken cancellationToken) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    try
+    {
+        var result = await capture.RedeemPairingAsync(body, cancellationToken);
+        return result is null ? Results.Unauthorized() : Results.Ok(result);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = ex.Message });
+    }
+})
+    .AllowAnonymous()
+    .DisableAntiforgery()
+    .WithMetadata(new RequestSizeLimitAttribute(16 * 1024))
+    .RequireRateLimiting("firefox-capture-pair");
+
+app.MapGet("/api/browser-capture/status", async (
+    PlexRequestsHosted.Services.Abstractions.IFirefoxCaptureService capture,
+    HttpContext context,
+    CancellationToken cancellationToken) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    var token = CaptureBearerToken(context);
+    if (token is null) return Results.Unauthorized();
+    var result = await capture.GetConnectionAsync(token, cancellationToken);
+    return result is null ? Results.Unauthorized() : Results.Ok(result);
+})
+    .AllowAnonymous()
+    .DisableAntiforgery()
+    .RequireRateLimiting("firefox-capture-ingest");
+
+app.MapPost("/api/browser-capture/batches", async (
+    FirefoxCaptureBatchDto body,
+    PlexRequestsHosted.Services.Abstractions.IFirefoxCaptureService capture,
+    HttpContext context,
+    CancellationToken cancellationToken) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    var token = CaptureBearerToken(context);
+    if (token is null) return Results.Unauthorized();
+    try
+    {
+        return Results.Ok(await capture.IngestAsync(token, body, cancellationToken));
+    }
+    catch (UnauthorizedAccessException)
+    {
+        return Results.Unauthorized();
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = ex.Message });
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+    .AllowAnonymous()
+    .DisableAntiforgery()
+    .WithMetadata(new RequestSizeLimitAttribute(512 * 1024))
+    .RequireRateLimiting("firefox-capture-ingest");
 
 // Simple health endpoint for Plex connectivity
 app.MapGet("/api/plex/health", async (IPlexApiService plex) =>

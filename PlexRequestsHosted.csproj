@@ -29,6 +29,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Update="BrowserExtension/firefox/manifest.json;BrowserExtension/firefox/background.js;BrowserExtension/firefox/content.js;BrowserExtension/firefox/parser.js;BrowserExtension/firefox/popup/**;BrowserExtension/firefox/icons/**;BrowserExtension/firefox/README.md"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <None Update="BrowserExtension/firefox/background.js;BrowserExtension/firefox/content.js;BrowserExtension/firefox/parser.js;BrowserExtension/firefox/popup/**;BrowserExtension/firefox/icons/**;BrowserExtension/firefox/README.md"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Blazored.LocalStorage" Version="4.5.0" />
     <PackageReference Include="Blazored.SessionStorage" Version="2.4.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.7" />
