@@ -2,7 +2,8 @@
 
 const elements = Object.fromEntries([
   "pairing", "connected", "server-url", "pairing-code", "device-name", "pair", "connection-label",
-  "source", "accepted", "queued", "failed", "capture-enabled", "retry", "repair", "message", "status-dot"
+  "source", "accepted", "hydrated", "queued", "hydration-queued", "failed", "capture-enabled",
+  "resume-hydration", "retry", "repair", "message", "status-dot"
 ].map(id => [id, document.getElementById(id)]));
 
 function showMessage(message, error = true) {
@@ -22,10 +23,15 @@ function render(status) {
   elements["status-dot"].style.background = status.connected ? "#4caf50" : "#ef5350";
   elements.source.textContent = status.source || status.serverUrl;
   elements.accepted.textContent = status.acceptedItems || 0;
+  elements.hydrated.textContent = status.hydratedItems || 0;
   elements.queued.textContent = status.queued || 0;
-  elements.failed.textContent = status.failed || 0;
+  elements["hydration-queued"].textContent = status.hydrationQueued || 0;
+  elements.failed.textContent = (status.failed || 0) + (status.hydrationFailed || 0);
   elements["capture-enabled"].checked = status.captureEnabled;
-  showMessage(status.lastError, Boolean(status.lastError));
+  const paused = status.hydrationPausedUntil && new Date(status.hydrationPausedUntil) > new Date();
+  elements["resume-hydration"].hidden = !paused;
+  const message = status.lastError || status.hydrationLastError;
+  showMessage(message, Boolean(message));
 }
 
 async function load() {
@@ -63,6 +69,13 @@ elements.retry.addEventListener("click", async () => {
   try { render(await browser.runtime.sendMessage({ type: "retry" })); }
   catch (error) { showMessage(error.message); }
   finally { elements.retry.disabled = false; }
+});
+
+elements["resume-hydration"].addEventListener("click", async () => {
+  elements["resume-hydration"].disabled = true;
+  try { render(await browser.runtime.sendMessage({ type: "resume-hydration" })); }
+  catch (error) { showMessage(error.message); }
+  finally { elements["resume-hydration"].disabled = false; }
 });
 
 elements.repair.addEventListener("click", async () => {

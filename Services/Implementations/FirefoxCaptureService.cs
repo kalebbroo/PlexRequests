@@ -150,6 +150,7 @@ public sealed class FirefoxCaptureService(
         device.LastSeenAt = now;
         device.LastCaptureAt = now;
         device.LastParserVersion = batch.ParserVersion;
+        device.ExtensionVersion = Clean(batch.ExtensionVersion, 32) ?? device.ExtensionVersion;
         device.LastPageUrl = Clean(batch.PageUrl, 2048);
         if (!result.DuplicateBatch)
         {
@@ -255,6 +256,8 @@ public sealed class FirefoxCaptureService(
             throw new ArgumentException("BatchId is required and must be 128 characters or fewer.");
         if (batch.ParserVersion <= 0 || batch.ParserVersion > 100_000)
             throw new ArgumentException("ParserVersion is invalid.");
+        if (batch.ExtensionVersion?.Length > 32)
+            throw new ArgumentException("ExtensionVersion must be 32 characters or fewer.");
         if (batch.PageType is not ("listing" or "detail"))
             throw new ArgumentException("PageType must be listing or detail.");
         if (batch.Items is null || batch.Items.Count == 0

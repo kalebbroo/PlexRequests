@@ -153,6 +153,30 @@ public sealed class ReleaseCatalogTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Stats_include_non_checkpoint_browser_sources_with_real_resolution_counts()
+    {
+        var listing = Batch(3, "firefox-listing", "ignored", Item("listing", null));
+        listing.Source = "1337x (Firefox)";
+        listing.AdvanceCheckpoint = false;
+        listing.Items[0].NeedsHydration = true;
+        await _catalog.UpsertBatchAsync(listing, CancellationToken.None);
+
+        var detail = Batch(3, "firefox-detail", "ignored", Item("detail", Hex('9')));
+        detail.Source = "1337x (Firefox)";
+        detail.AdvanceCheckpoint = false;
+        await _catalog.UpsertBatchAsync(detail, CancellationToken.None);
+
+        var stats = await _catalog.GetStatsAsync(CancellationToken.None);
+        var source = Assert.Single(stats.Sources);
+        Assert.Equal("1337x (Firefox)", source.Source);
+        Assert.Equal(2, source.Sightings);
+        Assert.Equal(2, source.TotalItemsSeen);
+        Assert.Equal(1, source.TotalItemsResolved);
+        Assert.Equal("Closed", source.CircuitState);
+        Assert.NotNull(source.LastSuccessAt);
+    }
+
+    [Fact]
     public async Task Failure_backoff_is_persisted_and_a_successful_batch_self_heals_the_circuit()
     {
         var failed = await _catalog.ReportFailureAsync(new CatalogFailureDto

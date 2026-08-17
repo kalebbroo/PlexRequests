@@ -44,8 +44,8 @@
                 @if (_model.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase))
                 {
                     <MudAlert Severity="Severity.Info" Variant="Variant.Text" dense="true">
-                        1337x browser sessions are captured through the Firefox extension instead of copying
-                        clearance cookies. Close this dialog and use the extension button on the 1337x row.
+                        1337x coverage is managed by the paired Firefox capture worker. Use the extension button
+                        on the indexer row to install, pair, and monitor it.
                     </MudAlert>
                 }
                 else
@@ -183,10 +183,13 @@
     <DialogActions>
         @* A test runs against the SAVED row: the probe happens in the downloader, which reads its config
            from the database, so an unsaved URL is not something it can reach. *@
-        <MudTooltip Text="@(_model.Id > 0 ? "Contact this endpoint and read back what it supports." : "Save the indexer first — the downloader tests the stored configuration.")">
-            <MudButton StartIcon="@Icons.Material.Filled.NetworkCheck" Disabled="@(_testing || _saving || _model.Id <= 0)"
-                       OnClick="Test">Test</MudButton>
-        </MudTooltip>
+        @if (!_model.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase))
+        {
+            <MudTooltip Text="@(_model.Id > 0 ? "Contact this endpoint and read back what it supports." : "Save the indexer first — the downloader tests the stored configuration.")">
+                <MudButton StartIcon="@Icons.Material.Filled.NetworkCheck" Disabled="@(_testing || _saving || _model.Id <= 0)"
+                           OnClick="Test">Test</MudButton>
+            </MudTooltip>
+        }
         <MudSpacer />
         <MudButton OnClick="Cancel">Cancel</MudButton>
         <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_saving" OnClick="Save">Save</MudButton>

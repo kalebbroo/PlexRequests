@@ -9,6 +9,7 @@ public static class FirefoxExtensionArchive
         "manifest.json",
         "background.js",
         "content.js",
+        "hydration.js",
         "parser.js",
         "popup/popup.html",
         "popup/popup.css",

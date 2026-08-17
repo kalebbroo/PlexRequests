@@ -3,6 +3,17 @@
 This extension observes supported 1337x pages after Firefox has rendered them and submits structured
 release metadata to Plex Requests. It does not read, export, or replay browser cookies.
 
+Browsing a search, category, or home listing automatically queues its torrent detail URLs. Firefox reuses
+one inactive worker tab and waits 8-15 seconds between detail navigations, so you do not need to click every
+release. The queue is durable across restarts, bounded at 2,000 pending details, and retries transient
+failures with backoff. If a Cloudflare challenge appears, the worker pauses; complete the challenge in a
+normal 1337x tab and choose **Resume detail capture** in the extension. The extension never clicks or solves
+browser challenges itself.
+
+Firefox's install prompt explicitly discloses the required transmission of 1337x browsing activity, search
+terms, and visible release metadata to the Plex Requests server you pair. No cookies or general browser
+history are read or transmitted.
+
 ## Development installation
 
 1. Open `about:debugging#/runtime/this-firefox`.

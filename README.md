@@ -226,7 +226,9 @@ Scraped sources such as 1337x may refuse automated requests. PlexRequests report
 **blocked** and backs off instead of turning them into misleading empty results. For 1337x, the optional
 Firefox capture extension reads structured release information from pages you browse successfully and
 writes it into the catalog without exporting browser cookies. Enable the catalog in shadow mode, then use
-the extension button on the 1337x row to download and pair it.
+the extension button on the 1337x row to download and pair it. Listing pages enqueue their torrent detail
+URLs automatically; the extension reuses one inactive, rate-limited Firefox tab to resolve magnets. It
+pauses and asks for normal user verification if 1337x presents another browser challenge.
 
 The optional release catalog is disabled by default. Set `CATALOG_ENABLED=true` on both web and downloader
 to start shadow ingestion into a separate, rebuildable `catalog.db`. Shadow mode does not change which

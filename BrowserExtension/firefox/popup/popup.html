@@ -24,12 +24,15 @@
       <div class="status-line"><span id="status-dot"></span><strong id="connection-label">Connected</strong></div>
       <p id="source"></p>
       <dl>
-        <div><dt>Captured</dt><dd id="accepted">0</dd></div>
-        <div><dt>Queued</dt><dd id="queued">0</dd></div>
+        <div><dt>Listings captured</dt><dd id="accepted">0</dd></div>
+        <div><dt>Details resolved</dt><dd id="hydrated">0</dd></div>
+        <div><dt>Uploads queued</dt><dd id="queued">0</dd></div>
+        <div><dt>Details pending</dt><dd id="hydration-queued">0</dd></div>
         <div><dt>Needs attention</dt><dd id="failed">0</dd></div>
       </dl>
       <label class="toggle"><input id="capture-enabled" type="checkbox" checked> Capture pages as I browse</label>
-      <button id="retry" class="secondary">Retry queued pages</button>
+      <button id="resume-hydration" class="secondary" hidden>Resume detail capture</button>
+      <button id="retry" class="secondary">Retry pending work</button>
       <button id="repair" class="secondary">Pair again</button>
     </section>
 
