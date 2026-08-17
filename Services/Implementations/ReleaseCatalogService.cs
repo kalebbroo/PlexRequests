@@ -157,11 +157,53 @@ public sealed class ReleaseCatalogService(
     {
         if (!options.Value.Enabled) return new CatalogStatsDto();
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var sightingCounts = await db.Sightings.GroupBy(x => x.IndexerId)
-            .Select(x => new { IndexerId = x.Key, Count = x.LongCount() })
-            .ToDictionaryAsync(x => x.IndexerId, x => x.Count, cancellationToken);
+        var sightingSources = await db.Sightings
+            .GroupBy(x => new { x.IndexerId, x.Source })
+            .Select(group => new
+            {
+                group.Key.IndexerId,
+                group.Key.Source,
+                Sightings = group.LongCount(),
+                Resolved = group.LongCount(x => x.ReleaseId != null),
+                LastSeenAt = group.Max(x => (DateTime?)x.LastSeenAt)
+            })
+            .OrderBy(x => x.Source)
+            .ToListAsync(cancellationToken);
         var checkpoints = await db.Checkpoints.AsNoTracking().OrderBy(x => x.Source)
             .ToListAsync(cancellationToken);
+        var sources = sightingSources.Select(sighting =>
+        {
+            var checkpoint = checkpoints.FirstOrDefault(candidate =>
+                candidate.IndexerId == sighting.IndexerId
+                && candidate.Source.Equals(sighting.Source, StringComparison.OrdinalIgnoreCase));
+            return new CatalogSourceStatsDto
+            {
+                IndexerId = sighting.IndexerId,
+                Source = sighting.Source,
+                Sightings = sighting.Sightings,
+                TotalItemsSeen = sighting.Sightings,
+                TotalItemsResolved = sighting.Resolved,
+                LastSuccessAt = Latest(checkpoint?.LastSuccessAt, sighting.LastSeenAt),
+                NextAttemptAt = checkpoint?.NextAttemptAt,
+                CircuitState = checkpoint?.CircuitState.ToString() ?? CatalogCircuitState.Closed.ToString(),
+                LastError = checkpoint?.LastError
+            };
+        }).ToList();
+        sources.AddRange(checkpoints
+            .Where(checkpoint => !sightingSources.Any(sighting =>
+                sighting.IndexerId == checkpoint.IndexerId
+                && sighting.Source.Equals(checkpoint.Source, StringComparison.OrdinalIgnoreCase)))
+            .Select(checkpoint => new CatalogSourceStatsDto
+            {
+                IndexerId = checkpoint.IndexerId,
+                Source = checkpoint.Source,
+                TotalItemsSeen = checkpoint.TotalItemsSeen,
+                TotalItemsResolved = checkpoint.TotalItemsResolved,
+                LastSuccessAt = checkpoint.LastSuccessAt,
+                NextAttemptAt = checkpoint.NextAttemptAt,
+                CircuitState = checkpoint.CircuitState.ToString(),
+                LastError = checkpoint.LastError
+            }));
         var dataSource = db.Database.GetDbConnection().DataSource;
         return new CatalogStatsDto
         {
@@ -175,20 +217,17 @@ public sealed class ReleaseCatalogService(
                 x => x.ReleaseId == null, cancellationToken),
             OldestReleaseAt = await db.Releases.Select(x => (DateTime?)x.FirstSeenAt).MinAsync(cancellationToken),
             NewestReleaseAt = await db.Releases.Select(x => (DateTime?)x.LastSeenAt).MaxAsync(cancellationToken),
-            Sources = checkpoints.Select(x => new CatalogSourceStatsDto
-            {
-                IndexerId = x.IndexerId,
-                Source = x.Source,
-                Sightings = sightingCounts.GetValueOrDefault(x.IndexerId),
-                TotalItemsSeen = x.TotalItemsSeen,
-                TotalItemsResolved = x.TotalItemsResolved,
-                LastSuccessAt = x.LastSuccessAt,
-                NextAttemptAt = x.NextAttemptAt,
-                CircuitState = x.CircuitState.ToString(),
-                LastError = x.LastError
-            }).ToList()
+            Sources = sources.OrderBy(x => x.Source).ToList()
         };
     }
+
+    private static DateTime? Latest(DateTime? first, DateTime? second) => (first, second) switch
+    {
+        (null, null) => null,
+        (null, _) => second,
+        (_, null) => first,
+        _ => first.Value > second.Value ? first : second
+    };
 
     public async Task<CatalogCheckpointDto> GetCheckpointAsync(
         int indexerId,

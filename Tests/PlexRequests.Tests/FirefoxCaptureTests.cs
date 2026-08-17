@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using System.IO.Compression;
 using PlexRequestsHosted.Infrastructure.Capture;
 using PlexRequestsHosted.Infrastructure.Catalog;
 using PlexRequestsHosted.Infrastructure.Data;
@@ -134,6 +135,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(2, device.BatchesReceived);
         Assert.Equal(2, device.ItemsReceived);
         Assert.Equal(1, device.LastParserVersion);
+        Assert.Equal("1.1.0", device.ExtensionVersion);
     }
 
     [Fact]
@@ -186,6 +188,34 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             _capture.IngestAsync(token, Batch("missing-name", "listing", item)));
     }
 
+    [Fact]
+    public void Downloadable_archive_contains_the_hydration_runtime()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"plexrequests-firefox-{Guid.NewGuid():N}");
+        var extension = Path.Combine(root, "BrowserExtension", "firefox");
+        try
+        {
+            foreach (var file in new[]
+            {
+                "manifest.json", "background.js", "content.js", "hydration.js", "parser.js",
+                "popup/popup.html", "popup/popup.css", "popup/popup.js", "icons/capture.svg", "README.md"
+            })
+            {
+                var path = Path.Combine(extension, file);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, file);
+            }
+
+            using var stream = new MemoryStream(FirefoxExtensionArchive.Create(root));
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+            Assert.Contains(archive.Entries, entry => entry.FullName == "hydration.js");
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
     private async Task<string> PairAsync()
     {
         var pairing = await _capture.CreatePairingAsync(37);
@@ -204,6 +234,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         PageUrl = "https://1337x.to/search/example/1/",
         PageType = pageType,
         ParserVersion = 1,
+        ExtensionVersion = "1.1.0",
         CapturedAt = new DateTime(2026, 8, 16, 17, 30, 0, DateTimeKind.Utc),
         Items = [item]
     };

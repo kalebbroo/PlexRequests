@@ -34,6 +34,7 @@ public sealed class FirefoxCaptureBatchDto
     public string PageUrl { get; set; } = string.Empty;
     public string PageType { get; set; } = string.Empty;
     public int ParserVersion { get; set; }
+    public string ExtensionVersion { get; set; } = string.Empty;
     public DateTime CapturedAt { get; set; }
     public List<CatalogItemDto> Items { get; set; } = new();
 }

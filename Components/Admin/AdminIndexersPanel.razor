@@ -1,6 +1,7 @@
 @using PlexRequestsHosted.Shared.DTOs
 @inject PlexRequestsHosted.Services.Abstractions.IIndexerAdminService Indexers
 @inject PlexRequestsHosted.Services.Abstractions.IReleaseCatalogService Catalog
+@inject PlexRequestsHosted.Services.Abstractions.IFirefoxCaptureService FirefoxCapture
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 @inject IDialogService Dialogs
 
@@ -15,7 +16,8 @@
     The native sources Plex Requests searches and ingests. A standards-compatible Torznab endpoint remains
     available as an optional bridge, but each built-in source owns its parsing, health, and recovery here.
     Toggle a source off to skip it; priority (1 = highest) gives its releases a small ranking edge when
-    candidates are otherwise comparable. Health columns update after each search.
+    candidates are otherwise comparable. Coverage combines live results and durable catalog ingestion so
+    browser-backed sources are not reported as empty just because their direct scraper is unavailable.
 </MudText>
 
 @if (_catalog is { Enabled: true })
@@ -38,10 +40,10 @@
                 <MudChip T="string" Size="Size.Small">@FormatBytes(_catalog.DatabaseSizeBytes)</MudChip>
             </div>
         </div>
-        @if (_catalog.Sources.Count > 0)
+        @if (_catalog.Sources.Any(source => source.Sightings > 0))
         {
             <MudStack Row="true" Spacing="1" Class="mt-3 flex-wrap">
-                @foreach (var source in _catalog.Sources)
+                @foreach (var source in _catalog.Sources.Where(source => source.Sightings > 0))
                 {
                     <MudTooltip Text="@CatalogSourceHelp(source)">
                         <MudChip T="string" Size="Size.Small" Color="@CatalogSourceColor(source)">
@@ -70,65 +72,80 @@ else
         <MudTable T="IndexerSettingDto" Items="_items" dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
             <HeaderContent>
                 <MudTh>Indexer</MudTh>
-                <MudTh>Type</MudTh>
+                <MudTh>Catalog coverage</MudTh>
+                <MudTh>Activity</MudTh>
+                <MudTh>Health</MudTh>
                 <MudTh>Enabled</MudTh>
-                <MudTh>Priority</MudTh>
-                <MudTh>Last search</MudTh>
-                <MudTh>Last results</MudTh>
-                <MudTh>Fail streak</MudTh>
-                <MudTh>Latency</MudTh>
-                <MudTh>Totals</MudTh>
-                <MudTh>Status</MudTh>
                 <MudTh></MudTh>
             </HeaderContent>
             <RowTemplate>
+                @{ var coverage = Coverage(context); }
                 <MudTd DataLabel="Indexer">
                     <b>@context.Name</b>
                     @if (!string.IsNullOrWhiteSpace(context.Url))
                     {
                         <div class="text-muted small">@context.Url</div>
                     }
+                    <div class="d-flex flex-wrap gap-1 mt-1">
+                        <MudChip T="string" Size="Size.Small" Color="@(context.IsBuiltIn ? Color.Default : Color.Info)">
+                            @(context.IsBuiltIn ? "Built-in" : context.Implementation)
+                        </MudChip>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Priority @context.Priority</MudChip>
+                    </div>
                 </MudTd>
-                <MudTd DataLabel="Type">
-                    <MudChip T="string" Size="Size.Small" Color="@(context.IsBuiltIn ? Color.Default : Color.Info)">
-                        @(context.IsBuiltIn ? "Built-in" : context.Implementation)
-                    </MudChip>
-                </MudTd>
-                <MudTd DataLabel="Enabled">
-                    <MudSwitch T="bool" Color="Color.Primary" Value="@context.Enabled"
-                               ValueChanged="@(v => SetEnabled(context, v))" />
-                </MudTd>
-                <MudTd DataLabel="Priority">
-                    <MudNumericField T="int" Value="@context.Priority" Min="1" Max="50" dense="true"
-                                     Variant="Variant.Outlined" Style="max-width:90px;"
-                                     ValueChanged="@(v => SetPriority(context, v))" />
-                </MudTd>
-                <MudTd DataLabel="Last search">@Relative(context.LastSearchAt)</MudTd>
-                <MudTd DataLabel="Last results">@(context.LastSearchAt is null ? "—" : context.LastResultCount.ToString())</MudTd>
-                <MudTd DataLabel="Fail streak">
-                    @if (context.ConsecutiveFailures > 0)
+                <MudTd DataLabel="Catalog coverage">
+                    @if (_catalog is not { Enabled: true })
                     {
-                        <MudChip T="string" Color="Color.Error" Size="Size.Small">@context.ConsecutiveFailures</MudChip>
+                        <span>Catalog off</span>
+                    }
+                    else if (coverage.Sightings == 0)
+                    {
+                        <span>None captured</span>
                     }
                     else
                     {
-                        <span>0</span>
+                        <b>@coverage.Sightings @(coverage.BrowserCapture ? "captured" : "indexed")</b>
+                        <div class="text-muted small">
+                            @coverage.Resolved resolved
+                            @if (coverage.Pending > 0)
+                            {
+                                <span> · @coverage.Pending awaiting detail</span>
+                            }
+                        </div>
                     }
                 </MudTd>
-                <MudTd DataLabel="Latency">@(context.LastSearchAt is null ? "—" : $"{context.LastLatencyMs} ms")</MudTd>
-                <MudTd DataLabel="Totals">@context.TotalResults results / @context.TotalSearches searches</MudTd>
-                <MudTd DataLabel="Status">
+                <MudTd DataLabel="Activity">
+                    @if (IsFirefoxIndexer(context))
+                    {
+                        <span>Last capture @Relative(LastFirefoxCapture() ?? coverage.LastSeenAt)</span>
+                        <div class="text-muted small">@FirefoxItems() items in @FirefoxBatches() batches</div>
+                    }
+                    else
+                    {
+                        <span>Last search @Relative(context.LastSearchAt)</span>
+                        <div class="text-muted small">
+                            @(context.LastSearchAt is null ? "No live searches" : $"{context.LastResultCount} last · {context.TotalResults} total")
+                        </div>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Health">
                     @if (!context.Enabled)
                     {
                         <MudChip T="string" Color="Color.Default" Size="Size.Small">disabled</MudChip>
+                    }
+                    else if (IsFirefoxIndexer(context))
+                    {
+                        <MudTooltip Text="@FirefoxHealthHelp(coverage)">
+                            <MudChip T="string" Color="@FirefoxHealthColor()" Size="Size.Small"
+                                     Icon="@FirefoxHealthIcon()">
+                                @FirefoxHealthLabel(coverage)
+                            </MudChip>
+                        </MudTooltip>
                     }
                     else if (context.LastSearchAt is null)
                     {
                         <MudChip T="string" Color="Color.Info" Size="Size.Small">no searches yet</MudChip>
                     }
-                    @* A block gets its own state ahead of the generic failure. It used to be invisible: the
-                       provider swallowed the 403 and reported "success, 0 results", so 1337x and ext.to sat
-                       green through 13 searches apiece while contributing nothing. Blocked is not quiet. *@
                     else if (context.LastBlockReason != IndexerBlockReason.None)
                     {
                         <MudTooltip Text="@BlockHelp(context)">
@@ -147,6 +164,10 @@ else
                     {
                         <MudChip T="string" Color="Color.Success" Size="Size.Small">ok</MudChip>
                     }
+                </MudTd>
+                <MudTd DataLabel="Enabled">
+                    <MudSwitch T="bool" Color="Color.Primary" Value="@context.Enabled"
+                               ValueChanged="@(v => SetEnabled(context, v))" />
                 </MudTd>
                 <MudTd>
                     <div class="d-flex">
@@ -206,6 +227,7 @@ else
     private bool _loading = true;
     private List<IndexerSettingDto> _items = new();
     private CatalogStatsDto? _catalog;
+    private FirefoxCaptureAdminStatusDto? _firefoxStatus;
 
     protected override async Task OnInitializedAsync() => await Load();
 
@@ -216,6 +238,10 @@ else
         {
             _items = await Indexers.GetAllAsync();
             _catalog = await Catalog.GetStatsAsync(CancellationToken.None);
+            var firefoxIndexer = _items.FirstOrDefault(IsFirefoxIndexer);
+            _firefoxStatus = firefoxIndexer is null
+                ? null
+                : await FirefoxCapture.GetAdminStatusAsync(firefoxIndexer.Id, CancellationToken.None);
         }
         finally { _loading = false; StateHasChanged(); }
     }
@@ -226,13 +252,6 @@ else
         if (await Indexers.SetEnabledAsync(row.Name, enabled))
             await Toast.ShowSuccessAsync($"{row.Name} {(enabled ? "enabled" : "disabled")}.");
         else
-            await Toast.ShowErrorAsync("Update failed.");
-    }
-
-    private async Task SetPriority(IndexerSettingDto row, int priority)
-    {
-        row.Priority = priority;
-        if (!await Indexers.SetPriorityAsync(row.Name, priority))
             await Toast.ShowErrorAsync("Update failed.");
     }
 
@@ -258,8 +277,53 @@ else
         if (source.CircuitState == "Open")
             return $"Circuit open until {source.NextAttemptAt?.ToLocalTime():g}. {source.LastError}";
         return $"Last successful ingestion: {Relative(source.LastSuccessAt)}. "
-             + $"Resolved {source.TotalItemsResolved} of {source.TotalItemsSeen} observations.";
+             + $"Resolved {source.TotalItemsResolved} of {source.TotalItemsSeen} distinct releases.";
     }
+
+    private sealed record IndexerCoverage(long Sightings, long Resolved, DateTime? LastSeenAt, bool BrowserCapture)
+    {
+        public long Pending => Math.Max(0, Sightings - Resolved);
+    }
+
+    private IndexerCoverage Coverage(IndexerSettingDto indexer)
+    {
+        var sources = (_catalog?.Sources ?? [])
+            .Where(source => source.IndexerId == indexer.Id);
+        if (IsFirefoxIndexer(indexer))
+            sources = sources.Where(source => source.Source.Contains("Firefox", StringComparison.OrdinalIgnoreCase));
+        var list = sources.ToList();
+        return new IndexerCoverage(
+            list.Sum(source => source.Sightings),
+            list.Sum(source => source.TotalItemsResolved),
+            list.Select(source => source.LastSuccessAt).OrderByDescending(value => value).FirstOrDefault(),
+            IsFirefoxIndexer(indexer));
+    }
+
+    private static bool IsFirefoxIndexer(IndexerSettingDto indexer) =>
+        indexer.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase);
+
+    private bool FirefoxPaired() => _firefoxStatus?.Devices.Any(device => device.IsActive) == true;
+    private bool FirefoxRecentlySeen() => _firefoxStatus?.Devices.Any(device =>
+        device.IsActive && device.LastSeenAt >= DateTime.UtcNow.AddMinutes(-5)) == true;
+    private DateTime? LastFirefoxCapture() => _firefoxStatus?.Devices
+        .OrderByDescending(device => device.LastCaptureAt)
+        .FirstOrDefault()?.LastCaptureAt;
+    private long FirefoxItems() => _firefoxStatus?.Devices.Sum(device => device.ItemsReceived) ?? 0;
+    private long FirefoxBatches() => _firefoxStatus?.Devices.Sum(device => device.BatchesReceived) ?? 0;
+
+    private Color FirefoxHealthColor() => FirefoxRecentlySeen()
+        ? Color.Success
+        : FirefoxPaired() ? Color.Info : Color.Warning;
+    private string FirefoxHealthIcon() => FirefoxRecentlySeen()
+        ? Icons.Material.Filled.Sync
+        : FirefoxPaired() ? Icons.Material.Filled.Extension : Icons.Material.Filled.ExtensionOff;
+    private string FirefoxHealthLabel(IndexerCoverage coverage) => FirefoxRecentlySeen()
+        ? (coverage.Sightings > 0 ? "capturing" : "Firefox ready")
+        : FirefoxPaired() ? "Firefox paired" : "pair Firefox";
+    private string FirefoxHealthHelp(IndexerCoverage coverage) => FirefoxPaired()
+        ? $"Firefox has stored {coverage.Sightings} distinct 1337x releases and was last seen {Relative(_firefoxStatus?.Devices.Max(device => device.LastSeenAt))}. "
+          + "The direct HTTP scraper's state does not interrupt browser capture."
+        : "No active Firefox profile is paired. Open Firefox capture and pair the browser used for 1337x.";
 
     private static string FormatBytes(long bytes) => bytes switch
     {
