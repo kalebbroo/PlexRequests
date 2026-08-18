@@ -926,24 +926,53 @@ app.MapGet("/api/fulfillment/episodes", async (int tmdbId, int season, HttpConte
 
 // Worker persists the durable audit trail of what got imported for a job (one row per video/subtitle
 // file) — otherwise the only record is a transient JSON file the worker deletes once the job completes.
+// Both downloader observers can report the same coordinated import at nearly the same instant. Serialize
+// this tiny write boundary so the read-before-insert dedupe remains atomic within the web process.
+var importedFilesWriteLock = new SemaphoreSlim(1, 1);
 app.MapPost("/api/fulfillment/{jobId:int}/imported-files", async (int jobId, List<PlexRequestsHosted.Shared.DTOs.ImportedFileDto> files, HttpContext ctx, IConfiguration cfg, AppDbContext db) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     if (!await db.FulfillmentJobs.AnyAsync(j => j.Id == jobId)) return Results.NotFound();
-    db.ImportedFiles.AddRange(files.Select(f => new PlexRequestsHosted.Infrastructure.Entities.ImportedFileEntity
+
+    await importedFilesWriteLock.WaitAsync(ctx.RequestAborted);
+    try
     {
-        FulfillmentJobId = jobId,
-        TorrentId = f.TorrentId,
-        SourcePath = f.SourcePath,
-        DestinationPath = f.DestinationPath,
-        FileType = f.FileType,
-        SeasonNumber = f.SeasonNumber,
-        EpisodeNumber = f.EpisodeNumber,
-        SizeBytes = f.SizeBytes,
-        ResolutionHeight = f.ResolutionHeight
-    }));
-    await db.SaveChangesAsync();
-    return Results.Ok();
+        static string AuditKey(string? torrentId, string destinationPath, string fileType) =>
+            $"{torrentId?.Trim()}\u001f{destinationPath.Trim()}\u001f{fileType.Trim()}";
+
+        var existing = await db.ImportedFiles.AsNoTracking()
+            .Where(f => f.FulfillmentJobId == jobId)
+            .Select(f => new { f.TorrentId, f.DestinationPath, f.FileType })
+            .ToListAsync(ctx.RequestAborted);
+        var known = existing.Select(f => AuditKey(f.TorrentId, f.DestinationPath, f.FileType))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var added = 0;
+        foreach (var f in files)
+        {
+            if (!known.Add(AuditKey(f.TorrentId, f.DestinationPath, f.FileType))) continue;
+            db.ImportedFiles.Add(new PlexRequestsHosted.Infrastructure.Entities.ImportedFileEntity
+            {
+                FulfillmentJobId = jobId,
+                TorrentId = f.TorrentId,
+                SourcePath = f.SourcePath,
+                DestinationPath = f.DestinationPath,
+                FileType = f.FileType,
+                SeasonNumber = f.SeasonNumber,
+                EpisodeNumber = f.EpisodeNumber,
+                SizeBytes = f.SizeBytes,
+                ResolutionHeight = f.ResolutionHeight
+            });
+            added++;
+        }
+
+        if (added > 0) await db.SaveChangesAsync(ctx.RequestAborted);
+        return Results.Ok(new { added });
+    }
+    finally
+    {
+        importedFilesWriteLock.Release();
+    }
 });
 
 // Worker asks Plex to rescan the relevant library section after a successful import — previously nothing
