@@ -10,15 +10,32 @@ public static partial class FileTransfer
 
     public static void Transfer(string source, string dest, TransferMode mode, bool deleteSourceAfterImport, ILogger logger)
     {
+        var sourceFullPath = Path.GetFullPath(source);
+        var destinationFullPath = Path.GetFullPath(dest);
+        var pathComparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (string.Equals(sourceFullPath, destinationFullPath, pathComparison)) return;
+
+        // Read the source before touching the existing library file. Besides giving us the expected length
+        // for verification, this is the safety boundary that the old implementation lacked: it deleted dest
+        // first, then discovered that another importer had already moved source, leaving neither copy behind.
+        var expectedLength = new FileInfo(sourceFullPath).Length;
         var destDir = Path.GetDirectoryName(dest);
         if (!string.IsNullOrEmpty(destDir)) Directory.CreateDirectory(destDir);
-        if (File.Exists(dest)) File.Delete(dest); // no dedup/versioning — a re-import intentionally replaces
+        var stagingPath = Path.Combine(destDir ?? Directory.GetCurrentDirectory(),
+            $".{Path.GetFileName(dest)}.plexrequests-{Guid.NewGuid():N}.partial");
 
-        switch (mode)
+        try
         {
-            case TransferMode.Hardlink:
-                if (OperatingSystem.IsLinux() && link(source, dest) == 0) return;
-                if (!OperatingSystem.IsLinux())
+            var staged = false;
+            if (mode == TransferMode.Hardlink)
+            {
+                if (OperatingSystem.IsLinux() && link(sourceFullPath, stagingPath) == 0)
+                {
+                    staged = true;
+                }
+                else if (!OperatingSystem.IsLinux())
                 {
                     if (!_warnedNonLinuxHardlink)
                     {
@@ -30,23 +47,33 @@ public static partial class FileTransfer
                 {
                     logger.LogInformation("Hardlink unavailable for {Dest} (likely cross-device); copying instead", dest);
                 }
-                File.Copy(source, dest, overwrite: true);
-                return;
+            }
 
-            case TransferMode.Copy:
-                File.Copy(source, dest, overwrite: true);
-                if (deleteSourceAfterImport) TryDelete(source, logger);
-                return;
+            // Move also stages by copying. That costs no extra I/O for the normal cross-filesystem
+            // download->NAS move, and it preserves source until the replacement has been committed. A direct
+            // File.Move cannot provide that guarantee when an old destination already exists.
+            if (!staged) File.Copy(sourceFullPath, stagingPath, overwrite: false);
 
-            case TransferMode.Move:
-                try { File.Move(source, dest, overwrite: true); }
-                catch (IOException)
-                {
-                    // Cross-filesystem move isn't atomic in .NET — fall back to copy+delete.
-                    File.Copy(source, dest, overwrite: true);
-                    TryDelete(source, logger);
-                }
-                return;
+            var stagedLength = new FileInfo(stagingPath).Length;
+            if (stagedLength != expectedLength)
+                throw new IOException($"Staged file size mismatch for '{dest}': expected {expectedLength} bytes, copied {stagedLength} bytes");
+
+            // stagingPath is in the destination directory, so this is a same-filesystem atomic rename. The
+            // previous library copy remains intact until this exact operation succeeds.
+            File.Move(stagingPath, destinationFullPath, overwrite: true);
+
+            var committedLength = new FileInfo(destinationFullPath).Length;
+            if (committedLength != expectedLength)
+                throw new IOException($"Committed file size mismatch for '{dest}': expected {expectedLength} bytes, found {committedLength} bytes");
+
+            if (mode == TransferMode.Move || (mode == TransferMode.Copy && deleteSourceAfterImport))
+                TryDelete(sourceFullPath, logger);
+        }
+        finally
+        {
+            // A crash can leave a partial file, but it is deliberately hidden and never replaces the Plex
+            // path. Normal failures clean it immediately.
+            if (File.Exists(stagingPath)) TryDelete(stagingPath, logger);
         }
     }
 

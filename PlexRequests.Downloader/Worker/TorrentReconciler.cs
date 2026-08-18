@@ -28,6 +28,7 @@ public class TorrentReconciler(
     IPlexRequestsApiClient api,
     IDownloadClient downloadClient,
     ILibraryImporter importer,
+    ITorrentImportCoordinator importCoordinator,
     IOptions<WorkerOptions> workerOptions,
     ILogger<TorrentReconciler> logger) : BackgroundService
 {
@@ -213,7 +214,8 @@ public class TorrentReconciler(
             Source: t.Source,
             IndexerId: t.IndexerId);
 
-        var result = await importer.ImportAsync(job, item, sourcePath, ct);
+        var result = await importCoordinator.RunOnceAsync(t.TorrentId,
+            token => importer.ImportAsync(job, item, sourcePath, token), ct);
         if (!result.Success)
             return (TorrentTrackingState.Failed, result.FailReason ?? "Import failed");
 

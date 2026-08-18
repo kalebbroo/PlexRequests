@@ -257,7 +257,91 @@ public class MediaRequestService(
         if (episodes is not { Count: > 0 }) return new MediaRequestResult { Success = false, ErrorMessage = "No episodes selected" };
         var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
         if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
+        if (asUpgrade)
+            return await QueueEpisodeUpgradeAsync(userId.Value, mediaId, mediaType, episodes, qualityProfileId);
         return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons: false, seasons: null, episodes: episodes, qualityProfileId: qualityProfileId, asUpgrade: asUpgrade);
+    }
+
+    /// <summary>
+    /// Manual episode upgrades must attach to the existing available request and use the real upgrade job
+    /// path. Creating a fresh ordinary request let Plex availability reconciliation complete it immediately
+    /// from the old 720p episode, before the requested 1080p replacement had even been verified.
+    /// </summary>
+    private async Task<MediaRequestResult> QueueEpisodeUpgradeAsync(
+        int userId,
+        int mediaId,
+        MediaType mediaType,
+        IReadOnlyList<(int season, int episode)> episodes,
+        int? qualityProfileId)
+    {
+        var wanted = episodes.Distinct().ToHashSet();
+        var imported = await (from file in _db.ImportedFiles.AsNoTracking()
+                              join job in _db.FulfillmentJobs.AsNoTracking() on file.FulfillmentJobId equals job.Id
+                              join request in _db.MediaRequests.AsNoTracking() on job.MediaRequestId equals request.Id
+                              where request.MediaId == mediaId && request.MediaType == mediaType
+                                    && file.FileType == "video"
+                                    && file.SeasonNumber != null && file.EpisodeNumber != null
+                              select new
+                              {
+                                  RequestId = request.Id,
+                                  request.Status,
+                                  file.SeasonNumber,
+                                  file.EpisodeNumber,
+                                  file.DestinationPath,
+                                  file.ImportedAt
+                              }).ToListAsync();
+
+        var matching = imported
+            .Where(x => wanted.Contains((x.SeasonNumber!.Value, x.EpisodeNumber!.Value)))
+            .ToList();
+
+        // Prefer an Available request that owns the most selected episodes. It remains Available while its
+        // upgrade runs, so ordinary availability reconciliation cannot prematurely close the upgrade job.
+        var anchorId = matching
+            .GroupBy(x => new { x.RequestId, x.Status })
+            .OrderByDescending(g => g.Key.Status == RequestStatus.Available)
+            .ThenByDescending(g => g.Select(x => (x.SeasonNumber, x.EpisodeNumber)).Distinct().Count())
+            .ThenByDescending(g => g.Max(x => x.ImportedAt))
+            .Select(g => (int?)g.Key.RequestId)
+            .FirstOrDefault();
+
+        if (anchorId is null)
+        {
+            anchorId = await _db.MediaRequests.AsNoTracking()
+                .Where(r => r.MediaId == mediaId && r.MediaType == mediaType && r.Status == RequestStatus.Available)
+                .OrderByDescending(r => r.AvailableAt ?? r.RequestedAt)
+                .Select(r => (int?)r.Id)
+                .FirstOrDefaultAsync();
+        }
+
+        if (anchorId is null)
+            return new MediaRequestResult
+            {
+                Success = false,
+                ErrorMessage = "The existing Plex episode could not be matched to a request, so no files were changed. Refresh Plex availability and try again."
+            };
+
+        var anchor = await _db.MediaRequests.FirstAsync(r => r.Id == anchorId.Value);
+        var profileId = await _qualityProfiles.ResolveProfileIdAsync(
+            mediaType, mediaId, genres: null, requesterChoiceId: qualityProfileId, userId: userId);
+        var target = await _qualityProfiles.GetCutoffQualityAsync(profileId);
+        if (target == Quality.Any)
+            return new MediaRequestResult { Success = false, ErrorMessage = "The selected quality profile has no upgrade target." };
+
+        var replacePaths = matching.Select(x => x.DestinationPath)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var queued = await _fulfillment.EnqueueUpgradeAsync(ToDto(anchor), target, replacePaths, wanted.ToList());
+        if (!queued)
+            return new MediaRequestResult { Success = false, ErrorMessage = "An upgrade for this request is already running." };
+
+        return new MediaRequestResult
+        {
+            Success = true,
+            RequestId = anchor.Id,
+            NewStatus = anchor.Status
+        };
     }
 
     /// <summary>
@@ -520,6 +604,43 @@ public class MediaRequestService(
         var myActive = await _db.MediaRequests
             .Where(r => r.MediaId == mediaId && r.MediaType == mediaType && r.RequestedByUserId == userId)
             .ToListAsync();
+
+        // Episode requests are compared at episode granularity. The former season-only comparison made an
+        // active S09E03 request block a missing S09E01 as "already requested", even though the jobs could
+        // satisfy completely different files.
+        if (episodes is { Count: > 0 })
+        {
+            var wantedEpisodes = episodes.ToHashSet();
+            var coveredEpisodes = new HashSet<(int season, int episode)>();
+            foreach (var request in myActive.Where(r => IsActiveStatus(r.Status)))
+            {
+                if (request.RequestAllSeasons || (string.IsNullOrWhiteSpace(request.RequestedEpisodesCsv)
+                                                  && string.IsNullOrWhiteSpace(request.RequestedSeasonsCsv)))
+                {
+                    coveredEpisodes.UnionWith(wantedEpisodes);
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(request.RequestedSeasonsCsv))
+                {
+                    var coveredSeasons = ParseSeasons(request.RequestedSeasonsCsv);
+                    coveredEpisodes.UnionWith(wantedEpisodes.Where(e => coveredSeasons.Contains(e.season)));
+                    continue;
+                }
+
+                coveredEpisodes.UnionWith(ParseEpisodes(request.RequestedEpisodesCsv));
+            }
+
+            if (wantedEpisodes.All(coveredEpisodes.Contains))
+                return (true, "You've already requested this episode.");
+
+            var availableEpisodes = await _seasonAvailability.GetPlexEpisodesAsync(mediaId);
+            if (wantedEpisodes.All(e => availableEpisodes.TryGetValue(e.season, out var have) && have.Contains(e.episode)))
+                return (true, "This episode is already available.");
+
+            return (false, null);
+        }
+
         var covered = new HashSet<int>();
         foreach (var r in myActive.Where(r => IsActiveStatus(r.Status)))
             covered.UnionWith(await ResolveRequestScopeAsync(r));
@@ -565,6 +686,25 @@ public class MediaRequestService(
             if (m.Success) seasons.Add(int.Parse(m.Groups[1].Value));
         }
         return seasons;
+    }
+
+    private static HashSet<int> ParseSeasons(string csv) =>
+        csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => int.TryParse(s, out var n) ? n : -1)
+            .Where(n => n >= 0)
+            .ToHashSet();
+
+    private static HashSet<(int season, int episode)> ParseEpisodes(string? csv)
+    {
+        var episodes = new HashSet<(int season, int episode)>();
+        if (string.IsNullOrWhiteSpace(csv)) return episodes;
+        foreach (var tok in csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(tok, @"^[Ss](\d+)[Ee](\d+)$");
+            if (match.Success)
+                episodes.Add((int.Parse(match.Groups[1].Value), int.Parse(match.Groups[2].Value)));
+        }
+        return episodes;
     }
 
     /// <summary>A specific user's requests, newest first (used by the Discord bridge /request status).</summary>

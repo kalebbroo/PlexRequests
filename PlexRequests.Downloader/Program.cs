@@ -178,6 +178,9 @@ builder.Services.AddSingleton<IPlexNamingService, PlexNamingService>();
 builder.Services.AddSingleton<IEpisodeTitleProvider, EpisodeTitleProvider>();
 builder.Services.AddSingleton<ILibraryOrganizer, LibraryOrganizer>();
 builder.Services.AddSingleton<ILibraryImporter, LibraryImporter>();
+// The legacy job monitor and the durable reconciler can see the same completed torrent. They share this
+// single-flight boundary so exactly one physical library import occurs and both callers receive its result.
+builder.Services.AddSingleton<ITorrentImportCoordinator, TorrentImportCoordinator>();
 builder.Services.AddHttpClient<IVpnGuard, VpnGuard>();
 
 // Pipeline + restart-resumable state + the orchestrating worker.
