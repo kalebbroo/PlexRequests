@@ -32,6 +32,7 @@ public class FulfillmentPipeline(
     ILibraryOrganizationProvider libraryPrefs,
     IDownloadClient downloadClient,
     ILibraryImporter importer,
+    ITorrentImportCoordinator importCoordinator,
     IPlexRequestsApiClient api,
     IJobStateStore stateStore,
     IVpnGuard vpn,
@@ -366,7 +367,8 @@ public class FulfillmentPipeline(
                     // Surface the "renaming & moving" phase in the admin panel before the (potentially slow,
                     // blocking) import so it doesn't look stuck at 100% while files are being transferred.
                     await SafeReportProgress(job.Id, (int)Math.Round(progressSum / Math.Max(1, items.Count)), BuildTelemetry(importingId: it.TorrentId));
-                    var result = await importer.ImportAsync(job, it, sourcePath, ct);
+                    var result = await importCoordinator.RunOnceAsync(it.TorrentId,
+                        token => importer.ImportAsync(job, it, sourcePath, token), ct);
                     if (!result.Success) { await FailTorrentAsync(it, result.FailReason ?? "A download completed but import failed", BlocklistReason.ImportFailed); continue; }
 
                     try

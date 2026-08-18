@@ -87,12 +87,23 @@ public class FulfillmentTorrentService(AppDbContext db, ILogger<FulfillmentTorre
         return added;
     }
 
-    public async Task<List<TrackedTorrentDto>> GetActiveAsync() =>
-        await db.FulfillmentTorrents.AsNoTracking()
+    public async Task<List<TrackedTorrentDto>> GetActiveAsync()
+    {
+        var active = await db.FulfillmentTorrents.AsNoTracking()
             .Where(t => t.State == TorrentTrackingState.Active || t.State == TorrentTrackingState.Finished)
             .OrderBy(t => t.Id)
             .Select(t => ToDto(t))
             .ToListAsync();
+
+        // One physical torrent may back several jobs, but it must be observed/imported only once per pass.
+        // Choose the newest mapping so a current retry/upgrade supplies the import context rather than a
+        // stale historical job; ApplyAsync still fans the resulting state out to every mapping.
+        return active
+            .GroupBy(t => t.TorrentId, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(t => t.Id).First())
+            .OrderBy(t => t.Id)
+            .ToList();
+    }
 
     public async Task<List<TrackedTorrentDto>> GetForJobAsync(int jobId) =>
         await db.FulfillmentTorrents.AsNoTracking()

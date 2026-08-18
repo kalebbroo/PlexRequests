@@ -56,6 +56,11 @@ public sealed class FulfillmentTorrentServiceTests
         var service = new FulfillmentTorrentService(
             db,
             NullLogger<FulfillmentTorrentService>.Instance);
+
+        var active = await service.GetActiveAsync();
+        var current = Assert.Single(active);
+        Assert.Equal(secondJob.Id, current.FulfillmentJobId);
+
         var changed = await service.ApplyAsync(new[]
         {
             new TorrentStateUpdateDto
