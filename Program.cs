@@ -857,18 +857,22 @@ app.MapPost("/api/fulfillment/rss-grab", async (List<PlexRequestsHosted.Shared.D
             var row = await db.AirSchedule.FirstOrDefaultAsync(a =>
                 a.MediaRequestId == g.MediaRequestId && a.SeasonNumber == g.Season && a.EpisodeNumber == g.Episode);
             if (row is null) continue;
-            row.LastSearchedAt = now;
-            row.SearchAttempts++;
+            if (!result.AlreadyCovered)
+            {
+                row.LastSearchedAt = now;
+                row.SearchAttempts++;
+            }
 
-            if (result.Success && result.JobQueued)
+            if (result.Success)
             {
                 row.SearchState = PlexRequestsHosted.Shared.Enums.AirSearchState.Searching;
-                row.NextSearchAt = null; // fulfillment pipeline owns it now
+                row.NextSearchAt = now.AddMinutes(30);
             }
             else
             {
-                // Same conservative backoff as the normal monitor.
-                row.NextSearchAt = now.AddHours(Math.Min(24, Math.Pow(2, Math.Min(row.SearchAttempts, 5))));
+                row.SearchState = PlexRequestsHosted.Shared.Enums.AirSearchState.Due;
+                row.NextSearchAt = PlexRequestsHosted.Services.Jobs.RetryBackoff.ComputeNextRetry(
+                    Math.Max(0, row.SearchAttempts - 1), releaseDate: null, now);
             }
         }
 

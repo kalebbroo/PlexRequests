@@ -31,9 +31,36 @@ public class CalendarRefreshJob(
         if (!config.GetValue("Monitoring:Enabled", true)) return JobResult.Skipped("Monitoring is disabled");
 
         var prefs = await monitoring.GetAsync();
-        var anchors = await db.MediaRequests
-            .Where(r => r.MonitorMode != MonitorMode.None && r.MediaType == MediaType.TvShow)
+        var candidates = await db.MediaRequests
+            .Where(r => r.MediaType == MediaType.TvShow
+                        && (r.Status == RequestStatus.Approved || r.Status == RequestStatus.Processing
+                            || r.Status == RequestStatus.Available || r.Status == RequestStatus.PartiallyAvailable
+                            || r.Status == RequestStatus.Searching)
+                        && (r.MonitorMode != MonitorMode.None || r.Monitored))
             .ToListAsync(ct);
+
+        // Repair rows created during the MonitorMode transition. CreateRequestCore used to write only the
+        // legacy boolean, while this job correctly read only MonitorMode; those shows silently received no
+        // calendar refresh. This runtime repair complements the migration so restored/older databases heal.
+        foreach (var candidate in candidates.Where(r => r.Monitored && r.MonitorMode == MonitorMode.None))
+        {
+            candidate.MonitorMode = MonitorMode.AllEpisodes;
+            candidate.MonitoredSince ??= candidate.RequestedAt;
+        }
+
+        // AirSchedule is intentionally unique per show/season/episode, not per requester. Refresh each show
+        // once using its broadest live monitoring anchor; iterating every request let the final narrow anchor
+        // overwrite the broad one and made the result depend on database order.
+        var anchors = candidates
+            .GroupBy(r => r.MediaId)
+            .Select(g => g.OrderByDescending(r => r.RequestAllSeasons)
+                .ThenByDescending(r => r.MonitorMode == MonitorMode.AllEpisodes)
+                .ThenByDescending(r => r.AutoMonitorNewSeasons)
+                .ThenByDescending(r => r.Id)
+                .First())
+            .ToList();
+
+        if (db.ChangeTracker.HasChanges()) await db.SaveChangesAsync(ct);
         if (anchors.Count == 0) return JobResult.Skipped("No series are being monitored");
 
         int rows = 0;
@@ -181,13 +208,6 @@ public class CalendarRefreshJob(
     {
         if (row.HasFile) { row.SearchState = AirSearchState.Acquired; row.NextSearchAt = null; return; }
         if (!row.Monitored) { row.SearchState = AirSearchState.Skipped; row.NextSearchAt = null; return; }
-        if (row.SearchAttempts >= prefs.MaxSearchAttemptsPerEpisode)
-        {
-            row.SearchState = AirSearchState.Skipped;
-            row.NextSearchAt = null;
-            return;
-        }
-
         if (row.AirsAtUtc is not DateTime airsAt)
         {
             // No air date at all. Previously these were skipped forever, because "has aired" is false
@@ -203,9 +223,13 @@ public class CalendarRefreshJob(
             row.SearchState = AirSearchState.NotDue;
             row.NextSearchAt = airsAt;
         }
-        else if (row.SearchState != AirSearchState.Searching)
+        else
         {
-            row.SearchState = AirSearchState.Due;
+            // Searching is not a terminal hand-off. The air-date monitor keeps a reconciliation deadline
+            // while work is live and re-queues whatever Plex still lacks after partial/failed completion.
+            // This also revives old rows marked Skipped solely because they reached the former attempt cap.
+            if (row.SearchState != AirSearchState.Searching)
+                row.SearchState = AirSearchState.Due;
             row.NextSearchAt ??= DateTime.UtcNow;
         }
     }

@@ -24,7 +24,7 @@ public class MonitoringPreferencesEntity
     /// <summary>How long after the assumed air time to start looking. Releases don't appear instantly.</summary>
     public int PostAirDelayMinutes { get; set; } = 90;
 
-    /// <summary>Give up searching one episode after this many attempts; it stays visible in the calendar.</summary>
+    /// <summary>Legacy escalation threshold. A monitored episode is never abandoned at this count.</summary>
     public int MaxSearchAttemptsPerEpisode { get; set; } = 12;
 
     /// <summary>How far ahead the calendar is populated, and how far back to backfill on first run.</summary>

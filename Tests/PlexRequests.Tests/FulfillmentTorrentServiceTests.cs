@@ -35,7 +35,9 @@ public sealed class FulfillmentTorrentServiceTests
             MediaRequestId = request.Id,
             MediaId = request.MediaId,
             MediaType = request.MediaType,
-            Title = request.Title
+            Title = request.Title,
+            // Historical/terminal job mappings remain reconcilable while the request owns one current job.
+            Status = FulfillmentStatus.Completed
         };
         var secondJob = new FulfillmentJobEntity
         {

@@ -18,7 +18,6 @@ namespace PlexRequestsHosted.Services.Jobs;
 public class AirDateMonitorJob(
     AppDbContext db,
     IMediaRequestService requests,
-    IMonitoringPreferencesService monitoring,
     IConfiguration config,
     ILogger<AirDateMonitorJob> logger) : IJobHandler
 {
@@ -29,15 +28,13 @@ public class AirDateMonitorJob(
         if (!config.GetValue("Monitoring:Enabled", true)) return JobResult.Skipped("Monitoring is disabled");
         if (!config.GetValue<bool>("Fulfillment:Enabled")) return JobResult.Skipped("Fulfillment is disabled");
 
-        var prefs = await monitoring.GetAsync();
         var now = DateTime.UtcNow;
 
         var due = await db.AirSchedule
             .Where(a => a.Monitored && !a.HasFile && a.MediaRequestId != null
-                        && a.NextSearchAt != null && a.NextSearchAt <= now
-                        && (a.SearchState == AirSearchState.Due
-                            || a.SearchState == AirSearchState.NotDue
-                            || a.SearchState == AirSearchState.AirDateUnknown))
+                        && (a.AirsAtUtc == null || a.AirsAtUtc <= now)
+                        && (a.NextSearchAt == null || a.NextSearchAt <= now)
+                        && a.SearchState != AirSearchState.Acquired)
             .OrderBy(a => a.NextSearchAt)
             .Take(200)
             .ToListAsync(ct);
@@ -56,18 +53,24 @@ public class AirDateMonitorJob(
 
             foreach (var row in group)
             {
-                row.LastSearchedAt = now;
-                row.SearchAttempts++;
-                if (result.Success && result.JobQueued)
+                if (!result.AlreadyCovered)
+                {
+                    row.LastSearchedAt = now;
+                    row.SearchAttempts++;
+                }
+
+                if (result.Success)
                 {
                     row.SearchState = AirSearchState.Searching;
-                    row.NextSearchAt = null; // the fulfillment pipeline owns it from here
+                    // The pipeline owns the download, but the monitor still owns the invariant. Recheck it
+                    // on a bounded cadence so a partial/vanished/terminal job can never strand the episode.
+                    row.NextSearchAt = now.AddMinutes(30);
                 }
                 else
                 {
-                    // Back off rather than retry immediately — a failure here is usually "already covered
-                    // by an active request", which resolves itself.
-                    row.NextSearchAt = now.AddHours(Math.Min(24, Math.Pow(2, Math.Min(row.SearchAttempts, 5))));
+                    row.SearchState = AirSearchState.Due;
+                    row.NextSearchAt = RetryBackoff.ComputeNextRetry(
+                        Math.Max(0, row.SearchAttempts - 1), releaseDate: null, now);
                 }
                 row.UpdatedAt = now;
             }

@@ -33,7 +33,8 @@ public class SeriesMonitoringService(AppDbContext db, ILogger<SeriesMonitoringSe
         var anchor = await db.MediaRequests
             .Where(r => r.MediaId == showTmdbId && r.MediaType == MediaType.TvShow
                         && r.Status != RequestStatus.Cancelled && r.Status != RequestStatus.Rejected)
-            .OrderByDescending(r => r.RequestAllSeasons)
+            .OrderByDescending(r => r.MonitorMode != MonitorMode.None || r.Monitored)
+            .ThenByDescending(r => r.RequestAllSeasons)
             .ThenByDescending(r => r.Id)
             .FirstOrDefaultAsync();
         if (anchor is null) return null;
@@ -65,11 +66,20 @@ public class SeriesMonitoringService(AppDbContext db, ILogger<SeriesMonitoringSe
         // episodes for a series nobody is following any more.
         if (mode == MonitorMode.None)
         {
-            await db.AirSchedule.Where(a => a.MediaRequestId == requestId)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(a => a.Monitored, false)
-                    .SetProperty(a => a.SearchState, AirSearchState.Skipped)
-                    .SetProperty(a => a.NextSearchAt, (DateTime?)null));
+            var anotherAnchor = await db.MediaRequests.AnyAsync(x => x.Id != r.Id
+                && x.MediaId == r.MediaId && x.MediaType == MediaType.TvShow
+                && x.MonitorMode != MonitorMode.None
+                && (x.Status == RequestStatus.Approved || x.Status == RequestStatus.Processing
+                    || x.Status == RequestStatus.Available || x.Status == RequestStatus.PartiallyAvailable
+                    || x.Status == RequestStatus.Searching));
+            if (!anotherAnchor)
+            {
+                await db.AirSchedule.Where(a => a.ShowTmdbId == r.MediaId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(a => a.Monitored, false)
+                        .SetProperty(a => a.SearchState, AirSearchState.Skipped)
+                        .SetProperty(a => a.NextSearchAt, (DateTime?)null));
+            }
         }
         else
         {

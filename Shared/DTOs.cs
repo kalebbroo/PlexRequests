@@ -862,6 +862,8 @@ public class MediaRequestResult
 {
     public bool Success { get; set; }
     public bool JobQueued { get; set; }
+    /// <summary>No new job was needed because the durable monitor child already has live work.</summary>
+    public bool AlreadyCovered { get; set; }
     public int? RequestId { get; set; }
     public string? ErrorMessage { get; set; }
     public RequestStatus? NewStatus { get; set; }

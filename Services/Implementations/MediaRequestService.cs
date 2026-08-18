@@ -350,8 +350,9 @@ public class MediaRequestService(
     /// through the normal one-request/one-job pipeline, so the fulfilled callback marks THIS child available
     /// (the monitored anchor is untouched). Batching the season's missing episodes into a single request
     /// (rather than one request per episode) lets the downloader satisfy them from a single season pack
-    /// when no standalone episode releases exist, instead of spawning a doomed job per episode. Returns
-    /// <see cref="MediaRequestResult.Success"/> only when a fulfillment job was actually persisted.
+    /// when no standalone episode releases exist, instead of spawning a doomed job per episode. The child
+    /// is durable and reused on every reconciliation; Success means its scope is covered by existing or new
+    /// live work, while JobQueued distinguishes a newly-persisted job.
     /// </summary>
     public async Task<MediaRequestResult> CreateMonitoredEpisodesAsync(int anchorRequestId, IReadOnlyList<(int season, int episode)> episodes)
     {
@@ -359,49 +360,94 @@ public class MediaRequestService(
         var anchor = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == anchorRequestId);
         if (anchor is null) return new MediaRequestResult { Success = false, ErrorMessage = "Anchor request not found" };
 
-        var csv = string.Join(",", episodes.Distinct().OrderBy(e => e.season).ThenBy(e => e.episode)
+        var wanted = episodes.Distinct().OrderBy(e => e.season).ThenBy(e => e.episode).ToList();
+        var seasons = wanted.Select(e => e.season).Distinct().ToList();
+        if (seasons.Count != 1)
+            return new MediaRequestResult { Success = false, ErrorMessage = "Monitored episodes must be queued one season at a time" };
+
+        var season = seasons[0];
+        var csv = string.Join(",", wanted
             .Select(e => $"S{e.season}E{e.episode}"));
-        var child = new MediaRequestEntity
+
+        // One durable request per (anchor, season). The previous append/delete approach consumed a new row
+        // on every 15-minute coverage check and, before its delete-on-no-op fix, left hundreds of Approved
+        // requests with no job. Reusing this row also gives partial completion a stable place to resume.
+        var child = await _db.MediaRequests.FirstOrDefaultAsync(r =>
+            r.MonitoringAnchorId == anchor.Id && r.MonitoringSeasonNumber == season);
+
+        if (child is not null)
         {
-            MediaId = anchor.MediaId,
-            MediaType = anchor.MediaType,
-            Title = anchor.Title,
-            PosterUrl = anchor.PosterUrl,
-            Status = RequestStatus.Approved,
-            RequestedAt = DateTime.UtcNow,
-            ApprovedAt = DateTime.UtcNow,
-            RequestedBy = anchor.RequestedBy,
-            RequestedByUserId = anchor.RequestedByUserId,
-            RequestAllSeasons = false,
-            RequestedEpisodesCsv = csv,
-            Monitored = false,
-            // Inherit the anchor's profile rather than re-resolving. A newly-aired episode of a series the
-            // user asked for in 1080p has to arrive in 1080p; re-resolving would silently apply whatever the
-            // assignment rules say today, which is not what was agreed when the series was requested.
-            QualityProfileId = anchor.QualityProfileId
-                ?? await _qualityProfiles.ResolveProfileIdAsync(anchor.MediaType, anchor.MediaId, null,
-                    requesterChoiceId: null, userId: anchor.RequestedByUserId)
-        };
-        _db.MediaRequests.Add(child);
+            var activeJob = await _db.FulfillmentJobs
+                .Where(j => j.MediaRequestId == child.Id &&
+                    (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
+                     j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred))
+                .OrderByDescending(j => j.Id)
+                .FirstOrDefaultAsync();
+            if (activeJob is not null)
+            {
+                // A Deferred job can live for days while new episodes air. Widen work that has not begun to
+                // the current missing set and wake a Deferred search immediately; otherwise one hard-to-find
+                // episode could serialize the season and strand every later episode behind it forever.
+                if (activeJob.Status is FulfillmentStatus.Queued or FulfillmentStatus.Deferred
+                    && !string.Equals(activeJob.RequestedEpisodesCsv, csv, StringComparison.OrdinalIgnoreCase))
+                {
+                    RefreshPendingMonitorScope(child, activeJob, csv, DateTime.UtcNow);
+                    await _db.SaveChangesAsync();
+                }
+
+                return new MediaRequestResult
+                {
+                    Success = true,
+                    AlreadyCovered = true,
+                    RequestId = child.Id,
+                    NewStatus = child.Status
+                };
+            }
+
+            // The preceding job is terminal (including PartiallyCompleted). Reconcile the child to the
+            // CURRENT Plex-missing set and let EnqueueAsync narrow it once more against the latest index.
+            child.RequestedEpisodesCsv = csv;
+            child.Status = RequestStatus.Approved;
+            child.ApprovedAt = DateTime.UtcNow;
+            child.AvailableAt = null;
+            child.DenialReason = null;
+            child.QualityProfileId = anchor.QualityProfileId ?? child.QualityProfileId;
+        }
+        else
+        {
+            child = new MediaRequestEntity
+            {
+                MediaId = anchor.MediaId,
+                MediaType = anchor.MediaType,
+                Title = anchor.Title,
+                PosterUrl = anchor.PosterUrl,
+                Status = RequestStatus.Approved,
+                RequestedAt = DateTime.UtcNow,
+                ApprovedAt = DateTime.UtcNow,
+                RequestedBy = anchor.RequestedBy,
+                RequestedByUserId = anchor.RequestedByUserId,
+                RequestAllSeasons = false,
+                RequestedEpisodesCsv = csv,
+                Monitored = false,
+                MonitorMode = MonitorMode.None,
+                MonitoringAnchorId = anchor.Id,
+                MonitoringSeasonNumber = season,
+                // Inherit the anchor's profile rather than re-resolving. A newly-aired episode of a series the
+                // user asked for in 1080p has to arrive in 1080p; re-resolving would silently apply whatever the
+                // assignment rules say today, which is not what was agreed when the series was requested.
+                QualityProfileId = anchor.QualityProfileId
+                    ?? await _qualityProfiles.ResolveProfileIdAsync(anchor.MediaType, anchor.MediaId, null,
+                        requesterChoiceId: null, userId: anchor.RequestedByUserId)
+            };
+            _db.MediaRequests.Add(child);
+        }
         await _db.SaveChangesAsync();
 
-        var queued = false;
-        try
-        {
-            if (_config.GetValue<bool>("Fulfillment:Enabled"))
-                queued = await _fulfillment.EnqueueAsync(ToDto(child));
-        }
-        catch
-        {
-            _db.MediaRequests.Remove(child);
-            await _db.SaveChangesAsync();
-            throw;
-        }
+        var queued = _config.GetValue<bool>("Fulfillment:Enabled")
+                     && await _fulfillment.EnqueueAsync(ToDto(child));
 
         if (!queued)
         {
-            _db.MediaRequests.Remove(child);
-            await _db.SaveChangesAsync();
             return new MediaRequestResult
             {
                 Success = false,
@@ -411,6 +457,20 @@ public class MediaRequestService(
         }
 
         return new MediaRequestResult { Success = true, JobQueued = true, RequestId = child.Id, NewStatus = child.Status };
+    }
+
+    internal static void RefreshPendingMonitorScope(
+        MediaRequestEntity child, FulfillmentJobEntity job, string episodesCsv, DateTime now)
+    {
+        child.RequestedEpisodesCsv = episodesCsv;
+        job.RequestedEpisodesCsv = episodesCsv;
+        job.SeasonTargetsJson = null;
+        if (job.Status == FulfillmentStatus.Deferred)
+        {
+            job.Status = FulfillmentStatus.Queued;
+            job.NextRetryAt = null;
+            job.LastUpdatedAt = now;
+        }
     }
 
     /// <summary>
@@ -479,7 +539,10 @@ public class MediaRequestService(
         var isAdmin = (profile?.Roles ?? string.Empty)
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Contains("Admin", StringComparer.OrdinalIgnoreCase);
-        return await CreateRequestCoreAsync(userId, user.Username, isAdmin, mediaId, mediaType);
+        var monitor = mediaType == MediaType.TvShow
+                      && (await _downloadPreferences.GetAsync()).AutoMonitorEntireSeriesRequests;
+        return await CreateRequestCoreAsync(userId, user.Username, isAdmin, mediaId, mediaType,
+            allSeasons: true, seasons: null, episodes: null, monitored: monitor);
     }
 
     private async Task<MediaRequestResult> CreateRequestCoreAsync(int userId, string username, bool isAdmin, int mediaId, MediaType mediaType, bool allSeasons = true, List<int>? seasons = null, List<(int season, int episode)>? episodes = null, bool monitored = false, int? qualityProfileId = null, bool asUpgrade = false)
@@ -546,6 +609,8 @@ public class MediaRequestService(
                 ? string.Join(",", episodes.Distinct().OrderBy(e => e.season).ThenBy(e => e.episode).Select(e => $"S{e.season}E{e.episode}"))
                 : null,
             Monitored = mediaType == MediaType.TvShow && monitored,
+            MonitorMode = mediaType == MediaType.TvShow && monitored ? MonitorMode.AllEpisodes : MonitorMode.None,
+            MonitoredSince = mediaType == MediaType.TvShow && monitored ? DateTime.UtcNow : null,
             // Resolved here rather than left null for the queue to work out later: the request row is what
             // the whole system reads to decide what "good enough" means for this title, and a null there
             // meant the answer depended on when you asked. ResolveProfileIdAsync re-validates the

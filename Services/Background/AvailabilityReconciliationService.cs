@@ -78,7 +78,8 @@ public class AvailabilityReconciliationService(
             // If a fulfillment job was still open for it, close it — the content arrived another way.
             var job = await db.FulfillmentJobs
                 .FirstOrDefaultAsync(j => j.MediaRequestId == req.Id
-                    && j.Status != FulfillmentStatus.Completed && j.Status != FulfillmentStatus.Failed && j.Status != FulfillmentStatus.Cancelled, ct);
+                    && (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed
+                        || j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred), ct);
             if (job is not null) { job.Status = FulfillmentStatus.Completed; job.CompletedAt = DateTime.UtcNow; }
 
             await db.SaveChangesAsync(ct);

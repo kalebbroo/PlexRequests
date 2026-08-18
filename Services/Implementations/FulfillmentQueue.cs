@@ -28,9 +28,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
     {
         var active = await _db.FulfillmentJobs.AnyAsync(j =>
             j.MediaRequestId == request.Id &&
-            j.Status != FulfillmentStatus.Completed &&
-            j.Status != FulfillmentStatus.Failed &&
-            j.Status != FulfillmentStatus.Cancelled);
+            (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
+             j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred));
         if (active) return false;
 
         // Other active jobs for the SAME title from a DIFFERENT request (two users, or one user
@@ -39,7 +38,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         var otherActive = await _db.FulfillmentJobs.Where(j =>
                 j.MediaId == request.MediaId && j.MediaType == request.MediaType &&
                 j.MediaRequestId != request.Id &&
-                j.Status != FulfillmentStatus.Completed && j.Status != FulfillmentStatus.Failed && j.Status != FulfillmentStatus.Cancelled)
+                (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
+                 j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred))
             .ToListAsync();
 
         if (request.MediaType != MediaType.TvShow && otherActive.Count > 0)
@@ -146,7 +146,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         // shared ranker lands, at which point it consumes the profile's full tier list instead.
         var resolvedQuality = await _profiles.GetCutoffQualityAsync(profileId);
 
-        _db.FulfillmentJobs.Add(new FulfillmentJobEntity
+        var job = new FulfillmentJobEntity
         {
             MediaRequestId = request.Id,
             MediaId = request.MediaId,
@@ -166,8 +166,23 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             IsAnime = isAnime,
             Status = FulfillmentStatus.Queued,
             CreatedAt = DateTime.UtcNow
-        });
-        await _db.SaveChangesAsync();
+        };
+        _db.FulfillmentJobs.Add(job);
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            // A second producer may have won the race after the active check. The filtered unique index is
+            // the final arbiter; detach our losing insert and report the normal idempotent no-op outcome.
+            _db.Entry(job).State = EntityState.Detached;
+            if (await _db.FulfillmentJobs.AnyAsync(j => j.MediaRequestId == request.Id &&
+                    (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
+                     j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred)))
+                return false;
+            throw;
+        }
         return true;
     }
 
@@ -409,7 +424,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         // Never run two upgrades for the same request at once.
         var activeUpgrade = await _db.FulfillmentJobs.AnyAsync(j =>
             j.MediaRequestId == request.Id && j.IsUpgrade &&
-            j.Status != FulfillmentStatus.Completed && j.Status != FulfillmentStatus.Failed && j.Status != FulfillmentStatus.Cancelled);
+            (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
+             j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred));
         if (activeUpgrade) return false;
 
         // Copy identity fields (IMDb id / year / genres / anime flag) from the most recent real job so the
