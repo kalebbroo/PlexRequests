@@ -78,6 +78,16 @@ public class MediaRequestEntity
     /// global default.</summary>
     public int? AirTimeOverrideMinutes { get; set; }
 
+    /// <summary>
+    /// For the one reusable per-season request created by the episode monitor, identifies the durable
+    /// whole-series/season request whose coverage it represents. Null for user-created requests. Keeping
+    /// this identity on the request prevents every reconciliation pass from appending another child row.
+    /// </summary>
+    public int? MonitoringAnchorId { get; set; }
+
+    /// <summary>The season represented by this monitor child. Unique together with MonitoringAnchorId.</summary>
+    public int? MonitoringSeasonNumber { get; set; }
+
     // --- Achieved quality / upgrade tracking ---------------------------------------------------------
     /// <summary>The lowest quality tier actually imported into the library for this request (min across its
     /// video files). <see cref="Quality.Any"/> until something imports. Compared against the preferred

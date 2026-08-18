@@ -176,7 +176,7 @@ public enum AirSearchState
     Searching = 2,
     /// <summary>On Plex.</summary>
     Acquired = 3,
-    /// <summary>Deliberately not wanted (monitor mode excludes it, or attempts exhausted).</summary>
+    /// <summary>Deliberately not wanted because the selected monitor mode excludes it.</summary>
     Skipped = 4,
     /// <summary>
     /// The metadata source has no air date. Previously these were invisible: HasAired is false without a

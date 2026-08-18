@@ -163,7 +163,8 @@ public class JobAdminService(
                 ?? await profiles.ResolveProfileIdAsync(r.MediaType, r.MediaId, genres, null, r.RequestedByUserId);
             var want = await profiles.GetCutoffQualityAsync(profileId);
             var inProgress = jobs.Any(j => j.IsUpgrade
-                && j.Status != FulfillmentStatus.Completed && j.Status != FulfillmentStatus.Failed && j.Status != FulfillmentStatus.Cancelled);
+                && j.Status is FulfillmentStatus.Queued or FulfillmentStatus.Claimed
+                    or FulfillmentStatus.Downloading or FulfillmentStatus.Deferred);
 
             result.Add(new CutoffUnmetItemDto
             {

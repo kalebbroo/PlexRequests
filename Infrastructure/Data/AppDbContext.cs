@@ -213,7 +213,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasKey(x => x.Id);
             b.Property(x => x.Title).HasMaxLength(512);
             b.HasIndex(x => x.Status); // worker polls queued jobs
-            b.HasIndex(x => x.MediaRequestId);
+            // The application guard makes enqueue idempotent; the filtered unique index closes the small
+            // race between two monitor/browser workers checking and inserting concurrently. Terminal jobs
+            // remain unlimited history, while a request can own only one live unit of work.
+            b.HasIndex(x => x.MediaRequestId).IsUnique()
+                .HasFilter("\"Status\" IN (0, 1, 2, 7)");
             b.HasIndex(x => new { x.MediaId, x.MediaType }); // cross-request in-flight job dedup
             b.HasIndex(x => x.NextRetryAt); // scheduler scans deferred jobs whose backoff has elapsed
 
@@ -303,6 +307,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasIndex(x => x.NextSearchAt);
             b.HasIndex(x => x.MediaRequestId);
             b.HasIndex(x => new { x.Monitored, x.SearchState });
+        });
+
+        modelBuilder.Entity<MediaRequestEntity>(b =>
+        {
+            // SQLite permits multiple NULLs in a unique index, so ordinary user requests are unaffected.
+            // A monitor anchor gets at most one reusable child per season.
+            b.HasIndex(x => new { x.MonitoringAnchorId, x.MonitoringSeasonNumber }).IsUnique();
         });
 
         modelBuilder.Entity<MonitoringPreferencesEntity>(b =>

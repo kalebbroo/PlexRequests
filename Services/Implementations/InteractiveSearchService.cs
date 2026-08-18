@@ -122,9 +122,8 @@ public class InteractiveSearchService(
         // Close any job already working this request; the admin's explicit choice supersedes it.
         var existing = await db.FulfillmentJobs
             .Where(j => j.MediaRequestId == request.Id
-                        && j.Status != FulfillmentStatus.Completed
-                        && j.Status != FulfillmentStatus.Failed
-                        && j.Status != FulfillmentStatus.Cancelled)
+                        && (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed
+                            || j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred))
             .ToListAsync();
         foreach (var j in existing)
         {
