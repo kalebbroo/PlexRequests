@@ -124,11 +124,13 @@ public sealed class MusicMetadataTests
         var defaults = await service.GetAsync();
         Assert.False(defaults.CatalogEnabled);
         Assert.False(defaults.RequestsEnabled);
-        await service.UpdateAsync(new MusicSettingsDto { CatalogEnabled = true });
+        Assert.Equal("musicbrainz", defaults.MetadataProvider);
+        await service.UpdateAsync(new MusicSettingsDto { CatalogEnabled = true, MetadataProvider = "youtube" });
 
         var updated = await service.GetAsync();
         Assert.True(updated.CatalogEnabled);
         Assert.False(updated.RequestsEnabled);
+        Assert.Equal("youtube", updated.MetadataProvider);
         Assert.Equal(2, updated.ReadinessIssues.Count);
         Assert.Equal(1, await db.MusicSettings.CountAsync());
     }

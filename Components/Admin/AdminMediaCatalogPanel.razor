@@ -1,6 +1,7 @@
 @using PlexRequestsHosted.Shared.DTOs
 @inject PlexRequestsHosted.Services.Abstractions.IMusicSettingsService Settings
 @inject PlexRequestsHosted.Services.Implementations.MusicBrainzMetadataProvider MusicBrainz
+@inject PlexRequestsHosted.Services.Implementations.YouTubeMusicMetadataProvider YouTubeMusic
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -9,7 +10,7 @@
         <MudText Typo="Typo.body2" Color="Color.Tertiary">Choose which complete metadata experiences appear to users.</MudText>
     </div>
     <div class="d-flex gap-2 flex-wrap">
-        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.WifiTethering" OnClick="Test" Disabled="_testing">Test MusicBrainz</MudButton>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.WifiTethering" OnClick="Test" Disabled="_testing">@TestLabel</MudButton>
         <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="Save" Disabled="_loading">Save</MudButton>
     </div>
 </div>
@@ -26,20 +27,34 @@ else
                 <div class="d-flex align-items-center gap-2 mb-2">
                     <MudIcon Icon="@Icons.Material.Filled.LibraryMusic" Color="Color.Primary" />
                     <MudText Typo="Typo.h6">Music</MudText>
-                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">Keyless metadata</MudChip>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">Keyless catalogs</MudChip>
                 </div>
                 <MudText Typo="Typo.body2" Color="Color.Tertiary">
-                    Adds MusicBrainz albums, artists, and tracks to search, plus a listening-based Trending Music row
-                    from ListenBrainz. Artwork comes from the Cover Art Archive. Results and details are cached locally.
+                    Adds albums, artists, and tracks to search. ListenBrainz supplies the listening-based Trending
+                    Music row, while results and details are cached locally for fast, resilient browsing.
                 </MudText>
             </div>
             <MudSwitch T="bool" @bind-Value="_settings.CatalogEnabled" Color="Color.Primary" Label="Show music catalog" />
         </div>
 
         <MudDivider Class="my-4" />
+        <MudGrid Spacing="2" Class="mb-2">
+            <MudItem xs="12" md="6">
+                <MudSelect T="string" Value="_settings.MetadataProvider" ValueChanged="ChangeProvider" Label="Search metadata source"
+                           Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem T="string" Value='@("musicbrainz")'>MusicBrainz</MudSelectItem>
+                    <MudSelectItem T="string" Value='@("youtube")'>YouTube Music</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true">
+                    @ProviderDescription
+                </MudAlert>
+            </MudItem>
+        </MudGrid>
         <MudGrid Spacing="2">
-            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Metadata" Ready="true" Detail="MusicBrainz" /></MudItem>
-            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Artwork" Ready="true" Detail="Cover Art Archive" /></MudItem>
+            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Metadata" Ready="true" Detail="@ProviderName" /></MudItem>
+            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Artwork" Ready="true" Detail="@ArtworkSource" /></MudItem>
             <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Acquisition" Ready="true" Detail="Modular indexers" /></MudItem>
             <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Plex verification" Ready="true" Detail="Confirmed before notification" /></MudItem>
         </MudGrid>
@@ -59,7 +74,7 @@ else
         @if (_testResult is not null)
         {
             <MudAlert Severity="@(_testResult.Value ? Severity.Success : Severity.Error)" Class="mt-3">
-                @(_testResult.Value ? "MusicBrainz is reachable and returned valid metadata." : "MusicBrainz could not be reached. Check DNS and outbound HTTPS access.")
+                @(_testResult.Value ? $"{ProviderName} is reachable and returned valid metadata." : $"{ProviderName} could not be reached. Check DNS and outbound HTTPS access.")
             </MudAlert>
         }
     </MudPaper>
@@ -70,6 +85,12 @@ else
     private bool _loading = true;
     private bool _testing;
     private bool? _testResult;
+    private string ProviderName => _settings?.MetadataProvider == "youtube" ? "YouTube Music" : "MusicBrainz";
+    private string ArtworkSource => _settings?.MetadataProvider == "youtube" ? "YouTube Music" : "Cover Art Archive";
+    private string TestLabel => $"Test {ProviderName}";
+    private string ProviderDescription => _settings?.MetadataProvider == "youtube"
+        ? "YouTube Music gives users its familiar catalog and artwork. It is metadata-only; configured music indexers still acquire releases."
+        : "MusicBrainz is the open, standards-based catalog and uses Cover Art Archive artwork.";
 
     protected override async Task OnInitializedAsync()
     {
@@ -94,11 +115,23 @@ else
         }
     }
 
+    private void ChangeProvider(string provider)
+    {
+        if (_settings is null) return;
+        _settings.MetadataProvider = provider;
+        _testResult = null;
+    }
+
     private async Task Test()
     {
         _testing = true;
         _testResult = null;
-        try { _testResult = await MusicBrainz.CheckHealthAsync(); }
+        try
+        {
+            _testResult = _settings?.MetadataProvider == "youtube"
+                ? await YouTubeMusic.CheckHealthAsync()
+                : await MusicBrainz.CheckHealthAsync();
+        }
         catch { _testResult = false; }
         finally { _testing = false; }
     }
