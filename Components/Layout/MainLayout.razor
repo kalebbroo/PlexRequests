@@ -4,6 +4,7 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @inject PlexRequestsHosted.Services.Abstractions.INotificationBroker Broker
 @inject PlexRequestsHosted.Services.Abstractions.INotificationService Notifications
+@inject PlexRequestsHosted.Services.Abstractions.IMusicSettingsService MusicSettings
 @inject IJSRuntime JS
 @implements IDisposable
 
@@ -20,6 +21,10 @@
                 <nav class="main-nav desktop-only">
                     <NavLink href="/browse/movie" class="nav-item">Movies</NavLink>
                     <NavLink href="/browse/tvshow" class="nav-item">TV Shows</NavLink>
+                    @if (_musicEnabled)
+                    {
+                        <NavLink href="/music" class="nav-item">Music</NavLink>
+                    }
                     <NavLink href="/requests" class="nav-item">My Requests</NavLink>
                     <NavLink href="/watchlist" class="nav-item">My List</NavLink>
                     @if (_isAdmin)
@@ -93,7 +98,9 @@
                     </ChildContent>
                 </MudMenu>
                 
-                <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Class="mobile-only" OnClick="ToggleMobileMenu" />
+                <span class="mobile-only mobile-menu-trigger">
+                    <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" OnClick="ToggleMobileMenu" />
+                </span>
             </div>
         </div>
     </header>
@@ -112,6 +119,13 @@
                     <MudIcon Icon="@Icons.Material.Filled.Tv" Size="Size.Small" />
                     <span>TV Shows</span>
                 </NavLink>
+                @if (_musicEnabled)
+                {
+                    <NavLink href="/music" class="mobile-nav-item" Match="NavLinkMatch.Prefix" @onclick="CloseMobileMenu">
+                        <MudIcon Icon="@Icons.Material.Filled.LibraryMusic" Size="Size.Small" />
+                        <span>Music</span>
+                    </NavLink>
+                }
                 <NavLink href="/requests" class="mobile-nav-item" Match="NavLinkMatch.All" @onclick="CloseMobileMenu">
                     <MudIcon Icon="@Icons.Material.Filled.ListAlt" Size="Size.Small" />
                     <span>My Requests</span>
@@ -200,6 +214,7 @@
     private int _userId;
     private bool _isAuthenticated = false;
     private bool _isAdmin = false;
+    private bool _musicEnabled;
     private string? _currentUsername;
 
     protected override async Task OnInitializedAsync()
@@ -215,6 +230,8 @@
 
         if (_isAuthenticated)
         {
+            try { _musicEnabled = (await MusicSettings.GetAsync()).CatalogEnabled; }
+            catch { _musicEnabled = false; /* the shell must survive a transient settings/DB failure */ }
             // Get avatar from claims (cheap; no network)
             _userAvatar = authState.User.FindFirst("avatar_url")?.Value;
             int.TryParse(authState.User.FindFirst("user_id")?.Value, out _userId);

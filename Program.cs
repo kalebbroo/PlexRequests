@@ -366,6 +366,7 @@ builder.Services.AddHttpClient<YouTubeMusicMetadataProvider>(c =>
         "Mozilla/5.0 (X11; Linux x86_64; rv:142.0) Gecko/20100101 Firefox/142.0");
     c.Timeout = TimeSpan.FromSeconds(20);
 });
+builder.Services.AddScoped<IMusicDiscoveryService, MusicDiscoveryService>();
 builder.Services.AddScoped<MetadataRouter>();
 builder.Services.AddScoped<IMetadataProviderFactory, MetadataProviderFactory>();
 

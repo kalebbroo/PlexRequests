@@ -1,0 +1,73 @@
+@page "/music/playlist"
+@inject IMusicDiscoveryService Discovery
+@inject IMediaRequestService MediaRequestService
+@inject IToastService ToastService
+
+<PageTitle>@(_playlist?.Title ?? "Music playlist") - Plex Requests</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="playlist-page">
+    <a class="back-link" href="/music"><MudIcon Icon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" /> Music</a>
+    @if (_loading)
+    {
+        <PosterGridSkeleton Count="18" />
+    }
+    else if (_playlist is null)
+    {
+        <div class="playlist-empty"><MudIcon Icon="@Icons.Material.Filled.PlaylistRemove" /><h1>Playlist unavailable</h1><p>It may have been removed or changed by the catalog provider.</p></div>
+    }
+    else
+    {
+        <header class="playlist-header">
+            <div class="playlist-cover">
+                @if (!string.IsNullOrWhiteSpace(_playlist.ArtworkUrl)) { <img src="@_playlist.ArtworkUrl" alt="" /> }
+                else { <MudIcon Icon="@Icons.Material.Filled.QueueMusic" /> }
+            </div>
+            <div>
+                <span>Playlist · YouTube Music</span>
+                <h1>@_playlist.Title</h1>
+                @if (!string.IsNullOrWhiteSpace(_playlist.Subtitle)) { <p>@_playlist.Subtitle</p> }
+                @if (!string.IsNullOrWhiteSpace(_playlist.Description)) { <p>@_playlist.Description</p> }
+                <strong>@_playlist.TrackCount @(_playlist.TrackCount == 1 ? "track" : "tracks")</strong>
+            </div>
+        </header>
+        <section class="playlist-tracks">
+            <div class="playlist-section-head"><h2>Tracks</h2><span>Request any song individually.</span></div>
+            <div class="track-grid">
+                @foreach (var track in _playlist.Tracks)
+                {
+                    <MediaCard Media="track" OnRequest="Request" />
+                }
+            </div>
+        </section>
+    }
+</MudContainer>
+
+@code {
+    [SupplyParameterFromQuery(Name = "id")] public string? Id { get; set; }
+    private MusicPlaylistDto? _playlist;
+    private bool _loading = true;
+    private bool _hasLoaded;
+    private string? _loadedId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_hasLoaded && Id == _loadedId) return;
+        _hasLoaded = true;
+        _loadedId = Id;
+        _loading = true;
+        try { _playlist = string.IsNullOrWhiteSpace(Id) ? null : await Discovery.GetPlaylistAsync(Id); }
+        catch { _playlist = null; }
+        finally { _loading = false; }
+    }
+
+    private async Task Request(MediaCardDto media)
+    {
+        var result = await MediaRequestService.RequestMediaAsync(media.ResolveMediaRef());
+        if (result.Success)
+        {
+            media.RequestStatus = RequestStatus.Pending;
+            await ToastService.ShowSuccessAsync($"{media.Title} has been requested!");
+        }
+        else await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request");
+    }
+}
