@@ -26,6 +26,9 @@ public class WorkerOptions
     /// its on-disk files before declaring an import failure — Deluge can flag is_finished a moment before
     /// the last piece is flushed/moved to disk, so an immediate path lookup can transiently find nothing.</summary>
     public int FinishSettleSeconds { get; set; } = 45;
+    /// <summary>How long a music import waits for Plex's asynchronous scan before handing continued
+    /// verification to the server-side reconciliation job. The request is never marked available early.</summary>
+    public int PlexVerificationTimeoutMinutes { get; set; } = 10;
 }
 
 /// <summary>Opt-in catalog ingestion with separately staged search and monitoring read paths.</summary>
@@ -119,6 +122,7 @@ public class LibraryOptions
     public const string Section = "Library";
     public string MoviePath { get; set; } = string.Empty;
     public string TvPath { get; set; } = string.Empty;
+    public string MusicPath { get; set; } = string.Empty;
     public bool Hardlink { get; set; } = true; // hardlink (keep seeding) vs move
 }
 

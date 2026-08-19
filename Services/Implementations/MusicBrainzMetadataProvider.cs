@@ -208,7 +208,13 @@ public sealed class MusicBrainzMetadataProvider(
         {
             Kind = MediaKind.Artist,
             ArtistId = mediaRef.Id,
-            ArtistCredit = card.Title
+            ArtistCredit = card.Title,
+            AlbumTitles = doc.RootElement.TryGetProperty("release-groups", out var groups)
+                          && groups.ValueKind == JsonValueKind.Array
+                ? groups.EnumerateArray().Select(x => Text(x, "title"))
+                    .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+                : new()
         };
         return detail;
     }

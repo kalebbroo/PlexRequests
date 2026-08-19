@@ -121,10 +121,15 @@ public sealed class MusicMetadataTests
         await db.Database.EnsureCreatedAsync();
         var service = new MusicSettingsService(db);
 
-        Assert.False((await service.GetAsync()).CatalogEnabled);
+        var defaults = await service.GetAsync();
+        Assert.False(defaults.CatalogEnabled);
+        Assert.False(defaults.RequestsEnabled);
         await service.UpdateAsync(new MusicSettingsDto { CatalogEnabled = true });
 
-        Assert.True((await service.GetAsync()).CatalogEnabled);
+        var updated = await service.GetAsync();
+        Assert.True(updated.CatalogEnabled);
+        Assert.False(updated.RequestsEnabled);
+        Assert.Equal(2, updated.ReadinessIssues.Count);
         Assert.Equal(1, await db.MusicSettings.CountAsync());
     }
 

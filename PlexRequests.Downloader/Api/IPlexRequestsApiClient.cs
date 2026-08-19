@@ -81,4 +81,6 @@ public interface IPlexRequestsApiClient
     /// <summary>Ask Plex to rescan the library section for this media type. Best-effort; client-side
     /// debounced so a large season-pack fan-out doesn't hammer Plex with one refresh per file.</summary>
     Task<bool> RefreshLibraryAsync(MediaType mediaType, CancellationToken ct);
+    /// <summary>Ask the web app to verify that Plex has actually indexed a completed import.</summary>
+    Task<PlexVerificationResult> VerifyLibraryAsync(FulfillmentJobDto job, CancellationToken ct);
 }

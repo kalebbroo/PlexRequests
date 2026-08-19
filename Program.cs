@@ -1024,6 +1024,15 @@ app.MapPost("/api/fulfillment/refresh-library", async (RefreshLibraryRequest bod
     }
 });
 
+app.MapPost("/api/fulfillment/verify-library", async (PlexVerificationRequest body, HttpContext ctx,
+    IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IPlexMusicService music) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    if (body.MediaType != MediaType.Music)
+        return Results.Ok(new PlexVerificationResult(true, Detail: "Video verification remains handled by the availability index"));
+    return Results.Ok(await music.VerifyAsync(body, ctx.RequestAborted));
+});
+
 // Worker reports download progress; reflects the request as Processing for the UI.
 app.MapPost("/api/fulfillment/{jobId:int}/progress", async (int jobId, ProgressRequest body, HttpContext ctx, IConfiguration cfg, IFulfillmentQueue queue, AppDbContext db, PlexRequestsHosted.Services.Abstractions.IDownloadTelemetryStore telemetry) =>
 {

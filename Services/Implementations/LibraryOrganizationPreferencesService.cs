@@ -27,9 +27,11 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
         var e = await GetOrCreateAsync();
         e.MoviePath = prefs.MoviePath?.Trim() ?? string.Empty;
         e.TvPath = prefs.TvPath?.Trim() ?? string.Empty;
+        e.MusicPath = prefs.MusicPath?.Trim() ?? string.Empty;
         e.MovieTemplate = string.IsNullOrWhiteSpace(prefs.MovieTemplate) ? e.MovieTemplate : prefs.MovieTemplate.Trim();
         e.TvEpisodeTemplate = string.IsNullOrWhiteSpace(prefs.TvEpisodeTemplate) ? e.TvEpisodeTemplate : prefs.TvEpisodeTemplate.Trim();
         e.SeasonPackFolderTemplate = string.IsNullOrWhiteSpace(prefs.SeasonPackFolderTemplate) ? e.SeasonPackFolderTemplate : prefs.SeasonPackFolderTemplate.Trim();
+        e.MusicTrackTemplate = string.IsNullOrWhiteSpace(prefs.MusicTrackTemplate) ? e.MusicTrackTemplate : prefs.MusicTrackTemplate.Trim();
         e.LibraryRootRulesJson = prefs.LibraryRootRules is { Count: > 0 } ? JsonSerializer.Serialize(prefs.LibraryRootRules) : null;
         e.TransferMode = prefs.TransferMode;
         e.ExtractArchives = prefs.ExtractArchives;
@@ -37,7 +39,9 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
         e.KeepSubtitles = prefs.KeepSubtitles;
         e.SubtitleExtensionsCsv = string.IsNullOrWhiteSpace(prefs.SubtitleExtensionsCsv) ? e.SubtitleExtensionsCsv : prefs.SubtitleExtensionsCsv.Trim();
         e.VideoExtensionsCsv = string.IsNullOrWhiteSpace(prefs.VideoExtensionsCsv) ? e.VideoExtensionsCsv : prefs.VideoExtensionsCsv.Trim();
+        e.AudioExtensionsCsv = string.IsNullOrWhiteSpace(prefs.AudioExtensionsCsv) ? e.AudioExtensionsCsv : prefs.AudioExtensionsCsv.Trim();
         e.MinVideoFileSizeMb = Math.Max(0, prefs.MinVideoFileSizeMb);
+        e.MinAudioFileSizeMb = Math.Max(0, prefs.MinAudioFileSizeMb);
         // Deleting the source only makes sense when the library copy isn't the same inode as the source.
         e.DeleteSourceAfterImport = prefs.DeleteSourceAfterImport && prefs.TransferMode != Shared.Enums.TransferMode.Hardlink;
         e.UpdatedAt = DateTime.UtcNow;
@@ -58,9 +62,11 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
     {
         MoviePath = e.MoviePath,
         TvPath = e.TvPath,
+        MusicPath = e.MusicPath,
         MovieTemplate = e.MovieTemplate,
         TvEpisodeTemplate = e.TvEpisodeTemplate,
         SeasonPackFolderTemplate = e.SeasonPackFolderTemplate,
+        MusicTrackTemplate = e.MusicTrackTemplate,
         LibraryRootRules = string.IsNullOrWhiteSpace(e.LibraryRootRulesJson)
             ? new List<LibraryRootRuleDto>()
             : (JsonSerializer.Deserialize<List<LibraryRootRuleDto>>(e.LibraryRootRulesJson) ?? new List<LibraryRootRuleDto>()),
@@ -70,7 +76,9 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
         KeepSubtitles = e.KeepSubtitles,
         SubtitleExtensionsCsv = e.SubtitleExtensionsCsv,
         VideoExtensionsCsv = e.VideoExtensionsCsv,
+        AudioExtensionsCsv = e.AudioExtensionsCsv,
         MinVideoFileSizeMb = e.MinVideoFileSizeMb,
+        MinAudioFileSizeMb = e.MinAudioFileSizeMb,
         DeleteSourceAfterImport = e.DeleteSourceAfterImport
     };
 }

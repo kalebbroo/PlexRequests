@@ -3,6 +3,7 @@
 @using PlexRequestsHosted.Shared.Media
 @inject NavigationManager Navigation
 @inject PlexRequestsHosted.Services.Abstractions.IMediaModuleRegistry MediaModules
+@inject PlexRequestsHosted.Services.Abstractions.IMusicSettingsService MusicSettings
 
 @* Unified poster card. CSS-only hover (no JS timer -> no leak), overlay stays INSIDE the card so a
    grid or row never shifts. Click -> details; quick actions stop propagation. *@
@@ -95,12 +96,21 @@
     [Parameter] public EventCallback<MediaCardDto> OnPlay { get; set; }
     [Parameter] public EventCallback<MediaCardDto> OnRemove { get; set; }
 
+    private bool _musicRequestsEnabled;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Media.MediaType == MediaType.Music)
+            _musicRequestsEnabled = (await MusicSettings.GetAsync()).RequestsEnabled;
+    }
+
     private async Task HandleRequest() { if (OnRequest.HasDelegate) await OnRequest.InvokeAsync(Media); }
     private async Task HandlePlay() { if (OnPlay.HasDelegate) await OnPlay.InvokeAsync(Media); }
     private async Task HandleRemove() { if (OnRemove.HasDelegate) await OnRemove.InvokeAsync(Media); }
 
     private bool CanRequest => MediaModules.IsEnabled(Media.MediaType)
-        && MediaModules.Get(Media.MediaType).Capabilities.HasFlag(MediaModuleCapabilities.Request);
+        && MediaModules.Get(Media.MediaType).Capabilities.HasFlag(MediaModuleCapabilities.Request)
+        && (Media.MediaType != MediaType.Music || _musicRequestsEnabled);
 
     private void NavigateToDetails()
     {

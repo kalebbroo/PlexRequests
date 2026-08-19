@@ -16,9 +16,11 @@ public class EffectiveLibraryOrganization
 {
     public string MoviePath { get; init; } = string.Empty;
     public string TvPath { get; init; } = string.Empty;
+    public string MusicPath { get; init; } = string.Empty;
     public string MovieTemplate { get; init; } = "{Title} ({Year})/{Title} ({Year}){Ext}";
     public string TvEpisodeTemplate { get; init; } = "{ShowTitle} ({Year})/Season {Season:00}/{ShowTitle} - s{Season:00}e{Episode:00} - {EpisodeTitle}{Ext}";
     public string SeasonPackFolderTemplate { get; init; } = "{ShowTitle} ({Year})/Season {Season:00}";
+    public string MusicTrackTemplate { get; init; } = "{Artist}/{Album} ({Year})/{Disc:00}-{Track:00} - {TrackTitle}{Ext}";
     public IReadOnlyList<LibraryRootRuleDto> RootRules { get; init; } = Array.Empty<LibraryRootRuleDto>();
     public TransferMode TransferMode { get; init; } = TransferMode.Hardlink;
     public bool ExtractArchives { get; init; } = true;
@@ -26,7 +28,9 @@ public class EffectiveLibraryOrganization
     public bool KeepSubtitles { get; init; } = true;
     public string[] SubtitleExtensions { get; init; } = { ".srt", ".ass", ".ssa", ".sub", ".vtt" };
     public string[] VideoExtensions { get; init; } = { ".mkv", ".mp4", ".avi", ".m4v", ".ts", ".mov", ".wmv", ".m2ts" };
+    public string[] AudioExtensions { get; init; } = { ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".wma", ".alac" };
     public double MinVideoFileSizeMb { get; init; } = 50;
+    public double MinAudioFileSizeMb { get; init; } = 1;
     public bool DeleteSourceAfterImport { get; init; } = false;
 
     /// <summary>Resolve the effective (root, template) for a job: first matching routing rule wins,
@@ -48,12 +52,22 @@ public class EffectiveLibraryOrganization
             return (rule.RootPath, template);
         }
 
-        var defaultRoot = mediaType == MediaType.Movie ? MoviePath : TvPath;
+        var defaultRoot = mediaType switch
+        {
+            MediaType.Movie => MoviePath,
+            MediaType.Music => MusicPath,
+            _ => TvPath
+        };
         return (defaultRoot, DefaultTemplate(mediaType, isEpisode));
     }
 
     private string DefaultTemplate(MediaType mediaType, bool isEpisode) =>
-        mediaType == MediaType.Movie ? MovieTemplate : (isEpisode ? TvEpisodeTemplate : SeasonPackFolderTemplate);
+        mediaType switch
+        {
+            MediaType.Movie => MovieTemplate,
+            MediaType.Music => MusicTrackTemplate,
+            _ => isEpisode ? TvEpisodeTemplate : SeasonPackFolderTemplate
+        };
 }
 
 public interface ILibraryOrganizationProvider
@@ -89,6 +103,7 @@ public class LibraryOrganizationPreferencesProvider : ILibraryOrganizationProvid
         {
             MoviePath = l.MoviePath,
             TvPath = l.TvPath,
+            MusicPath = l.MusicPath,
             TransferMode = l.Hardlink ? TransferMode.Hardlink : TransferMode.Move
         };
         _current = _fallback;
@@ -129,9 +144,11 @@ public class LibraryOrganizationPreferencesProvider : ILibraryOrganizationProvid
     {
         MoviePath = d.MoviePath,
         TvPath = d.TvPath,
+        MusicPath = d.MusicPath,
         MovieTemplate = d.MovieTemplate,
         TvEpisodeTemplate = d.TvEpisodeTemplate,
         SeasonPackFolderTemplate = d.SeasonPackFolderTemplate,
+        MusicTrackTemplate = d.MusicTrackTemplate,
         RootRules = d.LibraryRootRules,
         TransferMode = d.TransferMode,
         ExtractArchives = d.ExtractArchives,
@@ -143,7 +160,11 @@ public class LibraryOrganizationPreferencesProvider : ILibraryOrganizationProvid
         VideoExtensions = string.IsNullOrWhiteSpace(d.VideoExtensionsCsv)
             ? Array.Empty<string>()
             : d.VideoExtensionsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+        AudioExtensions = string.IsNullOrWhiteSpace(d.AudioExtensionsCsv)
+            ? Array.Empty<string>()
+            : d.AudioExtensionsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
         MinVideoFileSizeMb = d.MinVideoFileSizeMb,
+        MinAudioFileSizeMb = d.MinAudioFileSizeMb,
         DeleteSourceAfterImport = d.DeleteSourceAfterImport
     };
 }

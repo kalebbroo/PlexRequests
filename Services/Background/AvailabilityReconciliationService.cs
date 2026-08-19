@@ -5,6 +5,7 @@ using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.Jobs;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using System.Text.Json;
 
 namespace PlexRequestsHosted.Services.Background;
 
@@ -19,6 +20,7 @@ public class AvailabilityReconciliationService(
     AppDbContext db,
     IPlexApiService plex,
     ISeasonAvailabilityEvaluator seasonEvaluator,
+    PlexRequestsHosted.Services.Implementations.IPlexMusicService music,
     INotificationService notify,
     IConfiguration config,
     ILogger<AvailabilityReconciliationService> logger) : IJobHandler
@@ -61,7 +63,8 @@ public class AvailabilityReconciliationService(
         // monitored episode, plus separate season/whole-series requests — and availability doesn't depend on
         // which of those rows asked, so building one card per request crashed the dictionary below the moment
         // any title had more than one open request.
-        var cards = open.Select(r => new MediaCardDto { Id = r.MediaId, TmdbId = r.MediaId, MediaType = r.MediaType, Title = r.Title })
+        var cards = open.Where(r => r.MediaType != MediaType.Music)
+            .Select(r => new MediaCardDto { Id = r.MediaId, TmdbId = r.MediaId, MediaType = r.MediaType, Title = r.Title })
             .DistinctBy(c => (c.MediaType, c.Id)).ToList();
         await plex.AnnotateAvailabilityAsync(cards);
         var titleAvailable = cards.ToDictionary(c => (c.MediaType, c.Id), c => c.IsAvailable);
@@ -70,7 +73,10 @@ public class AvailabilityReconciliationService(
         foreach (var req in open)
         {
             if (ct.IsCancellationRequested) break;
-            if (!await IsSatisfiedAsync(req, titleAvailable, plex, seasonEvaluator, ct)) continue;
+            var satisfied = req.MediaType == MediaType.Music
+                ? await IsMusicSatisfiedAsync(req, ct)
+                : await IsSatisfiedAsync(req, titleAvailable, plex, seasonEvaluator, ct);
+            if (!satisfied) continue;
 
             req.Status = RequestStatus.Available;
             req.AvailableAt = DateTime.UtcNow;
@@ -90,6 +96,41 @@ public class AvailabilityReconciliationService(
 
         if (marked > 0) logger.LogInformation("Availability reconciliation marked {Count} request(s) Available", marked);
         return marked;
+    }
+
+    private async Task<bool> IsMusicSatisfiedAsync(MediaRequestEntity req, CancellationToken ct)
+    {
+        var contextJson = await db.FulfillmentJobs.AsNoTracking()
+            .Where(j => j.MediaRequestId == req.Id && j.AcquisitionContextJson != null)
+            .OrderByDescending(j => j.Id)
+            .Select(j => j.AcquisitionContextJson)
+            .FirstOrDefaultAsync(ct);
+        MusicAcquisitionContextDto? context = null;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(contextJson))
+                context = JsonSerializer.Deserialize<MusicAcquisitionContextDto>(contextJson);
+        }
+        catch (JsonException ex)
+        {
+            logger.LogDebug(ex, "Music verification context for request {RequestId} is malformed", req.Id);
+        }
+        context ??= new MusicAcquisitionContextDto
+        {
+            Kind = req.RequestScopeKind switch
+            {
+                RequestScopeKind.ArtistCatalog => MediaKind.Artist,
+                RequestScopeKind.Track => MediaKind.Track,
+                _ => MediaKind.Album
+            },
+            Artist = req.RequestScopeKind == RequestScopeKind.ArtistCatalog ? req.Title : null,
+            Album = req.RequestScopeKind == RequestScopeKind.Album ? req.Title : null,
+            Track = req.RequestScopeKind == RequestScopeKind.Track ? req.Title : null
+        };
+        var result = await music.VerifyAsync(new PlexVerificationRequest(
+            MediaType.Music, context.Kind, req.ExternalSource, req.ExternalId,
+            context.Artist, context.Album, context.Track, context.ExpectedAlbums), ct);
+        return result.Available;
     }
 
     private static async Task<bool> IsSatisfiedAsync(MediaRequestEntity req, Dictionary<(MediaType, int), bool> titleAvailable,

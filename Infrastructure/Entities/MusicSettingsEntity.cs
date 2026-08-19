@@ -10,5 +10,6 @@ public sealed class MusicSettingsEntity
     public int Id { get; set; }
     public bool IsSingleton { get; set; } = true;
     public bool CatalogEnabled { get; set; }
+    public bool RequestsEnabled { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

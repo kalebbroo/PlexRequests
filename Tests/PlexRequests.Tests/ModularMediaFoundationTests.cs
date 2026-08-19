@@ -35,7 +35,7 @@ public class ModularMediaFoundationTests
     }
 
     [Fact]
-    public void Registry_AdvertisesMusicWithoutEnablingIncompleteRequests()
+    public void Registry_AdvertisesCompletedMusicCapabilities()
     {
         IMediaModule[] modules =
         [
@@ -44,7 +44,9 @@ public class ModularMediaFoundationTests
         var registry = new MediaModuleRegistry(modules);
 
         Assert.True(registry.IsEnabled(MediaType.Movie));
-        Assert.False(registry.IsEnabled(MediaType.Music));
+        Assert.True(registry.IsEnabled(MediaType.Music));
+        Assert.True(registry.Get(MediaType.Music).Capabilities.HasFlag(MediaModuleCapabilities.LibraryImport));
+        Assert.True(registry.Get(MediaType.Music).Capabilities.HasFlag(MediaModuleCapabilities.PlexVerification));
         Assert.Contains(MediaKind.Album, registry.Get(MediaType.Music).Kinds);
         Assert.Contains(RequestScopeKind.ArtistCatalog, registry.Get(MediaType.Music).RequestScopes);
     }

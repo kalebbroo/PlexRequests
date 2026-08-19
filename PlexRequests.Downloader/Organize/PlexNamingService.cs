@@ -15,6 +15,10 @@ public interface IPlexNamingService
 
     /// <summary>Destination folder for a season pack that isn't being split into per-episode files.</summary>
     string BuildSeasonPackFolder(EffectiveLibraryOrganization prefs, FulfillmentJobDto job, int season);
+
+    /// <summary>Full destination path for one music track.</summary>
+    string BuildMusicTrackPath(EffectiveLibraryOrganization prefs, FulfillmentJobDto job,
+        string artist, string album, int disc, int track, string trackTitle, string ext);
 }
 
 public class PlexNamingService : IPlexNamingService
@@ -39,6 +43,15 @@ public class PlexNamingService : IPlexNamingService
     {
         var (root, template) = prefs.Resolve(MediaType.TvShow, job.Quality, job.Genres, job.IsAnime, isEpisode: false);
         var ctx = new TemplateContext(Title: job.Title, ShowTitle: job.Title, Year: job.Year, Season: season);
+        return Combine(root, NamingTemplateEngine.Render(template, ctx));
+    }
+
+    public string BuildMusicTrackPath(EffectiveLibraryOrganization prefs, FulfillmentJobDto job,
+        string artist, string album, int disc, int track, string trackTitle, string ext)
+    {
+        var (root, template) = prefs.Resolve(MediaType.Music, null, null, false, isEpisode: false);
+        var ctx = new TemplateContext(Title: job.Title, Year: job.Year, Artist: artist, Album: album,
+            Disc: disc, Track: track, TrackTitle: trackTitle, Ext: NormalizeExt(ext));
         return Combine(root, NamingTemplateEngine.Render(template, ctx));
     }
 

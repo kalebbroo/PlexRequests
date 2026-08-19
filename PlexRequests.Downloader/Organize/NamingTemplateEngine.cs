@@ -11,6 +11,11 @@ public record TemplateContext(
     int? Season = null,
     int? Episode = null,
     string? EpisodeTitle = null,
+    string? Artist = null,
+    string? Album = null,
+    int? Disc = null,
+    int? Track = null,
+    string? TrackTitle = null,
     string? Quality = null,
     string? Ext = null);
 
@@ -45,6 +50,11 @@ public static class NamingTemplateEngine
                 "Season" => pad > 0 ? ctx.Season?.ToString($"D{Math.Min(pad, 2)}") : ctx.Season?.ToString(),
                 "Episode" => pad > 0 ? ctx.Episode?.ToString($"D{Math.Min(pad, 2)}") : ctx.Episode?.ToString(),
                 "EpisodeTitle" => ctx.EpisodeTitle,
+                "Artist" => ctx.Artist,
+                "Album" => ctx.Album,
+                "Disc" => pad > 0 ? ctx.Disc?.ToString($"D{Math.Min(pad, 2)}") : ctx.Disc?.ToString(),
+                "Track" => pad > 0 ? ctx.Track?.ToString($"D{Math.Min(pad, 2)}") : ctx.Track?.ToString(),
+                "TrackTitle" => ctx.TrackTitle,
                 "Quality" => ctx.Quality,
                 "Ext" => ctx.Ext, // our own extension whitelist, never user-controlled — no sanitization needed
                 _ => null

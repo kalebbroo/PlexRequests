@@ -7,6 +7,8 @@
 @inject PlexRequestsHosted.Services.Implementations.IMediaIssueService IssueService
 @inject PlexRequestsHosted.Services.Implementations.IQualityProfileService QualityProfiles
 @inject PlexRequestsHosted.Services.Abstractions.IMediaModuleRegistry MediaModules
+@inject PlexRequestsHosted.Services.Abstractions.IMusicSettingsService MusicSettings
+@inject PlexRequestsHosted.Services.Implementations.IPlexMusicService PlexMusic
 @inject NavigationManager Navigation
 @inject IJSRuntime JSRuntime
 @using PlexRequestsHosted.Shared.Media
@@ -511,10 +513,12 @@ else
     private Boolean _inWatchlist = false;
 
     private bool _rendered = false;
+    private bool _musicRequestsEnabled;
     private string? _loadedKey;
     private int _loadVersion;
     private bool CanRequest => _media is not null && MediaModules.IsEnabled(_media.MediaType)
-        && MediaModules.Get(_media.MediaType).Capabilities.HasFlag(MediaModuleCapabilities.Request);
+        && MediaModules.Get(_media.MediaType).Capabilities.HasFlag(MediaModuleCapabilities.Request)
+        && (_media.MediaType != PlexRequestsHosted.Shared.Enums.MediaType.Music || _musicRequestsEnabled);
 
     // Load after first render (shell/skeleton paints instantly), and again when the route id/type
     // changes on the same component instance (e.g. clicking a "Similar" title).
@@ -555,6 +559,20 @@ else
             if (version != _loadVersion) return;
             _media = media;
             if (media is null) return;
+            if (media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music)
+            {
+                _musicRequestsEnabled = (await MusicSettings.GetAsync()).RequestsEnabled;
+                var present = await PlexMusic.VerifyAsync(new PlexRequestsHosted.Shared.DTOs.PlexVerificationRequest(
+                    PlexRequestsHosted.Shared.Enums.MediaType.Music,
+                    mediaRef.Kind,
+                    mediaRef.Provider,
+                    mediaRef.Id,
+                    mediaRef.Kind == MediaKind.Artist ? media.Title : media.Music?.ArtistCredit,
+                    mediaRef.Kind == MediaKind.Album ? media.Title : null,
+                    mediaRef.Kind == MediaKind.Track ? media.Title : null,
+                    media.Music?.AlbumTitles));
+                media.IsAvailable = present.Available;
+            }
 
             // Phase 1: show the title/poster/overview immediately.
             if (media.Seasons?.Any() == true) _selectedSeason = media.Seasons.First();

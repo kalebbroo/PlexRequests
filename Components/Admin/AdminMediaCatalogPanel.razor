@@ -40,14 +40,21 @@ else
         <MudGrid Spacing="2">
             <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Metadata" Ready="true" Detail="MusicBrainz" /></MudItem>
             <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Artwork" Ready="true" Detail="Cover Art Archive" /></MudItem>
-            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Acquisition" Ready="false" Detail="Next implementation stage" /></MudItem>
-            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Plex verification" Ready="false" Detail="Required before requests unlock" /></MudItem>
+            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Acquisition" Ready="true" Detail="Modular indexers" /></MudItem>
+            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Plex verification" Ready="true" Detail="Confirmed before notification" /></MudItem>
         </MudGrid>
 
-        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-4">
-            This switch enables browsing only. Music request buttons stay unavailable until acquisition,
-            import, and Plex verification are all complete, preventing false “available” results.
+        <MudDivider Class="my-4" />
+        <MudSwitch T="bool" @bind-Value="_settings.RequestsEnabled" Color="Color.Primary"
+                   Label="Enable music requests and automatic fulfillment" Disabled="_settings.ReadinessIssues.Count > 0" />
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-3">
+            Before enabling requests, set a writable Music library path under Library → Organization and
+            enable Music on at least one indexer. A request is not marked Available until Plex confirms it.
         </MudAlert>
+        @foreach (var issue in _settings.ReadinessIssues)
+        {
+            <MudAlert Severity="Severity.Warning" Variant="Variant.Text" Dense="true" Class="mt-2">@issue</MudAlert>
+        }
 
         @if (_testResult is not null)
         {
@@ -73,8 +80,18 @@ else
     private async Task Save()
     {
         if (_settings is null) return;
-        await Settings.UpdateAsync(_settings);
-        await Toast.ShowSuccessAsync(_settings.CatalogEnabled ? "Music catalog enabled." : "Music catalog hidden.");
+        try
+        {
+            await Settings.UpdateAsync(_settings);
+            await Toast.ShowSuccessAsync(_settings.RequestsEnabled
+                ? "Music catalog settings saved; requests are enabled."
+                : "Music catalog settings saved.");
+        }
+        catch (InvalidOperationException ex)
+        {
+            await Toast.ShowErrorAsync(ex.Message);
+            _settings = await Settings.GetAsync();
+        }
     }
 
     private async Task Test()
