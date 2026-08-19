@@ -5,6 +5,7 @@ using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
@@ -24,6 +25,7 @@ public class MediaIssueService(
     AuthenticationStateProvider authProvider,
     IFulfillmentQueue fulfillment,
     IQualityProfileService qualityProfiles,
+    IMediaIdentityService mediaIdentities,
     IConfiguration config) : IMediaIssueService
 {
     public async Task<bool> ReportIssueAsync(int mediaId, MediaType mediaType, string title, string? posterUrl, string reason, string? detail, int? season = null, int? episode = null)
@@ -89,10 +91,16 @@ public class MediaIssueService(
             .Select(r => r.QualityProfileId)
             .FirstOrDefaultAsync();
 
+        var identity = await mediaIdentities.ResolveAsync(MediaRef.FromTmdb(issue.MediaId, issue.MediaType));
         var req = new MediaRequestEntity
         {
+            MediaIdentityId = identity.Id,
             MediaId = issue.MediaId,
             MediaType = issue.MediaType,
+            RequestScopeKind = episodesCsv is not null ? RequestScopeKind.Episodes
+                : seasonsCsv is not null ? RequestScopeKind.Seasons
+                : issue.MediaType is MediaType.TvShow or MediaType.Anime ? RequestScopeKind.Series
+                : RequestScopeKind.Title,
             Title = issue.Title,
             PosterUrl = issue.PosterUrl,
             Status = RequestStatus.Approved,
@@ -143,6 +151,8 @@ public class MediaIssueService(
         Status = r.Status, RequestedAt = r.RequestedAt, ApprovedAt = r.ApprovedAt,
         RequestedByUserId = r.RequestedByUserId ?? 0, RequestedByUsername = r.RequestedBy ?? string.Empty,
         RequestAllSeasons = r.RequestAllSeasons, RequestedEpisodesCsv = r.RequestedEpisodesCsv,
+        RequestScopeKind = r.RequestScopeKind,
+        MediaRef = MediaRef.FromTmdb(r.MediaId, r.MediaType),
         RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv) ? new() :
             r.RequestedSeasonsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(x => int.TryParse(x, out var n) ? n : -1).Where(n => n >= 0).ToList()

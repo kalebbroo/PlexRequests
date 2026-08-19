@@ -7,12 +7,14 @@ namespace PlexRequestsHosted.Infrastructure.Entities;
 public class MediaRequestEntity
 {
     public int Id { get; set; }
+    /// <summary>Canonical provider-neutral identity. Nullable only while old rows/clients are migrated.</summary>
+    public int? MediaIdentityId { get; set; }
     public int MediaId { get; set; }   // TMDb id for movie/TV; 0 for sources without an int id (music)
     public MediaType MediaType { get; set; }
+    public RequestScopeKind RequestScopeKind { get; set; } = RequestScopeKind.Title;
 
-    // Provider-agnostic identifier for non-TMDb sources (e.g. MusicBrainz MBID, Plex ratingKey, TVDB id).
-    // TODO(music): music requests key off this instead of MediaId. Thread it through fulfillment + the
-    // availability match so an album/artist request can be found and downloaded.
+    // Transitional provider id mirrors used by older worker/API versions. MediaIdentityId is authoritative;
+    // these remain until every deployed consumer reads the canonical identity contract.
     [MaxLength(128)]
     public string? ExternalId { get; set; }
 
@@ -131,4 +133,7 @@ public class MediaRequestEntity
     // Navigation property
     [ForeignKey(nameof(RequestedByUserId))]
     public UserEntity? RequestedByUser { get; set; }
+
+    [ForeignKey(nameof(MediaIdentityId))]
+    public MediaIdentityEntity? MediaIdentity { get; set; }
 }

@@ -6,6 +6,8 @@ namespace PlexRequestsHosted.Infrastructure.Data;
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
     public DbSet<MediaRequestEntity> MediaRequests => Set<MediaRequestEntity>();
+    public DbSet<MediaIdentityEntity> MediaIdentities => Set<MediaIdentityEntity>();
+    public DbSet<MediaExternalIdentifierEntity> MediaExternalIdentifiers => Set<MediaExternalIdentifierEntity>();
     public DbSet<WatchlistItemEntity> Watchlist => Set<WatchlistItemEntity>();
     public DbSet<UserEntity> Users => Set<UserEntity>();
     public DbSet<UserProfileEntity> UserProfiles => Set<UserProfileEntity>();
@@ -29,6 +31,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ScheduledJobEntity> ScheduledJobs => Set<ScheduledJobEntity>();
     public DbSet<JobRunEntity> JobRuns => Set<JobRunEntity>();
     public DbSet<IndexerEntity> Indexers => Set<IndexerEntity>();
+    public DbSet<IndexerMediaCapabilityEntity> IndexerMediaCapabilities => Set<IndexerMediaCapabilityEntity>();
     public DbSet<SearchTaskEntity> SearchTasks => Set<SearchTaskEntity>();
     public DbSet<ReleaseBlocklistEntity> ReleaseBlocklist => Set<ReleaseBlocklistEntity>();
     public DbSet<RecommendedItemEntity> RecommendedItems => Set<RecommendedItemEntity>();
@@ -59,6 +62,28 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(x => x.RequestedByUserId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            b.HasOne(x => x.MediaIdentity)
+                .WithMany()
+                .HasForeignKey(x => x.MediaIdentityId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<MediaIdentityEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.StableKey).IsUnique();
+            b.HasIndex(x => new { x.MediaType, x.Kind });
+        });
+
+        modelBuilder.Entity<MediaExternalIdentifierEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => new { x.MediaType, x.Kind, x.Provider, x.ExternalId }).IsUnique();
+            b.HasIndex(x => x.MediaIdentityId);
+            b.HasOne(x => x.MediaIdentity).WithMany(x => x.ExternalIdentifiers)
+                .HasForeignKey(x => x.MediaIdentityId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<WatchlistItemEntity>(b =>
@@ -72,6 +97,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+            b.HasOne(x => x.MediaIdentity).WithMany()
+                .HasForeignKey(x => x.MediaIdentityId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<UserEntity>(b =>
@@ -225,6 +253,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(x => x.MediaRequestId)
                 .OnDelete(DeleteBehavior.Cascade);
+            b.HasOne(x => x.MediaIdentity).WithMany()
+                .HasForeignKey(x => x.MediaIdentityId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<ImportedFileEntity>(b =>
@@ -337,6 +368,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasIndex(x => x.Name).IsUnique();          // display names are the admin's handle on a row
             b.HasIndex(x => new { x.Enabled, x.Priority }); // the downloader's fan-out query
             b.HasIndex(x => x.Implementation);
+        });
+
+        modelBuilder.Entity<IndexerMediaCapabilityEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => new { x.IndexerId, x.MediaType }).IsUnique();
+            b.HasOne(x => x.Indexer).WithMany(x => x.MediaCapabilities)
+                .HasForeignKey(x => x.IndexerId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<FirefoxCapturePairingEntity>(b =>

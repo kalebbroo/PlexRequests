@@ -39,10 +39,11 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
     public async Task<List<IndexerSettingDto>> GetAllAsync()
     {
         await SeedAsync();
-        return await db.Indexers
+        var rows = await db.Indexers.AsNoTracking()
+            .Include(i => i.MediaCapabilities)
             .OrderBy(i => i.Priority).ThenBy(i => i.Name)
-            .Select(i => ToDto(i))
             .ToListAsync();
+        return rows.Select(ToDto).ToList();
     }
 
     public async Task<bool> SetEnabledAsync(string name, bool enabled)
@@ -71,7 +72,8 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
     public async Task<(bool ok, string? error)> SaveAsync(IndexerSettingDto dto)
     {
         var isNew = dto.Id == 0;
-        var row = isNew ? new IndexerEntity() : await db.Indexers.FirstOrDefaultAsync(i => i.Id == dto.Id);
+        var row = isNew ? new IndexerEntity() : await db.Indexers.Include(i => i.MediaCapabilities)
+            .FirstOrDefaultAsync(i => i.Id == dto.Id);
         if (row is null) return (false, "Indexer not found.");
 
         var name = (dto.Name ?? string.Empty).Trim();
@@ -100,6 +102,7 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
         row.SupportsTv = dto.SupportsTv;
         row.SupportsAnime = dto.SupportsAnime;
         row.AnimeOnly = dto.AnimeOnly;
+        SyncCapabilities(row, dto);
         row.EnableIngestion = dto.EnableIngestion;
         row.EnableAutomaticSearch = dto.EnableAutomaticSearch;
         row.EnableInteractiveSearch = dto.EnableInteractiveSearch;
@@ -183,7 +186,7 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
             var candidate = name;
             for (int n = 2; await db.Indexers.AnyAsync(i => i.Name == candidate); n++) candidate = $"{name} ({n})";
 
-            db.Indexers.Add(new IndexerEntity
+            var entity = new IndexerEntity
             {
                 Name = candidate,
                 Implementation = "Torznab",
@@ -194,7 +197,9 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
                 ApiKeyEncrypted = string.IsNullOrWhiteSpace(e.ApiKey) ? null : _protector.Protect(e.ApiKey.Trim()),
                 CreatedAt = now,
                 UpdatedAt = now
-            });
+            };
+            AddDefaultCapabilities(entity, movie: true, tv: true, anime: true);
+            db.Indexers.Add(entity);
             added++;
         }
 
@@ -211,7 +216,8 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
     public async Task<List<IndexerConfigDto>> GetWorkerConfigAsync()
     {
         await SeedAsync();
-        var rows = await db.Indexers.AsNoTracking().OrderBy(i => i.Priority).ToListAsync();
+        var rows = await db.Indexers.AsNoTracking().Include(i => i.MediaCapabilities)
+            .OrderBy(i => i.Priority).ToListAsync();
         return rows.Select(i => new IndexerConfigDto
         {
             Id = i.Id,
@@ -231,6 +237,7 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
             SupportsTv = i.SupportsTv,
             SupportsAnime = i.SupportsAnime,
             AnimeOnly = i.AnimeOnly,
+            MediaCapabilities = i.MediaCapabilities.Select(ToCapabilityDto).ToList(),
             EnableIngestion = i.EnableIngestion,
             EnableAutomaticSearch = i.EnableAutomaticSearch,
             EnableInteractiveSearch = i.EnableInteractiveSearch,
@@ -312,7 +319,7 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
         var now = DateTime.UtcNow;
         foreach (var b in BuiltIns.Where(b => !existing.Contains(b.Name)))
         {
-            db.Indexers.Add(new IndexerEntity
+            var entity = new IndexerEntity
             {
                 Name = b.Name,
                 Implementation = b.Name,
@@ -324,7 +331,9 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
                 Priority = 30, // behind admin-added aggregators by default
                 CreatedAt = now,
                 UpdatedAt = now
-            });
+            };
+            AddDefaultCapabilities(entity, b.Movie, b.Tv, b.Anime);
+            db.Indexers.Add(entity);
         }
         if (!db.ChangeTracker.HasChanges()) return;
         try { await db.SaveChangesAsync(); }
@@ -350,6 +359,7 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
         AnimeCategoriesCsv = i.AnimeCategoriesCsv,
         SupportsMovie = i.SupportsMovie, SupportsTv = i.SupportsTv, SupportsAnime = i.SupportsAnime,
         AnimeOnly = i.AnimeOnly,
+        MediaCapabilities = i.MediaCapabilities.Select(ToCapabilityDto).ToList(),
         EnableIngestion = i.EnableIngestion, EnableAutomaticSearch = i.EnableAutomaticSearch,
         EnableInteractiveSearch = i.EnableInteractiveSearch, EnableRecommendedFeed = i.EnableRecommendedFeed,
         MinSeeders = i.MinSeeders, TimeoutSeconds = i.TimeoutSeconds,
@@ -376,6 +386,56 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
     }
 
     private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    private static IndexerMediaCapabilityDto ToCapabilityDto(IndexerMediaCapabilityEntity capability) => new()
+    {
+        MediaType = capability.MediaType,
+        Enabled = capability.Enabled,
+        CategoriesCsv = capability.CategoriesCsv
+    };
+
+    private static void SyncCapabilities(IndexerEntity row, IndexerSettingDto dto)
+    {
+        var supplied = dto.MediaCapabilities.Count > 0
+            ? dto.MediaCapabilities.ToDictionary(x => x.MediaType)
+            : new Dictionary<MediaType, IndexerMediaCapabilityDto>
+            {
+                [MediaType.Movie] = new() { MediaType = MediaType.Movie, Enabled = dto.SupportsMovie, CategoriesCsv = dto.MovieCategoriesCsv },
+                [MediaType.TvShow] = new() { MediaType = MediaType.TvShow, Enabled = dto.SupportsTv, CategoriesCsv = dto.TvCategoriesCsv },
+                [MediaType.Anime] = new() { MediaType = MediaType.Anime, Enabled = dto.SupportsAnime, CategoriesCsv = dto.AnimeCategoriesCsv },
+                [MediaType.Music] = new() { MediaType = MediaType.Music, Enabled = false, CategoriesCsv = null }
+            };
+
+        foreach (var mediaType in Enum.GetValues<MediaType>())
+        {
+            supplied.TryGetValue(mediaType, out var input);
+            var capability = row.MediaCapabilities.FirstOrDefault(x => x.MediaType == mediaType);
+            if (capability is null)
+            {
+                capability = new IndexerMediaCapabilityEntity { MediaType = mediaType };
+                row.MediaCapabilities.Add(capability);
+            }
+            capability.Enabled = input?.Enabled ?? false;
+            capability.CategoriesCsv = Blank(input?.CategoriesCsv);
+        }
+
+        // Transitional mirrors for older downloader containers. They can be removed once bridge/worker v2
+        // has been deployed everywhere; new code reads MediaCapabilities first.
+        row.SupportsMovie = row.MediaCapabilities.Any(x => x.MediaType == MediaType.Movie && x.Enabled);
+        row.SupportsTv = row.MediaCapabilities.Any(x => x.MediaType == MediaType.TvShow && x.Enabled);
+        row.SupportsAnime = row.MediaCapabilities.Any(x => x.MediaType == MediaType.Anime && x.Enabled);
+        row.MovieCategoriesCsv = row.MediaCapabilities.First(x => x.MediaType == MediaType.Movie).CategoriesCsv;
+        row.TvCategoriesCsv = row.MediaCapabilities.First(x => x.MediaType == MediaType.TvShow).CategoriesCsv;
+        row.AnimeCategoriesCsv = row.MediaCapabilities.First(x => x.MediaType == MediaType.Anime).CategoriesCsv;
+    }
+
+    private static void AddDefaultCapabilities(IndexerEntity entity, bool movie, bool tv, bool anime)
+    {
+        entity.MediaCapabilities.Add(new() { MediaType = MediaType.Movie, Enabled = movie });
+        entity.MediaCapabilities.Add(new() { MediaType = MediaType.TvShow, Enabled = tv });
+        entity.MediaCapabilities.Add(new() { MediaType = MediaType.Anime, Enabled = anime });
+        entity.MediaCapabilities.Add(new() { MediaType = MediaType.Music, Enabled = false });
+    }
 
     internal static TimeSpan SearchFailureDelay(IndexerBlockReason reason, int consecutiveFailures) => reason switch
     {

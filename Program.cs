@@ -16,6 +16,7 @@ using System.Net.Http;
 using System.Net.Security;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.DTOs;
+using PlexRequestsHosted.Shared.Media;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -188,6 +189,12 @@ builder.Services.AddHttpClient<PlexRequestsHosted.Services.Implementations.IPlex
             allowInvalidCerts ? true : errors == SslPolicyErrors.None
     });
 builder.Services.AddScoped<IMediaRequestService, MediaRequestService>();
+builder.Services.AddScoped<IMediaIdentityService, MediaIdentityService>();
+builder.Services.AddSingleton<IMediaModule, MovieMediaModule>();
+builder.Services.AddSingleton<IMediaModule, TelevisionMediaModule>();
+builder.Services.AddSingleton<IMediaModule, AnimeMediaModule>();
+builder.Services.AddSingleton<IMediaModule, MusicMediaModule>();
+builder.Services.AddSingleton<IMediaModuleRegistry, MediaModuleRegistry>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.ISeasonAvailabilityEvaluator, PlexRequestsHosted.Services.Implementations.SeasonAvailabilityEvaluator>();
 builder.Services.AddScoped<IFulfillmentQueue, FulfillmentQueue>();
 // Live download telemetry: the store is a singleton (shared by worker progress reports and the admin
@@ -665,7 +672,16 @@ static PlexRequestsHosted.Shared.DTOs.MediaRequestDto ToRequestDto(PlexRequestsH
     AvailableAt = r.AvailableAt,
     RequestedByUserId = r.RequestedByUserId ?? 0,
     RequestedByUsername = r.RequestedBy ?? string.Empty,
-    DenialReason = r.DenialReason
+    DenialReason = r.DenialReason,
+    ExternalId = r.ExternalId,
+    ExternalSource = r.ExternalSource,
+    RequestScopeKind = r.RequestScopeKind,
+    MediaRef = !string.IsNullOrWhiteSpace(r.ExternalId)
+        ? MediaRef.FromExternal(r.ExternalSource ?? "external", r.ExternalId, r.MediaType,
+            r.RequestScopeKind == RequestScopeKind.ArtistCatalog ? MediaKind.Artist
+            : r.RequestScopeKind == RequestScopeKind.Track ? MediaKind.Track
+            : r.MediaType.DefaultKind())
+        : MediaRef.FromTmdb(r.MediaId, r.MediaType)
 };
 
 // Worker claims queued jobs to download.
@@ -1184,10 +1200,16 @@ static bool IsAuthorizedBridge(HttpContext ctx, IConfiguration cfg)
            System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(a, b);
 }
 
+app.MapGet("/api/bridge/capabilities", (HttpContext ctx, IConfiguration cfg, IMediaModuleRegistry modules) =>
+{
+    if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
+    return Results.Ok(new BridgeCapabilitiesDto { MediaModules = modules.All.ToList() });
+});
+
 // Catalog search (optionally personalized with the caller's request status if their Discord is linked).
 app.MapGet("/api/bridge/search", async (string q, string? type, int? limit, string? discordUserId,
     HttpContext ctx, IConfiguration cfg, IMediaMetadataProvider metadata, IPlexApiService plex,
-    IDiscordLinkService link, IMediaRequestService requests) =>
+    IDiscordLinkService link, IMediaRequestService requests, IMediaModuleRegistry modules) =>
 {
     if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
     if (string.IsNullOrWhiteSpace(q)) return Results.Ok(Array.Empty<BridgeSearchResultDto>());
@@ -1197,8 +1219,12 @@ app.MapGet("/api/bridge/search", async (string q, string? type, int? limit, stri
     {
         "movie" or "movies" => MediaType.Movie,
         "tv" or "tvshow" or "show" or "series" => MediaType.TvShow,
+        "anime" => MediaType.Anime,
+        "music" or "album" or "artist" or "track" => MediaType.Music,
         _ => null
     };
+    if (mt is MediaType requestedType && !modules.IsEnabled(requestedType))
+        return Results.Ok(Array.Empty<BridgeSearchResultDto>());
 
     var results = (await metadata.SearchAsync(q, mt, 1, take)).Take(take).ToList();
     try { await plex.AnnotateAvailabilityAsync(results); } catch { /* availability best-effort */ }
@@ -1210,11 +1236,12 @@ app.MapGet("/api/bridge/search", async (string q, string? type, int? limit, stri
         var uid = await link.ResolveUserIdAsync(discordUserId);
         if (uid is not null)
             foreach (var r in await requests.GetRequestsForUserAsync(uid.Value, 200))
-                statusMap[$"{r.MediaType}:{r.MediaId}"] = r.Status;
+                statusMap[r.MediaRef?.StableKey ?? MediaRef.FromTmdb(r.MediaId, r.MediaType).StableKey] = r.Status;
     }
 
     var dtos = results.Select(r => new BridgeSearchResultDto
     {
+        Media = r.ResolveMediaRef(),
         MediaId = r.Id,
         MediaType = r.MediaType,
         Title = r.Title,
@@ -1226,7 +1253,7 @@ app.MapGet("/api/bridge/search", async (string q, string? type, int? limit, stri
         TmdbId = r.TmdbId,
         Genres = r.Genres,
         AvailableOnPlex = r.IsAvailable,
-        RequestStatus = statusMap.TryGetValue($"{r.MediaType}:{r.Id}", out var st) ? st : null
+        RequestStatus = statusMap.TryGetValue(r.ResolveMediaRef().StableKey, out var st) ? st : null
     }).ToList();
     return Results.Ok(dtos);
 });
@@ -1240,7 +1267,8 @@ app.MapPost("/api/bridge/request", async (BridgeRequestBody body, HttpContext ct
     if (uid is null)
         return Results.Ok(new BridgeRequestResultDto { Success = false, NotLinked = true, Message = "Link your account first: run /request link with the code from your Plex Requests profile." });
 
-    var result = await requests.RequestMediaForUserAsync(uid.Value, body.MediaId, body.MediaType);
+    var result = await requests.RequestMediaForUserAsync(uid.Value, body.ResolveMedia(), body.Scope,
+        body.QualityProfileId);
     return Results.Ok(new BridgeRequestResultDto
     {
         Success = result.Success,
@@ -1266,6 +1294,7 @@ app.MapGet("/api/bridge/requests", async (string discordUserId, int? limit, Http
         Items = list.Select(r => new BridgeUserRequestDto
         {
             RequestId = r.Id, Title = r.Title, MediaType = r.MediaType, Status = r.Status,
+            Media = r.MediaRef, RequestScope = r.RequestScopeKind,
             PosterUrl = r.PosterUrl, RequestedAt = r.RequestedAt, DenialReason = r.DenialReason
         }).ToList()
     });
@@ -1311,7 +1340,8 @@ app.MapGet("/api/bridge/events", async (long? since, int? max, HttpContext ctx, 
     var take = Math.Clamp(max ?? 25, 1, 100);
     var cursor = since ?? 0;
 
-    var rows = await db.BridgeOutbox.Where(e => e.Id > cursor).OrderBy(e => e.Id).Take(take).ToListAsync();
+    var rows = await db.BridgeOutbox.Include(e => e.MediaRequest)
+        .Where(e => e.Id > cursor).OrderBy(e => e.Id).Take(take).ToListAsync();
     var events = new List<BridgeEventDto>(rows.Count);
     foreach (var e in rows)
     {
@@ -1319,6 +1349,8 @@ app.MapGet("/api/bridge/events", async (long? since, int? max, HttpContext ctx, 
         {
             Cursor = e.Id, Type = e.EventType, RequestId = e.MediaRequestId, MediaId = e.MediaId,
             MediaType = e.MediaType, Title = e.Title, PosterUrl = e.PosterUrl, Status = e.Status,
+            Media = e.MediaRequest is { } request ? ToRequestDto(request).MediaRef : MediaRef.FromTmdb(e.MediaId, e.MediaType),
+            RequestScope = e.MediaRequest?.RequestScopeKind ?? e.MediaType.DefaultKind().DefaultScope(),
             Detail = e.Detail, RequesterName = e.RequesterName, CreatedAt = e.CreatedAt
         };
         // Enrich with fresh artwork/metadata for the embed.

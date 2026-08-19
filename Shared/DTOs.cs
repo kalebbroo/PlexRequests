@@ -1,5 +1,6 @@
 using PlexRequestsHosted.Shared.Enums;
 using System.ComponentModel.DataAnnotations;
+using PlexRequestsHosted.Shared.Media;
 using System.Text.Json.Serialization;
 
 namespace PlexRequestsHosted.Shared.DTOs;
@@ -91,6 +92,18 @@ public class MediaCardDto : BaseDto
     // Provider-agnostic id for non-TMDb sources (MusicBrainz MBID, Plex ratingKey, ...) + its source key.
     public string? ExternalId { get; set; }
     public string? ExternalSource { get; set; }
+
+    /// <summary>Canonical provider-neutral identity. Older servers/clients may leave this null.</summary>
+    public MediaRef? MediaRef { get; set; }
+
+    public MediaRef ResolveMediaRef()
+    {
+        if (MediaRef is { IsValid: true }) return MediaRef;
+        if (!string.IsNullOrWhiteSpace(ExternalId))
+            return PlexRequestsHosted.Shared.Media.MediaRef.FromExternal(ExternalSource ?? "external", ExternalId, MediaType,
+                MediaType.DefaultKind());
+        return PlexRequestsHosted.Shared.Media.MediaRef.FromTmdb(TmdbId ?? Id, MediaType);
+    }
 }
 
 public class MediaDetailDto : MediaCardDto
@@ -181,6 +194,8 @@ public class MediaRequestDto : BaseDto
     public bool Monitored { get; set; }                 // ongoing-series auto-download
     public string? ExternalId { get; set; }             // non-TMDb id (music MBID / Plex ratingKey)
     public string? ExternalSource { get; set; }
+    public MediaRef? MediaRef { get; set; }
+    public RequestScopeKind RequestScopeKind { get; set; }
 }
 
 public class MediaIssueDto
@@ -455,6 +470,8 @@ public class FulfillmentJobDto
     public int MediaRequestId { get; set; }
     public int MediaId { get; set; }
     public MediaType MediaType { get; set; }
+    public MediaRef? Media { get; set; }
+    public RequestScopeKind RequestScope { get; set; }
     public string Title { get; set; } = string.Empty;
     public int? Year { get; set; }
     public int? TmdbId { get; set; }
@@ -640,6 +657,7 @@ public class IndexerSettingDto
     public bool SupportsTv { get; set; } = true;
     public bool SupportsAnime { get; set; } = true;
     public bool AnimeOnly { get; set; }
+    public List<IndexerMediaCapabilityDto> MediaCapabilities { get; set; } = new();
 
     public bool EnableIngestion { get; set; } = true;
     public bool EnableAutomaticSearch { get; set; } = true;
@@ -714,6 +732,7 @@ public class IndexerConfigDto
     public bool SupportsTv { get; set; } = true;
     public bool SupportsAnime { get; set; } = true;
     public bool AnimeOnly { get; set; }
+    public List<IndexerMediaCapabilityDto> MediaCapabilities { get; set; } = new();
 
     public bool EnableIngestion { get; set; } = true;
     public bool EnableAutomaticSearch { get; set; } = true;
@@ -731,18 +750,39 @@ public class IndexerConfigDto
     /// <summary>Category ids for a media type, falling back to the Torznab standards when unset.</summary>
     public string CategoriesFor(MediaType mediaType) => mediaType switch
     {
+        _ when MediaCapabilities.FirstOrDefault(x => x.MediaType == mediaType) is { } capability =>
+            string.IsNullOrWhiteSpace(capability.CategoriesCsv) ? DefaultCategories(mediaType) : capability.CategoriesCsv,
         MediaType.Movie => string.IsNullOrWhiteSpace(MovieCategoriesCsv) ? "2000" : MovieCategoriesCsv,
         MediaType.Anime => string.IsNullOrWhiteSpace(AnimeCategoriesCsv) ? "5000,5070" : AnimeCategoriesCsv,
+        MediaType.Music => "3000",
         _ => string.IsNullOrWhiteSpace(TvCategoriesCsv) ? "5000" : TvCategoriesCsv
     };
 
-    public bool Supports(MediaType mediaType) => mediaType switch
+    public bool Supports(MediaType mediaType) => MediaCapabilities.Count > 0
+        ? MediaCapabilities.Any(x => x.MediaType == mediaType && x.Enabled)
+        : mediaType switch
+        {
+            MediaType.Movie => SupportsMovie,
+            MediaType.TvShow => SupportsTv,
+            MediaType.Anime => SupportsAnime,
+            _ => false
+        };
+
+    private static string DefaultCategories(MediaType mediaType) => mediaType switch
     {
-        MediaType.Movie => SupportsMovie,
-        MediaType.TvShow => SupportsTv,
-        MediaType.Anime => SupportsAnime,
-        _ => false
+        MediaType.Movie => "2000",
+        MediaType.TvShow => "5000",
+        MediaType.Anime => "5000,5070",
+        MediaType.Music => "3000",
+        _ => string.Empty
     };
+}
+
+public class IndexerMediaCapabilityDto
+{
+    public MediaType MediaType { get; set; }
+    public bool Enabled { get; set; }
+    public string? CategoriesCsv { get; set; }
 }
 
 /// <summary>A Torznab endpoint the downloader found in its own environment, pushed once for import.</summary>
