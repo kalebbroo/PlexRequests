@@ -58,6 +58,11 @@ Returns an array of jobs; each claimed job flips `Queued → Claimed` and increm
 ```
 `mediaType`: 0=Movie 1=TvShow 2=Music 3=Anime. `quality`: 0=Any 480/720/1080/2160/4320.
 
+Provider-neutral jobs also carry `media` (`provider`, string `id`, `mediaType`, `kind`) and
+`requestScope`. Music jobs persist a compact `music` context containing artist/album/track names and
+track count. Those fields are snapshots: retries and worker restarts never have to reconstruct an album,
+artist catalog, or track from the legacy numeric `mediaId` (which is intentionally 0 for non-TMDb media).
+
 **TV target precedence** (a worker should honor the most specific present):
 1. `requestedEpisodes` — `[{ "season": 2, "episode": 5 }, …]`. Fetch exactly these episodes.
 2. `requestedSeasons` — `[1, 2]`. Fetch these whole seasons.
@@ -117,6 +122,10 @@ Release candidates come from a pluggable set of `IIndexerProvider`s, merged by `
 - **ext.to** (`ExtToIndexerProvider`) — movies + TV, **HTML scrape**: follows the top search results to
   their detail pages and extracts magnet + labelled Seeders/Size (falls back to inline magnets on the
   search page). Search path is configurable (`ExtToSearchPath`, `{query}` substituted) for tuning.
+- **Music acquisition** — general sources build artist-qualified free-text searches; 1337x and Pirate Bay
+  use their audio categories, and Torznab uses `t=music` plus a generic-search fallback for implementations
+  that expose category 3000 but reject the optional music search function. Per-indexer music support and
+  category ids remain ordinary data-driven capabilities in the admin panel.
 
   ⚠️ **Cloudflare:** a challenged scraper is opened as a circuit and retried later; the downloader does not
   launch Chrome or attempt to automate a human challenge. A manually supplied reusable cookie/User-Agent is
@@ -150,9 +159,14 @@ Parse release names into structured metadata and score them; reject anything bel
   best value (seeders × quality / size). No acceptable candidate ⇒ callback `failed` with a clear
   reason (so it surfaces to admins, not a silent stall).
 
+Music is evaluated by a separate policy behind the same evaluator contract. It requires artist/title
+identity and an identifiable audio format, rejects video-shaped releases, applies scope-aware size limits,
+and ranks lossless FLAC/ALAC/APE/WAV above lossy formats. Video resolution profiles never reject a music
+release for having no pixel resolution.
+
 ### Stage 4 — Hand to the torrent client
 Add the chosen magnet/torrent to **qBittorrent** or **Deluge** via its Web API, tagged with a
-category that routes the completed files to the correct library path (movies vs TV). Record the
+category that routes the completed files to the correct library path (movies vs TV vs music). Record the
 client's torrent hash against the job for progress polling and cleanup.
 
 ### Stage 5 — VPN failsafe (the reason this is out-of-process)

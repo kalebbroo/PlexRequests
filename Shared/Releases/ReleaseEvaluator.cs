@@ -38,6 +38,8 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
     {
         var p = context.Preferences;
         var parsed = _parser.Parse(c.ReleaseName);
+        if (job.MediaType == MediaType.Music)
+            return MusicReleaseEvaluator.Evaluate(c, job, context, parsed);
         var resolution = EffectiveResolution(c, parsed);
         var rejections = new List<Rejection>();
 

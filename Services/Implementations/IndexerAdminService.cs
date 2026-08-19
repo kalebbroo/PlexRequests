@@ -25,15 +25,15 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
     /// The built-in implementations, with the capabilities that used to be hardcoded in each provider class.
     /// Seeded once; afterwards these are ordinary rows an admin can disable, re-prioritise or re-scope.
     /// </summary>
-    private static readonly (string Name, bool Movie, bool Tv, bool Anime, bool AnimeOnly)[] BuiltIns =
+    private static readonly (string Name, bool Movie, bool Tv, bool Anime, bool Music, bool AnimeOnly)[] BuiltIns =
     {
-        ("EZTV",        false, true,  true,  false),
-        ("YTS",         true,  false, false, false),
-        ("1337x",       true,  true,  true,  false),
-        ("Nyaa",        true,  true,  true,  true),   // anime-only: skipped unless the job is classified anime
-        ("ext.to",      true,  true,  true,  false),
-        ("PirateBay",   true,  true,  true,  false),
-        ("TorrentsCSV", true,  true,  true,  false),
+        ("EZTV",        false, true,  true,  false, false),
+        ("YTS",         true,  false, false, false, false),
+        ("1337x",       true,  true,  true,  true,  false),
+        ("Nyaa",        true,  true,  true,  false, true),   // anime-only: skipped unless the job is classified anime
+        ("ext.to",      true,  true,  true,  true,  false),
+        ("PirateBay",   true,  true,  true,  true,  false),
+        ("TorrentsCSV", true,  true,  true,  true,  false),
     };
 
     public async Task<List<IndexerSettingDto>> GetAllAsync()
@@ -198,7 +198,7 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
                 CreatedAt = now,
                 UpdatedAt = now
             };
-            AddDefaultCapabilities(entity, movie: true, tv: true, anime: true);
+            AddDefaultCapabilities(entity, movie: true, tv: true, anime: true, music: false);
             db.Indexers.Add(entity);
             added++;
         }
@@ -332,7 +332,7 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
                 CreatedAt = now,
                 UpdatedAt = now
             };
-            AddDefaultCapabilities(entity, b.Movie, b.Tv, b.Anime);
+            AddDefaultCapabilities(entity, b.Movie, b.Tv, b.Anime, b.Music);
             db.Indexers.Add(entity);
         }
         if (!db.ChangeTracker.HasChanges()) return;
@@ -429,12 +429,12 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
         row.AnimeCategoriesCsv = row.MediaCapabilities.First(x => x.MediaType == MediaType.Anime).CategoriesCsv;
     }
 
-    private static void AddDefaultCapabilities(IndexerEntity entity, bool movie, bool tv, bool anime)
+    private static void AddDefaultCapabilities(IndexerEntity entity, bool movie, bool tv, bool anime, bool music)
     {
         entity.MediaCapabilities.Add(new() { MediaType = MediaType.Movie, Enabled = movie });
         entity.MediaCapabilities.Add(new() { MediaType = MediaType.TvShow, Enabled = tv });
         entity.MediaCapabilities.Add(new() { MediaType = MediaType.Anime, Enabled = anime });
-        entity.MediaCapabilities.Add(new() { MediaType = MediaType.Music, Enabled = false });
+        entity.MediaCapabilities.Add(new() { MediaType = MediaType.Music, Enabled = music, CategoriesCsv = music ? "3000" : null });
     }
 
     internal static TimeSpan SearchFailureDelay(IndexerBlockReason reason, int consecutiveFailures) => reason switch

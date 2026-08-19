@@ -28,6 +28,11 @@ public record ParsedRelease
 
     /// <summary>Audio codec, normalised ("DTS-HD MA", "TrueHD", "EAC3"). Null when absent.</summary>
     public string? AudioCodec { get; init; }
+    /// <summary>Music mastering depth (for example 16 or 24), when advertised.</summary>
+    public int? AudioBitDepth { get; init; }
+    /// <summary>Music sample rate in kHz (for example 44.1 or 96), when advertised.</summary>
+    public double? AudioSampleRateKhz { get; init; }
+    public bool LosslessAudio { get; init; }
     /// <summary>Channel layout such as "5.1". Null when absent.</summary>
     public string? AudioChannels { get; init; }
     /// <summary>Object-based audio (Atmos / DTS-X).</summary>

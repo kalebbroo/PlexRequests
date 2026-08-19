@@ -110,6 +110,7 @@ public class DelugeOptions
     public string Password { get; set; } = string.Empty;
     public string MovieLabel { get; set; } = "movies";
     public string TvLabel { get; set; } = "tv";
+    public string MusicLabel { get; set; } = "music";
 }
 
 /// <summary>Where completed files are placed for Plex to index.</summary>

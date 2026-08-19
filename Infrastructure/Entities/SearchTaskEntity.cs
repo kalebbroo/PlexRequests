@@ -28,6 +28,12 @@ public class SearchTaskEntity
     public int? MediaRequestId { get; set; }
     public MediaType MediaType { get; set; }
     public int MediaId { get; set; }
+    public MediaKind MediaKind { get; set; }
+    public RequestScopeKind RequestScopeKind { get; set; }
+    [MaxLength(128)] public string? ExternalId { get; set; }
+    [MaxLength(32)] public string? ExternalSource { get; set; }
+    /// <summary>Serialized <c>MusicAcquisitionContextDto</c>; null for video searches.</summary>
+    public string? AcquisitionContextJson { get; set; }
     [MaxLength(512)] public string Title { get; set; } = string.Empty;
     public int? Year { get; set; }
     [MaxLength(32)] public string? ImdbId { get; set; }

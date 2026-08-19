@@ -258,6 +258,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasIndex(x => x.MediaRequestId).IsUnique()
                 .HasFilter("\"Status\" IN (0, 1, 2, 7)");
             b.HasIndex(x => new { x.MediaId, x.MediaType }); // cross-request in-flight job dedup
+            b.HasIndex(x => x.MediaIdentityId); // provider-neutral cross-request dedup (music/non-TMDb)
             b.HasIndex(x => x.NextRetryAt); // scheduler scans deferred jobs whose backoff has elapsed
 
             b.HasOne(x => x.MediaRequest)

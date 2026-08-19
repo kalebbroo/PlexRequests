@@ -13,8 +13,9 @@ namespace PlexRequests.Downloader.Indexers;
 /// tracker set up in the aggregator becomes searchable with no site-specific scraping code — the practical
 /// fix for content the built-in public sources index poorly (kids'/preschool shows especially, which EZTV
 /// rarely carries and which need indexers with real TV/Kids category coverage). Queries use the proper
-/// capability per media type (t=movie / t=tvsearch) with standard categories (2000 movies, 5000 TV,
-/// 5070 TV/Anime), plus a per-season query for season-scoped TV jobs so packs surface.
+/// capability per media type (t=movie / t=tvsearch / t=music) with standard categories (2000 movies,
+/// 3000 music, 5000 TV, 5070 TV/Anime), plus a generic music fallback for endpoints that advertise music
+/// categories but not the optional music-search function.
 /// Only results that yield a magnet (magneturl attr, magnet link, or an info hash to build one from)
 /// are returned — the download client is magnet-only.
 /// </summary>
@@ -47,14 +48,27 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
         // One configured endpoint = one call here. This used to loop over every endpoint in the downloader's
         // appsettings, which is why they all shared a single identity, enable flag and health record.
         var byKey = new Dictionary<string, ReleaseCandidate>(StringComparer.OrdinalIgnoreCase);
+        InvalidDataException? musicQueryError = null;
+        var completedQuery = false;
         foreach (var url in BuildQueryUrls(indexer, job))
         {
             if (ct.IsCancellationRequested) break;
-            var xml = await _fetch.GetStringAsync(_http, indexer, url, ct);
-
-            foreach (var c in ParseFeed(xml, indexer))
-                byKey.TryAdd(c.InfoHash ?? c.Magnet, c);
+            try
+            {
+                var xml = await _fetch.GetStringAsync(_http, indexer, url, ct);
+                foreach (var c in ParseFeed(xml, indexer))
+                    byKey.TryAdd(c.InfoHash ?? c.Magnet, c);
+                completedQuery = true;
+            }
+            catch (InvalidDataException ex) when (job.MediaType == MediaType.Music)
+            {
+                // Some Torznab implementations return an XML error for t=music despite exposing 3000
+                // categories. The following t=search query is the standards-compatible fallback.
+                musicQueryError = ex;
+                continue;
+            }
         }
+        if (!completedQuery && musicQueryError is not null) throw musicQueryError;
         return byKey.Values.ToList();
     }
 
@@ -92,7 +106,9 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
                     Seeders = candidate.SeedersKnown ? candidate.Seeders : null,
                     Leechers = candidate.SeedersKnown ? candidate.Leechers : null,
                     SizeBytes = candidate.SizeKnown ? candidate.SizeBytes : null,
-                    PublishedAt = candidate.PublishDate
+                    PublishedAt = candidate.PublishDate,
+                    Category = candidate.CategoryIds.Count == 0 ? null : string.Join(',', candidate.CategoryIds),
+                    MediaType = Classify(candidate.CategoryIds)
                 });
             }
             // A Torznab page may contain .torrent-only rows that this magnet-only client intentionally
@@ -104,7 +120,7 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
         return ReleaseFeedCursor.Select(items, cursor, limit);
     }
 
-    private static IEnumerable<string> BuildQueryUrls(IndexerConfigDto indexer, FulfillmentJobDto job)
+    internal static IEnumerable<string> BuildQueryUrls(IndexerConfigDto indexer, FulfillmentJobDto job)
     {
         var endpointUrl = indexer.Url!;
         var sep = endpointUrl.Contains('?') ? "&" : "?";
@@ -123,6 +139,24 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
             var q = Base("movie", cat) + $"&q={Uri.EscapeDataString(job.Title)}";
             if (job.Year is int y) q += $"&year={y}";
             yield return q;
+            yield break;
+        }
+
+        if (job.MediaType == MediaType.Music)
+        {
+            var searchText = job.Music?.BuildSearchText(job.Title) ?? job.Title;
+            var specialized = Base("music", cat);
+            if (!string.IsNullOrWhiteSpace(job.Music?.Artist))
+                specialized += $"&artist={Uri.EscapeDataString(job.Music.Artist)}";
+            if (job.RequestScope == RequestScopeKind.Album && !string.IsNullOrWhiteSpace(job.Music?.Album))
+                specialized += $"&album={Uri.EscapeDataString(job.Music.Album)}";
+            else if (job.RequestScope == RequestScopeKind.Track && !string.IsNullOrWhiteSpace(job.Music?.Track))
+                specialized += $"&track={Uri.EscapeDataString(job.Music.Track)}";
+            else
+                specialized += $"&q={Uri.EscapeDataString(searchText)}";
+            if (job.Year is int musicYear) specialized += $"&year={musicYear}";
+            yield return specialized;
+            yield return Base("search", cat) + $"&q={Uri.EscapeDataString(searchText)}";
             yield break;
         }
 
@@ -162,6 +196,10 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
             string? Attr(string name) => item.Elements(TorznabNs + "attr")
                 .FirstOrDefault(a => string.Equals((string?)a.Attribute("name"), name, StringComparison.OrdinalIgnoreCase))
                 ?.Attribute("value")?.Value;
+            List<string> Attrs(string name) => item.Elements(TorznabNs + "attr")
+                .Where(a => string.Equals((string?)a.Attribute("name"), name, StringComparison.OrdinalIgnoreCase))
+                .Select(a => a.Attribute("value")?.Value)
+                .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).ToList();
 
             var infoHash = Attr("infohash");
             var link = (string?)item.Element("link");
@@ -179,6 +217,10 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
             DateTime? published = DateTime.TryParse((string?)item.Element("pubDate"), out var pd) ? pd.ToUniversalTime() : null;
             int? season = int.TryParse(Attr("season"), out var sn) && sn > 0 ? sn : null;
             int? episode = int.TryParse(Attr("episode"), out var ep) && ep > 0 ? ep : null;
+            var categories = Attrs("category")
+                .SelectMany(x => x.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .Select(x => int.TryParse(x, out var id) ? id : (int?)null)
+                .Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
 
             candidates.Add(new ReleaseCandidate
             {
@@ -195,7 +237,8 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
                 Source = indexer.Name,
                 PublishDate = published,
                 Season = season,
-                Episode = episode
+                Episode = episode,
+                CategoryIds = categories
             });
         }
         return candidates;
@@ -206,6 +249,15 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
         if (string.IsNullOrWhiteSpace(imdbId)) return null;
         var digits = new string(imdbId.Where(char.IsDigit).ToArray()).TrimStart('0');
         return digits.Length == 0 ? null : digits;
+    }
+
+    private static MediaType? Classify(IReadOnlyList<int> categories)
+    {
+        if (categories.Any(x => x == 5070)) return MediaType.Anime;
+        if (categories.Any(x => x is >= 3000 and < 4000)) return MediaType.Music;
+        if (categories.Any(x => x is >= 5000 and < 6000)) return MediaType.TvShow;
+        if (categories.Any(x => x is >= 2000 and < 3000)) return MediaType.Movie;
+        return null;
     }
 
     /// <summary>
@@ -256,6 +308,7 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
                 if (!available) continue;
                 if (s.Name.LocalName is "movie-search") caps.SupportsMovieSearch = true;
                 if (s.Name.LocalName is "tv-search") caps.SupportsTvSearch = true;
+                if (s.Name.LocalName is "music-search") caps.SupportsMusicSearch = true;
                 var supported = (string?)s.Attribute("supportedParams");
                 if (!string.IsNullOrWhiteSpace(supported))
                     caps.SupportedParams.AddRange(supported.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));

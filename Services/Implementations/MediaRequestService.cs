@@ -142,28 +142,7 @@ public class MediaRequestService(
     public async Task<MediaRequestDto?> GetRequestByIdAsync(int id)
     {
         var r = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == id);
-        return r == null ? null : new MediaRequestDto
-        {
-            Id = r.Id,
-            MediaId = r.MediaId,
-            MediaType = r.MediaType,
-            Title = r.Title,
-            PosterUrl = r.PosterUrl,
-            Status = r.Status,
-            RequestedAt = r.RequestedAt,
-            ApprovedAt = r.ApprovedAt,
-            AvailableAt = r.AvailableAt,
-            DenialReason = r.DenialReason,
-            RequestNote = r.RequestNote,
-            RequestAllSeasons = r.RequestAllSeasons,
-            RequestedEpisodesCsv = r.RequestedEpisodesCsv,
-            Monitored = r.Monitored,
-            ExternalId = r.ExternalId,
-            ExternalSource = r.ExternalSource,
-            RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv) ? new List<int>() : r.RequestedSeasonsCsv.Split(',').Select(s => int.TryParse(s, out var n) ? n : (int?)null).Where(n => n.HasValue).Select(n => n!.Value).ToList(),
-            RequestedByUserId = r.RequestedByUserId ?? 0,
-            RequestedByUsername = r.RequestedBy ?? string.Empty
-        };
+        return r is null ? null : ToDto(r);
     } // TODO: Add authorization check
 
     public async Task<PagedResult<MediaRequestDto>> GetRequestsAsync(MediaFilterDto filter)
@@ -188,7 +167,10 @@ public class MediaRequestService(
             {
                 try
                 {
-                    var d = await _metadata.GetDetailsAsync(r.MediaId, r.MediaType);
+                    var request = ToDto(r);
+                    var d = request.MediaRef is { IsValid: true } mediaRef
+                        ? await _metadata.GetDetailsAsync(mediaRef)
+                        : await _metadata.GetDetailsAsync(r.MediaId, r.MediaType);
                     if (d is not null)
                     {
                         if (!string.IsNullOrWhiteSpace(d.Title) && (string.IsNullOrWhiteSpace(r.Title) || r.Title.StartsWith("Item #")))
@@ -200,28 +182,7 @@ public class MediaRequestService(
                 catch { /* ignore */ }
             }
 
-            items.Add(new MediaRequestDto
-            {
-                Id = r.Id,
-                MediaId = r.MediaId,
-                MediaType = r.MediaType,
-                Title = r.Title,
-                PosterUrl = r.PosterUrl,
-                Status = r.Status,
-                RequestedAt = r.RequestedAt,
-                ApprovedAt = r.ApprovedAt,
-                AvailableAt = r.AvailableAt,
-                DenialReason = r.DenialReason,
-                RequestNote = r.RequestNote,
-                RequestAllSeasons = r.RequestAllSeasons,
-            RequestedEpisodesCsv = r.RequestedEpisodesCsv,
-            Monitored = r.Monitored,
-            ExternalId = r.ExternalId,
-            ExternalSource = r.ExternalSource,
-                RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv) ? new List<int>() : r.RequestedSeasonsCsv.Split(',').Select(s => { int n; return int.TryParse(s, out n) ? (int?)n : null; }).Where(n => n.HasValue).Select(n => n!.Value).ToList(),
-                RequestedByUserId = r.RequestedByUserId ?? 0,
-                RequestedByUsername = r.RequestedBy ?? string.Empty
-            });
+            items.Add(ToDto(r));
         }
         if (changed)
         {
@@ -260,7 +221,7 @@ public class MediaRequestService(
         if (requestedScope == RequestScopeKind.Episodes && scope?.Episodes.Count is not > 0)
             return new MediaRequestResult { Success = false, ErrorMessage = "No episodes selected" };
         if (!mediaRef.TryGetTmdbId(out var tmdbId))
-            return new MediaRequestResult { Success = false, ErrorMessage = "This provider is not requestable yet" };
+            return await CreateProviderRequestForCurrentUserAsync(mediaRef, requestedScope, qualityProfileId);
 
         return requestedScope switch
         {
@@ -509,55 +470,21 @@ public class MediaRequestService(
         }
     }
 
-    /// <summary>
-    /// Legacy album request entry point. It remains gated by the module registry until metadata,
-    /// acquisition, import and Plex verification are all available end to end.
-    /// </summary>
-    public async Task<MediaRequestResult> RequestMusicAsync(string externalId, string source, string title, string? posterUrl = null)
+    /// <summary>Compatibility entry point; all music requests now use the canonical provider-neutral path.</summary>
+    public async Task<MediaRequestResult> RequestMusicAsync(
+        string externalId, string source, string title, string? posterUrl = null)
     {
-        if (!_mediaModules.IsEnabled(MediaType.Music))
-            return new MediaRequestResult { Success = false, ErrorMessage = _mediaModules.Get(MediaType.Music).UnavailableReason ?? "Music requests are disabled" };
-        var (username, isAdmin) = await GetUserAsync();
-        if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
-        var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
-        if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
-        if (!isAdmin && !await CheckLimitsCoreAsync(userId.Value, MediaType.Music))
-            return new MediaRequestResult { Success = false, ErrorMessage = "You've reached your request limit for this media type." };
-
-        var autoApprove = isAdmin || await _db.UserProfiles.Where(p => p.UserId == userId).Select(p => p.AutoApprove).FirstOrDefaultAsync();
-        var effectiveSource = string.IsNullOrWhiteSpace(source) ? "musicbrainz" : source;
-        var mediaRef = MediaRef.FromExternal(effectiveSource, externalId, MediaType.Music, MediaKind.Album);
-        if (!mediaRef.IsValid) return new MediaRequestResult { Success = false, ErrorMessage = "Invalid music identity" };
-        var identity = await _mediaIdentities.ResolveAsync(mediaRef);
-        var entity = new MediaRequestEntity
-        {
-            MediaIdentityId = identity.Id,
-            MediaId = 0,                       // no TMDb id for music
-            MediaType = MediaType.Music,
-            RequestScopeKind = RequestScopeKind.Album,
-            ExternalId = mediaRef.Id,
-            ExternalSource = effectiveSource,
-            Title = title,
-            PosterUrl = posterUrl,
-            Status = autoApprove ? RequestStatus.Approved : RequestStatus.Pending,
-            RequestedAt = DateTime.UtcNow,
-            ApprovedAt = autoApprove ? DateTime.UtcNow : null,
-            RequestedBy = username,
-            RequestedByUserId = userId,
-            // Music has no quality tiers of its own yet, but every request is bound to a profile — so this
-            // takes whatever the rules resolve to rather than being the one row in the table without one.
-            QualityProfileId = await _qualityProfiles.ResolveProfileIdAsync(MediaType.Music, 0, null,
-                requesterChoiceId: null, userId: userId)
-        };
-        _db.MediaRequests.Add(entity);
-        var saved = await _db.SaveChangesAsync() > 0;
-        if (saved)
-        {
-            var dto = ToDto(entity);
-            if (autoApprove) await _notify.RequestApprovedAsync(dto); else await _notify.RequestCreatedAsync(dto);
-            // Intentionally no fulfillment handoff until the music module advertises that capability.
-        }
-        return new MediaRequestResult { Success = saved, RequestId = entity.Id, NewStatus = entity.Status };
+        var mediaRef = MediaRef.FromExternal(
+            string.IsNullOrWhiteSpace(source) ? "musicbrainz" : source,
+            externalId, MediaType.Music, MediaKind.Album);
+        if (!mediaRef.IsValid)
+            return new MediaRequestResult { Success = false, ErrorMessage = "Invalid music identity" };
+        var module = _mediaModules.Get(MediaType.Music);
+        if (!module.Enabled)
+            return new MediaRequestResult
+                { Success = false, ErrorMessage = module.UnavailableReason ?? "Music requests are disabled" };
+        return await CreateProviderRequestForCurrentUserAsync(
+            mediaRef, RequestScopeKind.Album, null, title, posterUrl);
     }
 
     /// <summary>Request an entire series. Whether it's then monitored for new episodes as they air is an
@@ -602,15 +529,15 @@ public class MediaRequestService(
             return new MediaRequestResult { Success = false, ErrorMessage = "No seasons selected" };
         if (requestScope == RequestScopeKind.Episodes && scope?.Episodes.Count is not > 0)
             return new MediaRequestResult { Success = false, ErrorMessage = "No episodes selected" };
-        if (!mediaRef.TryGetTmdbId(out var tmdbId))
-            return new MediaRequestResult { Success = false, ErrorMessage = "This provider is not requestable yet" };
-
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
         var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
         var isAdmin = (profile?.Roles ?? string.Empty)
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Contains("Admin", StringComparer.OrdinalIgnoreCase);
+        if (!mediaRef.TryGetTmdbId(out var tmdbId))
+            return await CreateProviderRequestCoreAsync(userId, user.Username, isAdmin, mediaRef,
+                requestScope, qualityProfileId);
         var seasons = requestScope == RequestScopeKind.Seasons ? scope?.Seasons : null;
         var episodes = requestScope == RequestScopeKind.Episodes
             ? scope?.Episodes.Select(x => (x.Season, x.Episode)).ToList()
@@ -620,6 +547,93 @@ public class MediaRequestService(
         return await CreateRequestCoreAsync(userId, user.Username, isAdmin, tmdbId, mediaRef.MediaType,
             allSeasons: requestScope == RequestScopeKind.Series, seasons: seasons, episodes: episodes,
             monitored: monitor, qualityProfileId: qualityProfileId);
+    }
+
+    private async Task<MediaRequestResult> CreateProviderRequestCoreAsync(
+        int userId,
+        string username,
+        bool isAdmin,
+        MediaRef mediaRef,
+        RequestScopeKind requestScope,
+        int? qualityProfileId,
+        string? fallbackTitle = null,
+        string? fallbackPoster = null)
+    {
+        var identity = await _mediaIdentities.ResolveAsync(mediaRef);
+        var duplicate = await _db.MediaRequests.AnyAsync(r =>
+            r.MediaIdentityId == identity.Id && r.RequestScopeKind == requestScope &&
+            (r.RequestedByUserId == userId &&
+                (r.Status == RequestStatus.Pending || r.Status == RequestStatus.Approved
+                 || r.Status == RequestStatus.Processing || r.Status == RequestStatus.Searching)
+             || r.Status == RequestStatus.Available));
+        if (duplicate)
+            return new MediaRequestResult { Success = false, ErrorMessage = "This item is already requested or available." };
+
+        if (!isAdmin && !await CheckLimitsCoreAsync(userId, mediaRef.MediaType))
+            return new MediaRequestResult
+                { Success = false, ErrorMessage = "You've reached your request limit for this media type." };
+
+        MediaDetailDto? detail = null;
+        try { detail = await _metadata.GetDetailsAsync(mediaRef); }
+        catch { /* durable identity still makes a later metadata/enqueue retry possible */ }
+
+        var autoApprove = isAdmin || await _db.UserProfiles
+            .Where(p => p.UserId == userId).Select(p => p.AutoApprove).FirstOrDefaultAsync();
+        var entity = new MediaRequestEntity
+        {
+            MediaIdentityId = identity.Id,
+            MediaId = 0,
+            MediaType = mediaRef.MediaType,
+            RequestScopeKind = requestScope,
+            ExternalId = mediaRef.Id,
+            ExternalSource = mediaRef.Provider,
+            Title = string.IsNullOrWhiteSpace(detail?.Title)
+                ? !string.IsNullOrWhiteSpace(fallbackTitle) ? fallbackTitle.Trim() : mediaRef.Id
+                : detail.Title,
+            PosterUrl = detail?.PosterUrl ?? fallbackPoster,
+            Status = autoApprove ? RequestStatus.Approved : RequestStatus.Pending,
+            RequestedAt = DateTime.UtcNow,
+            ApprovedAt = autoApprove ? DateTime.UtcNow : null,
+            RequestedBy = username,
+            RequestedByUserId = userId,
+            RequestAllSeasons = false,
+            QualityProfileId = await _qualityProfiles.ResolveProfileIdAsync(
+                mediaRef.MediaType, 0, detail?.Genres, qualityProfileId, userId)
+        };
+        _db.MediaRequests.Add(entity);
+        var saved = await _db.SaveChangesAsync() > 0;
+        if (!saved) return new MediaRequestResult { Success = false, ErrorMessage = "The request could not be saved." };
+
+        var dto = ToDto(entity);
+        if (autoApprove)
+        {
+            await _notify.RequestApprovedAsync(dto);
+            if (_config.GetValue<bool>("Fulfillment:Enabled"))
+                await _fulfillment.EnqueueAsync(dto);
+        }
+        else
+        {
+            await _notify.RequestCreatedAsync(dto);
+        }
+        return new MediaRequestResult { Success = true, RequestId = entity.Id, NewStatus = entity.Status };
+    }
+
+    private async Task<MediaRequestResult> CreateProviderRequestForCurrentUserAsync(
+        MediaRef mediaRef,
+        RequestScopeKind requestScope,
+        int? qualityProfileId,
+        string? fallbackTitle = null,
+        string? fallbackPoster = null)
+    {
+        var (username, isAdmin) = await GetUserAsync();
+        if (string.IsNullOrWhiteSpace(username))
+            return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
+        var userId = await _db.Users.Where(u => u.Username == username)
+            .Select(u => (int?)u.Id).FirstOrDefaultAsync();
+        return userId is null
+            ? new MediaRequestResult { Success = false, ErrorMessage = "User not found" }
+            : await CreateProviderRequestCoreAsync(userId.Value, username, isAdmin, mediaRef,
+                requestScope, qualityProfileId, fallbackTitle, fallbackPoster);
     }
 
     private async Task<MediaRequestResult> CreateRequestCoreAsync(int userId, string username, bool isAdmin, int mediaId, MediaType mediaType, bool allSeasons = true, List<int>? seasons = null, List<(int season, int episode)>? episodes = null, bool monitored = false, int? qualityProfileId = null, bool asUpgrade = false)
@@ -1001,21 +1015,7 @@ public class MediaRequestService(
         var ok = await _db.SaveChangesAsync() > 0;
         if (ok)
         {
-            var dto = new MediaRequestDto
-            {
-                Id = req.Id,
-                MediaId = req.MediaId,
-                MediaType = req.MediaType,
-                Title = req.Title,
-                PosterUrl = req.PosterUrl,
-                Status = req.Status,
-                RequestedAt = req.RequestedAt,
-                ApprovedAt = req.ApprovedAt,
-                AvailableAt = req.AvailableAt,
-                RequestedByUserId = req.RequestedByUserId ?? 0,
-                RequestedByUsername = req.RequestedBy ?? string.Empty
-            };
-            await _notify.RequestAvailableAsync(dto);
+            await _notify.RequestAvailableAsync(ToDto(req));
         }
         return ok;
     }

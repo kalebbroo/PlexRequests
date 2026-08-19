@@ -42,6 +42,7 @@ public partial class ReleaseParser : IReleaseParser
         bool proper = Rx(name, @"\b(proper|repack)\b");
 
         var (audioCodec, audioChannels, objectAudio) = ParseAudio(name);
+        var (audioBitDepth, audioSampleRateKhz) = ParseMusicAudio(name);
         var languages = ParseLanguages(name);
         var edition = ParseEdition(name);
         var flags = ParseFlags(name);
@@ -66,6 +67,9 @@ public partial class ReleaseParser : IReleaseParser
             Hdr = hdr,
             HdrFormat = hdrFormat,
             AudioCodec = audioCodec,
+            AudioBitDepth = audioBitDepth,
+            AudioSampleRateKhz = audioSampleRateKhz,
+            LosslessAudio = audioCodec is "FLAC" or "ALAC" or "APE" or "WAV" or "PCM" or "LPCM",
             AudioChannels = audioChannels,
             ObjectBasedAudio = objectAudio,
             Languages = languages,
@@ -182,6 +186,17 @@ public partial class ReleaseParser : IReleaseParser
 
         bool objectBased = Rx(name, @"\b(atmos|dts[\s._-]*x)\b");
         return (codec, channels, objectBased);
+    }
+
+    internal static (int? BitDepth, double? SampleRateKhz) ParseMusicAudio(string name)
+    {
+        var bit = Regex.Match(name, @"\b(16|24|32)[\s._-]*bit\b", RxOpts);
+        var rate = Regex.Match(name, @"\b(44\.1|48|88\.2|96|176\.4|192)[\s._-]*(?:khz|k)\b", RxOpts);
+        return (
+            bit.Success ? int.Parse(bit.Groups[1].Value) : null,
+            rate.Success && double.TryParse(rate.Groups[1].Value,
+                System.Globalization.NumberStyles.AllowDecimalPoint,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsedRate) ? parsedRate : null);
     }
 
     internal static List<string> ParseLanguages(string name)

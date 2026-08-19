@@ -149,6 +149,30 @@ public sealed class MusicMetadataDto
     public List<MusicTrackMetadataDto> Tracks { get; set; } = new();
 }
 
+/// <summary>
+/// The small, immutable slice of music metadata needed to search and rank a request after it has crossed
+/// into the downloader process. Keeping this separate from the full provider response makes durable jobs
+/// stable even when MusicBrainz is unavailable or its response shape changes between retries.
+/// </summary>
+public sealed class MusicAcquisitionContextDto
+{
+    public MediaKind Kind { get; set; }
+    public string? Artist { get; set; }
+    public string? Album { get; set; }
+    public string? Track { get; set; }
+    public int TrackCount { get; set; }
+
+    public string BuildSearchText(string fallbackTitle) => Kind switch
+    {
+        MediaKind.Artist => Join(Artist ?? fallbackTitle, "discography"),
+        MediaKind.Track => Join(Artist, Track ?? fallbackTitle),
+        _ => Join(Artist, Album ?? fallbackTitle)
+    };
+
+    private static string Join(params string?[] values) => string.Join(' ', values
+        .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!.Trim()));
+}
+
 public sealed class MusicTrackMetadataDto
 {
     public string RecordingId { get; set; } = string.Empty;
@@ -505,6 +529,7 @@ public class FulfillmentJobDto
     public MediaType MediaType { get; set; }
     public MediaRef? Media { get; set; }
     public RequestScopeKind RequestScope { get; set; }
+    public MusicAcquisitionContextDto? Music { get; set; }
     public string Title { get; set; } = string.Empty;
     public int? Year { get; set; }
     public int? TmdbId { get; set; }
@@ -1205,6 +1230,9 @@ public class SearchTaskDto
     public int? MediaRequestId { get; set; }
     public MediaType MediaType { get; set; }
     public int MediaId { get; set; }
+    public MediaRef? Media { get; set; }
+    public RequestScopeKind RequestScope { get; set; }
+    public MusicAcquisitionContextDto? Music { get; set; }
     public string Title { get; set; } = string.Empty;
     public int? Year { get; set; }
     public string? ImdbId { get; set; }
@@ -1275,6 +1303,7 @@ public class IndexerCapabilitiesDto
     public int? ResponseMs { get; set; }
     public bool SupportsMovieSearch { get; set; }
     public bool SupportsTvSearch { get; set; }
+    public bool SupportsMusicSearch { get; set; }
     /// <summary>Search params the endpoint advertises (imdbid, season, ep, …) — informational.</summary>
     public List<string> SupportedParams { get; set; } = new();
     public List<IndexerCategoryDto> Categories { get; set; } = new();
