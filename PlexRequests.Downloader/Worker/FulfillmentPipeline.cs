@@ -431,7 +431,11 @@ public class FulfillmentPipeline(
         }
         else if (importedCount == items.Count)
         {
-            await SafeMarkFulfilled(job.MediaRequestId);
+            if (job.MediaType != MediaType.Music || await WaitForPlexVerificationAsync(job, ct))
+                await SafeMarkFulfilled(job.MediaRequestId);
+            else
+                logger.LogWarning("Job {JobId} \"{Title}\": files are imported but Plex has not indexed them yet; server reconciliation will keep checking and no Available notification was sent",
+                    job.Id, job.Title);
         }
         else if (importedCount > 0)
         {
@@ -445,6 +449,38 @@ public class FulfillmentPipeline(
             await SafeDefer(job.Id, reason);
         }
         await SafeRemoveState(job.Id);
+    }
+
+    private async Task<bool> WaitForPlexVerificationAsync(FulfillmentJobDto job, CancellationToken ct)
+    {
+        var timeout = TimeSpan.FromMinutes(Math.Clamp(worker.Value.PlexVerificationTimeoutMinutes, 1, 60));
+        var deadline = DateTime.UtcNow + timeout;
+        var nextRefresh = DateTime.MinValue;
+        string? lastDetail = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (DateTime.UtcNow >= nextRefresh)
+            {
+                await api.RefreshLibraryAsync(MediaType.Music, ct);
+                nextRefresh = DateTime.UtcNow.AddMinutes(1);
+            }
+            var result = await api.VerifyLibraryAsync(job, ct);
+            lastDetail = result.Detail;
+            if (result.Available)
+            {
+                logger.LogInformation("Job {JobId} \"{Title}\": Plex verified music import ({Detail}, ratingKey={RatingKey})",
+                    job.Id, job.Title, result.Detail, result.RatingKey);
+                return true;
+            }
+            await SafeReportProgress(job.Id, 100);
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero) break;
+            await Task.Delay(remaining < TimeSpan.FromSeconds(10) ? remaining : TimeSpan.FromSeconds(10), ct);
+        }
+        logger.LogWarning("Job {JobId} \"{Title}\": Plex verification timed out after {Minutes}m ({Detail})",
+            job.Id, job.Title, timeout.TotalMinutes, lastDetail ?? "not indexed");
+        return false;
     }
 
     // Physically remove the old files an upgrade superseded, EXCEPT any the new import overwrote in place

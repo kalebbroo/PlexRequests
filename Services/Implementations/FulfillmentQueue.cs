@@ -834,7 +834,17 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             Artist = artist,
             Album = kind == MediaKind.Album ? detail?.Title ?? title : null,
             Track = kind == MediaKind.Track ? detail?.Title ?? title : null,
-            TrackCount = detail?.Music?.TrackCount ?? 0
+            TrackCount = detail?.Music?.TrackCount ?? 0,
+            Tracks = detail?.Music?.Tracks.Select(t => new MusicTrackMetadataDto
+            {
+                RecordingId = t.RecordingId,
+                Title = t.Title,
+                ArtistCredit = t.ArtistCredit,
+                DiscNumber = t.DiscNumber,
+                TrackNumber = t.TrackNumber,
+                DurationMs = t.DurationMs
+            }).ToList() ?? new(),
+            ExpectedAlbums = detail?.Music?.AlbumTitles.ToList() ?? new()
         };
     }
 }

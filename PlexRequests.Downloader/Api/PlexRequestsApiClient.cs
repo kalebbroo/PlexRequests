@@ -458,4 +458,30 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
             return false;
         }
     }
+
+    public async Task<PlexVerificationResult> VerifyLibraryAsync(FulfillmentJobDto job, CancellationToken ct)
+    {
+        try
+        {
+            var request = new PlexVerificationRequest(
+                job.MediaType,
+                job.Media?.Kind ?? job.Music?.Kind ?? job.MediaType.DefaultKind(),
+                job.Media?.Provider,
+                job.Media?.Id,
+                job.Music?.Artist,
+                job.Music?.Album,
+                job.Music?.Track,
+                job.Music?.ExpectedAlbums);
+            var response = await _http.PostAsJsonAsync("/api/fulfillment/verify-library", request, ct);
+            if (!response.IsSuccessStatusCode)
+                return new(false, Detail: $"Verification API returned {(int)response.StatusCode}");
+            return await response.Content.ReadFromJsonAsync<PlexVerificationResult>(cancellationToken: ct)
+                   ?? new(false, Detail: "Verification API returned an empty response");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Library verification unavailable for job {JobId}", job.Id);
+            return new(false, Detail: "Verification API is temporarily unavailable");
+        }
+    }
 }

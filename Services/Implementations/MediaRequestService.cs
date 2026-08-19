@@ -20,7 +20,9 @@ public class MediaRequestService(
     ISeasonAvailabilityEvaluator seasonAvailability,
     IQualityProfileService qualityProfiles,
     IMediaIdentityService mediaIdentities,
-    IMediaModuleRegistry mediaModules) : IMediaRequestService
+    IMediaModuleRegistry mediaModules,
+    IMusicSettingsService musicSettings,
+    IPlexMusicService plexMusic) : IMediaRequestService
 {
     private readonly AppDbContext _db = db;
     private readonly AuthenticationStateProvider _auth = authStateProvider;
@@ -33,6 +35,8 @@ public class MediaRequestService(
     private readonly IQualityProfileService _qualityProfiles = qualityProfiles;
     private readonly IMediaIdentityService _mediaIdentities = mediaIdentities;
     private readonly IMediaModuleRegistry _mediaModules = mediaModules;
+    private readonly IMusicSettingsService _musicSettings = musicSettings;
+    private readonly IPlexMusicService _plexMusic = plexMusic;
 
     // Statuses that still legitimately block a duplicate request/re-request; Failed/Cancelled/Rejected
     // don't (a failed download should be retryable), and Available is checked separately/live so its
@@ -213,6 +217,8 @@ public class MediaRequestService(
         var module = _mediaModules.Get(mediaRef.MediaType);
         if (!module.Enabled)
             return new MediaRequestResult { Success = false, ErrorMessage = module.UnavailableReason ?? "This media type is disabled" };
+        if (mediaRef.MediaType == MediaType.Music && !(await _musicSettings.GetAsync()).RequestsEnabled)
+            return new MediaRequestResult { Success = false, ErrorMessage = "Music requests are disabled by the administrator" };
         var requestedScope = scope?.Kind ?? mediaRef.Kind.DefaultScope();
         if (!module.Kinds.Contains(mediaRef.Kind) || !module.RequestScopes.Contains(requestedScope))
             return new MediaRequestResult { Success = false, ErrorMessage = "That request scope is not supported for this media type" };
@@ -483,6 +489,8 @@ public class MediaRequestService(
         if (!module.Enabled)
             return new MediaRequestResult
                 { Success = false, ErrorMessage = module.UnavailableReason ?? "Music requests are disabled" };
+        if (!(await _musicSettings.GetAsync()).RequestsEnabled)
+            return new MediaRequestResult { Success = false, ErrorMessage = "Music requests are disabled by the administrator" };
         return await CreateProviderRequestForCurrentUserAsync(
             mediaRef, RequestScopeKind.Album, null, title, posterUrl);
     }
@@ -522,6 +530,8 @@ public class MediaRequestService(
         var module = _mediaModules.Get(mediaRef.MediaType);
         if (!module.Enabled)
             return new MediaRequestResult { Success = false, ErrorMessage = module.UnavailableReason ?? "This media type is disabled" };
+        if (mediaRef.MediaType == MediaType.Music && !(await _musicSettings.GetAsync()).RequestsEnabled)
+            return new MediaRequestResult { Success = false, ErrorMessage = "Music requests are disabled by the administrator" };
         var requestScope = scope?.Kind ?? mediaRef.Kind.DefaultScope();
         if (!module.Kinds.Contains(mediaRef.Kind) || !module.RequestScopes.Contains(requestScope))
             return new MediaRequestResult { Success = false, ErrorMessage = "That request scope is not supported for this media type" };
@@ -576,6 +586,18 @@ public class MediaRequestService(
         MediaDetailDto? detail = null;
         try { detail = await _metadata.GetDetailsAsync(mediaRef); }
         catch { /* durable identity still makes a later metadata/enqueue retry possible */ }
+
+        if (mediaRef.MediaType == MediaType.Music && detail is not null)
+        {
+            var present = await _plexMusic.VerifyAsync(new PlexVerificationRequest(
+                MediaType.Music, mediaRef.Kind, mediaRef.Provider, mediaRef.Id,
+                mediaRef.Kind == MediaKind.Artist ? detail.Title : detail.Music?.ArtistCredit,
+                mediaRef.Kind == MediaKind.Album ? detail.Title : null,
+                mediaRef.Kind == MediaKind.Track ? detail.Title : null,
+                detail.Music?.AlbumTitles));
+            if (present.Available)
+                return new MediaRequestResult { Success = false, ErrorMessage = "This music is already available on Plex." };
+        }
 
         var autoApprove = isAdmin || await _db.UserProfiles
             .Where(p => p.UserId == userId).Select(p => p.AutoApprove).FirstOrDefaultAsync();

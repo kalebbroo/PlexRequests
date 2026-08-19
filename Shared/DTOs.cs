@@ -147,6 +147,7 @@ public sealed class MusicMetadataDto
     public string? ReleaseId { get; set; }
     public int TrackCount { get; set; }
     public List<MusicTrackMetadataDto> Tracks { get; set; } = new();
+    public List<string> AlbumTitles { get; set; } = new();
 }
 
 /// <summary>
@@ -161,6 +162,12 @@ public sealed class MusicAcquisitionContextDto
     public string? Album { get; set; }
     public string? Track { get; set; }
     public int TrackCount { get; set; }
+    /// <summary>Immutable track order captured from metadata when the job is enqueued. The downloader uses
+    /// this to name an album deterministically without making provider calls from the VPN container.</summary>
+    public List<MusicTrackMetadataDto> Tracks { get; set; } = new();
+    /// <summary>Artist-catalog completion contract. Plex must contain every album MusicBrainz reported
+    /// when the durable job was created; merely finding a pre-existing partial artist is not success.</summary>
+    public List<string> ExpectedAlbums { get; set; } = new();
 
     public string BuildSearchText(string fallbackTitle) => Kind switch
     {
@@ -185,8 +192,13 @@ public sealed class MusicTrackMetadataDto
 
 public sealed class MusicSettingsDto
 {
-    /// <summary>Enables MusicBrainz browsing/search only. Requesting remains gated by module readiness.</summary>
+    /// <summary>Show MusicBrainz results and discovery rows.</summary>
     public bool CatalogEnabled { get; set; }
+    /// <summary>Allow music requests to enter automatic fulfillment. Kept separate from catalog visibility
+    /// so an admin can browse/test metadata before a writable music library has been configured.</summary>
+    public bool RequestsEnabled { get; set; }
+    /// <summary>Concrete configuration gaps that currently prevent safe automatic fulfillment.</summary>
+    public List<string> ReadinessIssues { get; set; } = new();
     public DateTime? UpdatedAt { get; set; }
 }
 
@@ -520,6 +532,18 @@ public class DownloadJobView
     public List<DownloadTorrentTelemetry> Torrents { get; set; } = new();
 }
 public record RefreshLibraryRequest(MediaType MediaType);
+
+public sealed record PlexVerificationRequest(
+    MediaType MediaType,
+    MediaKind Kind,
+    string? ExternalSource,
+    string? ExternalId,
+    string? Artist,
+    string? Album,
+    string? Track,
+    List<string>? ExpectedAlbums = null);
+
+public sealed record PlexVerificationResult(bool Available, string? RatingKey = null, string? Detail = null);
 
 public class FulfillmentJobDto
 {
@@ -978,6 +1002,7 @@ public class LibraryOrganizationPreferencesDto
 {
     public string MoviePath { get; set; } = string.Empty;
     public string TvPath { get; set; } = string.Empty;
+    public string MusicPath { get; set; } = string.Empty;
 
     /// <summary>Token template for a movie's destination path, e.g. "{Title} ({Year})/{Title} ({Year}){Ext}".</summary>
     public string MovieTemplate { get; set; } = "{Title} ({Year})/{Title} ({Year}){Ext}";
@@ -985,6 +1010,9 @@ public class LibraryOrganizationPreferencesDto
     public string TvEpisodeTemplate { get; set; } = "{ShowTitle} ({Year})/Season {Season:00}/{ShowTitle} - s{Season:00}e{Episode:00} - {EpisodeTitle}{Ext}";
     /// <summary>Folder template used for a season pack when SplitSeasonPacks is off.</summary>
     public string SeasonPackFolderTemplate { get; set; } = "{ShowTitle} ({Year})/Season {Season:00}";
+    /// <summary>Plex-friendly album layout. Artist-catalog requests retain their album subfolders below
+    /// the artist root; track requests use the same tokens with the available context.</summary>
+    public string MusicTrackTemplate { get; set; } = "{Artist}/{Album} ({Year})/{Disc:00}-{Track:00} - {TrackTitle}{Ext}";
 
     /// <summary>Ordered routing rules (e.g. send Anime or a quality tier to a separate library root).
     /// First matching rule wins; no match falls back to MoviePath/TvPath + the default template.</summary>
@@ -996,8 +1024,10 @@ public class LibraryOrganizationPreferencesDto
     public bool KeepSubtitles { get; set; } = true;
     public string SubtitleExtensionsCsv { get; set; } = ".srt,.ass,.ssa,.sub,.vtt";
     public string VideoExtensionsCsv { get; set; } = ".mkv,.mp4,.avi,.m4v,.ts,.mov,.wmv,.m2ts";
+    public string AudioExtensionsCsv { get; set; } = ".flac,.mp3,.m4a,.aac,.ogg,.opus,.wav,.wma,.alac";
     /// <summary>Files smaller than this are treated as samples/junk rather than real episodes/movies.</summary>
     public double MinVideoFileSizeMb { get; set; } = 50;
+    public double MinAudioFileSizeMb { get; set; } = 1;
     /// <summary>Delete the source after import instead of leaving it for the torrent client to keep seeding.
     /// Forced off when TransferMode is Hardlink (the "source" and the library copy are the same inode).</summary>
     public bool DeleteSourceAfterImport { get; set; } = false;
@@ -1028,7 +1058,7 @@ public class ImportedFileDto
     public string? TorrentId { get; set; }
     public string SourcePath { get; set; } = string.Empty;
     public string DestinationPath { get; set; } = string.Empty;
-    /// <summary>"video" | "subtitle".</summary>
+    /// <summary>"video" | "audio" | "subtitle".</summary>
     public string FileType { get; set; } = "video";
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }

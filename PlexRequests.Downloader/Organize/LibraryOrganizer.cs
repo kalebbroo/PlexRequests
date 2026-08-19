@@ -4,6 +4,7 @@ using PlexRequests.Downloader.Worker;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
+using System.Text.RegularExpressions;
 
 namespace PlexRequests.Downloader.Organize;
 
@@ -54,17 +55,24 @@ public class LibraryOrganizer(
                 files = Directory.EnumerateFiles(stagingRoot, "*", SearchOption.AllDirectories).ToList();
             }
 
-            var videoFiles = files.Where(IsVideo(prefs)).Where(f => PassesMinSize(f, prefs)).ToList();
+            var mediaFiles = job.MediaType == MediaType.Music
+                ? files.Where(IsAudio(prefs)).Where(f => PassesMinAudioSize(f, prefs)).ToList()
+                : files.Where(IsVideo(prefs)).Where(f => PassesMinVideoSize(f, prefs)).ToList();
 
-            var records = job.MediaType == MediaType.Movie
-                ? OrganizeMovie(job, videoFiles, files, prefs)
-                : OrganizeTv(job, torrent, videoFiles, files, prefs, await ExpectedEpisodeCountAsync(job, torrent, ct));
+            var contentRoot = stagingRoot ?? sourcePath;
+            var records = job.MediaType switch
+            {
+                MediaType.Movie => OrganizeMovie(job, mediaFiles, files, prefs),
+                MediaType.Music => OrganizeMusic(job, contentRoot, mediaFiles, files, prefs),
+                _ => OrganizeTv(job, torrent, mediaFiles, files, prefs, await ExpectedEpisodeCountAsync(job, torrent, ct))
+            };
 
-            if (records.Count(r => r.FileType == "video") == 0)
+            var primaryType = job.MediaType == MediaType.Music ? "audio" : "video";
+            if (records.Count(r => r.FileType == primaryType) == 0)
             {
                 var reason = archiveEntryPoints.Count > 0 && !prefs.ExtractArchives
-                    ? $"No video files found for \"{job.Title}\" — source appears to be an archive but archive extraction is disabled"
-                    : $"No video files found for \"{job.Title}\" after import (checked {files.Count} file(s))";
+                    ? $"No {primaryType} files found for \"{job.Title}\" — source appears to be an archive but archive extraction is disabled"
+                    : $"No {primaryType} files found for \"{job.Title}\" after import (checked {files.Count} file(s))";
                 return ImportResult.Fail(reason);
             }
 
@@ -104,6 +112,89 @@ public class LibraryOrganizer(
         var dest = naming.BuildMoviePath(prefs, job, Path.GetExtension(best));
         TransferOne(best, dest, null, null, "video", records, prefs);
         PairSubtitle(best, dest, allFiles, prefs, null, null, records);
+        return records;
+    }
+
+    private List<ImportedFileRecord> OrganizeMusic(FulfillmentJobDto job, string sourcePath,
+        List<string> audioFiles, List<string> allFiles, EffectiveLibraryOrganization prefs)
+    {
+        var records = new List<ImportedFileRecord>();
+        if (string.IsNullOrWhiteSpace(prefs.MusicPath))
+            throw new InvalidOperationException("Music library path is not configured");
+        if (job.Music is null)
+            throw new InvalidOperationException("Music metadata context is missing; the job will retry after metadata refresh");
+
+        var music = job.Music;
+        var artist = CleanLabel(music.Artist, "Unknown Artist");
+
+        if (music.Kind == MediaKind.Artist)
+        {
+            // A discography already contains album folders. Retain that hierarchy beneath a single,
+            // sanitized artist root instead of flattening hundreds of tracks into one directory.
+            var root = Directory.Exists(sourcePath) ? sourcePath : Path.GetDirectoryName(sourcePath)!;
+            var artistRoot = Path.Combine(prefs.MusicPath, NamingTemplateEngine.SanitizeComponent(artist));
+            foreach (var file in audioFiles.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            {
+                var relative = Path.GetRelativePath(root, file);
+                if (relative.StartsWith("..", StringComparison.Ordinal)) relative = Path.GetFileName(file);
+                var parts = relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                    StringSplitOptions.RemoveEmptyEntries).Select(NamingTemplateEngine.SanitizeComponent).ToArray();
+                var safeRelative = parts.Length > 1
+                    ? Path.Combine(parts)
+                    : Path.Combine("Unknown Album", parts.FirstOrDefault() ?? Path.GetFileName(file));
+                TransferOne(file, Path.Combine(artistRoot, safeRelative), null, null, "audio", records, prefs);
+            }
+            return records;
+        }
+
+        if (music.Kind == MediaKind.Track)
+        {
+            var wanted = CleanLabel(music.Track ?? job.Title, job.Title);
+            var best = audioFiles.FirstOrDefault(f => ContainsNormalized(Path.GetFileNameWithoutExtension(f), wanted))
+                       ?? audioFiles.OrderByDescending(SafeLength).FirstOrDefault();
+            if (best is null) return records;
+            var album = CleanLabel(music.Album, "Singles");
+            var dest = naming.BuildMusicTrackPath(prefs, job, artist, album, 1, 1, wanted, Path.GetExtension(best));
+            TransferOne(best, dest, null, null, "audio", records, prefs);
+            return records;
+        }
+
+        var albumTitle = CleanLabel(music.Album ?? job.Title, job.Title);
+        var expected = music.Tracks.OrderBy(t => t.DiscNumber).ThenBy(t => t.TrackNumber).ToList();
+        var expectedCount = Math.Max(music.TrackCount, expected.Count);
+        if (expectedCount > 0 && audioFiles.Count < expectedCount)
+            throw new InvalidOperationException($"Album payload is incomplete: metadata expects {expectedCount} tracks but the release contains {audioFiles.Count} audio files");
+
+        var unused = new HashSet<MusicTrackMetadataDto>(expected);
+        var nextExtra = expected.Select(t => t.TrackNumber).DefaultIfEmpty(0).Max() + 1;
+        foreach (var file in audioFiles.OrderBy(NaturalTrackKey, StringComparer.OrdinalIgnoreCase))
+        {
+            var stem = Path.GetFileNameWithoutExtension(file);
+            var parsed = ParseTrackNumbers(file);
+            var track = unused.FirstOrDefault(t => ContainsNormalized(stem, t.Title))
+                        ?? unused.FirstOrDefault(t => t.TrackNumber == parsed.Track &&
+                            (parsed.Disc is null || Math.Max(1, t.DiscNumber) == parsed.Disc));
+            track ??= unused.OrderBy(t => t.DiscNumber).ThenBy(t => t.TrackNumber).FirstOrDefault();
+
+            var disc = Math.Max(1, track?.DiscNumber ?? parsed.Disc ?? 1);
+            var number = Math.Max(1, track?.TrackNumber ?? parsed.Track ?? nextExtra++);
+            var title = CleanLabel(track?.Title, StripTrackPrefix(stem));
+            var trackArtist = CleanLabel(track?.ArtistCredit, artist);
+            var dest = naming.BuildMusicTrackPath(prefs, job, trackArtist, albumTitle, disc, number, title, Path.GetExtension(file));
+            TransferOne(file, dest, null, null, "audio", records, prefs);
+            if (track is not null) unused.Remove(track);
+        }
+
+        // Plex recognizes cover.jpg/folder.jpg beside the tracks. Keep one small artwork file without
+        // copying arbitrary images bundled in a torrent (booklets/scans can be very large).
+        var artwork = allFiles.FirstOrDefault(IsPreferredArtwork);
+        if (artwork is not null && records.FirstOrDefault(r => r.FileType == "audio") is { } first)
+        {
+            var ext = Path.GetExtension(artwork).ToLowerInvariant();
+            var dest = Path.Combine(Path.GetDirectoryName(first.DestinationPath)!, $"cover{ext}");
+            try { TransferOne(artwork, dest, null, null, "artwork", records, prefs); }
+            catch (Exception ex) { logger.LogWarning(ex, "Optional album artwork import skipped for {Title}", job.Title); }
+        }
         return records;
     }
 
@@ -225,8 +316,55 @@ public class LibraryOrganizer(
         prefs.VideoExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase) &&
         !Path.GetFileName(f).Contains("sample", StringComparison.OrdinalIgnoreCase);
 
-    private static bool PassesMinSize(string file, EffectiveLibraryOrganization prefs) =>
+    private static Func<string, bool> IsAudio(EffectiveLibraryOrganization prefs) => f =>
+        prefs.AudioExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase) &&
+        !Path.GetFileName(f).Contains("sample", StringComparison.OrdinalIgnoreCase);
+
+    private static bool PassesMinVideoSize(string file, EffectiveLibraryOrganization prefs) =>
         SafeLength(file) >= prefs.MinVideoFileSizeMb * 1024 * 1024;
+
+    private static bool PassesMinAudioSize(string file, EffectiveLibraryOrganization prefs) =>
+        SafeLength(file) >= prefs.MinAudioFileSizeMb * 1024 * 1024;
+
+    private static string CleanLabel(string? value, string fallback) =>
+        string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+
+    private static bool ContainsNormalized(string value, string wanted)
+    {
+        static string N(string s) => new(s.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+        var needle = N(wanted);
+        return needle.Length > 1 && N(value).Contains(needle, StringComparison.Ordinal);
+    }
+
+    private static (int? Disc, int? Track) ParseTrackNumbers(string file)
+    {
+        var parent = Path.GetFileName(Path.GetDirectoryName(file));
+        var discMatch = Regex.Match(parent ?? string.Empty, @"(?:cd|disc)\s*(\d+)", RegexOptions.IgnoreCase);
+        var match = Regex.Match(Path.GetFileNameWithoutExtension(file), @"^\s*(?:(\d{1,2})[-_.])?(\d{1,3})(?:\D|$)");
+        int? disc = discMatch.Success ? int.Parse(discMatch.Groups[1].Value)
+            : match.Success && match.Groups[1].Success ? int.Parse(match.Groups[1].Value) : null;
+        int? track = match.Success ? int.Parse(match.Groups[2].Value) : null;
+        return (disc, track);
+    }
+
+    private static string NaturalTrackKey(string file)
+    {
+        var parsed = ParseTrackNumbers(file);
+        return $"{parsed.Disc ?? 1:D3}-{parsed.Track ?? 999:D4}-{file}";
+    }
+
+    private static string StripTrackPrefix(string stem) =>
+        Regex.Replace(stem, @"^\s*(?:\d{1,2}[-_.])?\d{1,3}\s*[-_. ]+", string.Empty).Trim();
+
+    private static bool IsPreferredArtwork(string file)
+    {
+        var ext = Path.GetExtension(file);
+        if (ext is not (".jpg" or ".jpeg" or ".png")) return false;
+        var name = Path.GetFileNameWithoutExtension(file);
+        return name.Equals("cover", StringComparison.OrdinalIgnoreCase)
+               || name.Equals("folder", StringComparison.OrdinalIgnoreCase)
+               || name.Equals("front", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static long SafeLength(string file)
     {

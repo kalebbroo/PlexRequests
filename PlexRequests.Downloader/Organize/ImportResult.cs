@@ -5,9 +5,9 @@ namespace PlexRequests.Downloader.Organize;
 public record ImportedFileRecord(string SourcePath, string DestinationPath, string FileType, int? Season, int? Episode, long SizeBytes);
 
 /// <summary>Outcome of importing one torrent's payload into the library.</summary>
-public record ImportResult(bool Success, int VideoFileCount, string? FailReason, IReadOnlyList<ImportedFileRecord> Files)
+public record ImportResult(bool Success, int MediaFileCount, string? FailReason, IReadOnlyList<ImportedFileRecord> Files)
 {
     public static ImportResult Fail(string reason) => new(false, 0, reason, Array.Empty<ImportedFileRecord>());
     public static ImportResult Ok(IReadOnlyList<ImportedFileRecord> files) =>
-        new(true, files.Count(f => f.FileType == "video"), null, files);
+        new(true, files.Count(f => f.FileType is "video" or "audio"), null, files);
 }

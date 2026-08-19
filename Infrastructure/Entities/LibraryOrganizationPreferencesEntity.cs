@@ -18,10 +18,12 @@ public class LibraryOrganizationPreferencesEntity
 
     [MaxLength(1024)] public string MoviePath { get; set; } = string.Empty;
     [MaxLength(1024)] public string TvPath { get; set; } = string.Empty;
+    [MaxLength(1024)] public string MusicPath { get; set; } = string.Empty;
 
     [MaxLength(512)] public string MovieTemplate { get; set; } = "{Title} ({Year})/{Title} ({Year}){Ext}";
     [MaxLength(512)] public string TvEpisodeTemplate { get; set; } = "{ShowTitle} ({Year})/Season {Season:00}/{ShowTitle} - s{Season:00}e{Episode:00} - {EpisodeTitle}{Ext}";
     [MaxLength(512)] public string SeasonPackFolderTemplate { get; set; } = "{ShowTitle} ({Year})/Season {Season:00}";
+    [MaxLength(512)] public string MusicTrackTemplate { get; set; } = "{Artist}/{Album} ({Year})/{Disc:00}-{Track:00} - {TrackTitle}{Ext}";
 
     /// <summary>Serialized List&lt;LibraryRootRuleDto&gt;. Null/empty = no routing rules.</summary>
     public string? LibraryRootRulesJson { get; set; }
@@ -32,7 +34,9 @@ public class LibraryOrganizationPreferencesEntity
     public bool KeepSubtitles { get; set; } = true;
     [MaxLength(256)] public string SubtitleExtensionsCsv { get; set; } = ".srt,.ass,.ssa,.sub,.vtt";
     [MaxLength(256)] public string VideoExtensionsCsv { get; set; } = ".mkv,.mp4,.avi,.m4v,.ts,.mov,.wmv,.m2ts";
+    [MaxLength(256)] public string AudioExtensionsCsv { get; set; } = ".flac,.mp3,.m4a,.aac,.ogg,.opus,.wav,.wma,.alac";
     public double MinVideoFileSizeMb { get; set; } = 50;
+    public double MinAudioFileSizeMb { get; set; } = 1;
     public bool DeleteSourceAfterImport { get; set; } = false;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

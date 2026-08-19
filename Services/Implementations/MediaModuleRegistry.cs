@@ -72,8 +72,8 @@ public sealed class AnimeMediaModule : IMediaModule
 }
 
 /// <summary>
-/// Registered now so every core consumer can reason about music, but intentionally disabled until the later
-/// PRs provide metadata, acquisition, import and Plex verification end to end.
+/// The module describes implemented code capabilities. The admin's independent RequestsEnabled setting is
+/// the runtime kill switch, so catalog visibility never has to masquerade as implementation readiness.
 /// </summary>
 public sealed class MusicMediaModule : IMediaModule
 {
@@ -82,8 +82,10 @@ public sealed class MusicMediaModule : IMediaModule
         Key = "music", DisplayName = "Music", MediaType = MediaType.Music,
         Kinds = [MediaKind.Album, MediaKind.Artist, MediaKind.Track],
         RequestScopes = [RequestScopeKind.Album, RequestScopeKind.ArtistCatalog, RequestScopeKind.Track],
-        Enabled = false,
-        Capabilities = MediaModuleCapabilities.None,
-        UnavailableReason = "Music fulfillment is still being installed."
+        Enabled = true,
+        Capabilities = MediaModuleCapabilities.Search | MediaModuleCapabilities.Discovery
+                       | MediaModuleCapabilities.Request | MediaModuleCapabilities.AutomaticFulfillment
+                       | MediaModuleCapabilities.InteractiveSearch | MediaModuleCapabilities.LibraryImport
+                       | MediaModuleCapabilities.PlexVerification
     };
 }
