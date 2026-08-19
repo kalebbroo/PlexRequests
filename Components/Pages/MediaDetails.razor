@@ -1,12 +1,15 @@
 @page "/media/{type}/{id:int}"
+@page "/media/{type}/{kind}/{provider}/{externalId}"
 @attribute [Authorize]
 @inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject PlexRequestsHosted.Services.Implementations.IMediaIssueService IssueService
 @inject PlexRequestsHosted.Services.Implementations.IQualityProfileService QualityProfiles
+@inject PlexRequestsHosted.Services.Abstractions.IMediaModuleRegistry MediaModules
 @inject NavigationManager Navigation
 @inject IJSRuntime JSRuntime
+@using PlexRequestsHosted.Shared.Media
 
 <PageTitle>@(_media?.Title ?? "Loading...") - Plex Requests</PageTitle>
 
@@ -57,7 +60,14 @@ else
                         <div class="poster-section">
                             @if (!string.IsNullOrEmpty(_media.PosterUrl))
                             {
-                                <img src="@_media.PosterUrl" alt="@_media.Title" class="poster" fetchpriority="high" />
+                                <img src="@_media.PosterUrl" alt="@_media.Title" class="poster" fetchpriority="high"
+                                     onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
+                            }
+                            else
+                            {
+                                <div class="poster poster-placeholder" aria-label="No artwork available">
+                                    <MudIcon Icon="@(_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music ? Icons.Material.Filled.LibraryMusic : Icons.Material.Filled.ImageNotSupported)" />
+                                </div>
                             }
                             <div class="poster-actions mobile-only">
                                 @if (_media.IsAvailable)
@@ -67,11 +77,18 @@ else
                                         <span>Play</span>
                                     </button>
                                 }
-                                else if (_media.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.None)
+                                else if (CanRequest && _media.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.None)
                                 {
                                     <button class="action-btn primary full" @onclick="RequestMedia">
                                         <MudIcon Icon="@Icons.Material.Filled.Add" />
                                         <span>Request</span>
+                                    </button>
+                                }
+                                else if (!CanRequest)
+                                {
+                                    <button class="action-btn secondary full" disabled>
+                                        <MudIcon Icon="@Icons.Material.Filled.Visibility" />
+                                        <span>Browse only</span>
                                     </button>
                                 }
                                 else
@@ -86,6 +103,10 @@ else
                         
                         <div class="info-section">
                             <h1 class="title">@_media.Title</h1>
+                            @if (!string.IsNullOrWhiteSpace(_media.Subtitle))
+                            {
+                                <p class="tagline">@_media.Subtitle</p>
+                            }
                             
                             @if (!string.IsNullOrEmpty(_media.Tagline))
                             {
@@ -136,11 +157,18 @@ else
                                         <span>Play</span>
                                     </button>
                                 }
-                                else if (_media.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.None)
+                                else if (CanRequest && _media.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.None)
                                 {
                                     <button class="action-btn primary large" @onclick="RequestMedia">
                                         <MudIcon Icon="@Icons.Material.Filled.Add" />
                                         <span>Request</span>
+                                    </button>
+                                }
+                                else if (!CanRequest)
+                                {
+                                    <button class="action-btn secondary large" disabled>
+                                        <MudIcon Icon="@Icons.Material.Filled.Visibility" />
+                                        <span>Browse only</span>
                                     </button>
                                 }
                                 else
@@ -151,10 +179,13 @@ else
                                     </button>
                                 }
                                 
-                                <button class="action-btn secondary large" @onclick="ToggleWatchlist">
-                                    <MudIcon Icon="@(_inWatchlist ? Icons.Material.Filled.Check : Icons.Material.Filled.Add)" />
-                                    <span>@(_inWatchlist ? "In My List" : "My List")</span>
-                                </button>
+                                @if (_media.MediaType != PlexRequestsHosted.Shared.Enums.MediaType.Music)
+                                {
+                                    <button class="action-btn secondary large" @onclick="ToggleWatchlist">
+                                        <MudIcon Icon="@(_inWatchlist ? Icons.Material.Filled.Check : Icons.Material.Filled.Add)" />
+                                        <span>@(_inWatchlist ? "In My List" : "My List")</span>
+                                    </button>
+                                }
                                 
                                 @if (!string.IsNullOrEmpty(_media.TrailerUrl))
                                 {
@@ -164,7 +195,7 @@ else
                                     </button>
                                 }
 
-                                @if (_media.IsAvailable)
+                                @if (_media.IsAvailable && _media.MediaType != PlexRequestsHosted.Shared.Enums.MediaType.Music)
                                 {
                                     <button class="action-btn secondary" @onclick="() => _reportOpen = true">
                                         <MudIcon Icon="@Icons.Material.Filled.ReportProblem" />
@@ -189,7 +220,14 @@ else
                                     }
                                     @foreach (String genre in _media.Genres)
                                     {
-                                        <a href="/browse/@genreTypeLabel?genre=@Uri.EscapeDataString(genre)" class="genre-link">@genre</a>
+                                        @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music)
+                                        {
+                                            <span class="genre-link">@genre</span>
+                                        }
+                                        else
+                                        {
+                                            <a href="/browse/@genreTypeLabel?genre=@Uri.EscapeDataString(genre)" class="genre-link">@genre</a>
+                                        }
                                     }
                                 </div>
                             }
@@ -203,6 +241,37 @@ else
         <section class="details-tabs">
             <MudContainer MaxWidth="MaxWidth.Large">
                 <MudTabs Elevation="0" Rounded="false" Centered="false" Color="Color.Default" SliderColor="Color.Primary" Class="custom-tabs">
+                    @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music && _media.Music?.Tracks.Count > 0)
+                    {
+                        <MudTabPanel Text="Tracks">
+                            <div class="episodes-section">
+                                @foreach (var disc in _media.Music.Tracks.GroupBy(t => t.DiscNumber).OrderBy(g => g.Key))
+                                {
+                                    @if (_media.Music.Tracks.Select(t => t.DiscNumber).Distinct().Count() > 1)
+                                    {
+                                        <MudText Typo="Typo.subtitle1" Class="mb-2 mt-3">Disc @disc.Key</MudText>
+                                    }
+                                    @foreach (var track in disc.OrderBy(t => t.TrackNumber))
+                                    {
+                                        <div class="episode-row">
+                                            <span style="width:2rem;color:var(--text-secondary);">@track.TrackNumber</span>
+                                            <div style="min-width:0;flex:1;">
+                                                <MudText Typo="Typo.body1">@track.Title</MudText>
+                                                @if (!string.IsNullOrWhiteSpace(track.ArtistCredit) && track.ArtistCredit != _media.Music.ArtistCredit)
+                                                {
+                                                    <MudText Typo="Typo.caption" Color="Color.Tertiary">@track.ArtistCredit</MudText>
+                                                }
+                                            </div>
+                                            @if (track.DurationMs is > 0)
+                                            {
+                                                <span class="text-secondary">@FormatTrackDuration(track.DurationMs.Value)</span>
+                                            }
+                                        </div>
+                                    }
+                                }
+                            </div>
+                        </MudTabPanel>
+                    }
                     @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
                     {
                         <MudTabPanel Text="Seasons">
@@ -431,6 +500,9 @@ else
 @code {
     [Parameter] public String? Type { get; set; }
     [Parameter] public Int32 Id { get; set; }
+    [Parameter] public String? Kind { get; set; }
+    [Parameter] public String? Provider { get; set; }
+    [Parameter] public String? ExternalId { get; set; }
 
     private PlexRequestsHosted.Shared.DTOs.MediaDetailDto? _media;
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _similarMedia;
@@ -439,14 +511,16 @@ else
     private Boolean _inWatchlist = false;
 
     private bool _rendered = false;
-    private int _loadedId = -1;
-    private string? _loadedType;
+    private string? _loadedKey;
+    private int _loadVersion;
+    private bool CanRequest => _media is not null && MediaModules.IsEnabled(_media.MediaType)
+        && MediaModules.Get(_media.MediaType).Capabilities.HasFlag(MediaModuleCapabilities.Request);
 
     // Load after first render (shell/skeleton paints instantly), and again when the route id/type
     // changes on the same component instance (e.g. clicking a "Similar" title).
     protected override async Task OnParametersSetAsync()
     {
-        if (_rendered && (Id != _loadedId || Type != _loadedType))
+        if (_rendered && RouteKey != _loadedKey)
             await LoadAsync();
     }
 
@@ -459,8 +533,10 @@ else
 
     private async Task LoadAsync()
     {
-        _loadedId = Id;
-        _loadedType = Type;
+        var routeKey = RouteKey;
+        var mediaRef = ResolveRouteMediaRef();
+        var version = Interlocked.Increment(ref _loadVersion);
+        _loadedKey = routeKey;
         _loading = true;
         _media = null;
         _similarMedia = null;
@@ -470,51 +546,75 @@ else
         _selectedEpisodes.Clear();
         _expanded.Clear();
         _episodes.Clear();
+        _selectedProfileId = null;
         await InvokeAsync(StateHasChanged);
 
         try
         {
-            var mediaType = ParseType(Type);
-            _media = await PlexApiService.GetMediaDetailsAsync(Id, mediaType);
-            if (_media is null) return;
+            var media = await PlexApiService.GetMediaDetailsAsync(mediaRef);
+            if (version != _loadVersion) return;
+            _media = media;
+            if (media is null) return;
 
             // Phase 1: show the title/poster/overview immediately.
-            if (_media.Seasons?.Any() == true) _selectedSeason = _media.Seasons.First();
+            if (media.Seasons?.Any() == true) _selectedSeason = media.Seasons.First();
             _loading = false;
             await InvokeAsync(StateHasChanged);
 
             // Phase 2: enrich (badges, watchlist, seasons, recommendations). The recommendations fetch
             // is a TMDB call (own HttpClient) so it can overlap the DB work; the DB calls themselves
             // run sequentially because scoped services share the circuit's single AppDbContext.
-            var similarTask = PlexApiService.GetSimilarAsync(_media.Id, mediaType, 12);
+            var similarTask = PlexApiService.GetSimilarAsync(mediaRef, 12);
 
-            await PlexApiService.AnnotateAvailabilityAsync(new List<PlexRequestsHosted.Shared.DTOs.MediaCardDto> { _media });
-            var statuses = await MediaRequestService.GetMyRequestStatusesAsync(new List<(int, PlexRequestsHosted.Shared.Enums.MediaType)> { (_media.Id, _media.MediaType) });
-            if (statuses.TryGetValue($"{_media.MediaType}:{_media.Id}", out var st)) _media.RequestStatus = st;
-            _inWatchlist = await MediaRequestService.IsInWatchlistAsync(_media.Id, _media.MediaType);
-            if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
+            await PlexApiService.AnnotateAvailabilityAsync(new List<PlexRequestsHosted.Shared.DTOs.MediaCardDto> { media });
+            if (version != _loadVersion) return;
+            if (mediaRef.TryGetTmdbId(out _))
             {
-                _availableSeasons = (await PlexApiService.GetAvailableSeasonsAsync(_media.Id)).ToHashSet();
-                _seasonQuality = await PlexApiService.GetSeasonQualitySummariesAsync(_media.Id);
+                var statuses = await MediaRequestService.GetMyRequestStatusesAsync(new List<(int, PlexRequestsHosted.Shared.Enums.MediaType)> { (media.Id, media.MediaType) });
+                if (version != _loadVersion) return;
+                if (statuses.TryGetValue($"{media.MediaType}:{media.Id}", out var st)) media.RequestStatus = st;
+                var inWatchlist = await MediaRequestService.IsInWatchlistAsync(media.Id, media.MediaType);
+                if (version != _loadVersion) return;
+                _inWatchlist = inWatchlist;
+            }
+            if (media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
+            {
+                var availableSeasons = (await PlexApiService.GetAvailableSeasonsAsync(media.Id)).ToHashSet();
+                if (version != _loadVersion) return;
+                var seasonQuality = await PlexApiService.GetSeasonQualitySummariesAsync(media.Id);
+                if (version != _loadVersion) return;
+                _availableSeasons = availableSeasons;
+                _seasonQuality = seasonQuality;
                 // Series-level header badge: dominant quality across all seasons on Plex.
-                if (_seasonQuality.Count > 0 && _media.MediaQuality is null)
+                if (seasonQuality.Count > 0 && media.MediaQuality is null)
                 {
-                    var best = _seasonQuality.Values
+                    var best = seasonQuality.Values
                         .OrderByDescending(q => q.Bitrate ?? 0)
-                        .FirstOrDefault(q => !string.IsNullOrEmpty(q.Resolution)) ?? _seasonQuality.Values.First();
-                    _media.MediaQuality = best;
-                    _media.Quality ??= best.Resolution;
+                        .FirstOrDefault(q => !string.IsNullOrEmpty(q.Resolution)) ?? seasonQuality.Values.First();
+                    media.MediaQuality = best;
+                    media.Quality ??= best.Resolution;
                 }
             }
-            await LoadProfileOptionsAsync();
+            if (CanRequest)
+            {
+                var profileOptions = await GetProfileOptionsAsync(media.MediaType);
+                if (version != _loadVersion) return;
+                _profileOptions = profileOptions;
+                _selectedProfileId ??= profileOptions.FirstOrDefault(p => p.IsDefault)?.Id;
+            }
             await InvokeAsync(StateHasChanged);
 
-            _similarMedia = (await similarTask)?.Where(m => m.Id != _media.Id).Take(12).ToList();
-            if (_similarMedia?.Any() == true)
+            var similarMedia = (await similarTask)?.Where(m => m.ResolveMediaRef().StableKey != mediaRef.StableKey).Take(12).ToList();
+            if (version != _loadVersion) return;
+            _similarMedia = similarMedia;
+            if (similarMedia?.Any() == true)
             {
-                await PlexApiService.AnnotateAvailabilityAsync(_similarMedia);
-                var map = await MediaRequestService.GetMyRequestStatusesAsync(_similarMedia.Select(m => (m.Id, m.MediaType)).ToList());
-                foreach (var m in _similarMedia)
+                await PlexApiService.AnnotateAvailabilityAsync(similarMedia);
+                if (version != _loadVersion) return;
+                var map = await MediaRequestService.GetMyRequestStatusesAsync(similarMedia
+                    .Where(m => m.ResolveMediaRef().TryGetTmdbId(out _)).Select(m => (m.Id, m.MediaType)).ToList());
+                if (version != _loadVersion) return;
+                foreach (var m in similarMedia)
                     if (map.TryGetValue($"{m.MediaType}:{m.Id}", out var st2)) m.RequestStatus = st2;
                 await InvokeAsync(StateHasChanged);
             }
@@ -524,26 +624,47 @@ else
             // A failure here (e.g. TMDB unreachable) must not escape into OnAfterRenderAsync,
             // which would be an unhandled circuit exception and kill the whole page. Fall back
             // to the "Content Not Found" state.
-            _media = null;
-            PlexRequestsHosted.Utils.Logs.Warning($"MediaDetails load failed for {Type}/{Id}: {ex.Message}");
+            if (version == _loadVersion)
+            {
+                _media = null;
+                PlexRequestsHosted.Utils.Logs.Warning($"MediaDetails load failed for {routeKey}: {ex.Message}");
+            }
         }
         finally
         {
-            _loading = false;
-            await InvokeAsync(StateHasChanged);
+            if (version == _loadVersion)
+            {
+                _loading = false;
+                await InvokeAsync(StateHasChanged);
+            }
         }
     }
 
-    private PlexRequestsHosted.Shared.Enums.MediaType ParseType(String? t)
-        => string.Equals(t, "tvshow", StringComparison.OrdinalIgnoreCase) ? PlexRequestsHosted.Shared.Enums.MediaType.TvShow
-         : string.Equals(t, "movie", StringComparison.OrdinalIgnoreCase) ? PlexRequestsHosted.Shared.Enums.MediaType.Movie
-         : PlexRequestsHosted.Shared.Enums.MediaType.Movie;
+    private string RouteKey => $"{Type}:{Kind}:{Provider}:{ExternalId}:{Id}";
+
+    private MediaRef ResolveRouteMediaRef()
+    {
+        var mediaType = ParseType(Type);
+        if (!string.IsNullOrWhiteSpace(ExternalId) && !string.IsNullOrWhiteSpace(Provider)
+            && Enum.TryParse<MediaKind>(Kind, true, out var kind))
+            return MediaRef.FromExternal(Provider, ExternalId, mediaType, kind);
+        return MediaRef.FromTmdb(Id, mediaType);
+    }
+
+    private static PlexRequestsHosted.Shared.Enums.MediaType ParseType(String? type) => type?.ToLowerInvariant() switch
+    {
+        "tvshow" or "tv" => PlexRequestsHosted.Shared.Enums.MediaType.TvShow,
+        "anime" => PlexRequestsHosted.Shared.Enums.MediaType.Anime,
+        "music" => PlexRequestsHosted.Shared.Enums.MediaType.Music,
+        _ => PlexRequestsHosted.Shared.Enums.MediaType.Movie
+    };
 
     private async Task RequestMedia()
     {
         if (_media == null) return;
         
-        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(_media.Id, _media.MediaType, _selectedProfileId);
+        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(
+            _media.ResolveMediaRef(), qualityProfileId: _selectedProfileId);
         if (result.Success)
         {
             _media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
@@ -563,15 +684,14 @@ else
     private int? _selectedProfileId;
     private List<PlexRequestsHosted.Shared.DTOs.QualityProfileSummaryDto> _profileOptions = new();
 
-    private async Task LoadProfileOptionsAsync()
+    private async Task<List<PlexRequestsHosted.Shared.DTOs.QualityProfileSummaryDto>> GetProfileOptionsAsync(
+        PlexRequestsHosted.Shared.Enums.MediaType mediaType)
     {
-        if (_media is null) return;
         try
         {
-            _profileOptions = await QualityProfiles.GetSelectableProfilesAsync(null, _media.MediaType);
-            _selectedProfileId ??= _profileOptions.FirstOrDefault(p => p.IsDefault)?.Id;
+            return await QualityProfiles.GetSelectableProfilesAsync(null, mediaType);
         }
-        catch { _profileOptions = new(); } // never block requesting on the picker failing to load
+        catch { return new(); } // never block requesting on the picker failing to load
     }
     private readonly HashSet<(int season, int episode)> _selectedEpisodes = new();
     private readonly HashSet<int> _expanded = new();
@@ -687,7 +807,7 @@ else
 
     private async Task RequestSimilar(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
     {
-        var result = await MediaRequestService.RequestMediaAsync(media.Id, media.MediaType);
+        var result = await MediaRequestService.RequestMediaAsync(media.ResolveMediaRef());
         if (result.Success)
         {
             media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
@@ -727,7 +847,11 @@ else
 
     private void NavigateToMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
     {
-        Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLower()}/{media.Id}");
+        var mediaRef = media.ResolveMediaRef();
+        if (mediaRef.TryGetTmdbId(out var tmdbId))
+            Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLowerInvariant()}/{tmdbId}");
+        else
+            Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLowerInvariant()}/{mediaRef.Kind.ToString().ToLowerInvariant()}/{Uri.EscapeDataString(mediaRef.Provider)}/{Uri.EscapeDataString(mediaRef.Id)}");
     }
 
     private String GetRequestStatusText() => _media?.RequestStatus switch
@@ -750,5 +874,11 @@ else
         Int32 hours = minutes / 60;
         Int32 mins = minutes % 60;
         return mins > 0 ? $"{hours}h {mins}m" : $"{hours}h";
+    }
+
+    private static string FormatTrackDuration(int milliseconds)
+    {
+        var duration = TimeSpan.FromMilliseconds(milliseconds);
+        return $"{(int)duration.TotalMinutes}:{duration.Seconds:00}";
     }
 }

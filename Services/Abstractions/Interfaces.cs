@@ -82,7 +82,9 @@ public interface IPlexAuthService
 public interface IPlexApiService
 {
     Task<List<MediaCardDto>> SearchMediaAsync(string query, MediaType? mediaType = null);
+    Task<List<MediaCardDto>> SearchMediaAsync(MediaSearchQuery query);
     Task<MediaDetailDto?> GetMediaDetailsAsync(int mediaId, MediaType mediaType);
+    Task<MediaDetailDto?> GetMediaDetailsAsync(MediaRef mediaRef);
     Task<List<MediaCardDto>> GetLibraryContentAsync(MediaType mediaType, int page = 1, int pageSize = 20);
     Task<List<MediaCardDto>> GetRecentlyAddedAsync(int count = 10);
     // Discovery feeds (delegate to the metadata provider's real trending/popular/genre endpoints).
@@ -91,6 +93,7 @@ public interface IPlexApiService
     Task<List<MediaCardDto>> GetTopRatedAsync(MediaType mediaType, int page = 1, int pageSize = 20);
     Task<List<MediaCardDto>> GetByGenreAsync(MediaType mediaType, string genre, int page = 1, int pageSize = 20);
     Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, MediaType mediaType, int count = 12);
+    Task<List<MediaCardDto>> GetSimilarAsync(MediaRef mediaRef, int count = 12);
     Task<bool> IsAvailableOnPlexAsync(int mediaId, MediaType mediaType);
     Task<List<int>> GetAvailableSeasonsAsync(int tvShowId);
     Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int showId, int seasonNumber);

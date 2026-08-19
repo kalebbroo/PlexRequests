@@ -121,6 +121,15 @@
     overflow: hidden;
 }
 
+.mcard-subtitle {
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .mcard-meta {
     display: flex;
     align-items: center;

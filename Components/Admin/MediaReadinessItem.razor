@@ -1,0 +1,14 @@
+<div class="d-flex align-items-start gap-2">
+    <MudIcon Icon="@(Ready ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.LockClock)"
+             Color="@(Ready ? Color.Success : Color.Default)" />
+    <div>
+        <strong>@Label</strong>
+        <div class="text-secondary text-caption">@Detail</div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Label { get; set; } = string.Empty;
+    [Parameter] public bool Ready { get; set; }
+    [Parameter] public string Detail { get; set; } = string.Empty;
+}

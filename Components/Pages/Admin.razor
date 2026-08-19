@@ -108,6 +108,9 @@
                     case "organization":
                         <AdminLibraryOrganizationPanel />
                         break;
+                    case "media-catalogs":
+                        <AdminMediaCatalogPanel />
+                        break;
                     case "network-shares":
                         <AdminNetworkSharesPanel />
                         break;
@@ -150,6 +153,7 @@
         ]),
         new("library", "Library",
         [
+            new("media-catalogs", "Library", "Media catalogs", "Enable optional media types and inspect which parts of each end-to-end pipeline are ready.", Icons.Material.Filled.LibraryMusic, "/admin?tab=library&sub=catalogs"),
             new("organization", "Library", "Organization", "Control destination paths, naming templates, routing rules, and file transfers.", Icons.Material.Filled.Folder, "/admin?tab=library&sub=organization"),
             new("network-shares", "Library", "Network storage", "Add, test, and monitor NAS or other network-backed library locations.", Icons.Material.Filled.Storage, "/admin?tab=library&sub=network")
         ]),
@@ -199,7 +203,12 @@
                 "indexers" => "indexers",
                 _ => "download-rules"
             },
-            "library" => normalizedSub == "network" ? "network-shares" : "organization",
+            "library" => normalizedSub switch
+            {
+                "catalogs" or "media" => "media-catalogs",
+                "network" => "network-shares",
+                _ => "organization"
+            },
             "jobs" or "operations" => "jobs",
             "users" => "users",
             "system" or "maintenance" => "maintenance",

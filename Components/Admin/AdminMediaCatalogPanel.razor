@@ -1,0 +1,89 @@
+@using PlexRequestsHosted.Shared.DTOs
+@inject PlexRequestsHosted.Services.Abstractions.IMusicSettingsService Settings
+@inject PlexRequestsHosted.Services.Implementations.MusicBrainzMetadataProvider MusicBrainz
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <MudText Typo="Typo.h6">Optional media catalogs</MudText>
+        <MudText Typo="Typo.body2" Color="Color.Tertiary">Choose which complete metadata experiences appear to users.</MudText>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.WifiTethering" OnClick="Test" Disabled="_testing">Test MusicBrainz</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="Save" Disabled="_loading">Save</MudButton>
+    </div>
+</div>
+
+@if (_loading || _settings is null)
+{
+    <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else
+{
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <div class="d-flex justify-content-between align-items-start gap-4 flex-wrap">
+            <div style="max-width:680px;">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <MudIcon Icon="@Icons.Material.Filled.LibraryMusic" Color="Color.Primary" />
+                    <MudText Typo="Typo.h6">Music</MudText>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">Keyless metadata</MudChip>
+                </div>
+                <MudText Typo="Typo.body2" Color="Color.Tertiary">
+                    Adds MusicBrainz albums, artists, and tracks to search, plus a listening-based Trending Music row
+                    from ListenBrainz. Artwork comes from the Cover Art Archive. Results and details are cached locally.
+                </MudText>
+            </div>
+            <MudSwitch T="bool" @bind-Value="_settings.CatalogEnabled" Color="Color.Primary" Label="Show music catalog" />
+        </div>
+
+        <MudDivider Class="my-4" />
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Metadata" Ready="true" Detail="MusicBrainz" /></MudItem>
+            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Artwork" Ready="true" Detail="Cover Art Archive" /></MudItem>
+            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Acquisition" Ready="false" Detail="Next implementation stage" /></MudItem>
+            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Plex verification" Ready="false" Detail="Required before requests unlock" /></MudItem>
+        </MudGrid>
+
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-4">
+            This switch enables browsing only. Music request buttons stay unavailable until acquisition,
+            import, and Plex verification are all complete, preventing false “available” results.
+        </MudAlert>
+
+        @if (_testResult is not null)
+        {
+            <MudAlert Severity="@(_testResult.Value ? Severity.Success : Severity.Error)" Class="mt-3">
+                @(_testResult.Value ? "MusicBrainz is reachable and returned valid metadata." : "MusicBrainz could not be reached. Check DNS and outbound HTTPS access.")
+            </MudAlert>
+        }
+    </MudPaper>
+}
+
+@code {
+    private MusicSettingsDto? _settings;
+    private bool _loading = true;
+    private bool _testing;
+    private bool? _testResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _settings = await Settings.GetAsync(); }
+        finally { _loading = false; }
+    }
+
+    private async Task Save()
+    {
+        if (_settings is null) return;
+        await Settings.UpdateAsync(_settings);
+        await Toast.ShowSuccessAsync(_settings.CatalogEnabled ? "Music catalog enabled." : "Music catalog hidden.");
+    }
+
+    private async Task Test()
+    {
+        _testing = true;
+        _testResult = null;
+        try { _testResult = await MusicBrainz.CheckHealthAsync(); }
+        catch { _testResult = false; }
+        finally { _testing = false; }
+    }
+
+}

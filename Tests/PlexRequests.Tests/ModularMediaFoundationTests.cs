@@ -140,6 +140,9 @@ public class ModularMediaFoundationTests
                 VALUES (2, 20, 1, 'Series', 0, 0, 0, 0, CURRENT_TIMESTAMP, 0, 0, 0, 0, 0, 0);
             INSERT INTO Watchlist (MediaId, MediaType, Username, AddedAt)
                 VALUES (10, 0, 'tester', CURRENT_TIMESTAMP);
+            INSERT INTO MediaMetadataCache
+                (MediaType, TmdbId, Title, GenresCsv, TotalSeasons, CardFetchedAt)
+                VALUES (0, 10, 'Cached Movie', '', 0, CURRENT_TIMESTAMP);
             INSERT INTO Indexers
                 (Name, Enabled, Priority, LastResultCount, ConsecutiveFailures, TotalSearches, TotalResults,
                  LastLatencyMs, CreatedAt, UpdatedAt, Implementation, SupportsMovie, SupportsTv, SupportsAnime)
@@ -164,6 +167,8 @@ public class ModularMediaFoundationTests
         Assert.Equal(4, await db.IndexerMediaCapabilities.CountAsync());
         Assert.False(await db.IndexerMediaCapabilities
             .Where(x => x.MediaType == MediaType.Music).Select(x => x.Enabled).SingleAsync());
+        Assert.Equal(1, await db.MediaMetadataCache.CountAsync(x => x.MediaIdentityId != null));
+        Assert.False(await db.MusicSettings.Select(x => x.CatalogEnabled).SingleAsync());
         await using var foreignKeyCheck = connection.CreateCommand();
         foreignKeyCheck.CommandText = "PRAGMA foreign_key_check";
         await using var violations = await foreignKeyCheck.ExecuteReaderAsync();

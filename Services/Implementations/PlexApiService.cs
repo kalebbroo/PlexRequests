@@ -9,6 +9,7 @@ using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
@@ -366,6 +367,9 @@ public class PlexApiService : IPlexApiService
     public Task<MediaDetailDto?> GetMediaDetailsAsync(int mediaId, MediaType mediaType)
         => _metadata.GetDetailsAsync(mediaId, mediaType);
 
+    public Task<MediaDetailDto?> GetMediaDetailsAsync(MediaRef mediaRef)
+        => _metadata.GetDetailsAsync(mediaRef);
+
     // Episodes of a season with per-episode "already on Plex" overlaid from the DB index.
     public async Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int showId, int seasonNumber)
     {
@@ -444,8 +448,14 @@ public class PlexApiService : IPlexApiService
     public Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, MediaType mediaType, int count = 12)
         => _metadata.GetSimilarAsync(mediaId, mediaType, count);
 
+    public Task<List<MediaCardDto>> GetSimilarAsync(MediaRef mediaRef, int count = 12)
+        => _metadata.GetSimilarAsync(mediaRef, count);
+
     public Task<List<MediaCardDto>> SearchMediaAsync(string query, MediaType? mediaType = null)
         => _metadata.SearchAsync(query, mediaType);
+
+    public Task<List<MediaCardDto>> SearchMediaAsync(MediaSearchQuery query)
+        => _metadata.SearchAsync(query);
 
     public async Task AnnotateAvailabilityAsync(List<MediaCardDto> items)
     {
@@ -457,6 +467,9 @@ public class PlexApiService : IPlexApiService
             var idx = await EnsureAvailabilityIndexAsync();
         foreach (var it in items)
         {
+            // Music is reconciled by artist/album identity in the later import pipeline. Applying the
+            // video title/year fallback here can falsely mark an album as a same-named movie.
+            if (it.MediaType == MediaType.Music) continue;
             if (it.IsAvailable) continue; // already known available
             var matched = false;
             // Try external ids first
