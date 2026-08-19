@@ -251,6 +251,11 @@ and VPN details are in **[docs/fulfillment-pipeline.md](docs/fulfillment-pipelin
 > **Legal note:** you are responsible for what you download and for complying with your local laws and
 > the terms of any service you use. The indexer integrations are provided as-is.
 
+Music catalogs are enabled under **Admin → Media → Optional catalogs**. MusicBrainz is the default open
+catalog; YouTube Music can be selected for user searches without an API key or Python sidecar. The native
+C# integration is deliberately metadata-only: configured modular music indexers still acquire releases,
+and ListenBrainz/MusicBrainz continues to supply the Trending Music feed.
+
 ---
 
 ## 7. Optional: Discord bridge

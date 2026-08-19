@@ -8,6 +8,10 @@ namespace PlexRequestsHosted.Services.Implementations;
 
 public sealed class MusicSettingsService(AppDbContext db) : IMusicSettingsService
 {
+    private static readonly HashSet<string> SupportedProviders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "musicbrainz", "youtube"
+    };
     private readonly object _cacheLock = new();
     private Task<MusicSettingsDto>? _cached;
     private DateTime _cachedAt;
@@ -29,6 +33,7 @@ public sealed class MusicSettingsService(AppDbContext db) : IMusicSettingsServic
         return new MusicSettingsDto
         {
             CatalogEnabled = row.CatalogEnabled,
+            MetadataProvider = NormalizeProvider(row.MetadataProvider),
             RequestsEnabled = row.RequestsEnabled && issues.Count == 0,
             ReadinessIssues = issues,
             UpdatedAt = row.UpdatedAt
@@ -42,6 +47,7 @@ public sealed class MusicSettingsService(AppDbContext db) : IMusicSettingsServic
         if (settings.RequestsEnabled && issues.Count > 0)
             throw new InvalidOperationException(string.Join(" ", issues));
         row.CatalogEnabled = settings.CatalogEnabled;
+        row.MetadataProvider = NormalizeProvider(settings.MetadataProvider);
         row.RequestsEnabled = settings.RequestsEnabled;
         row.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
@@ -80,5 +86,11 @@ public sealed class MusicSettingsService(AppDbContext db) : IMusicSettingsServic
             db.Entry(row).State = EntityState.Detached;
             return await db.MusicSettings.SingleAsync(x => x.IsSingleton, cancellationToken);
         }
+    }
+
+    private static string NormalizeProvider(string? provider)
+    {
+        var normalized = provider?.Trim().ToLowerInvariant();
+        return normalized is not null && SupportedProviders.Contains(normalized) ? normalized : "musicbrainz";
     }
 }

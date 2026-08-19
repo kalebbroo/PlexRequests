@@ -357,6 +357,15 @@ builder.Services.AddHttpClient<MusicBrainzMetadataProvider>(c =>
     c.DefaultRequestHeaders.UserAgent.ParseAdd("PlexRequests/1.0 (https://github.com/kalebbroo/PlexRequests)");
     c.Timeout = TimeSpan.FromSeconds(20);
 });
+// Anonymous, read-only YouTube Music web catalog client. This never requests or consumes media streams;
+// acquisition remains the downloader's independent indexer responsibility.
+builder.Services.AddHttpClient<YouTubeMusicMetadataProvider>(c =>
+{
+    c.BaseAddress = new Uri("https://music.youtube.com/");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd(
+        "Mozilla/5.0 (X11; Linux x86_64; rv:142.0) Gecko/20100101 Firefox/142.0");
+    c.Timeout = TimeSpan.FromSeconds(20);
+});
 builder.Services.AddScoped<MetadataRouter>();
 builder.Services.AddScoped<IMetadataProviderFactory, MetadataProviderFactory>();
 

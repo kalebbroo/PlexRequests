@@ -192,8 +192,11 @@ public sealed class MusicTrackMetadataDto
 
 public sealed class MusicSettingsDto
 {
-    /// <summary>Show MusicBrainz results and discovery rows.</summary>
+    /// <summary>Show music metadata results and discovery rows.</summary>
     public bool CatalogEnabled { get; set; }
+    /// <summary>Stable key of the catalog used for new music searches. Existing item identities continue
+    /// to resolve through the provider that created them.</summary>
+    public string MetadataProvider { get; set; } = "musicbrainz";
     /// <summary>Allow music requests to enter automatic fulfillment. Kept separate from catalog visibility
     /// so an admin can browse/test metadata before a writable music library has been configured.</summary>
     public bool RequestsEnabled { get; set; }

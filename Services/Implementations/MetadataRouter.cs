@@ -9,7 +9,8 @@ namespace PlexRequestsHosted.Services.Implementations;
 /// <summary>
 /// The single metadata entry point ("one method for any media type"). Implements
 /// <see cref="IMediaMetadataProvider"/> and routes each call to the provider the admin chose for that
-/// media type (config <c>MetadataProviders:{Movie|TvShow|Music|Anime}</c>, or <c>:DefaultProvider</c>),
+/// media type (music uses the persisted catalog setting; other types use
+/// <c>MetadataProviders:{Movie|TvShow|Anime}</c> or <c>:DefaultProvider</c>),
 /// falling back to a keyless provider when the chosen one is unavailable, and finally to Seed. Consumers
 /// keep injecting <see cref="IMediaMetadataProvider"/> (wrapped by the caching decorator); they never
 /// pick a provider themselves.
@@ -34,7 +35,8 @@ public class MetadataRouter : IMediaMetadataProvider
         foreach (var type in new[]
                  {
                      typeof(TmdbMetadataProvider), typeof(TvdbMetadataProvider), typeof(TraktMetadataProvider),
-                     typeof(MusicBrainzMetadataProvider), typeof(SeedMetadataProvider)
+                     typeof(MusicBrainzMetadataProvider), typeof(YouTubeMusicMetadataProvider),
+                     typeof(SeedMetadataProvider)
                  })
         {
             try
@@ -51,10 +53,11 @@ public class MetadataRouter : IMediaMetadataProvider
     }
 
     /// <summary>Choose the provider for a media type: admin-configured, else any available real provider, else Seed.</summary>
-    private IMediaMetadataProvider Pick(MediaType mediaType)
+    private IMediaMetadataProvider Pick(MediaType mediaType, string? requestedKey = null)
     {
         var supporting = _providers.Where(p => p.Supports(mediaType) && p.IsAvailable).ToList();
-        var key = (_config[$"MetadataProviders:{mediaType}"] ?? _config["MetadataProviders:DefaultProvider"])?.Trim();
+        var key = requestedKey?.Trim()
+                  ?? (_config[$"MetadataProviders:{mediaType}"] ?? _config["MetadataProviders:DefaultProvider"])?.Trim();
 
         return (!string.IsNullOrEmpty(key) ? supporting.FirstOrDefault(p => p.ProviderKey.Equals(key, StringComparison.OrdinalIgnoreCase)) : null)
             ?? supporting.FirstOrDefault()                                            // any available real provider (Tmdb etc. before Seed — see _providers order in ctor)
@@ -77,18 +80,19 @@ public class MetadataRouter : IMediaMetadataProvider
 
     public async Task<List<MediaCardDto>> SearchAsync(MediaSearchQuery query)
     {
-        var musicEnabled = (await _musicSettings.GetAsync()).CatalogEnabled;
+        var musicSettings = await _musicSettings.GetAsync();
+        var musicEnabled = musicSettings.CatalogEnabled;
         if (query.MediaType == MediaType.Music || query.Kind is MediaKind.Album or MediaKind.Artist or MediaKind.Track)
-            return musicEnabled ? await Pick(MediaType.Music).SearchAsync(query) : new();
+            return musicEnabled ? await Pick(MediaType.Music, musicSettings.MetadataProvider).SearchAsync(query) : new();
 
         if (query.MediaType is MediaType requested)
             return await Pick(requested).SearchAsync(query);
 
         // Cross-media search keeps the existing TMDb mixed movie/TV result set and adds album matches.
-        // Album is the default music kind here so one user search costs one MusicBrainz call, not three.
+        // Album is the default music kind here so one user search costs one catalog call, not three.
         var videoTask = Pick(MediaType.Movie).SearchAsync(query);
         if (!musicEnabled) return await videoTask;
-        var musicTask = Pick(MediaType.Music).SearchAsync(new MediaSearchQuery
+        var musicTask = Pick(MediaType.Music, musicSettings.MetadataProvider).SearchAsync(new MediaSearchQuery
         {
             Query = query.Query,
             MediaType = MediaType.Music,
@@ -101,18 +105,23 @@ public class MetadataRouter : IMediaMetadataProvider
     }
 
     public Task<MediaDetailDto?> GetDetailsAsync(int mediaId, MediaType mediaType) => Pick(mediaType).GetDetailsAsync(mediaId, mediaType);
-    public Task<MediaDetailDto?> GetDetailsAsync(MediaRef mediaRef) => Pick(mediaRef.MediaType).GetDetailsAsync(mediaRef);
+    public Task<MediaDetailDto?> GetDetailsAsync(MediaRef mediaRef) => PickForIdentity(mediaRef).GetDetailsAsync(mediaRef);
     public Task<string?> GetImdbIdAsync(int mediaId, MediaType mediaType) => Pick(mediaType).GetImdbIdAsync(mediaId, mediaType);
-    public Task<string?> GetImdbIdAsync(MediaRef mediaRef) => Pick(mediaRef.MediaType).GetImdbIdAsync(mediaRef);
-    public Task<List<MediaCardDto>> GetLibraryAsync(MediaType mediaType, int page = 1, int pageSize = 20) => Pick(mediaType).GetLibraryAsync(mediaType, page, pageSize);
+    public Task<string?> GetImdbIdAsync(MediaRef mediaRef) => PickForIdentity(mediaRef).GetImdbIdAsync(mediaRef);
+    public Task<List<MediaCardDto>> GetLibraryAsync(MediaType mediaType, int page = 1, int pageSize = 20)
+        => PickDiscovery(mediaType).GetLibraryAsync(mediaType, page, pageSize);
     public Task<List<MediaCardDto>> GetRecentlyAddedAsync(int count = 10) => Pick(MediaType.Movie).GetRecentlyAddedAsync(count);
 
-    public Task<List<MediaCardDto>> GetTrendingAsync(MediaType? mediaType = null, int page = 1, int pageSize = 20) => Pick(mediaType ?? MediaType.Movie).GetTrendingAsync(mediaType, page, pageSize);
-    public Task<List<MediaCardDto>> GetPopularAsync(MediaType mediaType, int page = 1, int pageSize = 20) => Pick(mediaType).GetPopularAsync(mediaType, page, pageSize);
-    public Task<List<MediaCardDto>> GetTopRatedAsync(MediaType mediaType, int page = 1, int pageSize = 20) => Pick(mediaType).GetTopRatedAsync(mediaType, page, pageSize);
-    public Task<List<MediaCardDto>> GetByGenreAsync(MediaType mediaType, string genre, int page = 1, int pageSize = 20) => Pick(mediaType).GetByGenreAsync(mediaType, genre, page, pageSize);
+    public Task<List<MediaCardDto>> GetTrendingAsync(MediaType? mediaType = null, int page = 1, int pageSize = 20)
+        => PickDiscovery(mediaType ?? MediaType.Movie).GetTrendingAsync(mediaType, page, pageSize);
+    public Task<List<MediaCardDto>> GetPopularAsync(MediaType mediaType, int page = 1, int pageSize = 20)
+        => PickDiscovery(mediaType).GetPopularAsync(mediaType, page, pageSize);
+    public Task<List<MediaCardDto>> GetTopRatedAsync(MediaType mediaType, int page = 1, int pageSize = 20)
+        => PickDiscovery(mediaType).GetTopRatedAsync(mediaType, page, pageSize);
+    public Task<List<MediaCardDto>> GetByGenreAsync(MediaType mediaType, string genre, int page = 1, int pageSize = 20)
+        => PickDiscovery(mediaType).GetByGenreAsync(mediaType, genre, page, pageSize);
     public Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, MediaType mediaType, int count = 12) => Pick(mediaType).GetSimilarAsync(mediaId, mediaType, count);
-    public Task<List<MediaCardDto>> GetSimilarAsync(MediaRef mediaRef, int count = 12) => Pick(mediaRef.MediaType).GetSimilarAsync(mediaRef, count);
+    public Task<List<MediaCardDto>> GetSimilarAsync(MediaRef mediaRef, int count = 12) => PickForIdentity(mediaRef).GetSimilarAsync(mediaRef, count);
     public Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int showId, int seasonNumber) => Pick(MediaType.TvShow).GetSeasonEpisodesAsync(showId, seasonNumber);
 
     private static List<MediaCardDto> Interleave(IReadOnlyList<MediaCardDto> primary,
@@ -126,4 +135,14 @@ public class MetadataRouter : IMediaMetadataProvider
         }
         return result;
     }
+
+    private IMediaMetadataProvider PickForIdentity(MediaRef mediaRef)
+        => _providers.FirstOrDefault(p => p.IsAvailable && p.Supports(mediaRef.MediaType)
+               && p.ProviderKey.Equals(mediaRef.Provider, StringComparison.OrdinalIgnoreCase))
+           ?? Pick(mediaRef.MediaType);
+
+    // ListenBrainz/MusicBrainz remains the standards-based discovery feed. Its cards carry MusicBrainz
+    // identities, while the admin-selected provider controls user searches only.
+    private IMediaMetadataProvider PickDiscovery(MediaType mediaType)
+        => mediaType == MediaType.Music ? Pick(mediaType, "musicbrainz") : Pick(mediaType);
 }
