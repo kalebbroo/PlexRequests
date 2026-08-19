@@ -1,5 +1,6 @@
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequestsHosted.Services.Abstractions;
 
@@ -11,6 +12,7 @@ namespace PlexRequestsHosted.Services.Abstractions;
 public interface IMetadataRefreshCoordinator
 {
     void QueueDetail(MediaType mediaType, int tmdbId);
+    void QueueDetail(MediaRef mediaRef);
     void QueueEpisodes(int showTmdbId, int seasonNumber);
 
     /// <summary>
@@ -21,6 +23,7 @@ public interface IMetadataRefreshCoordinator
     /// duplicated.
     /// </summary>
     Task<MediaDetailDto?> RefreshDetailNowAsync(MediaType mediaType, int tmdbId);
+    Task<MediaDetailDto?> RefreshDetailNowAsync(MediaRef mediaRef);
 
     Task<List<EpisodeDto>> RefreshEpisodesNowAsync(int showTmdbId, int seasonNumber);
 }

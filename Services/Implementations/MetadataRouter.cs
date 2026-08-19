@@ -21,12 +21,15 @@ public class MetadataRouter : IMediaMetadataProvider
 {
     private readonly IConfiguration _config;
     private readonly ILogger<MetadataRouter> _logger;
+    private readonly IMusicSettingsService _musicSettings;
     private readonly List<IMediaMetadataProvider> _providers = new();
 
-    public MetadataRouter(IServiceProvider sp, IConfiguration config, ILogger<MetadataRouter> logger)
+    public MetadataRouter(IServiceProvider sp, IConfiguration config, ILogger<MetadataRouter> logger,
+        IMusicSettingsService musicSettings)
     {
         _config = config;
         _logger = logger;
+        _musicSettings = musicSettings;
         // Order matters only for the "first keyless / first supporting" fallbacks.
         foreach (var type in new[]
                  {
@@ -66,10 +69,36 @@ public class MetadataRouter : IMediaMetadataProvider
     public bool Supports(MediaType mediaType) => _providers.Any(p => p.Supports(mediaType) && p.IsAvailable);
 
     // ---- routed calls ----
-    public Task<List<MediaCardDto>> SearchAsync(string query, MediaType? mediaType = null, int page = 1, int pageSize = 20)
-        // TODO(modular): for a null (cross-type) search, aggregate results from every supporting provider
-        // instead of routing to just the default. For now, route to the type's provider (or Movie default).
-        => Pick(mediaType ?? MediaType.Movie).SearchAsync(query, mediaType, page, pageSize);
+    public Task<List<MediaCardDto>> SearchAsync(string query, MediaType? mediaType = null, int page = 1,
+        int pageSize = 20) => SearchAsync(new MediaSearchQuery
+        {
+            Query = query, MediaType = mediaType, Page = page, PageSize = pageSize
+        });
+
+    public async Task<List<MediaCardDto>> SearchAsync(MediaSearchQuery query)
+    {
+        var musicEnabled = (await _musicSettings.GetAsync()).CatalogEnabled;
+        if (query.MediaType == MediaType.Music || query.Kind is MediaKind.Album or MediaKind.Artist or MediaKind.Track)
+            return musicEnabled ? await Pick(MediaType.Music).SearchAsync(query) : new();
+
+        if (query.MediaType is MediaType requested)
+            return await Pick(requested).SearchAsync(query);
+
+        // Cross-media search keeps the existing TMDb mixed movie/TV result set and adds album matches.
+        // Album is the default music kind here so one user search costs one MusicBrainz call, not three.
+        var videoTask = Pick(MediaType.Movie).SearchAsync(query);
+        if (!musicEnabled) return await videoTask;
+        var musicTask = Pick(MediaType.Music).SearchAsync(new MediaSearchQuery
+        {
+            Query = query.Query,
+            MediaType = MediaType.Music,
+            Kind = MediaKind.Album,
+            Page = query.Page,
+            PageSize = Math.Min(8, query.PageSize)
+        });
+        await Task.WhenAll(videoTask, musicTask);
+        return Interleave(videoTask.Result, musicTask.Result, query.PageSize);
+    }
 
     public Task<MediaDetailDto?> GetDetailsAsync(int mediaId, MediaType mediaType) => Pick(mediaType).GetDetailsAsync(mediaId, mediaType);
     public Task<MediaDetailDto?> GetDetailsAsync(MediaRef mediaRef) => Pick(mediaRef.MediaType).GetDetailsAsync(mediaRef);
@@ -85,4 +114,16 @@ public class MetadataRouter : IMediaMetadataProvider
     public Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, MediaType mediaType, int count = 12) => Pick(mediaType).GetSimilarAsync(mediaId, mediaType, count);
     public Task<List<MediaCardDto>> GetSimilarAsync(MediaRef mediaRef, int count = 12) => Pick(mediaRef.MediaType).GetSimilarAsync(mediaRef, count);
     public Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int showId, int seasonNumber) => Pick(MediaType.TvShow).GetSeasonEpisodesAsync(showId, seasonNumber);
+
+    private static List<MediaCardDto> Interleave(IReadOnlyList<MediaCardDto> primary,
+        IReadOnlyList<MediaCardDto> secondary, int take)
+    {
+        var result = new List<MediaCardDto>(Math.Min(take, primary.Count + secondary.Count));
+        for (var i = 0; result.Count < take && (i < primary.Count || i < secondary.Count); i++)
+        {
+            if (i < primary.Count) result.Add(primary[i]);
+            if (result.Count < take && i < secondary.Count) result.Add(secondary[i]);
+        }
+        return result;
+    }
 }

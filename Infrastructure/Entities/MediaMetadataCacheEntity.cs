@@ -5,10 +5,10 @@ using PlexRequestsHosted.Shared.Enums;
 namespace PlexRequestsHosted.Infrastructure.Entities;
 
 /// <summary>
-/// Persistent TMDB metadata cache — one row per (MediaType, TmdbId). Denormalized card fields serve
-/// lists (watchlist/requests/cards) with zero JSON parsing; <see cref="DetailJson"/> holds the full
-/// serialized MediaDetailDto (Seasons, Cast, etc.). Survives restarts, so repeat views need no API
-/// call. Refreshed in the background (stale-while-revalidate) by CachingMetadataProvider.
+/// Persistent provider-neutral metadata cache. Legacy TMDb rows retain their integer lookup; all new
+/// consumers attach the row to a canonical <see cref="MediaIdentityEntity"/> so UUID/string providers
+/// such as MusicBrainz are cached without synthetic ids. Denormalized fields serve lightweight lists,
+/// while <see cref="DetailJson"/> holds the full detail DTO for stale-while-revalidate reads.
 /// </summary>
 public class MediaMetadataCacheEntity
 {
@@ -18,6 +18,8 @@ public class MediaMetadataCacheEntity
 
     public MediaType MediaType { get; set; }   // part of the unique key
     public int TmdbId { get; set; }            // part of the unique key
+    public int? MediaIdentityId { get; set; }
+    public MediaIdentityEntity? MediaIdentity { get; set; }
 
     [MaxLength(32)] public string? ImdbId { get; set; }   // folds in GetImdbIdAsync
 

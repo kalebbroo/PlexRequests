@@ -1,6 +1,8 @@
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
+@using PlexRequestsHosted.Shared.Media
 @inject NavigationManager Navigation
+@inject PlexRequestsHosted.Services.Abstractions.IMediaModuleRegistry MediaModules
 
 @* Unified poster card. CSS-only hover (no JS timer -> no leak), overlay stays INSIDE the card so a
    grid or row never shifts. Click -> details; quick actions stop propagation. *@
@@ -43,9 +45,13 @@
             </div>
             <div class="mcard-overlay-body">
                 <div class="mcard-title">@Media.Title</div>
+                @if (!string.IsNullOrWhiteSpace(Media.Subtitle))
+                {
+                    <div class="mcard-subtitle">@Media.Subtitle</div>
+                }
                 <div class="mcard-meta">
                     @if (Media.Year.HasValue) { <span>@Media.Year</span> }
-                    <span class="mcard-type">@(Media.MediaType == MediaType.TvShow ? "TV" : "Movie")</span>
+                    <span class="mcard-type">@GetTypeLabel()</span>
                 </div>
                 <div class="mcard-actions">
                     @if (Media.IsAvailable)
@@ -54,11 +60,15 @@
                             <MudIcon Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small" /> Play
                         </button>
                     }
-                    else if (Media.RequestStatus == RequestStatus.None)
+                    else if (CanRequest && Media.RequestStatus == RequestStatus.None)
                     {
                         <button class="mcard-btn primary" @onclick:stopPropagation="true" @onclick="HandleRequest">
                             <MudIcon Icon="@Icons.Material.Filled.Add" Size="Size.Small" /> Request
                         </button>
+                    }
+                    else if (!CanRequest)
+                    {
+                        <button class="mcard-btn muted" disabled>Browse only</button>
                     }
                     else
                     {
@@ -89,14 +99,34 @@
     private async Task HandlePlay() { if (OnPlay.HasDelegate) await OnPlay.InvokeAsync(Media); }
     private async Task HandleRemove() { if (OnRemove.HasDelegate) await OnRemove.InvokeAsync(Media); }
 
+    private bool CanRequest => MediaModules.IsEnabled(Media.MediaType)
+        && MediaModules.Get(Media.MediaType).Capabilities.HasFlag(MediaModuleCapabilities.Request);
+
     private void NavigateToDetails()
-        => Navigation.NavigateTo($"/media/{Media.MediaType.ToString().ToLower()}/{Media.Id}");
+    {
+        var mediaRef = Media.ResolveMediaRef();
+        if (mediaRef.TryGetTmdbId(out var tmdbId))
+            Navigation.NavigateTo($"/media/{Media.MediaType.ToString().ToLowerInvariant()}/{tmdbId}");
+        else
+            Navigation.NavigateTo($"/media/{Media.MediaType.ToString().ToLowerInvariant()}/{mediaRef.Kind.ToString().ToLowerInvariant()}/{Uri.EscapeDataString(mediaRef.Provider)}/{Uri.EscapeDataString(mediaRef.Id)}");
+    }
 
     private string GetMediaIcon() => Media.MediaType switch
     {
         MediaType.Movie => Icons.Material.Filled.Movie,
         MediaType.TvShow => Icons.Material.Filled.Tv,
+        MediaType.Music => Media.ResolveMediaRef().Kind == MediaKind.Artist
+            ? Icons.Material.Filled.Person
+            : Icons.Material.Filled.LibraryMusic,
         _ => Icons.Material.Filled.VideoLibrary
+    };
+
+    private string GetTypeLabel() => Media.MediaType switch
+    {
+        MediaType.TvShow => "TV",
+        MediaType.Music => Media.ResolveMediaRef().Kind.ToString(),
+        MediaType.Anime => "Anime",
+        _ => "Movie"
     };
 
     private string GetStatusText() => Media.RequestStatus switch

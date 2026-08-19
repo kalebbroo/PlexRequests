@@ -14,6 +14,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<PlexMappingEntity> PlexMappings => Set<PlexMappingEntity>();
     public DbSet<PlexSeasonAvailabilityEntity> PlexSeasonAvailability => Set<PlexSeasonAvailabilityEntity>();
     public DbSet<MediaMetadataCacheEntity> MediaMetadataCache => Set<MediaMetadataCacheEntity>();
+    public DbSet<MusicSettingsEntity> MusicSettings => Set<MusicSettingsEntity>();
     public DbSet<SeasonEpisodesCacheEntity> SeasonEpisodesCache => Set<SeasonEpisodesCacheEntity>();
     public DbSet<MediaIssueEntity> MediaIssues => Set<MediaIssueEntity>();
     public DbSet<QualityRuleEntity> QualityRules => Set<QualityRuleEntity>();
@@ -136,7 +137,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<MediaMetadataCacheEntity>(b =>
         {
             b.HasKey(x => x.Id);
-            b.HasIndex(x => new { x.MediaType, x.TmdbId }).IsUnique();
+            b.HasIndex(x => new { x.MediaType, x.TmdbId }).IsUnique().HasFilter("\"TmdbId\" > 0");
+            b.HasIndex(x => x.MediaIdentityId).IsUnique();
+            b.HasOne(x => x.MediaIdentity).WithMany()
+                .HasForeignKey(x => x.MediaIdentityId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<MusicSettingsEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.IsSingleton).IsUnique();
         });
 
         modelBuilder.Entity<SeasonEpisodesCacheEntity>(b =>

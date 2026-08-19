@@ -112,3 +112,14 @@ public sealed class MediaRequestScope
 }
 
 public sealed record EpisodeSelection(int Season, int Episode);
+
+/// <summary>Provider-neutral search intent. Kind is optional so existing movie/TV callers stay simple,
+/// while modules such as music can distinguish albums, artists and tracks without string conventions.</summary>
+public sealed class MediaSearchQuery
+{
+    public required string Query { get; set; }
+    public MediaType? MediaType { get; set; }
+    public MediaKind? Kind { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 20;
+}

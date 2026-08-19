@@ -92,6 +92,8 @@ public class MediaCardDto : BaseDto
     // Provider-agnostic id for non-TMDb sources (MusicBrainz MBID, Plex ratingKey, ...) + its source key.
     public string? ExternalId { get; set; }
     public string? ExternalSource { get; set; }
+    /// <summary>Compact secondary label, such as an album's artist or an artist's disambiguation.</summary>
+    public string? Subtitle { get; set; }
 
     /// <summary>Canonical provider-neutral identity. Older servers/clients may leave this null.</summary>
     public MediaRef? MediaRef { get; set; }
@@ -131,6 +133,37 @@ public class MediaDetailDto : MediaCardDto
     public string? TrailerUrl { get; set; }
     public List<string> Languages { get; set; } = new();
     public List<string> Countries { get; set; } = new();
+    public MusicMetadataDto? Music { get; set; }
+}
+
+public sealed class MusicMetadataDto
+{
+    public MediaKind Kind { get; set; }
+    public string? ArtistId { get; set; }
+    public string? ArtistCredit { get; set; }
+    public string? PrimaryType { get; set; }
+    public List<string> SecondaryTypes { get; set; } = new();
+    public string? ReleaseGroupId { get; set; }
+    public string? ReleaseId { get; set; }
+    public int TrackCount { get; set; }
+    public List<MusicTrackMetadataDto> Tracks { get; set; } = new();
+}
+
+public sealed class MusicTrackMetadataDto
+{
+    public string RecordingId { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string? ArtistCredit { get; set; }
+    public int DiscNumber { get; set; }
+    public int TrackNumber { get; set; }
+    public int? DurationMs { get; set; }
+}
+
+public sealed class MusicSettingsDto
+{
+    /// <summary>Enables MusicBrainz browsing/search only. Requesting remains gated by module readiness.</summary>
+    public bool CatalogEnabled { get; set; }
+    public DateTime? UpdatedAt { get; set; }
 }
 
 public class SeasonDto

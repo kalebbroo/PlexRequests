@@ -3,7 +3,9 @@
 @inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
+@inject PlexRequestsHosted.Services.Abstractions.IMusicSettingsService MusicSettings
 @inject NavigationManager Navigation
+@using PlexRequestsHosted.Shared.Media
 @implements IDisposable
 
 <PageTitle>Search - Plex Requests</PageTitle>
@@ -15,7 +17,7 @@
                 <MudIcon Icon="@Icons.Material.Filled.Search" Class="search-icon" />
                 <input type="text" 
                        class="search-input" 
-                       placeholder="Search for movies, TV shows, genres..."
+                       placeholder="@(_musicCatalogEnabled ? "Search movies, TV, albums, artists, and tracks…" : "Search for movies, TV shows, genres…")"
                        @bind="_searchQuery"
                        @bind:event="oninput"
                        @onkeyup="HandleKeyUp"
@@ -47,7 +49,25 @@
                              OnClick="() => SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType.TvShow)">
                         TV Shows
                     </MudChip>
+                    @if (_musicCatalogEnabled)
+                    {
+                        <MudChip T="PlexRequestsHosted.Shared.Enums.MediaType?"
+                                 Variant="@(_filterType == PlexRequestsHosted.Shared.Enums.MediaType.Music ? Variant.Filled : Variant.Outlined)"
+                                 OnClick="() => SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType.Music)">
+                            Music
+                        </MudChip>
+                    }
                 </div>
+                @if (_filterType == PlexRequestsHosted.Shared.Enums.MediaType.Music)
+                {
+                    <div class="search-filters music-kinds" aria-label="Music result type">
+                        @foreach (var kind in MusicKinds)
+                        {
+                            <MudChip T="MediaKind" Variant="@(_musicKind == kind.Kind ? Variant.Filled : Variant.Outlined)"
+                                     OnClick="() => SetMusicKind(kind.Kind)">@kind.Label</MudChip>
+                        }
+                    </div>
+                }
             }
         </MudContainer>
     </div>
@@ -133,9 +153,17 @@
     private String _searchQuery = "";
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _searchResults;
     private PlexRequestsHosted.Shared.Enums.MediaType? _filterType;
+    private MediaKind _musicKind = MediaKind.Album;
+    private bool _musicCatalogEnabled;
     private Boolean _isSearching = false;
     private Boolean _showFilters = false;
     private System.Timers.Timer? _debounceTimer;
+    private int _searchVersion;
+
+    private static readonly (MediaKind Kind, string Label)[] MusicKinds =
+    {
+        (MediaKind.Album, "Albums"), (MediaKind.Artist, "Artists"), (MediaKind.Track, "Tracks")
+    };
 
     private List<String> _popularSearches = new()
     {
@@ -179,6 +207,11 @@
         _debounceTimer.Elapsed += (_, _) => _ = InvokeAsync(PerformSearch);
     }
 
+    protected override async Task OnInitializedAsync()
+    {
+        _musicCatalogEnabled = (await MusicSettings.GetAsync()).CatalogEnabled;
+    }
+
     private void HandleKeyUp(KeyboardEventArgs e)
     {
         _debounceTimer?.Stop();
@@ -190,48 +223,69 @@
     {
         if (string.IsNullOrWhiteSpace(_searchQuery))
         {
+            Interlocked.Increment(ref _searchVersion);
             _searchResults = null;
+            _isSearching = false;
             StateHasChanged();
             return;
         }
 
+        var version = Interlocked.Increment(ref _searchVersion);
+        var query = _searchQuery.Trim();
+        var type = _filterType;
+        var kind = type == PlexRequestsHosted.Shared.Enums.MediaType.Music ? _musicKind : (MediaKind?)null;
         _isSearching = true;
         StateHasChanged();
 
         try
         {
-            _searchResults = await PlexApiService.SearchMediaAsync(_searchQuery, _filterType);
+            var results = await PlexApiService.SearchMediaAsync(new MediaSearchQuery
+            {
+                Query = query,
+                MediaType = type,
+                Kind = kind,
+                PageSize = 40
+            });
+            if (version != _searchVersion) return;
 
             // Apply additional filtering if needed
-            if (_filterType.HasValue)
+            if (type.HasValue)
             {
-                _searchResults = _searchResults?.Where(r => r.MediaType == _filterType.Value).ToList();
+                results = results.Where(r => r.MediaType == type.Value).ToList();
             }
 
             // Mark availability and overlay my request statuses
-            if (_searchResults?.Any() == true)
+            if (results.Count > 0)
             {
-                await PlexApiService.AnnotateAvailabilityAsync(_searchResults);
-                var keys = _searchResults.Select(m => (m.Id, m.MediaType)).ToList();
+                await PlexApiService.AnnotateAvailabilityAsync(results);
+                if (version != _searchVersion) return;
+                var keys = results.Where(m => m.ResolveMediaRef().TryGetTmdbId(out _))
+                    .Select(m => (m.Id, m.MediaType)).ToList();
                 var statuses = await MediaRequestService.GetMyRequestStatusesAsync(keys);
-                foreach (var m in _searchResults)
+                if (version != _searchVersion) return;
+                foreach (var m in results)
                 {
                     var k = $"{m.MediaType}:{m.Id}";
                     if (statuses.TryGetValue(k, out var st)) m.RequestStatus = st;
                 }
             }
+            _searchResults = results;
         }
         catch (Exception ex)
         {
+            if (version != _searchVersion) return;
             // Never let a search error tear down the circuit; show empty results + a toast.
             _searchResults = null;
-            PlexRequestsHosted.Utils.Logs.Warning($"Search failed for '{_searchQuery}': {ex.Message}");
+            PlexRequestsHosted.Utils.Logs.Warning($"Search failed for '{query}': {ex.Message}");
             await ToastService.ShowErrorAsync("Search failed. Please try again.");
         }
         finally
         {
-            _isSearching = false;
-            StateHasChanged();
+            if (version == _searchVersion)
+            {
+                _isSearching = false;
+                StateHasChanged();
+            }
         }
     }
 
@@ -249,8 +303,10 @@
 
     private void ClearSearch()
     {
+        Interlocked.Increment(ref _searchVersion);
         _searchQuery = "";
         _searchResults = null;
+        _isSearching = false;
         _showFilters = false;
     }
 
@@ -260,9 +316,15 @@
         _ = PerformSearch();
     }
 
+    private void SetMusicKind(MediaKind kind)
+    {
+        _musicKind = kind;
+        _ = PerformSearch();
+    }
+
     private async Task RequestMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
     {
-        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(media.Id, media.MediaType);
+        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(media.ResolveMediaRef());
         if (result.Success)
         {
             media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
@@ -282,6 +344,7 @@
 
     public void Dispose()
     {
+        Interlocked.Increment(ref _searchVersion);
         _debounceTimer?.Dispose();
     }
 }

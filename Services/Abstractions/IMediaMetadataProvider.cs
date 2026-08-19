@@ -22,6 +22,8 @@ public interface IMediaMetadataProvider
     bool Supports(MediaType mediaType) => mediaType is MediaType.Movie or MediaType.TvShow or MediaType.Anime;
 
     Task<List<MediaCardDto>> SearchAsync(string query, MediaType? mediaType = null, int page = 1, int pageSize = 20);
+    Task<List<MediaCardDto>> SearchAsync(MediaSearchQuery query)
+        => SearchAsync(query.Query, query.MediaType, query.Page, query.PageSize);
     Task<MediaDetailDto?> GetDetailsAsync(int mediaId, MediaType mediaType);
     /// <summary>Provider-neutral detail lookup. Legacy providers automatically accept TMDb identities.</summary>
     Task<MediaDetailDto?> GetDetailsAsync(MediaRef mediaRef) => mediaRef.TryGetTmdbId(out var tmdbId)

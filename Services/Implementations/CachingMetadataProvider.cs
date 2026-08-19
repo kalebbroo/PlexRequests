@@ -7,6 +7,7 @@ using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.MetadataProviders;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
@@ -21,7 +22,8 @@ namespace PlexRequestsHosted.Services.Implementations;
 public sealed class CachingMetadataProvider(
     IMediaMetadataProvider inner,
     IDbContextFactory<AppDbContext> dbf,
-    IMetadataRefreshCoordinator refresh) : IMediaMetadataProvider
+    IMetadataRefreshCoordinator refresh,
+    IMediaIdentityService identities) : IMediaMetadataProvider
 {
     internal static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
     private static readonly TimeSpan OngoingTtl = TimeSpan.FromHours(6);   // Status == "Returning Series"
@@ -54,6 +56,35 @@ public sealed class CachingMetadataProvider(
         {
             await using var wdb = await dbf.CreateDbContextAsync();
             await UpsertDetailAsync(wdb, mediaType, mediaId, dto);
+        }
+        return dto;
+    }
+
+    public async Task<MediaDetailDto?> GetDetailsAsync(MediaRef mediaRef)
+    {
+        if (!mediaRef.IsValid) return null;
+        var identity = await identities.ResolveAsync(mediaRef);
+        await using var db = await dbf.CreateDbContextAsync();
+        var row = await db.MediaMetadataCache.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.MediaIdentityId == identity.Id);
+
+        if (row?.DetailJson is { Length: > 0 })
+        {
+            var cached = TryDeserialize<MediaDetailDto>(row.DetailJson);
+            if (cached is not null)
+            {
+                var ttl = row.Status == "Returning Series" ? OngoingTtl : EndedTtl;
+                if (row.DetailFetchedAt is { } fetched && DateTime.UtcNow - fetched > ttl)
+                    refresh.QueueDetail(mediaRef);
+                return cached;
+            }
+        }
+
+        var dto = await inner.GetDetailsAsync(mediaRef);
+        if (dto is not null && !string.IsNullOrWhiteSpace(dto.Title))
+        {
+            await using var writeDb = await dbf.CreateDbContextAsync();
+            await UpsertDetailAsync(writeDb, identity.Id, mediaRef, dto);
         }
         return dto;
     }
@@ -105,6 +136,7 @@ public sealed class CachingMetadataProvider(
     // ---- forwarders (discovery/search stay in the inner's in-memory cache) ----
     public Task<List<MediaCardDto>> SearchAsync(string query, MediaType? mediaType = null, int page = 1, int pageSize = 20)
         => inner.SearchAsync(query, mediaType, page, pageSize);
+    public Task<List<MediaCardDto>> SearchAsync(MediaSearchQuery query) => inner.SearchAsync(query);
     public Task<List<MediaCardDto>> GetRecentlyAddedAsync(int count = 10) => inner.GetRecentlyAddedAsync(count);
     public Task<List<MediaCardDto>> GetLibraryAsync(MediaType mediaType, int page = 1, int pageSize = 20) => inner.GetLibraryAsync(mediaType, page, pageSize);
     public Task<List<MediaCardDto>> GetTrendingAsync(MediaType? mediaType = null, int page = 1, int pageSize = 20) => inner.GetTrendingAsync(mediaType, page, pageSize);
@@ -112,6 +144,7 @@ public sealed class CachingMetadataProvider(
     public Task<List<MediaCardDto>> GetTopRatedAsync(MediaType mediaType, int page = 1, int pageSize = 20) => inner.GetTopRatedAsync(mediaType, page, pageSize);
     public Task<List<MediaCardDto>> GetByGenreAsync(MediaType mediaType, string genre, int page = 1, int pageSize = 20) => inner.GetByGenreAsync(mediaType, genre, page, pageSize);
     public Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, MediaType mediaType, int count = 12) => inner.GetSimilarAsync(mediaId, mediaType, count);
+    public Task<List<MediaCardDto>> GetSimilarAsync(MediaRef mediaRef, int count = 12) => inner.GetSimilarAsync(mediaRef, count);
 
     // ---- upsert / mapping helpers (also used by MetadataRefreshCoordinator) ----
 
@@ -134,6 +167,40 @@ public sealed class CachingMetadataProvider(
         row.TotalSeasons = dto.TotalSeasons;
         row.Status = dto.Status;
         if (!string.IsNullOrEmpty(dto.ImdbId)) row.ImdbId = dto.ImdbId;
+        row.DetailJson = JsonSerializer.Serialize(dto, Json);
+        row.DetailFetchedAt = DateTime.UtcNow;
+        row.CardFetchedAt = DateTime.UtcNow;
+        await SaveSafeAsync(db);
+    }
+
+    internal static async Task UpsertDetailAsync(AppDbContext db, int mediaIdentityId, MediaRef mediaRef,
+        MediaDetailDto dto)
+    {
+        var tmdbId = mediaRef.TryGetTmdbId(out var parsed) ? parsed : 0;
+        var row = await db.MediaMetadataCache.FirstOrDefaultAsync(x => x.MediaIdentityId == mediaIdentityId
+            || (tmdbId > 0 && x.MediaType == mediaRef.MediaType && x.TmdbId == tmdbId));
+        if (row is null)
+        {
+            row = new MediaMetadataCacheEntity
+            {
+                MediaType = mediaRef.MediaType,
+                TmdbId = tmdbId,
+                MediaIdentityId = mediaIdentityId
+            };
+            db.MediaMetadataCache.Add(row);
+        }
+        else row.MediaIdentityId ??= mediaIdentityId;
+
+        row.Title = dto.Title ?? string.Empty;
+        row.Overview = dto.Overview;
+        row.PosterUrl = dto.PosterUrl;
+        row.BackdropUrl = dto.BackdropUrl;
+        row.Year = dto.Year;
+        row.Rating = dto.Rating;
+        row.Runtime = dto.Runtime;
+        row.GenresCsv = dto.Genres is { Count: > 0 } ? string.Join(",", dto.Genres) : string.Empty;
+        row.TotalSeasons = dto.TotalSeasons;
+        row.Status = dto.Status;
         row.DetailJson = JsonSerializer.Serialize(dto, Json);
         row.DetailFetchedAt = DateTime.UtcNow;
         row.CardFetchedAt = DateTime.UtcNow;
@@ -219,6 +286,31 @@ public sealed class MetadataRefreshCoordinator(
         });
     }
 
+    public void QueueDetail(MediaRef mediaRef)
+    {
+        var key = $"d:{mediaRef.StableKey}";
+        if (!_inFlight.TryAdd(key, 0)) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = scopes.CreateScope();
+                var provider = scope.ServiceProvider.GetRequiredService<IMetadataProviderFactory>().GetDefaultProvider();
+                var identityService = scope.ServiceProvider.GetRequiredService<IMediaIdentityService>();
+                var dbf = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AppDbContext>>();
+                var dto = await provider.GetDetailsAsync(mediaRef);
+                if (dto is not null && !string.IsNullOrWhiteSpace(dto.Title))
+                {
+                    var identity = await identityService.ResolveAsync(mediaRef);
+                    await using var db = await dbf.CreateDbContextAsync();
+                    await CachingMetadataProvider.UpsertDetailAsync(db, identity.Id, mediaRef, dto);
+                }
+            }
+            catch (Exception ex) { log.LogWarning(ex, "Background detail refresh failed for {Media}", mediaRef.StableKey); }
+            finally { _inFlight.TryRemove(key, out _); }
+        });
+    }
+
     /// <summary>Awaitable counterpart to <see cref="QueueDetail"/> — fetch now, write through, return it.</summary>
     public async Task<MediaDetailDto?> RefreshDetailNowAsync(MediaType mediaType, int tmdbId)
     {
@@ -240,6 +332,33 @@ public sealed class MetadataRefreshCoordinator(
         catch (Exception ex)
         {
             log.LogWarning(ex, "Forced detail refresh failed for {Type} {Id}", mediaType, tmdbId);
+            return null;
+        }
+        finally { _inFlight.TryRemove(key, out _); }
+    }
+
+    public async Task<MediaDetailDto?> RefreshDetailNowAsync(MediaRef mediaRef)
+    {
+        var key = $"d:{mediaRef.StableKey}";
+        _inFlight.TryAdd(key, 0);
+        try
+        {
+            using var scope = scopes.CreateScope();
+            var provider = scope.ServiceProvider.GetRequiredService<IMetadataProviderFactory>().GetDefaultProvider();
+            var identityService = scope.ServiceProvider.GetRequiredService<IMediaIdentityService>();
+            var dbf = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AppDbContext>>();
+            var dto = await provider.GetDetailsAsync(mediaRef);
+            if (dto is not null && !string.IsNullOrWhiteSpace(dto.Title))
+            {
+                var identity = await identityService.ResolveAsync(mediaRef);
+                await using var db = await dbf.CreateDbContextAsync();
+                await CachingMetadataProvider.UpsertDetailAsync(db, identity.Id, mediaRef, dto);
+            }
+            return dto;
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Forced detail refresh failed for {Media}", mediaRef.StableKey);
             return null;
         }
         finally { _inFlight.TryRemove(key, out _); }

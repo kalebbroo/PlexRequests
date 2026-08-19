@@ -190,6 +190,7 @@ builder.Services.AddHttpClient<PlexRequestsHosted.Services.Implementations.IPlex
     });
 builder.Services.AddScoped<IMediaRequestService, MediaRequestService>();
 builder.Services.AddScoped<IMediaIdentityService, MediaIdentityService>();
+builder.Services.AddScoped<IMusicSettingsService, MusicSettingsService>();
 builder.Services.AddSingleton<IMediaModule, MovieMediaModule>();
 builder.Services.AddSingleton<IMediaModule, TelevisionMediaModule>();
 builder.Services.AddSingleton<IMediaModule, AnimeMediaModule>();
@@ -340,10 +341,18 @@ builder.Services.AddScoped<TraktMetadataProvider>();
 builder.Services.AddScoped<SeedMetadataProvider>();
 builder.Services.AddScoped<TvdbMetadataProvider>();
 // MusicBrainz requires a descriptive User-Agent; keyless -> default fallback for Music.
+builder.Services.AddSingleton<IMusicBrainzRateGate, MusicBrainzRateGate>();
+builder.Services.AddHttpClient<IListenBrainzDiscoveryClient, ListenBrainzDiscoveryClient>(c =>
+{
+    c.BaseAddress = new Uri("https://api.listenbrainz.org/");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("PlexRequests/1.0 (https://github.com/kalebbroo/PlexRequests)");
+    c.Timeout = TimeSpan.FromSeconds(15);
+});
 builder.Services.AddHttpClient<MusicBrainzMetadataProvider>(c =>
 {
     c.BaseAddress = new Uri("https://musicbrainz.org/");
-    c.DefaultRequestHeaders.UserAgent.ParseAdd("PlexRequests/1.0 (self-hosted)");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("PlexRequests/1.0 (https://github.com/kalebbroo/PlexRequests)");
+    c.Timeout = TimeSpan.FromSeconds(20);
 });
 builder.Services.AddScoped<MetadataRouter>();
 builder.Services.AddScoped<IMetadataProviderFactory, MetadataProviderFactory>();
@@ -360,7 +369,8 @@ builder.Services.AddScoped<IMediaMetadataProvider>(sp =>
     return new PlexRequestsHosted.Services.Implementations.CachingMetadataProvider(
         innerProvider,
         sp.GetRequiredService<IDbContextFactory<AppDbContext>>(),
-        sp.GetRequiredService<PlexRequestsHosted.Services.Abstractions.IMetadataRefreshCoordinator>());
+        sp.GetRequiredService<PlexRequestsHosted.Services.Abstractions.IMetadataRefreshCoordinator>(),
+        sp.GetRequiredService<IMediaIdentityService>());
 });
 
 // Persistence: SQLite. Resolve an absolute path so the DB doesn't depend on the current
