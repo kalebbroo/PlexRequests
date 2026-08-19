@@ -70,6 +70,8 @@ static void LoadDotEnvFrom(string rootPath)
             Environment.SetEnvironmentVariable("Bridge__Enabled", val);
         else if (key.Equals("BRIDGE_API_KEY", StringComparison.OrdinalIgnoreCase))
             Environment.SetEnvironmentVariable("Bridge__ApiKey", val);
+        else if (key.Equals("BRIDGE_EVENT_RETENTION_DAYS", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("Bridge__EventRetentionDays", val);
         else if (key.Equals("DEV_AUTH_ENABLED", StringComparison.OrdinalIgnoreCase))
             Environment.SetEnvironmentVariable("DevelopmentAuth__Enabled", val);
         else if (key.Equals("DEV_AUTH_USERNAME", StringComparison.OrdinalIgnoreCase))
@@ -203,6 +205,7 @@ builder.Services.AddScoped<IFulfillmentQueue, FulfillmentQueue>();
 builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.IDownloadTelemetryStore, PlexRequestsHosted.Services.Implementations.DownloadTelemetryStore>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IDownloadMonitorService, PlexRequestsHosted.Services.Implementations.DownloadMonitorService>();
 builder.Services.AddScoped<IDiscordLinkService, DiscordLinkService>();
+builder.Services.AddScoped<IBridgeOutboxService, BridgeOutboxService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IMediaIssueService, PlexRequestsHosted.Services.Implementations.MediaIssueService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IQualityRuleService, PlexRequestsHosted.Services.Implementations.QualityRuleService>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IDownloadPreferencesService, PlexRequestsHosted.Services.Implementations.DownloadPreferencesService>();
@@ -1113,7 +1116,7 @@ app.MapPost("/api/requests/{id:int}/partially-completed", async (int id, FailReq
     await db.SaveChangesAsync();
     await queue.MarkPartiallyCompletedAsync(id, reason);
     try { await plex.RebuildAvailabilityIndexAsync(); } catch { /* index refresh is best-effort */ }
-    await notify.RequestFailedAsync(ToRequestDto(req), $"Partially completed — {reason}");
+    await notify.RequestPartiallyAvailableAsync(ToRequestDto(req), reason);
     return Results.Ok(new { req.Id, status = req.Status.ToString() });
 });
 
@@ -1219,10 +1222,34 @@ static bool IsAuthorizedBridge(HttpContext ctx, IConfiguration cfg)
            System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(a, b);
 }
 
-app.MapGet("/api/bridge/capabilities", (HttpContext ctx, IConfiguration cfg, IMediaModuleRegistry modules) =>
+app.MapGet("/api/bridge/capabilities", async (HttpContext ctx, IConfiguration cfg,
+    IMediaModuleRegistry modules, IMusicSettingsService musicSettings, IBridgeOutboxService outbox) =>
 {
     if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
-    return Results.Ok(new BridgeCapabilitiesDto { MediaModules = modules.All.ToList() });
+    var music = await musicSettings.GetAsync();
+    var descriptors = modules.All.Select(module =>
+    {
+        if (module.MediaType != MediaType.Music) return module;
+        var capabilities = module.Capabilities;
+        if (!music.CatalogEnabled)
+            capabilities &= ~(MediaModuleCapabilities.Search | MediaModuleCapabilities.Discovery);
+        if (!music.RequestsEnabled)
+            capabilities &= ~(MediaModuleCapabilities.Request | MediaModuleCapabilities.AutomaticFulfillment
+                              | MediaModuleCapabilities.InteractiveSearch);
+        return module with
+        {
+            Enabled = music.CatalogEnabled || music.RequestsEnabled,
+            Capabilities = capabilities,
+            UnavailableReason = !music.CatalogEnabled && !music.RequestsEnabled
+                ? "Music is disabled by the Plex Requests administrator."
+                : null
+        };
+    }).ToList();
+    return Results.Ok(new BridgeCapabilitiesDto
+    {
+        MediaModules = descriptors,
+        EventRetentionDays = outbox.RetentionDays
+    });
 });
 
 // Catalog search (optionally personalized with the caller's request status if their Discord is linked).
@@ -1242,10 +1269,24 @@ app.MapGet("/api/bridge/search", async (string q, string? type, int? limit, stri
         "music" or "album" or "artist" or "track" => MediaType.Music,
         _ => null
     };
+    MediaKind? kind = type?.ToLowerInvariant() switch
+    {
+        "album" => MediaKind.Album,
+        "artist" => MediaKind.Artist,
+        "track" => MediaKind.Track,
+        _ => null
+    };
     if (mt is MediaType requestedType && !modules.IsEnabled(requestedType))
         return Results.Ok(Array.Empty<BridgeSearchResultDto>());
 
-    var results = (await metadata.SearchAsync(q, mt, 1, take)).Take(take).ToList();
+    var results = (await metadata.SearchAsync(new MediaSearchQuery
+    {
+        Query = q.Trim(),
+        MediaType = mt,
+        Kind = kind,
+        Page = 1,
+        PageSize = take
+    })).Take(take).ToList();
     try { await plex.AnnotateAvailabilityAsync(results); } catch { /* availability best-effort */ }
 
     // Per-user request status if this Discord user is linked.
@@ -1351,55 +1392,42 @@ app.MapPost("/api/bridge/requests/{id:int}/deny", async (int id, BridgeAdminActi
     return Results.Ok(new { ok });
 });
 
-// Request-lifecycle event feed — the extension polls this and renders embeds/DMs. Cursor = highest Id seen.
+// Legacy v1/v2 request-lifecycle event feed. Kept as an array so PlexBox can upgrade independently.
 app.MapGet("/api/bridge/events", async (long? since, int? max, HttpContext ctx, IConfiguration cfg,
-    AppDbContext db, IMediaMetadataProvider metadata) =>
+    IBridgeOutboxService outbox, CancellationToken cancellationToken) =>
 {
     if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
     var take = Math.Clamp(max ?? 25, 1, 100);
-    var cursor = since ?? 0;
-
-    var rows = await db.BridgeOutbox.Include(e => e.MediaRequest)
-        .Where(e => e.Id > cursor).OrderBy(e => e.Id).Take(take).ToListAsync();
-    var events = new List<BridgeEventDto>(rows.Count);
-    foreach (var e in rows)
-    {
-        var dto = new BridgeEventDto
+    var batch = await outbox.ReadBatchAsync(since ?? 0, take, cancellationToken);
+    // Old PlexBox builds know only the original five enum values. Preserve their historical rendering
+    // semantics here; v3 consumers receive the precise lifecycle types from the endpoint below.
+    foreach (var bridgeEvent in batch.Events)
+        bridgeEvent.Type = bridgeEvent.Type switch
         {
-            Cursor = e.Id, Type = e.EventType, RequestId = e.MediaRequestId, MediaId = e.MediaId,
-            MediaType = e.MediaType, Title = e.Title, PosterUrl = e.PosterUrl, Status = e.Status,
-            Media = e.MediaRequest is { } request ? ToRequestDto(request).MediaRef : MediaRef.FromTmdb(e.MediaId, e.MediaType),
-            RequestScope = e.MediaRequest?.RequestScopeKind ?? e.MediaType.DefaultKind().DefaultScope(),
-            Detail = e.Detail, RequesterName = e.RequesterName, CreatedAt = e.CreatedAt
+            BridgeEventType.Searching or BridgeEventType.PartiallyAvailable => BridgeEventType.Failed,
+            BridgeEventType.Upgraded => BridgeEventType.Available,
+            BridgeEventType.Cancelled => BridgeEventType.Denied,
+            _ => bridgeEvent.Type
         };
-        // Enrich with fresh artwork/metadata for the embed.
-        try
-        {
-            var d = await metadata.GetDetailsAsync(e.MediaId, e.MediaType);
-            if (d is not null)
-            {
-                dto.Overview = d.Overview;
-                dto.BackdropUrl = d.BackdropUrl;
-                dto.Rating = d.Rating;
-                dto.Year = d.Year;
-                dto.TmdbId = d.TmdbId;
-                dto.Genres = d.Genres;
-                if (string.IsNullOrEmpty(dto.PosterUrl)) dto.PosterUrl = d.PosterUrl;
-            }
-        }
-        catch { /* enrichment best-effort */ }
+    return Results.Ok(batch.Events);
+});
 
-        // Include the requester's Discord id ONLY if they're linked and opted in (safe to DM).
-        if (e.RequesterUserId is int ruid)
-        {
-            var prof = await db.UserProfiles.Where(p => p.UserId == ruid)
-                .Select(p => new { p.DiscordUserId, p.DiscordDmOptIn }).FirstOrDefaultAsync();
-            if (prof is { DiscordDmOptIn: true } && !string.IsNullOrWhiteSpace(prof.DiscordUserId))
-                dto.RequesterDiscordId = prof.DiscordUserId;
-        }
-        events.Add(dto);
-    }
-    return Results.Ok(events);
+// Version 3 adds an explicit batch envelope, stable event ids and acknowledgement. The bot persists
+// NextCursor only after it has handled the complete batch, then acknowledges that cursor.
+app.MapGet("/api/bridge/events/v3", async (long? since, int? max, HttpContext ctx, IConfiguration cfg,
+    IBridgeOutboxService outbox, CancellationToken cancellationToken) =>
+{
+    if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
+    return Results.Ok(await outbox.ReadBatchAsync(since ?? 0, Math.Clamp(max ?? 25, 1, 100),
+        cancellationToken));
+});
+
+app.MapPost("/api/bridge/events/ack", async (BridgeEventAckBody body, HttpContext ctx,
+    IConfiguration cfg, IBridgeOutboxService outbox, CancellationToken cancellationToken) =>
+{
+    if (!IsAuthorizedBridge(ctx, cfg)) return Results.Unauthorized();
+    if (body.Cursor < 0) return Results.BadRequest(new { message = "Cursor cannot be negative." });
+    return Results.Ok(await outbox.AcknowledgeAsync(body.Cursor, cancellationToken));
 });
 
 // Local dev-only login shortcut - bypass Plex auth for UI development.

@@ -145,6 +145,9 @@ public class ModularMediaFoundationTests
             INSERT INTO MediaMetadataCache
                 (MediaType, TmdbId, Title, GenresCsv, TotalSeasons, CardFetchedAt)
                 VALUES (0, 10, 'Cached Movie', '', 0, CURRENT_TIMESTAMP);
+            INSERT INTO BridgeOutbox
+                (EventType, MediaRequestId, MediaId, MediaType, Title, Status, CreatedAt)
+                VALUES (3, 3, 0, 2, 'Album', 5, CURRENT_TIMESTAMP);
             INSERT INTO Indexers
                 (Name, Enabled, Priority, LastResultCount, ConsecutiveFailures, TotalSearches, TotalResults,
                  LastLatencyMs, CreatedAt, UpdatedAt, Implementation, SupportsMovie, SupportsTv, SupportsAnime)
@@ -180,6 +183,12 @@ public class ModularMediaFoundationTests
                 && x.Indexer!.Implementation == "PirateBay").Select(x => x.Enabled).SingleAsync());
         Assert.Equal(1, await db.MediaMetadataCache.CountAsync(x => x.MediaIdentityId != null));
         Assert.False(await db.MusicSettings.Select(x => x.CatalogEnabled).SingleAsync());
+        var bridge = await db.BridgeOutbox.SingleAsync();
+        Assert.StartsWith("legacy:", bridge.DeduplicationKey, StringComparison.Ordinal);
+        Assert.Equal(MediaKind.Album, bridge.MediaKind);
+        Assert.Equal(RequestScopeKind.Album, bridge.RequestScopeKind);
+        Assert.Equal("musicbrainz", bridge.ExternalSource);
+        Assert.Equal("release-group-id", bridge.ExternalId);
         await using var foreignKeyCheck = connection.CreateCommand();
         foreignKeyCheck.CommandText = "PRAGMA foreign_key_check";
         await using var violations = await foreignKeyCheck.ExecuteReaderAsync();

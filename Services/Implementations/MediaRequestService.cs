@@ -81,7 +81,9 @@ public class MediaRequestService(
         if (req is null) return false;
         if (!isAdmin && !string.Equals(req.RequestedBy, username, StringComparison.OrdinalIgnoreCase)) return false;
         req.Status = RequestStatus.Cancelled;
-        return await _db.SaveChangesAsync() > 0;
+        var changed = await _db.SaveChangesAsync() > 0;
+        if (changed) await _notify.RequestCancelledAsync(ToDto(req));
+        return changed;
     } // TODO: Add authorization check for request ownership
 
     public async Task<UserStatsDto> GetMyStatsAsync()

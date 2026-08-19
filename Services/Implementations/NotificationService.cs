@@ -13,11 +13,14 @@ namespace PlexRequestsHosted.Services.Implementations;
 /// components via the in-process <see cref="INotificationBroker"/>. Registered as a singleton,
 /// so it resolves a scoped <see cref="AppDbContext"/> per operation via the scope factory.
 /// </summary>
-public class NotificationService(IServiceScopeFactory scopeFactory, INotificationBroker broker, IConfiguration configuration) : INotificationService
+public class NotificationService(
+    IServiceScopeFactory scopeFactory,
+    INotificationBroker broker,
+    ILogger<NotificationService> logger) : INotificationService
 {
     private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
     private readonly INotificationBroker _broker = broker;
-    private readonly IConfiguration _config = configuration;
+    private readonly ILogger<NotificationService> _logger = logger;
 
     // Each lifecycle event: (1) in-app notification/broker + (2) a Discord bridge outbox row.
     // This is the single choke point for all transitions (web UI, fulfillment, and bridge paths).
@@ -53,6 +56,14 @@ public class NotificationService(IServiceScopeFactory scopeFactory, INotificatio
         await WriteOutboxAsync(request, BridgeEventType.Available);
     }
 
+    public async Task RequestPartiallyAvailableAsync(MediaRequestDto request, string reason)
+    {
+        await NotifyUserAsync(request.RequestedByUserId, NotificationType.Warning,
+            "Partially available",
+            $"Some of \"{request.Title}\" is available, but the remaining content is still missing.", request.Id);
+        await WriteOutboxAsync(request, BridgeEventType.PartiallyAvailable, reason);
+    }
+
     public async Task RequestFailedAsync(MediaRequestDto request, string reason)
     {
         // The user-facing message stays generic; the raw reason (which may contain exception text from the
@@ -62,6 +73,9 @@ public class NotificationService(IServiceScopeFactory scopeFactory, INotificatio
         await WriteOutboxAsync(request, BridgeEventType.Failed, reason);
     }
 
+    public Task RequestCancelledAsync(MediaRequestDto request) =>
+        WriteOutboxAsync(request, BridgeEventType.Cancelled);
+
     public async Task RequestSearchStalledAsync(MediaRequestDto request, int attempts)
     {
         // Not a failure — the request is still being searched. Surface it to admins so they can add an
@@ -69,40 +83,33 @@ public class NotificationService(IServiceScopeFactory scopeFactory, INotificatio
         await NotifyAdminsAsync(NotificationType.RequestSearchStalled, "Still searching",
             $"\"{request.Title}\" has been searched {attempts} times with no release found yet. It will keep retrying; you can help by adding an indexer or adjusting quality rules.",
             request.Id);
-        await WriteOutboxAsync(request, BridgeEventType.Failed, $"Still searching after {attempts} attempts (not failed)");
+        await WriteOutboxAsync(request, BridgeEventType.Searching,
+            $"Still searching after {attempts} attempts");
     }
 
     public async Task RequestUpgradedAsync(MediaRequestDto request, Quality newQuality)
     {
         await NotifyUserAsync(request.RequestedByUserId, NotificationType.RequestUpgraded,
             "Quality upgraded", $"\"{request.Title}\" was upgraded to {newQuality.Label()}.", request.Id);
-        await WriteOutboxAsync(request, BridgeEventType.Available, $"Upgraded to {newQuality.Label()}");
+        await WriteOutboxAsync(request, BridgeEventType.Upgraded, $"Upgraded to {newQuality.Label()}");
     }
 
     private async Task WriteOutboxAsync(MediaRequestDto request, BridgeEventType type, string? detail = null)
     {
-        if (!_config.GetValue<bool>("Bridge:Enabled")) return;
         try
         {
             using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            db.BridgeOutbox.Add(new BridgeOutboxEntity
-            {
-                EventType = type,
-                MediaRequestId = request.Id,
-                MediaId = request.MediaId,
-                MediaType = request.MediaType,
-                Title = request.Title,
-                PosterUrl = request.PosterUrl,
-                Status = request.Status,
-                RequesterUserId = request.RequestedByUserId > 0 ? request.RequestedByUserId : null,
-                RequesterName = request.RequestedByUsername,
-                Detail = detail,
-                CreatedAt = DateTime.UtcNow
-            });
-            await db.SaveChangesAsync();
+            var outbox = scope.ServiceProvider.GetRequiredService<IBridgeOutboxService>();
+            await outbox.EnqueueAsync(request, type, detail);
         }
-        catch { /* outbox is best-effort; never block a notification on it */ }
+        catch (Exception ex)
+        {
+            // The lifecycle transition itself must not fail because an optional bridge is unavailable.
+            // Unlike the former empty catch, this is observable, and the outbox repair pass can recreate
+            // the current state on the next successful bot poll.
+            _logger.LogWarning(ex, "Could not persist bridge event {EventType} for request {RequestId}",
+                type, request.Id);
+        }
     }
 
     private async Task NotifyUserAsync(int userId, NotificationType type, string title, string message, int? relatedRequestId)

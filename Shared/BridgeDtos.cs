@@ -71,6 +71,8 @@ public class BridgeEventDto
 {
     /// <summary>Cursor — pass the highest value seen back as `since` on the next poll.</summary>
     public long Cursor { get; set; }
+    /// <summary>Stable idempotency key. PlexBox may safely ignore a repeated event with this id.</summary>
+    public string EventId { get; set; } = string.Empty;
     public BridgeEventType Type { get; set; }
     public int RequestId { get; set; }
     public int MediaId { get; set; }
@@ -95,8 +97,26 @@ public class BridgeEventDto
 
 public sealed class BridgeCapabilitiesDto
 {
-    public int ApiVersion { get; set; } = 2;
+    public int ApiVersion { get; set; } = 3;
     public List<MediaModuleDescriptor> MediaModules { get; set; } = new();
+    public bool SupportsEventBatches { get; set; } = true;
+    public bool SupportsEventAcknowledgement { get; set; } = true;
+    public int EventRetentionDays { get; set; } = 30;
+}
+
+/// <summary>Version 3 event envelope. The legacy array endpoint remains available for older PlexBox builds.</summary>
+public sealed class BridgeEventBatchDto
+{
+    public int ApiVersion { get; set; } = 3;
+    public long RequestedCursor { get; set; }
+    public long OldestAvailableCursor { get; set; }
+    public long NextCursor { get; set; }
+    public bool HasMore { get; set; }
+    /// <summary>The supplied cursor predates retained history. Current request states were repaired into
+    /// the feed, but the consumer should treat this as a state resynchronization rather than full history.</summary>
+    public bool CursorExpired { get; set; }
+    public DateTime ServerTimeUtc { get; set; } = DateTime.UtcNow;
+    public List<BridgeEventDto> Events { get; set; } = new();
 }
 
 // ---- request bodies ----
@@ -118,3 +138,5 @@ public sealed class BridgeRequestBody
 }
 public record BridgeLinkBody(string Code, string DiscordUserId, string? DiscordUsername);
 public record BridgeAdminActionBody(string DiscordUserId, string? Reason);
+public record BridgeEventAckBody(long Cursor);
+public record BridgeEventAckResult(long Cursor, int Acknowledged, int Pruned);

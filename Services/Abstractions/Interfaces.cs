@@ -53,7 +53,9 @@ public interface INotificationService
     Task RequestApprovedAsync(MediaRequestDto request);
     Task RequestRejectedAsync(MediaRequestDto request);
     Task RequestAvailableAsync(MediaRequestDto request);
+    Task RequestPartiallyAvailableAsync(MediaRequestDto request, string reason);
     Task RequestFailedAsync(MediaRequestDto request, string reason);
+    Task RequestCancelledAsync(MediaRequestDto request);
     /// <summary>A request has been searching a long time with no findable release — notify admins so they
     /// can intervene. The request keeps searching; it is never auto-failed.</summary>
     Task RequestSearchStalledAsync(MediaRequestDto request, int attempts);
