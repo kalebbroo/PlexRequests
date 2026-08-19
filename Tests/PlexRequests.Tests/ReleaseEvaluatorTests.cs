@@ -1,3 +1,4 @@
+using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
 using Xunit;
@@ -272,4 +273,97 @@ public class ReleaseEvaluatorTests
         Assert.False(ReleaseEvaluator.MeetsCutoff(TestData.TierId(defs, Quality.HD, ReleaseSource.Remux), profile, defs));
         Assert.False(ReleaseEvaluator.MeetsCutoff(null, profile, defs));
     }
+
+    [Fact]
+    public void Music_uses_audio_quality_instead_of_video_profiles()
+    {
+        var job = MusicJob(RequestScopeKind.Album, "Random Access Memories", "Daft Punk");
+        var result = _eval.Evaluate(
+            TestData.Release("Daft.Punk-Random.Access.Memories-2013-FLAC-24bit-96kHz", sizeGb: 1.5),
+            job,
+            TestData.Context(TestData.Profile(TestData.Definitions())));
+
+        Assert.True(result.Accepted);
+        Assert.Equal(0, result.Resolution);
+        Assert.Contains(result.ScoreBreakdown, x => x.Name == "Audio format" && x.Points == 400);
+        Assert.Contains(result.ScoreBreakdown, x => x.Name == "Bit depth");
+    }
+
+    [Fact]
+    public void Music_rejects_same_named_video_and_wrong_artist()
+    {
+        var job = MusicJob(RequestScopeKind.Album, "Discovery", "Daft Punk");
+        var video = _eval.Evaluate(TestData.Release("Discovery.2021.1080p.WEB-DL.AAC", sizeGb: 2),
+            job, TestData.Context());
+        var wrongArtist = _eval.Evaluate(TestData.Release("Electric.Light.Orchestra-Discovery-1979-FLAC", sizeGb: 1),
+            job, TestData.Context());
+
+        Assert.True(Rejected(video, RejectionReason.MediaTypeMismatch));
+        Assert.True(Rejected(wrongArtist, RejectionReason.ArtistMismatch));
+    }
+
+    [Fact]
+    public void Authoritative_music_category_accepts_a_release_that_omits_the_codec_token()
+    {
+        var job = MusicJob(RequestScopeKind.Album, "Discovery", "Daft Punk");
+        var candidate = TestData.Release("Daft.Punk-Discovery-2001", sizeGb: .8) with
+            { CategoryIds = new[] { 3000 } };
+
+        var result = _eval.Evaluate(candidate, job, TestData.Context());
+
+        Assert.True(result.Accepted);
+        Assert.Contains(result.ScoreBreakdown, x => x.Name == "Audio format" && x.Points == 100);
+    }
+
+    [Fact]
+    public void Album_search_waits_for_artist_metadata_instead_of_guessing_by_title()
+    {
+        var job = MusicJob(RequestScopeKind.Album, "Discovery", string.Empty);
+
+        var result = _eval.Evaluate(TestData.Release("Discovery-2001-FLAC", sizeGb: .8),
+            job, TestData.Context());
+
+        Assert.True(Rejected(result, RejectionReason.MetadataIncomplete));
+    }
+
+    [Fact]
+    public void Artist_request_requires_a_catalog_release()
+    {
+        var job = MusicJob(RequestScopeKind.ArtistCatalog, "Daft Punk", "Daft Punk", MediaKind.Artist);
+        var album = _eval.Evaluate(TestData.Release("Daft.Punk-Discovery-2001-FLAC", sizeGb: 1),
+            job, TestData.Context());
+        var catalog = _eval.Evaluate(TestData.Release("Daft.Punk-Complete.Discography-FLAC", sizeGb: 12),
+            job, TestData.Context());
+
+        Assert.True(Rejected(album, RejectionReason.CatalogScopeMismatch));
+        Assert.True(catalog.Accepted);
+    }
+
+    [Fact]
+    public void Lossless_music_outranks_lossy_even_with_fewer_seeders()
+    {
+        var job = MusicJob(RequestScopeKind.Album, "Discovery", "Daft Punk");
+        var flac = _eval.Evaluate(TestData.Release("Daft.Punk-Discovery-FLAC", seeders: 5, sizeGb: 1),
+            job, TestData.Context());
+        var mp3 = _eval.Evaluate(TestData.Release("Daft.Punk-Discovery-MP3-320", seeders: 500, sizeGb: .2),
+            job, TestData.Context());
+
+        Assert.True(flac.Accepted && mp3.Accepted);
+        Assert.True(flac.Score > mp3.Score, $"FLAC scored {flac.Score}, MP3 scored {mp3.Score}");
+    }
+
+    private static FulfillmentJobDto MusicJob(
+        RequestScopeKind scope, string title, string artist, MediaKind kind = MediaKind.Album) => new()
+        {
+            MediaType = MediaType.Music,
+            Title = title,
+            RequestScope = scope,
+            Music = new MusicAcquisitionContextDto
+            {
+                Kind = kind,
+                Artist = artist,
+                Album = kind == MediaKind.Album ? title : null,
+                Track = kind == MediaKind.Track ? title : null
+            }
+        };
 }

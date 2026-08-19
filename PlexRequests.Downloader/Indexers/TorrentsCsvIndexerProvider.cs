@@ -4,6 +4,7 @@ using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequests.Downloader.Indexers;
 
@@ -38,9 +39,9 @@ public class TorrentsCsvIndexerProvider(HttpClient http, IOptions<IndexerOptions
 
         var queries = new List<string>
         {
-            job.MediaType == MediaType.Movie && job.Year is int y ? $"{job.Title} {y}" : job.Title
+            AcquisitionQuery.Build(job)
         };
-        if (job.MediaType != MediaType.Movie)
+        if (job.MediaType is MediaType.TvShow or MediaType.Anime)
         {
             var seasons = job.RequestedSeasons
                 .Concat(job.SeasonTargets.Select(t => t.Season))

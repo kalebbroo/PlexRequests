@@ -6,6 +6,7 @@ using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequests.Downloader.Indexers;
 
@@ -32,7 +33,7 @@ public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptio
     {
         if (!_opts.ExtToEnabled || string.IsNullOrWhiteSpace(job.Title)) return Array.Empty<ReleaseCandidate>();
 
-        var terms = job.MediaType == MediaType.Movie && job.Year is int y ? $"{job.Title} {y}" : job.Title;
+        var terms = AcquisitionQuery.Build(job);
         var query = Uri.EscapeDataString(Regex.Replace(terms, @"\s+", " ").Trim());
         var searchUrl = _opts.ExtToSearchPath.Replace("{query}", query);
 

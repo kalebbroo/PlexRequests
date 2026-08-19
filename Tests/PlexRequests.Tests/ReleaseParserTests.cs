@@ -108,4 +108,17 @@ public class ReleaseParserTests
         var p2 = _parser.Parse("Show.S01E01_1080p_WEB-DL_GRP");
         Assert.Equal("GRP", p2.Group);
     }
+
+    [Theory]
+    [InlineData("Daft.Punk-Random.Access.Memories-2013-FLAC-24bit-96kHz", "FLAC", true, 24, 96.0)]
+    [InlineData("Artist - Album (2020) ALAC 16-bit 44.1kHz", "ALAC", true, 16, 44.1)]
+    [InlineData("Artist.Album.2024.MP3.320", "MP3", false, null, null)]
+    public void Parses_music_audio_quality(string name, string codec, bool lossless, int? depth, double? rate)
+    {
+        var parsed = _parser.Parse(name);
+        Assert.Equal(codec, parsed.AudioCodec);
+        Assert.Equal(lossless, parsed.LosslessAudio);
+        Assert.Equal(depth, parsed.AudioBitDepth);
+        Assert.Equal(rate, parsed.AudioSampleRateKhz);
+    }
 }

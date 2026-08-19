@@ -148,6 +148,11 @@ public class ModularMediaFoundationTests
                  LastLatencyMs, CreatedAt, UpdatedAt, Implementation, SupportsMovie, SupportsTv, SupportsAnime)
                 VALUES ('Fixture', 1, 25, 0, 0, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
                         'Torznab', 1, 0, 1);
+            INSERT INTO Indexers
+                (Name, Enabled, Priority, LastResultCount, ConsecutiveFailures, TotalSearches, TotalResults,
+                 LastLatencyMs, CreatedAt, UpdatedAt, Implementation, SupportsMovie, SupportsTv, SupportsAnime)
+                VALUES ('General Fixture', 1, 30, 0, 0, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        'PirateBay', 1, 1, 1);
             """;
             await seed.ExecuteNonQueryAsync();
         }
@@ -163,10 +168,14 @@ public class ModularMediaFoundationTests
         Assert.Equal(RequestScopeKind.Album, await db.MediaRequests.Where(x => x.MediaType == MediaType.Music)
             .Select(x => x.RequestScopeKind).SingleAsync());
         Assert.Equal(1, await db.FulfillmentJobs.CountAsync(x => x.MediaIdentityId != null));
+        Assert.Equal(MediaKind.Series, await db.FulfillmentJobs.Select(x => x.MediaKind).SingleAsync());
+        Assert.Equal(RequestScopeKind.Series, await db.FulfillmentJobs.Select(x => x.RequestScopeKind).SingleAsync());
         Assert.Equal(1, await db.Watchlist.CountAsync(x => x.MediaIdentityId != null));
-        Assert.Equal(4, await db.IndexerMediaCapabilities.CountAsync());
-        Assert.False(await db.IndexerMediaCapabilities
-            .Where(x => x.MediaType == MediaType.Music).Select(x => x.Enabled).SingleAsync());
+        Assert.Equal(8, await db.IndexerMediaCapabilities.CountAsync());
+        Assert.False(await db.IndexerMediaCapabilities.Where(x => x.MediaType == MediaType.Music
+                && x.Indexer!.Implementation == "Torznab").Select(x => x.Enabled).SingleAsync());
+        Assert.True(await db.IndexerMediaCapabilities.Where(x => x.MediaType == MediaType.Music
+                && x.Indexer!.Implementation == "PirateBay").Select(x => x.Enabled).SingleAsync());
         Assert.Equal(1, await db.MediaMetadataCache.CountAsync(x => x.MediaIdentityId != null));
         Assert.False(await db.MusicSettings.Select(x => x.CatalogEnabled).SingleAsync());
         await using var foreignKeyCheck = connection.CreateCommand();

@@ -44,6 +44,9 @@ public static partial class ReleaseTokens
         (@"ddp", "EAC3"),
         (@"ac[\s._-]*3", "AC3"),
         (@"flac", "FLAC"),
+        (@"alac", "ALAC"),
+        (@"(?:monkey'?s[\s._-]*audio|ape)", "APE"),
+        (@"wav", "WAV"),
         (@"opus", "Opus"),
         (@"lpcm", "LPCM"),
         (@"pcm", "PCM"),
@@ -101,6 +104,8 @@ public static partial class ReleaseTokens
         foreach (var t in new[] { "bluray", "blu-ray", "bdrip", "brrip", "web[\\s._-]*dl", "webdl", "web[\\s._-]*rip", "hdtv", "pdtv", "remux" }) yield return t;
         foreach (var t in new[] { "x264", "x265", @"h\.?264", @"h\.?265", "hevc", "avc" }) yield return t;
         foreach (var t in new[] { "hdr", "hdr10", "dv", "amzn", "nf", "dsnp", "hmax" }) yield return t;
+        yield return @"(?:16|24|32)[\s._-]*bit";
+        yield return @"(?:44\.1|48|88\.2|96|176\.4|192)[\s._-]*(?:khz|k)";
 
         // Newly contributed by this file. A title legitimately containing one of these is vanishingly rare
         // next to the number of release names where they mark the end of the title.

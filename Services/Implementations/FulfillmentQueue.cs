@@ -27,6 +27,14 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
 
     public async Task<bool> EnqueueAsync(MediaRequestDto request, bool force = false)
     {
+        var reqEntity = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == request.Id);
+        var mediaRef = request.MediaRef is { IsValid: true } suppliedRef
+            ? suppliedRef
+            : !string.IsNullOrWhiteSpace(request.ExternalId)
+                ? MediaRef.FromExternal(request.ExternalSource ?? "external", request.ExternalId,
+                    request.MediaType, KindForScope(request.MediaType, request.RequestScopeKind))
+                : MediaRef.FromTmdb(request.MediaId, request.MediaType);
+
         var active = await _db.FulfillmentJobs.AnyAsync(j =>
             j.MediaRequestId == request.Id &&
             (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
@@ -36,12 +44,15 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         // Other active jobs for the SAME title from a DIFFERENT request (two users, or one user
         // requesting different seasons at different times) — never let two jobs re-download the same
         // content concurrently. Subtracted from what this job would target, below.
-        var otherActive = await _db.FulfillmentJobs.Where(j =>
-                j.MediaId == request.MediaId && j.MediaType == request.MediaType &&
-                j.MediaRequestId != request.Id &&
-                (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
-                 j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred))
-            .ToListAsync();
+        var otherActiveQuery = _db.FulfillmentJobs.Where(j =>
+            j.MediaRequestId != request.Id &&
+            (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
+             j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred));
+        otherActiveQuery = reqEntity?.MediaIdentityId is int identityId
+            ? otherActiveQuery.Where(j => j.MediaIdentityId == identityId)
+            : otherActiveQuery.Where(j => j.MediaIdentityId == null && j.MediaId == request.MediaId
+                                                                  && j.MediaType == request.MediaType);
+        var otherActive = await otherActiveQuery.ToListAsync();
 
         if (request.MediaType != MediaType.TvShow && otherActive.Count > 0)
             return false; // no sub-scope for movies/other media — one in-flight job for the title is enough
@@ -115,21 +126,29 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         List<string>? genres = null;
         int? year = null;
         bool isAnime = false;
+        MusicAcquisitionContextDto? music = null;
         try
         {
-            var detail = await _metadata.GetDetailsAsync(request.MediaId, request.MediaType);
+            var detail = await _metadata.GetDetailsAsync(mediaRef);
             imdbId = detail?.ImdbId;
             genres = detail?.Genres;
             year = detail?.Year;
             isAnime = AnimeClassifier.IsAnime(detail?.Genres, detail?.Languages, detail?.Countries);
-            if (string.IsNullOrEmpty(imdbId)) imdbId = await _metadata.GetImdbIdAsync(request.MediaId, request.MediaType);
+            if (request.MediaType == MediaType.Music)
+                music = BuildMusicContext(mediaRef.Kind, request.Title, detail);
+            else if (string.IsNullOrEmpty(imdbId))
+                imdbId = await _metadata.GetImdbIdAsync(request.MediaId, request.MediaType);
         }
         catch { /* best-effort; downloader can still try by title/year */ }
+
+        // A metadata outage must not erase the identity needed by future retries. The fallback still gives
+        // the ranker the correct request shape and title; it simply has less artist context for this pass.
+        if (request.MediaType == MediaType.Music)
+            music ??= BuildMusicContext(mediaRef.Kind, request.Title, null);
 
         // Resolve the quality profile: the requester's pick when they're entitled to it, else the first
         // matching assignment rule, else the default. Previously the requester's choice was discarded
         // outright and a single admin rule decided everything.
-        var reqEntity = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == request.Id);
         var profileId = await _profiles.ResolveProfileIdAsync(
             request.MediaType, request.MediaId, genres,
             requesterChoiceId: reqEntity?.QualityProfileId,
@@ -153,12 +172,15 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             MediaIdentityId = reqEntity?.MediaIdentityId,
             MediaId = request.MediaId,
             MediaType = request.MediaType,
+            MediaKind = mediaRef.Kind,
+            RequestScopeKind = request.RequestScopeKind,
+            AcquisitionContextJson = music is null ? null : JsonSerializer.Serialize(music),
             Title = request.Title,
             Year = year,
-            TmdbId = request.MediaId, // MediaId is the TMDb id for the default provider
+            TmdbId = mediaRef.TryGetTmdbId(out var tmdbId) ? tmdbId : null,
             ImdbId = imdbId,
-            ExternalId = request.ExternalId,           // music/other-source id (TODO: downloader music support)
-            ExternalSource = request.ExternalSource,
+            ExternalId = mediaRef.Provider == "tmdb" ? null : mediaRef.Id,
+            ExternalSource = mediaRef.Provider == "tmdb" ? null : mediaRef.Provider,
             RequestedSeasonsCsv = seasonsCsv,
             RequestedEpisodesCsv = episodesCsv,
             SeasonTargetsJson = seasonTargets.Count > 0 ? JsonSerializer.Serialize(seasonTargets) : null,
@@ -256,6 +278,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         var now = DateTime.UtcNow;
         foreach (var j in jobs)
         {
+            if (j.MediaType == MediaType.Music)
+                await RefreshMusicContextAsync(j);
             j.Status = FulfillmentStatus.Claimed;
             j.ClaimedBy = workerId;
             j.ClaimedAt = now;
@@ -267,6 +291,40 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         var dtos = jobs.Select(Map).ToList();
         await AttachRankingContextAsync(dtos, jobs);
         return dtos;
+    }
+
+    /// <summary>
+    /// Refresh incomplete music identity on a retry. Metadata was best-effort at enqueue, and persisting a missing
+    /// artist forever would make an album title ambiguous forever. Complete contexts return without I/O;
+    /// a transient outage simply leaves the ranker rejecting with MetadataIncomplete,
+    /// after which the existing durable deferral/backoff brings it through here again.
+    /// </summary>
+    private async Task RefreshMusicContextAsync(FulfillmentJobEntity job)
+    {
+        if (string.IsNullOrWhiteSpace(job.ExternalId)) return;
+        try
+        {
+            var current = string.IsNullOrWhiteSpace(job.AcquisitionContextJson)
+                ? null : JsonSerializer.Deserialize<MusicAcquisitionContextDto>(job.AcquisitionContextJson);
+            if (current?.Kind == MediaKind.Artist || !string.IsNullOrWhiteSpace(current?.Artist)) return;
+        }
+        catch (JsonException) { /* replace malformed transitional context from authoritative metadata */ }
+        try
+        {
+            var kind = job.MediaKind.BelongsTo(MediaType.Music)
+                ? job.MediaKind : KindForScope(MediaType.Music, job.RequestScopeKind);
+            var mediaRef = MediaRef.FromExternal(
+                job.ExternalSource ?? "external", job.ExternalId, MediaType.Music, kind);
+            var detail = await _metadata.GetDetailsAsync(mediaRef);
+            if (detail is null) return;
+            job.AcquisitionContextJson = JsonSerializer.Serialize(BuildMusicContext(kind, job.Title, detail));
+            job.Year = detail.Year;
+            job.LastUpdatedAt = DateTime.UtcNow;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Music metadata refresh deferred for fulfillment job {JobId}", job.Id);
+        }
     }
 
     /// <summary>
@@ -446,9 +504,12 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             MediaIdentityId = origin?.MediaIdentityId,
             MediaId = request.MediaId,
             MediaType = request.MediaType,
+            MediaKind = origin?.MediaKind ?? KindForScope(request.MediaType, request.RequestScopeKind),
+            RequestScopeKind = origin?.RequestScopeKind ?? request.RequestScopeKind,
+            AcquisitionContextJson = origin?.AcquisitionContextJson,
             Title = request.Title,
             Year = origin?.Year,
-            TmdbId = origin?.TmdbId ?? request.MediaId,
+            TmdbId = origin?.TmdbId ?? (request.MediaRef?.TryGetTmdbId(out var tmdbId) == true ? tmdbId : null),
             ImdbId = origin?.ImdbId,
             TvdbId = origin?.TvdbId,
             ExternalId = request.ExternalId,
@@ -710,13 +771,19 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         MediaType = j.MediaType,
         Media = !string.IsNullOrWhiteSpace(j.ExternalId)
             ? MediaRef.FromExternal(j.ExternalSource ?? "external", j.ExternalId, j.MediaType,
-                j.MediaType.DefaultKind())
+                j.MediaKind.BelongsTo(j.MediaType) ? j.MediaKind : KindForScope(j.MediaType, j.RequestScopeKind))
             : MediaRef.FromTmdb(j.MediaId, j.MediaType),
-        RequestScope = j.MediaType is MediaType.TvShow or MediaType.Anime
+        RequestScope = Enum.IsDefined(j.RequestScopeKind) &&
+                       (j.RequestScopeKind != RequestScopeKind.Title || j.MediaType == MediaType.Movie)
+            ? j.RequestScopeKind
+            : j.MediaType is MediaType.TvShow or MediaType.Anime
             ? !string.IsNullOrWhiteSpace(j.RequestedEpisodesCsv) ? RequestScopeKind.Episodes
             : !string.IsNullOrWhiteSpace(j.RequestedSeasonsCsv) ? RequestScopeKind.Seasons
             : RequestScopeKind.Series
             : j.MediaType == MediaType.Music ? RequestScopeKind.Album : RequestScopeKind.Title,
+        Music = string.IsNullOrWhiteSpace(j.AcquisitionContextJson)
+            ? null
+            : JsonSerializer.Deserialize<MusicAcquisitionContextDto>(j.AcquisitionContextJson),
         Title = j.Title,
         Year = j.Year,
         TmdbId = j.TmdbId,
@@ -749,4 +816,25 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             ? new List<string>()
             : (JsonSerializer.Deserialize<List<string>>(j.ReplacePathsJson) ?? new List<string>())
     };
+
+    private static MediaKind KindForScope(MediaType mediaType, RequestScopeKind scope) => scope switch
+    {
+        RequestScopeKind.ArtistCatalog => MediaKind.Artist,
+        RequestScopeKind.Track => MediaKind.Track,
+        RequestScopeKind.Album => MediaKind.Album,
+        _ => mediaType.DefaultKind()
+    };
+
+    private static MusicAcquisitionContextDto BuildMusicContext(MediaKind kind, string title, MediaDetailDto? detail)
+    {
+        var artist = kind == MediaKind.Artist ? detail?.Title ?? title : detail?.Music?.ArtistCredit;
+        return new MusicAcquisitionContextDto
+        {
+            Kind = kind,
+            Artist = artist,
+            Album = kind == MediaKind.Album ? detail?.Title ?? title : null,
+            Track = kind == MediaKind.Track ? detail?.Title ?? title : null,
+            TrackCount = detail?.Music?.TrackCount ?? 0
+        };
+    }
 }

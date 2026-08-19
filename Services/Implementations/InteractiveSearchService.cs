@@ -4,6 +4,7 @@ using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
@@ -12,6 +13,8 @@ public interface IInteractiveSearchService
     /// <summary>Queue a search. Returns the task id to poll.</summary>
     Task<int> CreateAsync(int? mediaRequestId, MediaType mediaType, int mediaId, string title,
         int? year, string? imdbId, int? season, int? episode, int? userId);
+    Task<int> CreateAsync(int? mediaRequestId, MediaRef mediaRef, RequestScopeKind scope, string title,
+        int? year, string? imdbId, MusicAcquisitionContextDto? music, int? userId);
 
     /// <summary>Queue a capabilities probe against one indexer.</summary>
     Task<int> CreateCapabilitiesTestAsync(int indexerId, int? userId);
@@ -48,6 +51,22 @@ public class InteractiveSearchService(
     public async Task<int> CreateAsync(int? mediaRequestId, MediaType mediaType, int mediaId, string title,
         int? year, string? imdbId, int? season, int? episode, int? userId)
     {
+        var scope = episode.HasValue ? RequestScopeKind.Episodes
+            : season.HasValue ? RequestScopeKind.Seasons
+            : mediaType is MediaType.TvShow or MediaType.Anime ? RequestScopeKind.Series
+            : RequestScopeKind.Title;
+        return await CreateCoreAsync(mediaRequestId, MediaRef.FromTmdb(mediaId, mediaType), scope, title,
+            year, imdbId, season, episode, null, userId);
+    }
+
+    public Task<int> CreateAsync(int? mediaRequestId, MediaRef mediaRef, RequestScopeKind scope, string title,
+        int? year, string? imdbId, MusicAcquisitionContextDto? music, int? userId) =>
+        CreateCoreAsync(mediaRequestId, mediaRef, scope, title, year, imdbId, null, null, music, userId);
+
+    private async Task<int> CreateCoreAsync(int? mediaRequestId, MediaRef mediaRef, RequestScopeKind scope,
+        string title, int? year, string? imdbId, int? season, int? episode,
+        MusicAcquisitionContextDto? music, int? userId)
+    {
         int? profileId = mediaRequestId is int rid
             ? await db.MediaRequests.Where(r => r.Id == rid).Select(r => r.QualityProfileId).FirstOrDefaultAsync()
             : null;
@@ -57,8 +76,13 @@ public class InteractiveSearchService(
         {
             Kind = SearchTaskKind.InteractiveSearch,
             MediaRequestId = mediaRequestId,
-            MediaType = mediaType,
-            MediaId = mediaId,
+            MediaType = mediaRef.MediaType,
+            MediaId = mediaRef.TryGetTmdbId(out var tmdbId) ? tmdbId : 0,
+            MediaKind = mediaRef.Kind,
+            RequestScopeKind = scope,
+            ExternalId = mediaRef.Provider == "tmdb" ? null : mediaRef.Id,
+            ExternalSource = mediaRef.Provider == "tmdb" ? null : mediaRef.Provider,
+            AcquisitionContextJson = music is null ? null : JsonSerializer.Serialize(music, Json),
             Title = title,
             Year = year,
             ImdbId = imdbId,
@@ -138,8 +162,13 @@ public class InteractiveSearchService(
             MediaIdentityId = request.MediaIdentityId,
             MediaId = request.MediaId,
             MediaType = request.MediaType,
+            MediaKind = task.MediaKind,
+            RequestScopeKind = request.RequestScopeKind,
+            ExternalId = request.ExternalId,
+            ExternalSource = request.ExternalSource,
+            AcquisitionContextJson = task.AcquisitionContextJson,
             Title = request.Title,
-            TmdbId = request.MediaId,
+            TmdbId = string.IsNullOrWhiteSpace(request.ExternalId) ? request.MediaId : null,
             Quality = task.QualityProfileId is int pid ? await profiles.GetCutoffQualityAsync(pid) : Quality.Any,
             QualityProfileId = task.QualityProfileId,
             RequestedSeasonsCsv = task.Season?.ToString(),
@@ -182,6 +211,14 @@ public class InteractiveSearchService(
             MediaRequestId = task.MediaRequestId,
             MediaType = task.MediaType,
             MediaId = task.MediaId,
+            Media = !string.IsNullOrWhiteSpace(task.ExternalId)
+                ? MediaRef.FromExternal(task.ExternalSource ?? "external", task.ExternalId,
+                    task.MediaType, task.MediaKind)
+                : MediaRef.FromTmdb(task.MediaId, task.MediaType),
+            RequestScope = task.RequestScopeKind,
+            Music = string.IsNullOrWhiteSpace(task.AcquisitionContextJson)
+                ? null
+                : JsonSerializer.Deserialize<MusicAcquisitionContextDto>(task.AcquisitionContextJson, Json),
             Title = task.Title,
             Year = task.Year,
             ImdbId = task.ImdbId,

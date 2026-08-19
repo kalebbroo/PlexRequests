@@ -241,7 +241,8 @@ public class IndexerClient(
                 SizeBytes = Math.Max(c.SizeBytes, existing.SizeBytes),
                 SizeKnown = c.SizeKnown || existing.SizeKnown,
                 ImdbId = keep.ImdbId ?? c.ImdbId ?? existing.ImdbId,
-                QualityLabel = keep.QualityLabel ?? c.QualityLabel ?? existing.QualityLabel
+                QualityLabel = keep.QualityLabel ?? c.QualityLabel ?? existing.QualityLabel,
+                CategoryIds = c.CategoryIds.Concat(existing.CategoryIds).Distinct().ToList()
             };
         }
 
@@ -336,6 +337,9 @@ public class IndexerClient(
         var seasons = string.Join('-', job.RequestedSeasons.OrderBy(s => s));
         var episodes = string.Join('-', job.RequestedEpisodes.Select(e => $"{e.Season}x{e.Episode}").OrderBy(s => s));
         var targets = string.Join('-', job.SeasonTargets.Select(t => t.Season).OrderBy(s => s));
-        return $"{job.MediaType}:{job.Title}:{job.Year}:{job.ImdbId}:{seasons}:{episodes}:{targets}";
+        var identity = job.Media is { IsValid: true } media ? media.StableKey : $"legacy:{job.MediaId}";
+        var music = job.Music is null ? string.Empty
+            : $"{job.RequestScope}:{job.Music.Artist}:{job.Music.Album}:{job.Music.Track}";
+        return $"{identity}:{job.Title}:{job.Year}:{job.ImdbId}:{seasons}:{episodes}:{targets}:{music}";
     }
 }

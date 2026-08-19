@@ -5,6 +5,7 @@ using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequests.Downloader.Api;
 
@@ -229,10 +230,14 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         {
             var response = await _http.PostAsJsonAsync("/api/fulfillment/catalog/search", new CatalogQueryDto
             {
-                Title = job.Title,
+                Title = job.MediaType == MediaType.Music && job.RequestScope == RequestScopeKind.ArtistCatalog
+                    ? job.Music?.Artist ?? job.Title
+                    : AcquisitionQuery.Build(job, includeMovieYear: false),
                 ImdbId = job.ImdbId,
                 MediaType = job.MediaType,
-                Year = job.Year,
+                // MusicBrainz carries an original release-group year while torrents often carry a reissue
+                // or remaster year. Identity ranking handles that safely; a hard catalog filter would hide it.
+                Year = job.MediaType == MediaType.Music ? null : job.Year,
                 Limit = 500
             }, ct);
             if (!response.IsSuccessStatusCode) return null;

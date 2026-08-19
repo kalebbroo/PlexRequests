@@ -38,7 +38,20 @@ public interface IIndexerImplementation
     /// </summary>
     async Task<IndexerCapabilitiesDto> TestAsync(IndexerConfigDto indexer, CancellationToken ct)
     {
-        var probe = new FulfillmentJobDto { Title = "the", MediaType = MediaType.Movie, Quality = Quality.Any };
+        var probeType = indexer.Supports(MediaType.Movie) ? MediaType.Movie
+            : indexer.Supports(MediaType.TvShow) ? MediaType.TvShow
+            : indexer.Supports(MediaType.Music) ? MediaType.Music
+            : MediaType.Movie;
+        var probe = new FulfillmentJobDto
+        {
+            Title = "the",
+            MediaType = probeType,
+            RequestScope = probeType == MediaType.Music ? RequestScopeKind.Album : RequestScopeKind.Title,
+            Music = probeType == MediaType.Music
+                ? new MusicAcquisitionContextDto { Kind = MediaKind.Album, Album = "the" }
+                : null,
+            Quality = Quality.Any
+        };
         var started = System.Diagnostics.Stopwatch.StartNew();
         try
         {
@@ -50,6 +63,7 @@ public interface IIndexerImplementation
                 ResponseMs = (int)started.ElapsedMilliseconds,
                 SupportsMovieSearch = indexer.SupportsMovie,
                 SupportsTvSearch = indexer.SupportsTv,
+                SupportsMusicSearch = indexer.Supports(MediaType.Music),
                 Message = $"Responded in {started.ElapsedMilliseconds} ms with {results.Count} result(s) for a sample query."
             };
         }

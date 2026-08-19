@@ -4,6 +4,7 @@ using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequests.Downloader.Indexers;
 
@@ -39,16 +40,21 @@ public class PirateBayIndexerProvider(HttpClient http, IOptions<IndexerOptions> 
     {
         if (!_opts.PirateBayEnabled || string.IsNullOrWhiteSpace(job.Title)) return Array.Empty<ReleaseCandidate>();
 
-        // Video categories: 201 Movies, 202 Movies DVDR, 207 HD Movies, 211 4K Movies / 205 TV, 208 HD TV, 212 4K TV.
-        var cats = job.MediaType == MediaType.Movie ? "201,202,207,211" : "205,208,212";
+        // TPB categories: 101 Music, 104 FLAC, 199 Other audio; video retains its established routing.
+        var cats = job.MediaType switch
+        {
+            MediaType.Movie => "201,202,207,211",
+            MediaType.Music => "101,104,199",
+            _ => "205,208,212"
+        };
 
         // Each query returns at most ~100 rows, so add a per-season query for season-scoped TV jobs
         // (same pattern as the 1337x provider) to surface packs a busy show pushes out of the first page.
         var queries = new List<string>
         {
-            job.MediaType == MediaType.Movie && job.Year is int y ? $"{job.Title} {y}" : job.Title
+            AcquisitionQuery.Build(job)
         };
-        if (job.MediaType != MediaType.Movie)
+        if (job.MediaType is MediaType.TvShow or MediaType.Anime)
         {
             var seasons = job.RequestedSeasons
                 .Concat(job.SeasonTargets.Select(t => t.Season))
@@ -78,7 +84,8 @@ public class PirateBayIndexerProvider(HttpClient http, IOptions<IndexerOptions> 
             {
                 if (string.IsNullOrWhiteSpace(t.InfoHash) || t.InfoHash == ZeroHash) continue; // "no results" sentinel
                 if (string.IsNullOrWhiteSpace(t.Name)) continue;
-                if (t.Category is < 200 or > 299) continue; // defensive: video categories only
+                if (job.MediaType == MediaType.Music && t.Category is < 100 or > 199) continue;
+                if (job.MediaType != MediaType.Music && t.Category is < 200 or > 299) continue;
                 byHash.TryAdd(t.InfoHash!, new ReleaseCandidate
                 {
                     ReleaseName = t.Name!,
@@ -89,7 +96,10 @@ public class PirateBayIndexerProvider(HttpClient http, IOptions<IndexerOptions> 
                     Leechers = t.Leechers,
                     SizeBytes = t.Size,
                     IndexerId = indexer.Id,
-                    Source = indexer.Name
+                    Source = indexer.Name,
+                    // Preserve the source category and add the Torznab-standard parent so shared ranking
+                    // can identify music without learning every indexer's private taxonomy.
+                    CategoryIds = job.MediaType == MediaType.Music ? new[] { 3000, t.Category } : new[] { t.Category }
                 });
             }
         }

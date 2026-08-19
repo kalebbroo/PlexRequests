@@ -23,6 +23,10 @@ public enum RejectionReason
     ImdbMismatch,
     YearMismatch,
     MediaTypeMismatch,
+    ArtistMismatch,
+    MusicFormatMissing,
+    CatalogScopeMismatch,
+    MetadataIncomplete,
     WrongSeason,
     WrongEpisode,
     /// <summary>A season pack that demonstrably doesn't cover the episodes still missing.</summary>

@@ -89,7 +89,12 @@ public class FulfillmentPipeline(
                 return;
             }
 
-            var label = job.MediaType == MediaType.Movie ? deluge.Value.MovieLabel : deluge.Value.TvLabel;
+            var label = job.MediaType switch
+            {
+                MediaType.Movie => deluge.Value.MovieLabel,
+                MediaType.Music => deluge.Value.MusicLabel,
+                _ => deluge.Value.TvLabel
+            };
             var torrents = new List<TorrentItem>();
             foreach (var item in plan.Items)
             {

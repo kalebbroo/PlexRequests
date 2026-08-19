@@ -319,6 +319,7 @@
             string.Join(",", _caps.Categories.Where(pick).Select(c => c.Id).Distinct().OrderBy(id => id));
 
         var movies = Csv(c => InRange(c, 2000, 3000));
+        var music = Csv(c => InRange(c, 3000, 4000));
         var tv = Csv(c => InRange(c, 5000, 6000));
         var anime = Csv(c => c.Name.Contains("anime", StringComparison.OrdinalIgnoreCase));
 
@@ -327,6 +328,7 @@
         if (anime.Length > 0) _model.AnimeCategoriesCsv = anime;
 
         SetCategories(MediaType.Movie, movies);
+        SetCategories(MediaType.Music, music);
         SetCategories(MediaType.TvShow, tv);
         SetCategories(MediaType.Anime, anime);
 

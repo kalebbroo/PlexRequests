@@ -24,6 +24,8 @@ public record ReleaseCandidate
     public string? QualityLabel { get; init; }
     public int? Season { get; init; }
     public int? Episode { get; init; }
+    /// <summary>Source-native category ids when the protocol reports them (notably Torznab).</summary>
+    public IReadOnlyList<int> CategoryIds { get; init; } = Array.Empty<int>();
 
     /// <summary>When the indexer says the release was published. Null when it doesn't report one.</summary>
     public DateTime? PublishDate { get; init; }

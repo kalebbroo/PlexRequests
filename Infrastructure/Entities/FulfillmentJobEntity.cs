@@ -18,6 +18,11 @@ public class FulfillmentJobEntity
 
     public int MediaId { get; set; }
     public MediaType MediaType { get; set; }
+    public MediaKind MediaKind { get; set; }
+    public RequestScopeKind RequestScopeKind { get; set; }
+
+    /// <summary>Serialized <c>MusicAcquisitionContextDto</c>; null for non-music jobs.</summary>
+    public string? AcquisitionContextJson { get; set; }
 
     [MaxLength(512)]
     public string Title { get; set; } = string.Empty;

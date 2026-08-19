@@ -8,6 +8,7 @@ using PlexRequests.Downloader.Ranking;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequests.Downloader.Indexers;
 
@@ -32,15 +33,16 @@ public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parse
         {
             MediaType.Movie => "Movies",
             MediaType.Anime => "Anime",
+            MediaType.Music => "Music",
             _ => "TV"
         };
-        var terms = job.MediaType == MediaType.Movie && job.Year is int y ? $"{job.Title} {y}" : job.Title;
+        var terms = AcquisitionQuery.Build(job);
 
         // Each search only sees page 1, so for a season-scoped TV job a title-only query can miss the
         // wanted season entirely (a busy show's newest uploads push older seasons' packs off the page).
         // Add a "title season N" query per requested season (bounded) so those packs surface too.
         var termsList = new List<string> { terms };
-        if (job.MediaType != MediaType.Movie)
+        if (job.MediaType is MediaType.TvShow or MediaType.Anime)
         {
             var seasons = job.RequestedSeasons
                 .Concat(job.SeasonTargets.Select(t => t.Season))
@@ -89,7 +91,9 @@ public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parse
                 var c = await ResolveMagnetAsync(row, indexer, token);
                 lock (gate) results.Add(c);
             });
-        foreach (var c in results) if (c is not null) candidates.Add(c);
+        foreach (var c in results)
+            if (c is not null)
+                candidates.Add(job.MediaType == MediaType.Music ? c with { CategoryIds = new[] { 3000 } } : c);
 
         return candidates;
     }
@@ -165,6 +169,7 @@ public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parse
         {
             MediaType.Movie => "Movies",
             MediaType.Anime => "Anime",
+            MediaType.Music => "Music",
             _ => "TV"
         };
 
