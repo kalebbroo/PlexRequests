@@ -38,6 +38,7 @@ services:
       Fulfillment__ApiKey: ${FULFILLMENT_API_KEY}
       Bridge__Enabled: ${BRIDGE_ENABLED:-false}
       Bridge__ApiKey: ${BRIDGE_API_KEY:-}
+      Bridge__EventRetentionDays: ${BRIDGE_EVENT_RETENTION_DAYS:-30}
       ApiKeys__TMDb__ApiKey: ${TMDB_API_KEY}
       Admin__Usernames: ${ADMIN_USERNAMES}
       Plex__PrimaryServerUrl: ${PLEX_URL}

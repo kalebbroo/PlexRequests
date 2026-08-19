@@ -263,6 +263,11 @@ To enable the server side here: set `BRIDGE_ENABLED=true` and a shared `BRIDGE_A
 extension at your portal URL with the same key. Users link their Discord to their portal account with a
 code generated on their **Profile** page. See the extension's own README for the bot-side setup.
 
+Bridge API v3 consumers should poll `GET /api/bridge/events/v3`, finish the complete returned batch,
+persist `nextCursor`, and then `POST { "cursor": nextCursor }` to `/api/bridge/events/ack`. Events have a
+stable `eventId` for idempotency and are retained for 30 days by default. The legacy array-shaped
+`GET /api/bridge/events` remains available so the bot and portal can be upgraded independently.
+
 ---
 
 ## 8. Configuration reference
@@ -280,6 +285,7 @@ All settings are read from `.env` (mapped to the app's config keys). Only the fi
 | `FULFILLMENT_API_KEY` | ▲ | Shared secret between web app and downloader. Required to use §6. |
 | `FULFILLMENT_ENABLED` | | Queue jobs on approval (default on in the compose files). |
 | `BRIDGE_ENABLED` / `BRIDGE_API_KEY` | ▲ | Enable + secure the Discord bridge API. Required for §7. |
+| `BRIDGE_EVENT_RETENTION_DAYS` | | Durable event retention window; default `30`, allowed `1–365`. |
 | `CATALOG_ENABLED` | | Ingest structured feeds into the separate `catalog.db` in shadow mode. |
 | `CATALOG_USE_FOR_SEARCH` | | Supplement normal fulfillment searches from the local catalog. |
 | `CATALOG_USE_FOR_MONITORING` | | Match wanted episodes locally instead of repeatedly searching upstream sources. |

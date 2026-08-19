@@ -11,7 +11,10 @@ namespace PlexRequestsHosted.Services.Implementations;
 /// Links a Discord user to a PlexRequests account via a one-time code shown on the web Profile page.
 /// Codes live briefly in IMemoryCache; the association is stored on <see cref="Infrastructure.Entities.UserProfileEntity"/>.
 /// </summary>
-public class DiscordLinkService(AppDbContext db, IMemoryCache cache) : IDiscordLinkService
+public class DiscordLinkService(
+    AppDbContext db,
+    IMemoryCache cache,
+    ILogger<DiscordLinkService> logger) : IDiscordLinkService
 {
     private const string CachePrefix = "discordlink:";
     private static readonly TimeSpan CodeTtl = TimeSpan.FromMinutes(10);
@@ -21,29 +24,57 @@ public class DiscordLinkService(AppDbContext db, IMemoryCache cache) : IDiscordL
     public string GenerateLinkCode(int userId)
     {
         var code = NewCode(6);
-        cache.Set(CachePrefix + code, userId, CodeTtl);
+        cache.Set(CachePrefix + code, new LinkTicket(userId), CodeTtl);
         return code;
     }
 
     public async Task<BridgeLinkResultDto> CompleteLinkAsync(string code, string discordUserId, string? discordUsername)
     {
-        var key = CachePrefix + (code ?? string.Empty).Trim().ToUpperInvariant();
-        if (string.IsNullOrWhiteSpace(discordUserId) || !cache.TryGetValue(key, out int userId))
+        var normalizedCode = (code ?? string.Empty).Trim().ToUpperInvariant();
+        var normalizedDiscordId = discordUserId?.Trim() ?? string.Empty;
+        var normalizedUsername = discordUsername?.Trim();
+        var key = CachePrefix + normalizedCode;
+        if (!IsValidDiscordUserId(normalizedDiscordId))
+            return new BridgeLinkResultDto { Success = false, Message = "The Discord user id is invalid." };
+        if (normalizedUsername?.Length > 128)
+            return new BridgeLinkResultDto { Success = false, Message = "The Discord username is too long to store." };
+        if (!IsValidCode(normalizedCode) || !cache.TryGetValue(key, out LinkTicket? ticket) || ticket is null
+            || !ticket.TryConsume(out var userId))
             return new BridgeLinkResultDto { Success = false, Message = "That code is invalid or has expired. Generate a new one on your Plex Requests profile." };
+        cache.Remove(key);
 
         var profile = await db.UserProfiles.Include(p => p.User).FirstOrDefaultAsync(p => p.UserId == userId);
         if (profile is null)
             return new BridgeLinkResultDto { Success = false, Message = "Account not found." };
 
-        // A Discord id maps to at most one account: unlink it from any other profile first.
-        var others = await db.UserProfiles.Where(p => p.DiscordUserId == discordUserId && p.UserId != userId).ToListAsync();
-        foreach (var o in others) { o.DiscordUserId = null; o.DiscordUsername = null; }
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        try
+        {
+            // The database unique index is the final guard. Explicitly unlinking inside the same write
+            // transaction makes a deliberate re-link atomic instead of briefly mapping one Discord id twice.
+            await db.UserProfiles
+                .Where(p => p.DiscordUserId == normalizedDiscordId && p.UserId != userId)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(p => p.DiscordUserId, (string?)null)
+                    .SetProperty(p => p.DiscordUsername, (string?)null)
+                    .SetProperty(p => p.DiscordDmOptIn, false));
 
-        profile.DiscordUserId = discordUserId;
-        profile.DiscordUsername = discordUsername;
-        profile.DiscordDmOptIn = true; // opt in on link; user can toggle in Profile
-        await db.SaveChangesAsync();
-        cache.Remove(key);
+            profile.DiscordUserId = normalizedDiscordId;
+            profile.DiscordUsername = normalizedUsername;
+            profile.DiscordDmOptIn = true; // opt in on link; user can toggle in Profile
+            await db.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
+        catch (Exception ex)
+        {
+            await transaction.RollbackAsync();
+            logger.LogWarning(ex, "Discord account linking failed for Plex Requests user {UserId}", userId);
+            return new BridgeLinkResultDto
+            {
+                Success = false,
+                Message = "The account could not be linked safely. Generate a new code and try again."
+            };
+        }
 
         return new BridgeLinkResultDto
         {
@@ -55,18 +86,28 @@ public class DiscordLinkService(AppDbContext db, IMemoryCache cache) : IDiscordL
 
     public async Task<BridgeLinkStatusDto> GetStatusByDiscordIdAsync(string discordUserId)
     {
-        var p = await db.UserProfiles.Include(x => x.User).FirstOrDefaultAsync(x => x.DiscordUserId == discordUserId);
+        var normalized = discordUserId?.Trim() ?? string.Empty;
+        if (!IsValidDiscordUserId(normalized)) return new BridgeLinkStatusDto { Linked = false };
+        var p = await db.UserProfiles.Include(x => x.User).FirstOrDefaultAsync(x => x.DiscordUserId == normalized);
         return p is null
             ? new BridgeLinkStatusDto { Linked = false }
             : new BridgeLinkStatusDto { Linked = true, PlexUsername = p.PlexUsername ?? p.User?.Username, DmOptIn = p.DiscordDmOptIn };
     }
 
-    public Task<int?> ResolveUserIdAsync(string discordUserId) =>
-        db.UserProfiles.Where(p => p.DiscordUserId == discordUserId).Select(p => (int?)p.UserId).FirstOrDefaultAsync();
+    public Task<int?> ResolveUserIdAsync(string discordUserId)
+    {
+        var normalized = discordUserId?.Trim() ?? string.Empty;
+        return !IsValidDiscordUserId(normalized)
+            ? Task.FromResult<int?>(null)
+            : db.UserProfiles.Where(p => p.DiscordUserId == normalized)
+                .Select(p => (int?)p.UserId).FirstOrDefaultAsync();
+    }
 
     public async Task<bool> IsAdminAsync(string discordUserId)
     {
-        var roles = await db.UserProfiles.Where(p => p.DiscordUserId == discordUserId).Select(p => p.Roles).FirstOrDefaultAsync();
+        var normalized = discordUserId?.Trim() ?? string.Empty;
+        if (!IsValidDiscordUserId(normalized)) return false;
+        var roles = await db.UserProfiles.Where(p => p.DiscordUserId == normalized).Select(p => p.Roles).FirstOrDefaultAsync();
         return (roles ?? string.Empty)
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Contains("Admin", StringComparer.OrdinalIgnoreCase);
@@ -87,5 +128,22 @@ public class DiscordLinkService(AppDbContext db, IMemoryCache cache) : IDiscordL
         for (int i = 0; i < length; i++)
             chars[i] = Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)];
         return new string(chars);
+    }
+
+    internal static bool IsValidDiscordUserId(string value) =>
+        value.Length is >= 17 and <= 20 && value.All(char.IsAsciiDigit);
+
+    private static bool IsValidCode(string value) =>
+        value.Length == 6 && value.All(Alphabet.Contains);
+
+    private sealed class LinkTicket(int userId)
+    {
+        private int _consumed;
+
+        public bool TryConsume(out int value)
+        {
+            value = userId;
+            return Interlocked.Exchange(ref _consumed, 1) == 0;
+        }
     }
 }

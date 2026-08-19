@@ -13,6 +13,12 @@
     box-shadow: var(--shadow-sm);
 }
 
+/* Album and artist artwork is square. Keep the media-aware shape on the shared card so music is
+   rendered correctly everywhere it appears, without changing movie and TV poster proportions. */
+.mcard-music .mcard-poster {
+    aspect-ratio: 1;
+}
+
 .mcard-poster img {
     width: 100%;
     height: 100%;

@@ -7,7 +7,7 @@
 
 @* Unified poster card. CSS-only hover (no JS timer -> no leak), overlay stays INSIDE the card so a
    grid or row never shifts. Click -> details; quick actions stop propagation. *@
-<div class="mcard" @onclick="NavigateToDetails" title="@Media.Title">
+<div class="@CardClass" @onclick="NavigateToDetails" title="@Media.Title">
     <div class="mcard-poster">
         @if (!string.IsNullOrEmpty(Media.PosterUrl))
         {
@@ -97,6 +97,10 @@
     [Parameter] public EventCallback<MediaCardDto> OnRemove { get; set; }
 
     private bool _musicRequestsEnabled;
+
+    private string CardClass => Media.MediaType == MediaType.Music
+        ? "mcard mcard-music"
+        : "mcard";
 
     protected override async Task OnParametersSetAsync()
     {

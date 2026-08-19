@@ -114,6 +114,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasKey(x => x.Id);
             b.HasIndex(x => x.UserId).IsUnique();
             b.HasIndex(x => x.PlexUsername);
+            b.HasIndex(x => x.DiscordUserId).IsUnique().HasFilter("\"DiscordUserId\" IS NOT NULL");
             b.HasOne(x => x.User)
                 .WithOne()
                 .HasForeignKey<UserProfileEntity>(x => x.UserId)
@@ -286,6 +287,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasKey(x => x.Id);
             b.Property(x => x.Title).HasMaxLength(512);
             b.HasIndex(x => x.Id); // cursor scans (PK already indexed, explicit for clarity)
+            b.HasIndex(x => x.DeduplicationKey).IsUnique();
+            b.HasIndex(x => new { x.AcknowledgedAt, x.Id });
 
             b.HasOne(x => x.MediaRequest)
                 .WithMany()

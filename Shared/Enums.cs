@@ -89,7 +89,11 @@ public enum BridgeEventType
     Approved = 1,
     Denied = 2,
     Available = 3,
-    Failed = 4
+    Failed = 4,
+    Searching = 5,
+    PartiallyAvailable = 6,
+    Upgraded = 7,
+    Cancelled = 8
 }
 
 public enum FulfillmentStatus
