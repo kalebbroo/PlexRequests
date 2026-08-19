@@ -8,6 +8,7 @@ using PlexRequestsHosted.Services.Jobs;
 using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
@@ -149,6 +150,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         var job = new FulfillmentJobEntity
         {
             MediaRequestId = request.Id,
+            MediaIdentityId = reqEntity?.MediaIdentityId,
             MediaId = request.MediaId,
             MediaType = request.MediaType,
             Title = request.Title,
@@ -441,6 +443,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         _db.FulfillmentJobs.Add(new FulfillmentJobEntity
         {
             MediaRequestId = request.Id,
+            MediaIdentityId = origin?.MediaIdentityId,
             MediaId = request.MediaId,
             MediaType = request.MediaType,
             Title = request.Title,
@@ -705,6 +708,15 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         MediaRequestId = j.MediaRequestId,
         MediaId = j.MediaId,
         MediaType = j.MediaType,
+        Media = !string.IsNullOrWhiteSpace(j.ExternalId)
+            ? MediaRef.FromExternal(j.ExternalSource ?? "external", j.ExternalId, j.MediaType,
+                j.MediaType.DefaultKind())
+            : MediaRef.FromTmdb(j.MediaId, j.MediaType),
+        RequestScope = j.MediaType is MediaType.TvShow or MediaType.Anime
+            ? !string.IsNullOrWhiteSpace(j.RequestedEpisodesCsv) ? RequestScopeKind.Episodes
+            : !string.IsNullOrWhiteSpace(j.RequestedSeasonsCsv) ? RequestScopeKind.Seasons
+            : RequestScopeKind.Series
+            : j.MediaType == MediaType.Music ? RequestScopeKind.Album : RequestScopeKind.Title,
         Title = j.Title,
         Year = j.Year,
         TmdbId = j.TmdbId,

@@ -135,6 +135,7 @@ public class InteractiveSearchService(
         db.FulfillmentJobs.Add(new FulfillmentJobEntity
         {
             MediaRequestId = request.Id,
+            MediaIdentityId = request.MediaIdentityId,
             MediaId = request.MediaId,
             MediaType = request.MediaType,
             Title = request.Title,

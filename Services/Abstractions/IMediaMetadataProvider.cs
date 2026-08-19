@@ -1,5 +1,6 @@
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequestsHosted.Services.Abstractions;
 
@@ -22,11 +23,18 @@ public interface IMediaMetadataProvider
 
     Task<List<MediaCardDto>> SearchAsync(string query, MediaType? mediaType = null, int page = 1, int pageSize = 20);
     Task<MediaDetailDto?> GetDetailsAsync(int mediaId, MediaType mediaType);
+    /// <summary>Provider-neutral detail lookup. Legacy providers automatically accept TMDb identities.</summary>
+    Task<MediaDetailDto?> GetDetailsAsync(MediaRef mediaRef) => mediaRef.TryGetTmdbId(out var tmdbId)
+        ? GetDetailsAsync(tmdbId, mediaRef.MediaType)
+        : Task.FromResult<MediaDetailDto?>(null);
     Task<List<MediaCardDto>> GetRecentlyAddedAsync(int count = 10);
     Task<List<MediaCardDto>> GetLibraryAsync(MediaType mediaType, int page = 1, int pageSize = 20);
 
     /// <summary>Resolve the IMDb id (e.g. "tt0137523") for a media item, or null if unavailable.</summary>
     Task<string?> GetImdbIdAsync(int mediaId, MediaType mediaType);
+    Task<string?> GetImdbIdAsync(MediaRef mediaRef) => mediaRef.TryGetTmdbId(out var tmdbId)
+        ? GetImdbIdAsync(tmdbId, mediaRef.MediaType)
+        : Task.FromResult<string?>(null);
 
     // ---- Discovery ----
     // Default implementations fall back to the library/search feed so providers that don't have real
@@ -52,6 +60,11 @@ public interface IMediaMetadataProvider
     /// <summary>Titles similar to / recommended from a given title.</summary>
     Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, MediaType mediaType, int count = 12)
         => GetLibraryAsync(mediaType, 1, count);
+
+    Task<List<MediaCardDto>> GetSimilarAsync(MediaRef mediaRef, int count = 12) =>
+        mediaRef.TryGetTmdbId(out var tmdbId)
+            ? GetSimilarAsync(tmdbId, mediaRef.MediaType, count)
+            : Task.FromResult(new List<MediaCardDto>());
 
     /// <summary>Episodes of one season (with air dates), for episode-level requests + monitoring.</summary>
     Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int showId, int seasonNumber)

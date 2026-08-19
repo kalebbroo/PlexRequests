@@ -145,12 +145,17 @@ public class IndexerEntity
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    public ICollection<IndexerMediaCapabilityEntity> MediaCapabilities { get; set; }
+        = new List<IndexerMediaCapabilityEntity>();
+
     /// <summary>Whether this row can serve a job of the given media type at all.</summary>
-    public bool Supports(MediaType mediaType) => mediaType switch
-    {
-        MediaType.Movie => SupportsMovie,
-        MediaType.TvShow => SupportsTv,
-        MediaType.Anime => SupportsAnime,
-        _ => false
-    };
+    public bool Supports(MediaType mediaType) => MediaCapabilities.Count > 0
+        ? MediaCapabilities.Any(x => x.MediaType == mediaType && x.Enabled)
+        : mediaType switch
+        {
+            MediaType.Movie => SupportsMovie,
+            MediaType.TvShow => SupportsTv,
+            MediaType.Anime => SupportsAnime,
+            _ => false
+        };
 }

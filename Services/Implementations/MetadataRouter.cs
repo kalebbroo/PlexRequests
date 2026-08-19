@@ -2,6 +2,7 @@ using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.MetadataProviders;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
@@ -71,7 +72,9 @@ public class MetadataRouter : IMediaMetadataProvider
         => Pick(mediaType ?? MediaType.Movie).SearchAsync(query, mediaType, page, pageSize);
 
     public Task<MediaDetailDto?> GetDetailsAsync(int mediaId, MediaType mediaType) => Pick(mediaType).GetDetailsAsync(mediaId, mediaType);
+    public Task<MediaDetailDto?> GetDetailsAsync(MediaRef mediaRef) => Pick(mediaRef.MediaType).GetDetailsAsync(mediaRef);
     public Task<string?> GetImdbIdAsync(int mediaId, MediaType mediaType) => Pick(mediaType).GetImdbIdAsync(mediaId, mediaType);
+    public Task<string?> GetImdbIdAsync(MediaRef mediaRef) => Pick(mediaRef.MediaType).GetImdbIdAsync(mediaRef);
     public Task<List<MediaCardDto>> GetLibraryAsync(MediaType mediaType, int page = 1, int pageSize = 20) => Pick(mediaType).GetLibraryAsync(mediaType, page, pageSize);
     public Task<List<MediaCardDto>> GetRecentlyAddedAsync(int count = 10) => Pick(MediaType.Movie).GetRecentlyAddedAsync(count);
 
@@ -80,5 +83,6 @@ public class MetadataRouter : IMediaMetadataProvider
     public Task<List<MediaCardDto>> GetTopRatedAsync(MediaType mediaType, int page = 1, int pageSize = 20) => Pick(mediaType).GetTopRatedAsync(mediaType, page, pageSize);
     public Task<List<MediaCardDto>> GetByGenreAsync(MediaType mediaType, string genre, int page = 1, int pageSize = 20) => Pick(mediaType).GetByGenreAsync(mediaType, genre, page, pageSize);
     public Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, MediaType mediaType, int count = 12) => Pick(mediaType).GetSimilarAsync(mediaId, mediaType, count);
+    public Task<List<MediaCardDto>> GetSimilarAsync(MediaRef mediaRef, int count = 12) => Pick(mediaRef.MediaType).GetSimilarAsync(mediaRef, count);
     public Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int showId, int seasonNumber) => Pick(MediaType.TvShow).GetSeasonEpisodesAsync(showId, seasonNumber);
 }

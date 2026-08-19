@@ -7,6 +7,7 @@ namespace PlexRequestsHosted.Infrastructure.Entities;
 public class WatchlistItemEntity
 {
     public int Id { get; set; }
+    public int? MediaIdentityId { get; set; }
     public int MediaId { get; set; }
     public MediaType MediaType { get; set; }
 
@@ -22,4 +23,7 @@ public class WatchlistItemEntity
     // Navigation property
     [ForeignKey(nameof(UserId))]
     public UserEntity? User { get; set; }
+
+    [ForeignKey(nameof(MediaIdentityId))]
+    public MediaIdentityEntity? MediaIdentity { get; set; }
 }

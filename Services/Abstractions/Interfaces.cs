@@ -1,5 +1,6 @@
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequestsHosted.Services.Abstractions;
 
@@ -10,6 +11,7 @@ public interface IMediaRequestService
     // qualityProfileId is the requester's chosen profile; null means "decide for me" (assignment rules, then
     // the default). It's validated against what that user may actually select before it's honoured.
     Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null);
+    Task<MediaRequestResult> RequestMediaAsync(MediaRef mediaRef, MediaRequestScope? scope = null, int? qualityProfileId = null);
     Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons, int? qualityProfileId = null);
     /// <summary>
     /// Request specific episodes. <paramref name="asUpgrade"/> asks for a better copy of episodes already on
@@ -19,10 +21,12 @@ public interface IMediaRequestService
     Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes, int? qualityProfileId = null, bool asUpgrade = false);
     Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null);
     Task<MediaRequestResult> CreateMonitoredEpisodesAsync(int anchorRequestId, IReadOnlyList<(int season, int episode)> episodes);
-    // Music (scaffold): request an album/artist by its provider id (MusicBrainz MBID or Plex ratingKey).
+    // Compatibility entry point retained while music callers move to RequestMediaAsync(MediaRef, scope).
     Task<MediaRequestResult> RequestMusicAsync(string externalId, string source, string title, string? posterUrl = null);
     // User-scoped variants for callers without a cookie session (Discord bridge).
     Task<MediaRequestResult> RequestMediaForUserAsync(int userId, int mediaId, MediaType mediaType);
+    Task<MediaRequestResult> RequestMediaForUserAsync(int userId, MediaRef mediaRef, MediaRequestScope? scope = null,
+        int? qualityProfileId = null);
     Task<List<MediaRequestDto>> GetRequestsForUserAsync(int userId, int take = 25);
     Task<bool> CancelRequestAsync(int requestId);
     Task<bool> IsInWatchlistAsync(int mediaId, MediaType mediaType);

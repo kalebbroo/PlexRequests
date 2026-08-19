@@ -1,4 +1,5 @@
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequestsHosted.Shared.DTOs;
 
@@ -7,6 +8,7 @@ namespace PlexRequestsHosted.Shared.DTOs;
 
 public class BridgeSearchResultDto
 {
+    public MediaRef? Media { get; set; }
     public int MediaId { get; set; }
     public MediaType MediaType { get; set; }
     public string Title { get; set; } = string.Empty;
@@ -37,6 +39,8 @@ public class BridgeUserRequestDto
     public int RequestId { get; set; }
     public string Title { get; set; } = string.Empty;
     public MediaType MediaType { get; set; }
+    public MediaRef? Media { get; set; }
+    public RequestScopeKind RequestScope { get; set; }
     public RequestStatus Status { get; set; }
     public string? PosterUrl { get; set; }
     public DateTime RequestedAt { get; set; }
@@ -71,6 +75,8 @@ public class BridgeEventDto
     public int RequestId { get; set; }
     public int MediaId { get; set; }
     public MediaType MediaType { get; set; }
+    public MediaRef? Media { get; set; }
+    public RequestScopeKind RequestScope { get; set; }
     public string Title { get; set; } = string.Empty;
     public int? Year { get; set; }
     public string? Overview { get; set; }
@@ -87,7 +93,28 @@ public class BridgeEventDto
     public DateTime CreatedAt { get; set; }
 }
 
+public sealed class BridgeCapabilitiesDto
+{
+    public int ApiVersion { get; set; } = 2;
+    public List<MediaModuleDescriptor> MediaModules { get; set; } = new();
+}
+
 // ---- request bodies ----
-public record BridgeRequestBody(string DiscordUserId, int MediaId, MediaType MediaType);
+public sealed class BridgeRequestBody
+{
+    public string DiscordUserId { get; set; } = string.Empty;
+    /// <summary>Version 2 identity. Preferred over the legacy integer fields below.</summary>
+    public MediaRef? Media { get; set; }
+    public MediaRequestScope? Scope { get; set; }
+    public int? QualityProfileId { get; set; }
+
+    // Version 1 compatibility. PlexBox can upgrade independently without a flag day.
+    public int MediaId { get; set; }
+    public MediaType MediaType { get; set; }
+
+    public MediaRef ResolveMedia() => Media is { IsValid: true }
+        ? Media
+        : MediaRef.FromTmdb(MediaId, MediaType);
+}
 public record BridgeLinkBody(string Code, string DiscordUserId, string? DiscordUsername);
 public record BridgeAdminActionBody(string DiscordUserId, string? Reason);

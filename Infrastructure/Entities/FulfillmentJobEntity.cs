@@ -14,6 +14,7 @@ public class FulfillmentJobEntity
     public int Id { get; set; }
 
     public int MediaRequestId { get; set; }
+    public int? MediaIdentityId { get; set; }
 
     public int MediaId { get; set; }
     public MediaType MediaType { get; set; }
@@ -29,8 +30,7 @@ public class FulfillmentJobEntity
     public string? ImdbId { get; set; }
     public int? TvdbId { get; set; }
 
-    // Non-TMDb identifier (music MBID / Plex ratingKey / etc.) for the downloader to resolve the target.
-    // TODO(music): the downloader needs a music indexer that can search by artist+album (or MBID).
+    // Transitional non-TMDb mirrors for worker v1. The v2 DTO also carries a provider-neutral MediaRef.
     [MaxLength(128)] public string? ExternalId { get; set; }
     [MaxLength(32)] public string? ExternalSource { get; set; }
 
@@ -119,4 +119,7 @@ public class FulfillmentJobEntity
 
     [ForeignKey(nameof(MediaRequestId))]
     public MediaRequestEntity? MediaRequest { get; set; }
+
+    [ForeignKey(nameof(MediaIdentityId))]
+    public MediaIdentityEntity? MediaIdentity { get; set; }
 }

@@ -71,27 +71,22 @@
                 }
             </MudItem>
 
-            <MudItem xs="12" sm="4">
-                <MudTextField T="string" Label="Movie categories" @bind-Value="_model.MovieCategoriesCsv"
-                              Variant="Variant.Outlined" Placeholder="2000"
-                              HelperText="Blank = Torznab standard." />
-            </MudItem>
-            <MudItem xs="12" sm="4">
-                <MudTextField T="string" Label="TV categories" @bind-Value="_model.TvCategoriesCsv"
-                              Variant="Variant.Outlined" Placeholder="5000" HelperText="Blank = Torznab standard." />
-            </MudItem>
-            <MudItem xs="12" sm="4">
-                <MudTextField T="string" Label="Anime categories" @bind-Value="_model.AnimeCategoriesCsv"
-                              Variant="Variant.Outlined" Placeholder="5000,5070" HelperText="Blank = Torznab standard." />
-            </MudItem>
-
-            <MudItem xs="12" sm="6">
-                <MudText Typo="Typo.caption" Class="text-muted">Searches this indexer serves</MudText>
-                <div class="d-flex flex-wrap gap-2">
-                    <MudSwitch T="bool" Label="Movies" @bind-Value="_model.SupportsMovie" Color="Color.Primary" />
-                    <MudSwitch T="bool" Label="TV" @bind-Value="_model.SupportsTv" Color="Color.Primary" />
-                    <MudSwitch T="bool" Label="Anime" @bind-Value="_model.SupportsAnime" Color="Color.Primary" />
-                </div>
+            <MudItem xs="12">
+                <MudText Typo="Typo.caption" Class="text-muted mb-2 d-block">Media coverage and categories</MudText>
+                <MudGrid Spacing="2">
+                    @foreach (var capability in _model.MediaCapabilities.OrderBy(x => x.MediaType))
+                    {
+                        <MudItem xs="12" sm="6">
+                            <div class="d-flex align-items-center gap-2">
+                                <MudSwitch T="bool" Label="@MediaLabel(capability.MediaType)"
+                                           @bind-Value="capability.Enabled" Color="Color.Primary" />
+                                <MudTextField T="string" Label="Categories" @bind-Value="capability.CategoriesCsv"
+                                              Variant="Variant.Outlined" Placeholder="@DefaultCategories(capability.MediaType)"
+                                              Disabled="@(!capability.Enabled)" HelperText="Blank = standard category." />
+                            </div>
+                        </MudItem>
+                    }
+                </MudGrid>
                 <MudSwitch T="bool" Label="Anime only" @bind-Value="_model.AnimeOnly" Color="Color.Secondary" />
             </MudItem>
             <MudItem xs="12" sm="6">
@@ -222,6 +217,10 @@
                 AnimeCategoriesCsv = Existing.AnimeCategoriesCsv,
                 SupportsMovie = Existing.SupportsMovie, SupportsTv = Existing.SupportsTv,
                 SupportsAnime = Existing.SupportsAnime, AnimeOnly = Existing.AnimeOnly,
+                MediaCapabilities = Existing.MediaCapabilities.Select(x => new IndexerMediaCapabilityDto
+                {
+                    MediaType = x.MediaType, Enabled = x.Enabled, CategoriesCsv = x.CategoriesCsv
+                }).ToList(),
                 EnableIngestion = Existing.EnableIngestion, EnableAutomaticSearch = Existing.EnableAutomaticSearch,
                 EnableInteractiveSearch = Existing.EnableInteractiveSearch,
                 EnableRecommendedFeed = Existing.EnableRecommendedFeed,
@@ -232,6 +231,17 @@
                 MaxDetailFetches = Existing.MaxDetailFetches, MaxAgeDays = Existing.MaxAgeDays,
                 Notes = Existing.Notes
             };
+
+        if (_model.MediaCapabilities.Count == 0)
+        {
+            _model.MediaCapabilities = new()
+            {
+                new() { MediaType = MediaType.Movie, Enabled = _model.SupportsMovie, CategoriesCsv = _model.MovieCategoriesCsv },
+                new() { MediaType = MediaType.TvShow, Enabled = _model.SupportsTv, CategoriesCsv = _model.TvCategoriesCsv },
+                new() { MediaType = MediaType.Anime, Enabled = _model.SupportsAnime, CategoriesCsv = _model.AnimeCategoriesCsv },
+                new() { MediaType = MediaType.Music, Enabled = false }
+            };
+        }
     }
 
     private async Task Save()
@@ -316,6 +326,10 @@
         if (tv.Length > 0) _model.TvCategoriesCsv = tv;
         if (anime.Length > 0) _model.AnimeCategoriesCsv = anime;
 
+        SetCategories(MediaType.Movie, movies);
+        SetCategories(MediaType.TvShow, tv);
+        SetCategories(MediaType.Anime, anime);
+
         _error = null;
         StateHasChanged();
     }
@@ -335,4 +349,29 @@
     }
 
     private void Cancel() => MudDialog.Cancel();
+
+    private void SetCategories(MediaType mediaType, string categories)
+    {
+        if (categories.Length == 0) return;
+        var capability = _model.MediaCapabilities.FirstOrDefault(x => x.MediaType == mediaType);
+        if (capability is not null) capability.CategoriesCsv = categories;
+    }
+
+    private static string MediaLabel(MediaType mediaType) => mediaType switch
+    {
+        MediaType.Movie => "Movies",
+        MediaType.TvShow => "TV",
+        MediaType.Anime => "Anime",
+        MediaType.Music => "Music",
+        _ => mediaType.ToString()
+    };
+
+    private static string DefaultCategories(MediaType mediaType) => mediaType switch
+    {
+        MediaType.Movie => "2000",
+        MediaType.TvShow => "5000",
+        MediaType.Anime => "5000,5070",
+        MediaType.Music => "3000",
+        _ => string.Empty
+    };
 }

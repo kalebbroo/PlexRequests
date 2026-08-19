@@ -27,6 +27,32 @@ public enum MediaType
     Anime = 3
 }
 
+/// <summary>
+/// The shape of a catalog item. <see cref="MediaType"/> remains the broad UI/library grouping, while this
+/// identifies what can actually be requested. In particular, music is not one shape: artists, albums and
+/// tracks have different request scopes and fulfillment rules.
+/// </summary>
+public enum MediaKind
+{
+    Movie = 0,
+    Series = 1,
+    Album = 2,
+    Artist = 3,
+    Track = 4
+}
+
+/// <summary>The durable intent of a request, independent of the metadata provider that identified it.</summary>
+public enum RequestScopeKind
+{
+    Title = 0,
+    Series = 1,
+    Seasons = 2,
+    Episodes = 3,
+    Album = 4,
+    ArtistCatalog = 5,
+    Track = 6
+}
+
 [Flags]
 public enum UserRole
 {
