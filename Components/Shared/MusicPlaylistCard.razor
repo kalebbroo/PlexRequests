@@ -1,0 +1,26 @@
+@using PlexRequestsHosted.Shared.DTOs
+
+<a class="playlist-card" href="@Href" title="@Playlist.Title">
+    <div class="playlist-art">
+        @if (!string.IsNullOrWhiteSpace(Playlist.ArtworkUrl))
+        {
+            <img src="@Playlist.ArtworkUrl" alt="" loading="lazy"
+                 onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
+        }
+        else
+        {
+            <div class="playlist-placeholder"><MudIcon Icon="@Icons.Material.Filled.QueueMusic" /></div>
+        }
+        <span class="playlist-open"><MudIcon Icon="@Icons.Material.Filled.ChevronRight" /></span>
+    </div>
+    <strong>@Playlist.Title</strong>
+    @if (!string.IsNullOrWhiteSpace(Playlist.Subtitle))
+    {
+        <span>@Playlist.Subtitle</span>
+    }
+</a>
+
+@code {
+    [Parameter, EditorRequired] public MusicPlaylistSummaryDto Playlist { get; set; } = default!;
+    private string Href => $"/music/playlist?id={Uri.EscapeDataString(Playlist.Id)}";
+}

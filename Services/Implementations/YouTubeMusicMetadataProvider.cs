@@ -111,17 +111,130 @@ public sealed partial class YouTubeMusicMetadataProvider(
     public Task<List<MediaCardDto>> GetLibraryAsync(MediaType mediaType, int page = 1, int pageSize = 20)
         => Task.FromResult(new List<MediaCardDto>());
 
-    public Task<List<MediaCardDto>> GetTrendingAsync(MediaType? mediaType = null, int page = 1,
-        int pageSize = 20) => Task.FromResult(new List<MediaCardDto>());
+    public async Task<List<MediaCardDto>> GetTrendingAsync(MediaType? mediaType = null, int page = 1,
+        int pageSize = 20)
+    {
+        if (mediaType is not null && mediaType != MediaType.Music) return new();
+        using var doc = await GetExploreAsync();
+        if (doc is null) return new();
+        var shelf = FindCarousel(doc.RootElement, "Trending");
+        return Page(shelf.HasValue ? MapTrackRows(shelf.Value) : new(), page, pageSize);
+    }
 
-    public Task<List<MediaCardDto>> GetPopularAsync(MediaType mediaType, int page = 1, int pageSize = 20)
-        => Task.FromResult(new List<MediaCardDto>());
+    public async Task<List<MediaCardDto>> GetPopularAsync(MediaType mediaType, int page = 1, int pageSize = 20)
+    {
+        if (mediaType != MediaType.Music) return new();
+        using var doc = await GetExploreAsync();
+        if (doc is null) return new();
+        var shelf = FindCarousel(doc.RootElement, "New albums");
+        return Page(shelf.HasValue ? MapAlbumTiles(shelf.Value, null) : new(), page, pageSize);
+    }
 
-    public Task<List<MediaCardDto>> GetTopRatedAsync(MediaType mediaType, int page = 1, int pageSize = 20)
-        => Task.FromResult(new List<MediaCardDto>());
+    public async Task<List<MediaCardDto>> GetTopRatedAsync(MediaType mediaType, int page = 1, int pageSize = 20)
+    {
+        if (mediaType != MediaType.Music) return new();
+        using var doc = await GetChartsAsync();
+        if (doc is null) return new();
+        var shelf = FindCarousel(doc.RootElement, "Top artists");
+        return Page(shelf.HasValue ? MapArtistRows(shelf.Value) : new(), page, pageSize);
+    }
 
     public Task<List<MediaCardDto>> GetByGenreAsync(MediaType mediaType, string genre, int page = 1,
         int pageSize = 20) => Task.FromResult(new List<MediaCardDto>());
+
+    public async Task<MusicBrowseHubDto> GetBrowseHubAsync(CancellationToken cancellationToken = default)
+    {
+        var exploreTask = GetExploreAsync(cancellationToken);
+        var chartsTask = GetChartsAsync(cancellationToken);
+        var categoriesTask = PostJsonAsync(BrowsePath,
+            new Dictionary<string, object?> { ["browseId"] = "FEmusic_moods_and_genres" },
+            "ytm:discovery:categories", DetailFreshFor, cancellationToken);
+        await Task.WhenAll(exploreTask, chartsTask, categoriesTask);
+
+        using var explore = exploreTask.Result;
+        using var charts = chartsTask.Result;
+        using var categories = categoriesTask.Result;
+        var hub = new MusicBrowseHubDto { SourceLabel = "YouTube Music" };
+
+        if (explore is not null)
+        {
+            var newReleases = FindCarousel(explore.RootElement, "New albums");
+            if (newReleases.HasValue) hub.NewReleases = MapAlbumTiles(newReleases.Value, null);
+            var trending = FindCarousel(explore.RootElement, "Trending");
+            if (trending.HasValue) hub.TrendingTracks = MapTrackRows(trending.Value);
+        }
+
+        if (charts is not null)
+        {
+            var artists = FindCarousel(charts.RootElement, "Top artists");
+            if (artists.HasValue) hub.PopularArtists = MapArtistRows(artists.Value);
+            foreach (var heading in new[] { "Video charts", "Genres" })
+            {
+                var shelf = FindCarousel(charts.RootElement, heading);
+                if (shelf.HasValue) hub.FeaturedPlaylists.AddRange(MapPlaylistTiles(shelf.Value));
+            }
+            hub.FeaturedPlaylists = DeduplicatePlaylists(hub.FeaturedPlaylists);
+        }
+
+        if (categories is not null) hub.Categories = ParseCategories(categories.RootElement);
+        // Explore already carries a compact mood row. Use it if YouTube changes the full categories page.
+        if (hub.Categories.Count == 0 && explore is not null)
+            hub.Categories = ParseCategories(explore.RootElement);
+        return hub;
+    }
+
+    private Task<JsonDocument?> GetExploreAsync(CancellationToken cancellationToken = default)
+        => PostJsonAsync(BrowsePath,
+            new Dictionary<string, object?> { ["browseId"] = "FEmusic_explore" },
+            "ytm:discovery:explore", SearchFreshFor, cancellationToken);
+
+    private Task<JsonDocument?> GetChartsAsync(CancellationToken cancellationToken = default)
+        => PostJsonAsync(BrowsePath, new Dictionary<string, object?>
+        {
+            ["browseId"] = "FEmusic_charts",
+            ["formData"] = new Dictionary<string, object?> { ["selectedValues"] = new[] { "US" } }
+        }, "ytm:discovery:charts:US", SearchFreshFor, cancellationToken);
+
+    public async Task<List<MusicPlaylistSummaryDto>> GetMoodPlaylistsAsync(string token,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(token) || token.Length > 512) return new();
+        using var doc = await PostJsonAsync(BrowsePath, new Dictionary<string, object?>
+        {
+            ["browseId"] = "FEmusic_moods_and_genres_category",
+            ["params"] = token
+        }, $"ytm:discovery:category:{token.GetHashCode(StringComparison.Ordinal)}", SearchFreshFor,
+            cancellationToken);
+        return doc is null ? new() : MapPlaylistTiles(doc.RootElement);
+    }
+
+    public async Task<MusicPlaylistDto?> GetPlaylistAsync(string playlistId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(playlistId) || playlistId.Length > 200) return null;
+        var normalized = NormalizePlaylistId(playlistId);
+        using var doc = await PostJsonAsync(BrowsePath,
+            new Dictionary<string, object?> { ["browseId"] = "VL" + normalized },
+            $"ytm:discovery:playlist:{normalized}", SearchFreshFor, cancellationToken);
+        if (doc is null) return null;
+
+        JsonElement header;
+        if (!TryFindObject(doc.RootElement, "musicResponsiveHeaderRenderer", out header)
+            && !TryFindObject(doc.RootElement, "musicDetailHeaderRenderer", out header)) return null;
+        var title = FirstRunText(header, "title");
+        if (string.IsNullOrWhiteSpace(title)) return null;
+        var tracks = MapTrackRows(doc.RootElement);
+        return new MusicPlaylistDto
+        {
+            Id = normalized,
+            Title = title,
+            Subtitle = JoinRuns(DirectRuns(header, "subtitle")),
+            Description = JoinRuns(DirectRuns(header, "description")),
+            ArtworkUrl = LargestThumbnail(header),
+            TrackCount = tracks.Count,
+            Tracks = tracks
+        };
+    }
 
     public Task<string?> GetImdbIdAsync(int mediaId, MediaType mediaType) => Task.FromResult<string?>(null);
     public Task<string?> GetImdbIdAsync(MediaRef mediaRef) => Task.FromResult<string?>(null);
@@ -549,6 +662,136 @@ public sealed partial class YouTubeMusicMetadataProvider(
             });
         }
         return Deduplicate(rows);
+    }
+
+    private static JsonElement? FindCarousel(JsonElement root, string heading)
+        => FindObjects(root, "musicCarouselShelfRenderer")
+            .FirstOrDefault(x => CarouselHeading(x)?.Contains(heading, StringComparison.OrdinalIgnoreCase) == true)
+            is { ValueKind: JsonValueKind.Object } shelf ? shelf : null;
+
+    private static List<MediaCardDto> MapTrackRows(JsonElement root)
+    {
+        var rows = new List<MediaCardDto>();
+        foreach (var item in FindObjects(root, "musicResponsiveListItemRenderer"))
+        {
+            string? id = null;
+            // playlistItemData is an object, not a string; prefer its direct video id when present so a
+            // menu's radio/related endpoint can never become the identity of the visible row.
+            if (item.TryGetProperty("playlistItemData", out var playlistData))
+                id = DirectString(playlistData, "videoId");
+            id ??= FindFirstString(item, "videoId");
+            var title = FlexColumnRuns(item, 0).Select(RunText)
+                .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(title)) continue;
+            var metadata = FlexColumnRuns(item, 1);
+            var artist = JoinNames(LinkedNames(metadata, "MUSIC_PAGE_TYPE_ARTIST").Select(x => x.Name))
+                         ?? metadata.Select(RunText).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)
+                             && x != " • ");
+            var mediaRef = MediaRef.FromExternal(Provider, id, MediaType.Music, MediaKind.Track);
+            rows.Add(new MediaCardDto
+            {
+                Title = title,
+                Subtitle = artist,
+                Overview = Describe("Song", artist),
+                PosterUrl = LargestThumbnail(item),
+                BackdropUrl = LargestThumbnail(item),
+                MediaType = MediaType.Music,
+                ExternalId = mediaRef.Id,
+                ExternalSource = Provider,
+                MediaRef = mediaRef
+            });
+        }
+        return Deduplicate(rows);
+    }
+
+    private static List<MediaCardDto> MapArtistRows(JsonElement root)
+    {
+        var rows = new List<MediaCardDto>();
+        foreach (var item in FindObjects(root, "musicResponsiveListItemRenderer"))
+        {
+            var id = FindBrowseId(item, "MUSIC_PAGE_TYPE_ARTIST");
+            var title = FlexColumnRuns(item, 0).Select(RunText)
+                .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(title)) continue;
+            var mediaRef = MediaRef.FromExternal(Provider, id, MediaType.Music, MediaKind.Artist);
+            rows.Add(new MediaCardDto
+            {
+                Title = title,
+                Subtitle = JoinRuns(FlexColumnRuns(item, 1)) ?? "Artist · YouTube Music",
+                Overview = "Artist on YouTube Music",
+                PosterUrl = LargestThumbnail(item),
+                BackdropUrl = LargestThumbnail(item),
+                MediaType = MediaType.Music,
+                ExternalId = mediaRef.Id,
+                ExternalSource = Provider,
+                MediaRef = mediaRef
+            });
+        }
+        return Deduplicate(rows);
+    }
+
+    private static List<MusicPlaylistSummaryDto> MapPlaylistTiles(JsonElement root)
+    {
+        var rows = new List<MusicPlaylistSummaryDto>();
+        foreach (var item in FindObjects(root, "musicTwoRowItemRenderer"))
+        {
+            var browseId = FindFirstString(item, "browseId", x => x.StartsWith("VL", StringComparison.Ordinal));
+            var id = browseId is not null ? NormalizePlaylistId(browseId) :
+                FindFirstString(item, "playlistId", x => !x.StartsWith("RDAMP", StringComparison.Ordinal));
+            var title = FirstRunText(item, "title");
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(title)) continue;
+            rows.Add(new MusicPlaylistSummaryDto
+            {
+                Id = id,
+                Title = title,
+                Subtitle = JoinRuns(DirectRuns(item, "subtitle")),
+                ArtworkUrl = LargestThumbnail(item)
+            });
+        }
+        return DeduplicatePlaylists(rows);
+    }
+
+    private static List<MusicPlaylistSummaryDto> DeduplicatePlaylists(
+        IEnumerable<MusicPlaylistSummaryDto> rows)
+        => rows.GroupBy(x => x.Id, StringComparer.Ordinal).Select(x => x.First()).ToList();
+
+    private static List<MusicCategoryDto> ParseCategories(JsonElement root)
+    {
+        var categories = new List<MusicCategoryDto>();
+        foreach (var grid in FindObjects(root, "gridRenderer"))
+        {
+            var group = "Moods & genres";
+            if (grid.TryGetProperty("header", out var header)
+                && TryFindObject(header, "gridHeaderRenderer", out var gridHeader))
+                group = FirstRunText(gridHeader, "title") ?? group;
+            if (!grid.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array) continue;
+            foreach (var item in items.EnumerateArray())
+                AddCategory(item, group, categories);
+        }
+        // The compact Explore shelf is not a grid on every YouTube layout.
+        if (categories.Count == 0)
+            foreach (var button in FindObjects(root, "musicNavigationButtonRenderer"))
+                AddCategory(button, "Moods & genres", categories);
+        return categories.Where(x => !string.IsNullOrWhiteSpace(x.Token))
+            .GroupBy(x => x.Token, StringComparer.Ordinal).Select(x => x.First()).ToList();
+    }
+
+    private static void AddCategory(JsonElement root, string group, ICollection<MusicCategoryDto> categories)
+    {
+        if (!TryFindObject(root, "musicNavigationButtonRenderer", out var button)) button = root;
+        var title = FirstRunText(button, "buttonText");
+        var token = FindFirstString(button, "params");
+        if (!string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(token))
+            categories.Add(new MusicCategoryDto { Title = title, Group = group, Token = token });
+    }
+
+    private static string NormalizePlaylistId(string id)
+        => id.StartsWith("VL", StringComparison.Ordinal) ? id[2..] : id;
+
+    private static List<MediaCardDto> Page(List<MediaCardDto> rows, int page, int pageSize)
+    {
+        var take = Math.Clamp(pageSize, 1, 100);
+        return rows.Skip((Math.Max(1, page) - 1) * take).Take(take).ToList();
     }
 
     private static List<MediaCardDto> Deduplicate(IEnumerable<MediaCardDto> rows)

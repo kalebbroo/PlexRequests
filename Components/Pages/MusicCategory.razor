@@ -1,0 +1,62 @@
+@page "/music/category"
+@inject IMusicDiscoveryService Discovery
+
+<PageTitle>@(Name ?? "Music category") - Plex Requests</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="music-subpage">
+    <a class="back-link" href="/music"><MudIcon Icon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" /> Music</a>
+    <div class="subpage-heading">
+        <span>Genre, mood, or moment</span>
+        <h1>@(Name ?? "Curated playlists")</h1>
+        <p>Open a playlist to browse its songs. Playlists are discovery containers; you can request individual tracks from inside.</p>
+    </div>
+
+    @if (_loading)
+    {
+        <PosterGridSkeleton Count="12" />
+    }
+    else if (_playlists.Count == 0)
+    {
+        <div class="subpage-empty"><MudIcon Icon="@Icons.Material.Filled.QueueMusic" /><h2>No playlists available</h2><p>This category may be temporarily unavailable or changed upstream.</p></div>
+    }
+    else
+    {
+        <div class="subpage-playlists">
+            @foreach (var playlist in _playlists.Take(_visibleCount))
+            {
+                <MusicPlaylistCard Playlist="playlist" />
+            }
+        </div>
+        @if (_visibleCount < _playlists.Count)
+        {
+            <div class="load-more">
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Large"
+                           OnClick="ShowMore">Show more playlists</MudButton>
+            </div>
+        }
+    }
+</MudContainer>
+
+@code {
+    [SupplyParameterFromQuery(Name = "token")] public string? Token { get; set; }
+    [SupplyParameterFromQuery(Name = "name")] public string? Name { get; set; }
+    private List<MusicPlaylistSummaryDto> _playlists = new();
+    private bool _loading = true;
+    private bool _hasLoaded;
+    private string? _loadedToken;
+    private int _visibleCount = 48;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_hasLoaded && Token == _loadedToken) return;
+        _hasLoaded = true;
+        _loadedToken = Token;
+        _loading = true;
+        _visibleCount = 48;
+        try { _playlists = string.IsNullOrWhiteSpace(Token) ? new() : await Discovery.GetCategoryAsync(Token); }
+        catch { _playlists = new(); }
+        finally { _loading = false; }
+    }
+
+    private void ShowMore() => _visibleCount = Math.Min(_visibleCount + 48, _playlists.Count);
+}

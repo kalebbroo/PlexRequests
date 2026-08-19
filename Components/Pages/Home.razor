@@ -73,7 +73,7 @@
             <MediaRow Title="Popular TV" Items="_popularTv" SeeAllHref="/browse/tvshow" OnRequest="Request" OnPlay="Play" />
             @if (_newMusic.Count > 0)
             {
-                <MediaRow Title="Trending Music" Items="_newMusic" OnRequest="Request" OnPlay="Play" />
+                <MediaRow Title="New Music" Items="_newMusic" SeeAllHref="/music" OnRequest="Request" OnPlay="Play" />
             }
             <MediaRow Title="Action & Adventure" Items="_actionMovies" SeeAllHref="/browse/movie" OnRequest="Request" OnPlay="Play" />
 
@@ -175,8 +175,8 @@
         }
     }
 
-    // Music discovery is an optional enhancement. A MusicBrainz/ListenBrainz outage must never
-    // suppress the movie and TV home page that the rest of the application depends on.
+    // Music discovery is an optional enhancement. An upstream catalog outage must never suppress
+    // the movie and TV home page that the rest of the application depends on.
     private async Task<List<MediaCardDto>> LoadOptionalMusicAsync()
     {
         try

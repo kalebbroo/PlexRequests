@@ -108,18 +108,18 @@ public class MetadataRouter : IMediaMetadataProvider
     public Task<MediaDetailDto?> GetDetailsAsync(MediaRef mediaRef) => PickForIdentity(mediaRef).GetDetailsAsync(mediaRef);
     public Task<string?> GetImdbIdAsync(int mediaId, MediaType mediaType) => Pick(mediaType).GetImdbIdAsync(mediaId, mediaType);
     public Task<string?> GetImdbIdAsync(MediaRef mediaRef) => PickForIdentity(mediaRef).GetImdbIdAsync(mediaRef);
-    public Task<List<MediaCardDto>> GetLibraryAsync(MediaType mediaType, int page = 1, int pageSize = 20)
-        => PickDiscovery(mediaType).GetLibraryAsync(mediaType, page, pageSize);
+    public async Task<List<MediaCardDto>> GetLibraryAsync(MediaType mediaType, int page = 1, int pageSize = 20)
+        => await (await PickDiscoveryAsync(mediaType)).GetLibraryAsync(mediaType, page, pageSize);
     public Task<List<MediaCardDto>> GetRecentlyAddedAsync(int count = 10) => Pick(MediaType.Movie).GetRecentlyAddedAsync(count);
 
-    public Task<List<MediaCardDto>> GetTrendingAsync(MediaType? mediaType = null, int page = 1, int pageSize = 20)
-        => PickDiscovery(mediaType ?? MediaType.Movie).GetTrendingAsync(mediaType, page, pageSize);
-    public Task<List<MediaCardDto>> GetPopularAsync(MediaType mediaType, int page = 1, int pageSize = 20)
-        => PickDiscovery(mediaType).GetPopularAsync(mediaType, page, pageSize);
-    public Task<List<MediaCardDto>> GetTopRatedAsync(MediaType mediaType, int page = 1, int pageSize = 20)
-        => PickDiscovery(mediaType).GetTopRatedAsync(mediaType, page, pageSize);
-    public Task<List<MediaCardDto>> GetByGenreAsync(MediaType mediaType, string genre, int page = 1, int pageSize = 20)
-        => PickDiscovery(mediaType).GetByGenreAsync(mediaType, genre, page, pageSize);
+    public async Task<List<MediaCardDto>> GetTrendingAsync(MediaType? mediaType = null, int page = 1, int pageSize = 20)
+        => await (await PickDiscoveryAsync(mediaType ?? MediaType.Movie)).GetTrendingAsync(mediaType, page, pageSize);
+    public async Task<List<MediaCardDto>> GetPopularAsync(MediaType mediaType, int page = 1, int pageSize = 20)
+        => await (await PickDiscoveryAsync(mediaType)).GetPopularAsync(mediaType, page, pageSize);
+    public async Task<List<MediaCardDto>> GetTopRatedAsync(MediaType mediaType, int page = 1, int pageSize = 20)
+        => await (await PickDiscoveryAsync(mediaType)).GetTopRatedAsync(mediaType, page, pageSize);
+    public async Task<List<MediaCardDto>> GetByGenreAsync(MediaType mediaType, string genre, int page = 1, int pageSize = 20)
+        => await (await PickDiscoveryAsync(mediaType)).GetByGenreAsync(mediaType, genre, page, pageSize);
     public Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, MediaType mediaType, int count = 12) => Pick(mediaType).GetSimilarAsync(mediaId, mediaType, count);
     public Task<List<MediaCardDto>> GetSimilarAsync(MediaRef mediaRef, int count = 12) => PickForIdentity(mediaRef).GetSimilarAsync(mediaRef, count);
     public Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int showId, int seasonNumber) => Pick(MediaType.TvShow).GetSeasonEpisodesAsync(showId, seasonNumber);
@@ -141,8 +141,10 @@ public class MetadataRouter : IMediaMetadataProvider
                && p.ProviderKey.Equals(mediaRef.Provider, StringComparison.OrdinalIgnoreCase))
            ?? Pick(mediaRef.MediaType);
 
-    // ListenBrainz/MusicBrainz remains the standards-based discovery feed. Its cards carry MusicBrainz
-    // identities, while the admin-selected provider controls user searches only.
-    private IMediaMetadataProvider PickDiscovery(MediaType mediaType)
-        => mediaType == MediaType.Music ? Pick(mediaType, "musicbrainz") : Pick(mediaType);
+    // Discovery follows the same provider the admin selected for new music searches. Cards retain that
+    // provider's identity, so details and requests keep routing correctly even if the setting changes later.
+    private async Task<IMediaMetadataProvider> PickDiscoveryAsync(MediaType mediaType)
+        => mediaType == MediaType.Music
+            ? Pick(mediaType, (await _musicSettings.GetAsync()).MetadataProvider)
+            : Pick(mediaType);
 }

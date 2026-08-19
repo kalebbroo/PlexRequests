@@ -166,6 +166,75 @@ public sealed class YouTubeMusicMetadataTests
         Assert.Equal(3, handler.Requests.Count);
     }
 
+    [Fact]
+    public async Task BrowseHub_MapsDiscoveryChartsPlaylistsAndGroupedCategories()
+    {
+        const string explore = """
+            {"contents":{"sectionListRenderer":{"contents":[
+              {"musicCarouselShelfRenderer":{"header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"New albums & singles"}]}}},"contents":[
+                {"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"New Album","navigationEndpoint":{"browseEndpoint":{"browseId":"album-id","browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":"MUSIC_PAGE_TYPE_ALBUM"}}}}}]},"subtitle":{"runs":[{"text":"Album"},{"text":" • "},{"text":"Artist"}]},"thumbnailRenderer":{"musicThumbnailRenderer":{"thumbnail":{"thumbnails":[{"url":"https://img/album","width":544,"height":544}]}}}}}
+              ]}},
+              {"musicCarouselShelfRenderer":{"header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"Trending"}]}}},"contents":[
+                {"musicResponsiveListItemRenderer":{"playlistItemData":{"videoId":"track-id"},"flexColumns":[
+                  {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Trending Song"}]}}},
+                  {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Singer","navigationEndpoint":{"browseEndpoint":{"browseId":"artist-id","browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":"MUSIC_PAGE_TYPE_ARTIST"}}}}}]}}}
+                ]}}
+              ]}}
+            ]}}}
+            """;
+        const string charts = """
+            {"contents":{"sectionListRenderer":{"contents":[
+              {"musicCarouselShelfRenderer":{"header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"Video charts"}]}}},"contents":[
+                {"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"Top 100"}]},"navigationEndpoint":{"browseEndpoint":{"browseId":"VLchart-id"}},"subtitle":{"runs":[{"text":"Playlist • YouTube Music"}]}}}
+              ]}},
+              {"musicCarouselShelfRenderer":{"header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"Top artists"}]}}},"contents":[
+                {"musicResponsiveListItemRenderer":{"flexColumns":[
+                  {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Chart Artist","navigationEndpoint":{"browseEndpoint":{"browseId":"chart-artist","browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":"MUSIC_PAGE_TYPE_ARTIST"}}}}}]}}},
+                  {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"2M subscribers"}]}}}
+                ]}}
+              ]}}
+            ]}}}
+            """;
+        const string categories = """
+            {"contents":{"gridRenderer":{"header":{"gridHeaderRenderer":{"title":{"runs":[{"text":"Genres"}]}}},"items":[
+              {"musicNavigationButtonRenderer":{"buttonText":{"runs":[{"text":"Rock"}]},"clickCommand":{"browseEndpoint":{"browseId":"FEmusic_moods_and_genres_category","params":"opaque-rock"}}}}
+            ]}}}
+            """;
+        var provider = CreateProvider(new QueueHandler(Html(VisitorHtml), Json(explore), Json(charts), Json(categories)));
+
+        var hub = await provider.GetBrowseHubAsync();
+
+        Assert.Equal("New Album", Assert.Single(hub.NewReleases).Title);
+        Assert.Equal("Music:Track:youtube:track-id", Assert.Single(hub.TrendingTracks).ResolveMediaRef().StableKey);
+        Assert.Equal("Chart Artist", Assert.Single(hub.PopularArtists).Title);
+        Assert.Equal("chart-id", Assert.Single(hub.FeaturedPlaylists).Id);
+        var genre = Assert.Single(hub.Categories);
+        Assert.Equal("Genres", genre.Group);
+        Assert.Equal("opaque-rock", genre.Token);
+    }
+
+    [Fact]
+    public async Task Playlist_MapsVisibleTrackIdentityWithoutMakingPlaylistRequestable()
+    {
+        const string playlist = """
+            {"contents":{"musicResponsiveHeaderRenderer":{"title":{"runs":[{"text":"Coffee Shop Blend"}]},"subtitle":{"runs":[{"text":"Playlist"},{"text":" • "},{"text":"YouTube Music"}]},"thumbnail":{"musicThumbnailRenderer":{"thumbnail":{"thumbnails":[{"url":"https://img/list","width":544,"height":544}]}}}},
+            "tracks":{"musicShelfRenderer":{"contents":[{"musicResponsiveListItemRenderer":{"playlistItemData":{"videoId":"Visible_CASE"},"flexColumns":[
+              {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Visible Song"}]}}},
+              {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Visible Artist","navigationEndpoint":{"browseEndpoint":{"browseId":"artist","browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":"MUSIC_PAGE_TYPE_ARTIST"}}}}}]}}}
+            ]}}]}}}}
+            """;
+        var handler = new QueueHandler(Html(VisitorHtml), Json(playlist));
+        var provider = CreateProvider(handler);
+
+        var result = await provider.GetPlaylistAsync("VLplaylist-id");
+
+        Assert.NotNull(result);
+        Assert.Equal("playlist-id", result.Id);
+        Assert.Equal("Coffee Shop Blend", result.Title);
+        Assert.Equal("Music:Track:youtube:Visible_CASE", Assert.Single(result.Tracks).ResolveMediaRef().StableKey);
+        Assert.Contains("youtubei/v1/browse", handler.Requests[1], StringComparison.Ordinal);
+    }
+
     private static YouTubeMusicMetadataProvider CreateProvider(HttpMessageHandler handler)
     {
         var cache = new MemoryCache(new MemoryCacheOptions());

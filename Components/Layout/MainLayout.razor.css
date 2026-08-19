@@ -362,7 +362,11 @@ body {
     display: none !important;
 }
 
-@media (max-width: 768px) {
+.mobile-menu-trigger { align-items: center; }
+
+/* The complete desktop nav no longer fits safely once Music/Admin are both visible. Switch to the
+   compact menu before labels or the search field can collide with the brand. */
+@media (max-width: 1100px) {
     .desktop-only {
         display: none !important;
     }

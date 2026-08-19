@@ -184,10 +184,16 @@
     };
 
     [SupplyParameterFromQuery(Name = "q")] public string? Q { get; set; }
+    [SupplyParameterFromQuery(Name = "type")] public string? QueryType { get; set; }
     private string? _lastQ;
 
     protected override async Task OnParametersSetAsync()
     {
+        if (QueryType?.Equals("music", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            _filterType = PlexRequestsHosted.Shared.Enums.MediaType.Music;
+            _showFilters = true;
+        }
         // Accept a query handed off from the header search box (/search?q=...).
         if (!string.IsNullOrWhiteSpace(Q) && Q != _lastQ)
         {
