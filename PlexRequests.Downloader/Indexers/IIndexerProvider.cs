@@ -88,6 +88,15 @@ public interface IIndexerClient
     Task<IndexerCapabilitiesDto> TestAsync(int indexerId, CancellationToken ct);
 }
 
+/// <summary>An optional, non-indexer candidate source. These modules translate authoritative metadata into
+/// an acquisition resource without pretending to be a torrent search engine.</summary>
+public interface IAcquisitionCandidateSource
+{
+    string Name { get; }
+    bool AppliesTo(FulfillmentJobDto job);
+    Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(FulfillmentJobDto job, CancellationToken ct);
+}
+
 public enum IndexerSearchPurpose
 {
     Automatic,

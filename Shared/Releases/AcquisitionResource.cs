@@ -19,4 +19,16 @@ public sealed record AcquisitionResource
         Locator = magnet,
         SourceId = infoHash
     };
+
+    public static AcquisitionResource DirectAudio(string locator, string sourceId) => new()
+    {
+        Protocol = AcquisitionProtocol.DirectAudio,
+        Locator = locator,
+        SourceId = sourceId
+    };
+
+    /// <summary>Protocol-qualified identity used by the shared blocklist. The qualification prevents a
+    /// provider id from colliding with an info hash or a future Usenet article id.</summary>
+    public static string BlocklistKey(AcquisitionProtocol protocol, string sourceId) =>
+        $"{(int)protocol}:{sourceId.Trim().ToLowerInvariant()}";
 }

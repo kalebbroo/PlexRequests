@@ -55,16 +55,21 @@ else
         <MudGrid Spacing="2">
             <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Metadata" Ready="true" Detail="@ProviderName" /></MudItem>
             <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Artwork" Ready="true" Detail="@ArtworkSource" /></MudItem>
-            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Acquisition" Ready="true" Detail="Modular indexers" /></MudItem>
+            <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Acquisition" Ready="true" Detail="@AcquisitionLabel" /></MudItem>
             <MudItem xs="12" sm="6" md="3"><MediaReadinessItem Label="Plex verification" Ready="true" Detail="Confirmed before notification" /></MudItem>
         </MudGrid>
 
         <MudDivider Class="my-4" />
+        <MudSwitch T="bool" @bind-Value="_settings.DirectDownloadsEnabled" Color="Color.Primary"
+                   Label="Allow direct audio from YouTube Music" />
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="d-block mt-1 mb-3">
+            Uses YouTube Music only for YouTube-backed tracks and albums. Torrent indexers remain available as a fallback.
+        </MudText>
         <MudSwitch T="bool" @bind-Value="_settings.RequestsEnabled" Color="Color.Primary"
                    Label="Enable music requests and automatic fulfillment" Disabled="_settings.ReadinessIssues.Count > 0" />
         <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-3">
             Before enabling requests, set a writable Music library path under Library → Organization and
-            enable Music on at least one indexer. A request is not marked Available until Plex confirms it.
+            enable Music on an indexer or enable direct YouTube Music acquisition. A request is not marked Available until Plex confirms it.
         </MudAlert>
         @foreach (var issue in _settings.ReadinessIssues)
         {
@@ -87,9 +92,11 @@ else
     private bool? _testResult;
     private string ProviderName => _settings?.MetadataProvider == "youtube" ? "YouTube Music" : "MusicBrainz";
     private string ArtworkSource => _settings?.MetadataProvider == "youtube" ? "YouTube Music" : "Cover Art Archive";
+    private string AcquisitionLabel => _settings?.DirectDownloadsEnabled == true
+        ? "YouTube direct + indexers" : "Modular indexers";
     private string TestLabel => $"Test {ProviderName}";
     private string ProviderDescription => _settings?.MetadataProvider == "youtube"
-        ? "YouTube Music gives users its familiar catalog and artwork. It is metadata-only; configured music indexers still acquire releases."
+        ? "YouTube Music gives users its familiar catalog and artwork. Direct audio is optional; configured music indexers remain an independent fallback."
         : "MusicBrainz is the open, standards-based catalog and uses Cover Art Archive artwork.";
 
     protected override async Task OnInitializedAsync()

@@ -17,6 +17,7 @@ builder.Services.Configure<WorkerOptions>(builder.Configuration.GetSection(Worke
 builder.Services.Configure<IndexerOptions>(builder.Configuration.GetSection(IndexerOptions.Section));
 builder.Services.Configure<CatalogWorkerOptions>(builder.Configuration.GetSection(CatalogWorkerOptions.Section));
 builder.Services.Configure<DelugeOptions>(builder.Configuration.GetSection(DelugeOptions.Section));
+builder.Services.Configure<DirectAudioOptions>(builder.Configuration.GetSection(DirectAudioOptions.Section));
 builder.Services.Configure<LibraryOptions>(builder.Configuration.GetSection(LibraryOptions.Section));
 builder.Services.Configure<QualityOptions>(builder.Configuration.GetSection(QualityOptions.Section));
 builder.Services.Configure<VpnOptions>(builder.Configuration.GetSection(VpnOptions.Section));
@@ -119,6 +120,7 @@ builder.Services.AddTransient<IReleaseFeedSource>(sp => sp.GetRequiredService<Ez
 builder.Services.AddTransient<IReleaseFeedSource>(sp => sp.GetRequiredService<YtsIndexerProvider>());
 builder.Services.AddTransient<IReleaseFeedSource>(sp => sp.GetRequiredService<TorznabIndexerProvider>());
 builder.Services.AddTransient<IIndexerClient, IndexerClient>();
+builder.Services.AddSingleton<IAcquisitionCandidateSource, YouTubeMusicDirectSource>();
 // Per-(indexer, query) result cache and the per-indexer request throttle the client sits on top of.
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IIndexerRateLimiter, IndexerRateLimiter>();
@@ -171,6 +173,7 @@ builder.Services.AddHttpClient<IDownloadClient, DelugeDownloadClient>(http =>
     UseCookies = true
 });
 builder.Services.AddSingleton<IAcquisitionBackend, TorrentAcquisitionBackend>();
+builder.Services.AddSingleton<IAcquisitionBackend, YouTubeMusicAcquisitionBackend>();
 builder.Services.AddSingleton<IAcquisitionBackendRegistry, AcquisitionBackendRegistry>();
 
 // Library organizer: archive extraction, season-pack splitting, Plex-convention naming/transfer.

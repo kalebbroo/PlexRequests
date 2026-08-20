@@ -29,7 +29,8 @@ public sealed record TransferStatus(
 public sealed record AcquisitionRequest(
     AcquisitionResource Resource,
     string? Label,
-    string DisplayName);
+    string DisplayName,
+    string? CorrelationId = null);
 
 public enum TransferVerdict { Wait, Import, Fail, Missing }
 

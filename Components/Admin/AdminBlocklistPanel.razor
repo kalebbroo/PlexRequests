@@ -39,7 +39,7 @@ else
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="Release" Style="word-break:break-all;">
-                @(string.IsNullOrWhiteSpace(context.ReleaseName) ? context.InfoHash : context.ReleaseName)
+                @(string.IsNullOrWhiteSpace(context.ReleaseName) ? context.SourceId ?? context.InfoHash : context.ReleaseName)
             </MudTd>
             <MudTd DataLabel="For">@(context.RequestTitle ?? "—")</MudTd>
             <MudTd DataLabel="Reason">

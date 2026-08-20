@@ -328,10 +328,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             b.HasKey(x => x.Id);
             b.HasIndex(x => x.InfoHash);
+            b.HasIndex(x => new { x.Protocol, x.SourceId });
             b.HasIndex(x => x.NormalizedReleaseName);
             b.HasIndex(x => new { x.MediaId, x.MediaType });
             // One block per release per request; re-failing the same torrent must not pile up rows.
             b.HasIndex(x => new { x.InfoHash, x.MediaRequestId }).IsUnique();
+            b.HasIndex(x => new { x.Protocol, x.SourceId, x.MediaRequestId }).IsUnique();
         });
 
         modelBuilder.Entity<CustomFormatEntity>(b =>

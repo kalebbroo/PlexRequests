@@ -104,7 +104,8 @@ public class FulfillmentPipeline(
                     logger.LogWarning("Job {JobId}: no acquisition backend is configured for {Protocol}", job.Id, resource.Protocol);
                     continue;
                 }
-                var transferId = await backend.EnqueueAsync(new AcquisitionRequest(resource, label, item.Candidate.ReleaseName), ct);
+                var transferId = await backend.EnqueueAsync(new AcquisitionRequest(resource, label,
+                    item.Candidate.ReleaseName, job.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)), ct);
                 if (string.IsNullOrWhiteSpace(transferId))
                 {
                     logger.LogWarning("Failed to enqueue {Protocol} transfer for job {JobId} (S{Season}E{Episode})",
@@ -281,11 +282,17 @@ public class FulfillmentPipeline(
             await SafeBlocklist(job.Id, new BlocklistRequestDto
             {
                 InfoHash = it.Protocol == AcquisitionProtocol.Torrent ? it.SourceId ?? it.TransferId : null,
+                Protocol = it.Protocol,
+                SourceId = it.SourceId,
                 ReleaseName = status?.Name ?? job.ForcedReleaseName ?? job.Title,
                 Reason = blocklistReason,
                 Detail = reason,
                 Season = it.Season,
-                Episode = it.Episode
+                Episode = it.Episode,
+                // A removed video should fall back to torrents, but a transient extractor/network failure
+                // must heal without admin intervention. Retry the authoritative source after a cooldown.
+                ExpiresAt = it.Protocol == AcquisitionProtocol.DirectAudio
+                    ? DateTime.UtcNow.AddHours(6) : null
             });
             if (acquisitionBackends.TryGet(it.Protocol, out var backend))
             {
@@ -424,7 +431,8 @@ public class FulfillmentPipeline(
                     progressSum += 100 - status.Progress; // count the just-imported torrent as fully done this tick
                     items[i] = it with { Imported = true };
                     await stateStore.SaveAsync(record with { Transfers = items.ToList() }, ct); // persist so a restart resumes
-                    try { await backend.RemoveAsync(it.TransferId, removeData: false, ct); }
+                    try { await backend.RemoveAsync(it.TransferId,
+                        removeData: !backend.Capabilities.CanKeepSourceDataAfterRemoval, ct); }
                     catch (Exception ex) { logger.LogDebug(ex, "Transfer removal after import skipped"); }
                 }
             }

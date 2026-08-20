@@ -129,6 +129,7 @@ public class InteractiveSearchWorker(
         Media = t.Media,
         RequestScope = t.RequestScope,
         Music = t.Music,
+        AllowedAcquisitionProtocols = t.AllowedAcquisitionProtocols,
         Title = t.Title,
         Year = t.Year,
         ImdbId = t.ImdbId,
@@ -151,6 +152,7 @@ public class InteractiveSearchWorker(
         InfoHash = r.Candidate.Acquisition.Protocol == AcquisitionProtocol.Torrent
             ? MagnetUtil.Normalize(r.Candidate.Acquisition.SourceId) ?? MagnetUtil.InfoHashFromMagnet(r.Candidate.Acquisition.Locator)
             : null,
+        Protocol = r.Candidate.Acquisition.Protocol,
         IndexerId = r.Candidate.IndexerId,
         IndexerName = r.Candidate.Source,
         Seeders = r.Candidate.Seeders,

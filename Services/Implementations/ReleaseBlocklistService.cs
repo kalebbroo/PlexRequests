@@ -16,7 +16,7 @@ public interface IReleaseBlocklistService
     Task<bool> UnblockAsync(int id);
     Task<int> ClearForRequestAsync(int mediaRequestId);
 
-    /// <summary>Info hashes to exclude when searching for this request.</summary>
+    /// <summary>Legacy torrent hashes plus protocol-qualified source ids to exclude for this request.</summary>
     Task<List<string>> HashesForRequestAsync(int mediaRequestId);
 
     /// <summary>Delete lapsed entries. Called by the cleanup job.</summary>
@@ -39,14 +39,15 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
         if (job is null) return false;
 
         // Derive the hash when the caller only had a magnet, so a release is still identifiable either way.
-        var hash = MagnetUtil.Normalize(request.InfoHash);
+        var hash = request.Protocol == AcquisitionProtocol.Torrent ? MagnetUtil.Normalize(request.InfoHash) : null;
+        var sourceId = NormalizeSourceId(request.SourceId ?? hash);
         var normalizedName = string.IsNullOrWhiteSpace(request.ReleaseName)
             ? null
             : ReleaseBlocklistEntity.Normalize(request.ReleaseName);
 
-        if (hash is null && normalizedName is null)
+        if (sourceId is null && normalizedName is null)
         {
-            logger.LogDebug("Blocklist entry skipped for job {JobId}: neither an info hash nor a release name", fulfillmentJobId);
+            logger.LogDebug("Blocklist entry skipped for job {JobId}: neither a source id nor a release name", fulfillmentJobId);
             return false;
         }
 
@@ -54,13 +55,16 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
         // piling up rows.
         var existing = await db.ReleaseBlocklist.FirstOrDefaultAsync(b =>
             b.MediaRequestId == job.MediaRequestId &&
-            ((hash != null && b.InfoHash == hash) || (hash == null && b.NormalizedReleaseName == normalizedName)));
+            ((sourceId != null && b.Protocol == request.Protocol && b.SourceId == sourceId)
+             || (hash != null && b.InfoHash == hash)
+             || (sourceId == null && b.NormalizedReleaseName == normalizedName)));
 
         if (existing is not null)
         {
             existing.Reason = request.Reason;
             existing.Detail = Trim(request.Detail);
             existing.BlockedAt = DateTime.UtcNow;
+            existing.ExpiresAt = request.ExpiresAt;
             await db.SaveChangesAsync();
             return true;
         }
@@ -68,6 +72,8 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
         db.ReleaseBlocklist.Add(new ReleaseBlocklistEntity
         {
             InfoHash = hash,
+            Protocol = request.Protocol,
+            SourceId = sourceId,
             NormalizedReleaseName = normalizedName,
             ReleaseName = request.ReleaseName is { Length: > 512 } n ? n[..512] : request.ReleaseName,
             Scope = BlocklistScope.Request,
@@ -78,7 +84,8 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
             Episode = request.Episode,
             IndexerId = request.IndexerId,
             Reason = request.Reason,
-            Detail = Trim(request.Detail)
+            Detail = Trim(request.Detail),
+            ExpiresAt = request.ExpiresAt
         });
         await db.SaveChangesAsync();
 
@@ -99,7 +106,8 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
 
         return rows.Select(b => new BlocklistEntryDto
         {
-            Id = b.Id, InfoHash = b.InfoHash, ReleaseName = b.ReleaseName, Scope = b.Scope,
+            Id = b.Id, InfoHash = b.InfoHash, Protocol = b.Protocol, SourceId = b.SourceId,
+            ReleaseName = b.ReleaseName, Scope = b.Scope,
             Reason = b.Reason, Detail = b.Detail, MediaRequestId = b.MediaRequestId,
             RequestTitle = b.MediaRequestId is int id && titles.TryGetValue(id, out var t) ? t : null,
             MediaId = b.MediaId, MediaType = b.MediaType, BlockedAt = b.BlockedAt, ExpiresAt = b.ExpiresAt
@@ -127,15 +135,19 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
         if (job is null) return new();
 
         var now = DateTime.UtcNow;
-        return await db.ReleaseBlocklist
-            .Where(b => b.InfoHash != null && (b.ExpiresAt == null || b.ExpiresAt > now))
+        var resources = await db.ReleaseBlocklist
+            .Where(b => (b.SourceId != null || b.InfoHash != null) && (b.ExpiresAt == null || b.ExpiresAt > now))
             // Request-scoped entries apply to this request; wider scopes apply to the title or everywhere.
             .Where(b => b.MediaRequestId == job.MediaRequestId
                         || (b.Scope == BlocklistScope.Media && b.MediaId == job.MediaId && b.MediaType == job.MediaType)
                         || b.Scope == BlocklistScope.Global)
-            .Select(b => b.InfoHash!)
-            .Distinct()
-            .ToListAsync();
+            .Select(b => new { b.Protocol, b.SourceId, b.InfoHash }).ToListAsync();
+        return resources.SelectMany(x => new[]
+            {
+                x.InfoHash,
+                x.SourceId is null ? null : AcquisitionResource.BlocklistKey(x.Protocol, x.SourceId)
+            })
+            .Where(x => x is not null).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     public async Task<int> PruneExpiredAsync(CancellationToken ct = default)
@@ -145,4 +157,9 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
     }
 
     private static string? Trim(string? s) => s is { Length: > 1000 } ? s[..1000] : s;
+    private static string? NormalizeSourceId(string? sourceId)
+    {
+        var value = sourceId?.Trim().ToLowerInvariant();
+        return string.IsNullOrWhiteSpace(value) ? null : value.Length > 256 ? value[..256] : value;
+    }
 }

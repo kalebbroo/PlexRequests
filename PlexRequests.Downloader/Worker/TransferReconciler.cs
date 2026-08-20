@@ -146,7 +146,7 @@ public class TransferReconciler(
 
             updates.Add(update);
 
-            if (update.State == TransferTrackingState.Failed && decision.Blocklist && t.Protocol == AcquisitionProtocol.Torrent)
+            if (update.State == TransferTrackingState.Failed && decision.Blocklist)
                 await SafeBlocklist(t, update.Reason, status?.State.Equals("error", StringComparison.OrdinalIgnoreCase) == true, ct);
 
             if (updates.Count - flushed >= FlushEvery)
@@ -226,6 +226,10 @@ public class TransferReconciler(
         // Keep source data where the backend supports it (torrent seeding); remove only its tracking entry.
         if (acquisitionBackends.TryGet(t.Protocol, out var backend))
         {
+            // The per-job monitor may be observing this same successful import. Remove only backend
+            // tracking here and retain source data; the monitor performs protocol-specific cleanup after
+            // it has observed the shared import result. This closes the reconcile-vs-monitor race where a
+            // direct backend could delete its payload milliseconds before the monitor resolved the path.
             try { await backend.RemoveAsync(t.TransferId, removeData: false, ct); }
             catch (Exception ex) { logger.LogDebug(ex, "Transfer removal after import skipped"); }
         }
@@ -245,13 +249,17 @@ public class TransferReconciler(
             await api.BlocklistAsync(t.FulfillmentJobId, new BlocklistRequestDto
             {
                 InfoHash = t.SourceId,
+                Protocol = t.Protocol,
+                SourceId = t.SourceId,
                 ReleaseName = t.ReleaseName ?? string.Empty,
                 // Stalled covers both shapes the reconciler gives up on — no progress with no peers, and a
                 // magnet whose metadata never arrived. TorrentError is reserved for the client saying so.
                 Reason = clientError ? BlocklistReason.TorrentError : BlocklistReason.Stalled,
                 Detail = reason,
                 Season = t.Season,
-                Episode = t.Episode
+                Episode = t.Episode,
+                ExpiresAt = t.Protocol == AcquisitionProtocol.DirectAudio
+                    ? DateTime.UtcNow.AddHours(6) : null
             }, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

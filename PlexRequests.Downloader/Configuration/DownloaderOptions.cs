@@ -116,6 +116,19 @@ public class DelugeOptions
     public string MusicLabel { get; set; } = "music";
 }
 
+/// <summary>Optional direct-audio runtime. Admin policy travels with each job; these settings describe only
+/// the local backend's executable, durable workspace and bounded retry behavior.</summary>
+public sealed class DirectAudioOptions
+{
+    public const string Section = "DirectAudio";
+    public bool Enabled { get; set; } = true;
+    public string ExecutablePath { get; set; } = "yt-dlp";
+    public string StatePath { get; set; } = "state/direct-audio";
+    public int MaxConcurrent { get; set; } = 2;
+    public int MaxAttempts { get; set; } = 3;
+    public int TrackTimeoutMinutes { get; set; } = 20;
+}
+
 /// <summary>Where completed files are placed for Plex to index.</summary>
 public class LibraryOptions
 {

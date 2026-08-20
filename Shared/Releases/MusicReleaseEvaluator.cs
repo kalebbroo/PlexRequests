@@ -21,6 +21,7 @@ internal static class MusicReleaseEvaluator
     {
         var rejections = new List<Rejection>();
         var music = job.Music;
+        var authoritativeDirect = candidate.Acquisition.Protocol == AcquisitionProtocol.DirectAudio;
 
         if (job.RequestScope is RequestScopeKind.Album or RequestScopeKind.Track
             && string.IsNullOrWhiteSpace(music?.Artist))
@@ -49,16 +50,16 @@ internal static class MusicReleaseEvaluator
         }
 
         var musicCategory = candidate.CategoryIds.Any(x => x is >= 3000 and < 4000);
-        if ((parsed.AudioCodec is null || !MusicCodecs.Contains(parsed.AudioCodec)) && !musicCategory)
+        if (!authoritativeDirect && (parsed.AudioCodec is null || !MusicCodecs.Contains(parsed.AudioCodec)) && !musicCategory)
             rejections.Add(new(RejectionReason.MusicFormatMissing,
                 "neither a supported audio format nor an authoritative music category was identified"));
 
         // A same-named video is a dangerous false positive. Audio releases have no video resolution or
         // S/E markers; reject those even if an audio codec token also happens to be present.
-        if (parsed.Resolution > 0 || parsed.Season is not null || parsed.Episode is not null)
+        if (!authoritativeDirect && (parsed.Resolution > 0 || parsed.Season is not null || parsed.Episode is not null))
             rejections.Add(new(RejectionReason.MediaTypeMismatch, "this looks like a video release, not music"));
 
-        var artistRecall = string.IsNullOrWhiteSpace(music?.Artist)
+        var artistRecall = authoritativeDirect || string.IsNullOrWhiteSpace(music?.Artist)
             ? 1d : ReleaseEvaluator.TitleSimilarity(parsed.Title, music.Artist);
         if (artistRecall < context.Preferences.MinTitleSimilarity)
             rejections.Add(new(RejectionReason.ArtistMismatch,
@@ -70,7 +71,7 @@ internal static class MusicReleaseEvaluator
             RequestScopeKind.ArtistCatalog => music?.Artist ?? job.Title,
             _ => music?.Album ?? job.Title
         };
-        var titleRecall = ReleaseEvaluator.TitleSimilarity(parsed.Title, requestedTitle);
+        var titleRecall = authoritativeDirect ? 1d : ReleaseEvaluator.TitleSimilarity(parsed.Title, requestedTitle);
         if (titleRecall < context.Preferences.MinTitleSimilarity)
             rejections.Add(new(RejectionReason.TitleMismatch,
                 $"the release only matches {titleRecall:P0} of \"{requestedTitle}\""));
@@ -85,7 +86,8 @@ internal static class MusicReleaseEvaluator
         var sourceId = candidate.Acquisition.Protocol == AcquisitionProtocol.Torrent
             ? MagnetUtil.Normalize(candidate.Acquisition.SourceId) ?? MagnetUtil.InfoHashFromMagnet(candidate.Acquisition.Locator)
             : candidate.Acquisition.SourceId;
-        if (sourceId is not null && context.BlocklistedHashes.Contains(sourceId))
+        if (sourceId is not null && (context.BlocklistedHashes.Contains(sourceId)
+            || context.BlocklistedHashes.Contains(AcquisitionResource.BlocklistKey(candidate.Acquisition.Protocol, sourceId))))
             rejections.Add(new(RejectionReason.Blocklisted, "this release already failed for this request"));
         if (string.IsNullOrWhiteSpace(candidate.Acquisition.Locator))
             rejections.Add(new(RejectionReason.MissingAcquisition, "no acquisition locator"));
@@ -95,6 +97,7 @@ internal static class MusicReleaseEvaluator
 
         Add("Artist match", artistRecall * 100);
         Add(job.RequestScope == RequestScopeKind.ArtistCatalog ? "Catalog match" : "Title match", titleRecall * 100);
+        if (authoritativeDirect) Add("Authoritative direct source", 1000);
         Add("Audio format", parsed.AudioCodec switch
         {
             // Format preference must dominate seeder popularity: a heavily seeded MP3 is easier to fetch,

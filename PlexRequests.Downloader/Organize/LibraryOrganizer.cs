@@ -56,7 +56,11 @@ public class LibraryOrganizer(
             }
 
             var mediaFiles = job.MediaType == MediaType.Music
-                ? files.Where(IsAudio(prefs)).Where(f => PassesMinAudioSize(f, prefs)).ToList()
+                ? files.Where(IsAudio(prefs))
+                    // Direct sources already validate every expected track before reporting completion.
+                    // The admin's general torrent-size floor must not discard a legitimate short intro.
+                    .Where(f => transfer.Protocol == AcquisitionProtocol.DirectAudio || PassesMinAudioSize(f, prefs))
+                    .ToList()
                 : files.Where(IsVideo(prefs)).Where(f => PassesMinVideoSize(f, prefs)).ToList();
 
             var contentRoot = stagingRoot ?? sourcePath;
