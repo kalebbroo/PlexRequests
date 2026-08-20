@@ -30,9 +30,9 @@ public class FulfillmentPipeline(
     IReleaseParser parser,
     IDownloadPreferencesProvider prefs,
     ILibraryOrganizationProvider libraryPrefs,
-    IDownloadClient downloadClient,
+    IAcquisitionBackendRegistry acquisitionBackends,
     ILibraryImporter importer,
-    ITorrentImportCoordinator importCoordinator,
+    ITransferImportCoordinator importCoordinator,
     IPlexRequestsApiClient api,
     IJobStateStore stateStore,
     IVpnGuard vpn,
@@ -95,53 +95,61 @@ public class FulfillmentPipeline(
                 MediaType.Music => deluge.Value.MusicLabel,
                 _ => deluge.Value.TvLabel
             };
-            var torrents = new List<TorrentItem>();
+            var transfers = new List<TransferItem>();
             foreach (var item in plan.Items)
             {
-                var torrentId = await downloadClient.AddMagnetAsync(item.Candidate.Magnet, label, ct);
-                if (string.IsNullOrWhiteSpace(torrentId))
+                var resource = item.Candidate.Acquisition;
+                if (!acquisitionBackends.TryGet(resource.Protocol, out var backend))
                 {
-                    logger.LogWarning("Failed to add magnet for job {JobId} (S{Season}E{Episode})", job.Id, item.Season, item.Episode);
+                    logger.LogWarning("Job {JobId}: no acquisition backend is configured for {Protocol}", job.Id, resource.Protocol);
                     continue;
                 }
-                torrents.Add(new TorrentItem(
-                    torrentId,
+                var transferId = await backend.EnqueueAsync(new AcquisitionRequest(resource, label, item.Candidate.ReleaseName), ct);
+                if (string.IsNullOrWhiteSpace(transferId))
+                {
+                    logger.LogWarning("Failed to enqueue {Protocol} transfer for job {JobId} (S{Season}E{Episode})",
+                        resource.Protocol, job.Id, item.Season, item.Episode);
+                    continue;
+                }
+                transfers.Add(new TransferItem(
+                    transferId,
                     item.Season,
                     item.Episode,
                     item.IsPack,
                     NeededEpisodes: item.NeededEpisodes,
                     Resolution: item.Resolution,
                     Source: item.Candidate.Source,
-                    IndexerId: item.Candidate.IndexerId > 0 ? item.Candidate.IndexerId : null));
+                    IndexerId: item.Candidate.IndexerId > 0 ? item.Candidate.IndexerId : null,
+                    ReleaseName: item.Candidate.ReleaseName,
+                    Protocol: resource.Protocol,
+                    SourceId: resource.SourceId));
             }
 
-            if (torrents.Count == 0)
+            if (transfers.Count == 0)
             {
                 // Adding to the download client failed for everything (usually a transient Deluge/VPN blip).
                 // Defer with a backoff rather than failing so it's retried automatically.
                 if (job.IsUpgrade) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
-                else await api.MarkDeferredAsync(job.Id, "Could not add torrent(s) to the download client", false, ct);
+                else await api.MarkDeferredAsync(job.Id, "Could not enqueue release(s) with an available acquisition backend", false, ct);
                 return;
             }
 
-            logger.LogInformation("Job {JobId} \"{Title}\": added {Count} torrent(s) [{Kind}]", job.Id, job.Title, torrents.Count, plan.Kind);
+            logger.LogInformation("Job {JobId} \"{Title}\": enqueued {Count} transfer(s) [{Kind}]", job.Id, job.Title, transfers.Count, plan.Kind);
 
             // Persist the job<->torrent link BEFORE monitoring starts. The local state file written below
             // only helps THIS process; this is what lets any process — the reconciler after a deploy, or a
             // replacement worker — pick these up. Without it, torrents added here became invisible the
             // moment this worker was replaced, which is how sixty-seven of them ended up downloading with
             // their job marked "no acceptable release found".
-            await api.RegisterTorrentsAsync(job.Id, torrents.Select((t, i) => new TrackedTorrentDto
+            await api.RegisterTransfersAsync(job.Id, transfers.Select(t => new TrackedTransferDto
             {
                 FulfillmentJobId = job.Id,
-                TorrentId = t.TorrentId,
-                InfoHash = MagnetUtil.InfoHashFromMagnet(plan.Items.ElementAtOrDefault(i)?.Candidate.Magnet ?? string.Empty)
-                           ?? MagnetUtil.Normalize(t.TorrentId),
-                ReleaseName = plan.Items.ElementAtOrDefault(i)?.Candidate.ReleaseName,
-                Source = plan.Items.ElementAtOrDefault(i)?.Candidate.Source,
-                IndexerId = plan.Items.ElementAtOrDefault(i)?.Candidate.IndexerId is > 0
-                    ? plan.Items[i].Candidate.IndexerId
-                    : null,
+                TransferId = t.TransferId,
+                Protocol = t.Protocol,
+                SourceId = t.SourceId,
+                ReleaseName = t.ReleaseName,
+                Source = t.Source,
+                IndexerId = t.IndexerId,
                 Season = t.Season,
                 Episode = t.Episode,
                 IsPack = t.IsPack,
@@ -149,7 +157,7 @@ public class FulfillmentPipeline(
                 Resolution = t.Resolution
             }).ToList(), ct);
 
-            var record = new ActiveJobRecord(job, torrents);
+            var record = new ActiveJobRecord(job, transfers);
             await stateStore.SaveAsync(record, ct);
             await SafeReportProgress(job.Id, 0);
             await MonitorAndImportAllAsync(record, ct);
@@ -172,7 +180,7 @@ public class FulfillmentPipeline(
     {
         try
         {
-            logger.LogInformation("Resuming job {JobId} ({Count} torrent(s))", record.Job.Id, record.Torrents.Count);
+            logger.LogInformation("Resuming job {JobId} ({Count} transfer(s))", record.Job.Id, record.Transfers.Count);
             await MonitorAndImportAllAsync(record, ct);
         }
         catch (OperationCanceledException) { throw; }
@@ -197,7 +205,7 @@ public class FulfillmentPipeline(
     private async Task MonitorAndImportAllAsync(ActiveJobRecord record, CancellationToken ct)
     {
         var job = record.Job;
-        var items = record.Torrents.ToList(); // working copy; entries replaced as they import
+        var items = record.Transfers.ToList(); // working copy; entries replaced as they import
         var interval = TimeSpan.FromSeconds(Math.Max(5, worker.Value.MonitorIntervalSeconds));
         var stallTimeout = TimeSpan.FromMinutes(Math.Max(5, worker.Value.StallTimeoutMinutes));
         var finishSettle = TimeSpan.FromSeconds(Math.Max(5, worker.Value.FinishSettleSeconds));
@@ -214,39 +222,41 @@ public class FulfillmentPipeline(
         var trimmed = new HashSet<string>();
         // Latest raw client status per torrent, kept so we can assemble a live telemetry snapshot for the
         // admin downloads panel at any point in the tick (including right before a blocking import).
-        var latest = new Dictionary<string, DownloadStatus>();
+        var latest = new Dictionary<(AcquisitionProtocol, string), TransferStatus>();
         // Every library destination path written this run — used (upgrade jobs only) to avoid deleting an old
         // file that the new import just overwrote in place.
         var importedDestinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var now0 = DateTime.UtcNow;
-        foreach (var it in items) lastProgress[it.TorrentId] = (0, now0);
+        foreach (var it in items) lastProgress[TransferKey(it)] = (0, now0);
 
         // Assemble the per-torrent telemetry snapshot pushed up with each progress report. Failed torrents
         // are omitted; a torrent named in importingId is forced to the Importing stage (it's mid-move). This
         // is display-only — never drives control flow — so unknown/missing fields just read as 0.
-        List<DownloadTorrentTelemetry> BuildTelemetry(string? importingId = null)
+        List<DownloadTransferTelemetry> BuildTelemetry(string? importingId = null)
         {
-            var list = new List<DownloadTorrentTelemetry>();
+            var list = new List<DownloadTransferTelemetry>();
             foreach (var it in items)
             {
-                if (failed.Contains(it.TorrentId)) continue;
-                latest.TryGetValue(it.TorrentId, out var st);
-                DownloadTorrentStage stage;
-                if (it.Imported) stage = DownloadTorrentStage.Imported;
-                else if (it.TorrentId == importingId) stage = DownloadTorrentStage.Importing;
-                else if (st is not null && (st.IsFinished || st.Progress >= 100)) stage = DownloadTorrentStage.Finishing;
-                else stage = DownloadTorrentStage.Downloading;
-                list.Add(new DownloadTorrentTelemetry
+                var key = TransferKey(it);
+                if (failed.Contains(key)) continue;
+                latest.TryGetValue((it.Protocol, it.TransferId), out var st);
+                DownloadTransferStage stage;
+                if (it.Imported) stage = DownloadTransferStage.Imported;
+                else if (key == importingId) stage = DownloadTransferStage.Importing;
+                else if (st is not null && (st.IsFinished || st.Progress >= 100)) stage = DownloadTransferStage.Finishing;
+                else stage = DownloadTransferStage.Downloading;
+                list.Add(new DownloadTransferTelemetry
                 {
                     Name = string.IsNullOrWhiteSpace(st?.Name) ? job.Title : st!.Name,
+                    Protocol = it.Protocol,
                     Source = it.Source,
                     IndexerId = it.IndexerId,
                     Stage = stage,
                     ProgressPercent = it.Imported ? 100 : (st?.Progress ?? 0),
-                    DownloadRateBytesPerSec = stage == DownloadTorrentStage.Downloading ? (st?.DownloadRate ?? 0) : 0,
+                    DownloadRateBytesPerSec = stage == DownloadTransferStage.Downloading ? (st?.DownloadRate ?? 0) : 0,
                     Seeds = st?.Seeds ?? 0,
                     Peers = st?.Peers ?? 0,
-                    EtaSeconds = st is { Eta: > 0 } ? st.Eta : null,
+                    EtaSeconds = st?.Eta,
                     TotalSizeBytes = st?.TotalSizeBytes ?? 0,
                     Season = it.Season,
                     Episode = it.Episode
@@ -257,27 +267,31 @@ public class FulfillmentPipeline(
 
         // Mark a single torrent as failed: record the reason, wipe its partial data (healthy siblings keep
         // going), and remember it so it's excluded from further polling and from the final "all imported" check.
-        async Task FailTorrentAsync(TorrentItem it, string reason, BlocklistReason blocklistReason = BlocklistReason.DownloadFailed)
+        async Task FailTransferAsync(TransferItem it, string reason, BlocklistReason blocklistReason = BlocklistReason.DownloadFailed)
         {
-            if (!failed.Add(it.TorrentId)) return;
+            var key = TransferKey(it);
+            if (!failed.Add(key)) return;
             failReasons.Add(reason);
-            logger.LogWarning("Job {JobId} torrent {TorrentId} (S{Season}E{Episode}) failed: {Reason}",
-                job.Id, it.TorrentId, it.Season, it.Episode, reason);
+            logger.LogWarning("Job {JobId} transfer {TransferId} (S{Season}E{Episode}) failed: {Reason}",
+                job.Id, it.TransferId, it.Season, it.Episode, reason);
 
             // Remember the release so a re-search can't rank the same broken torrent top again and fail
             // identically on every backoff tick. Best-effort — this must never change the job's outcome.
-            latest.TryGetValue(it.TorrentId, out var status);
+            latest.TryGetValue((it.Protocol, it.TransferId), out var status);
             await SafeBlocklist(job.Id, new BlocklistRequestDto
             {
-                InfoHash = it.TorrentId,
+                InfoHash = it.Protocol == AcquisitionProtocol.Torrent ? it.SourceId ?? it.TransferId : null,
                 ReleaseName = status?.Name ?? job.ForcedReleaseName ?? job.Title,
                 Reason = blocklistReason,
                 Detail = reason,
                 Season = it.Season,
                 Episode = it.Episode
             });
-            try { await downloadClient.RemoveAsync(it.TorrentId, removeData: true, ct); }
-            catch (Exception ex) { logger.LogDebug(ex, "Cleanup of failed torrent {TorrentId} skipped", it.TorrentId); }
+            if (acquisitionBackends.TryGet(it.Protocol, out var backend))
+            {
+                try { await backend.RemoveAsync(it.TransferId, removeData: true, ct); }
+                catch (Exception ex) { logger.LogDebug(ex, "Cleanup of failed transfer {TransferId} skipped", it.TransferId); }
+            }
         }
 
         while (true)
@@ -300,31 +314,40 @@ public class FulfillmentPipeline(
             {
                 var it = items[i];
                 if (it.Imported) { progressSum += 100; continue; }
-                if (failed.Contains(it.TorrentId)) continue; // dropped; excluded from the average
+                var transferKey = TransferKey(it);
+                if (failed.Contains(transferKey)) continue; // dropped; excluded from the average
 
-                var status = await downloadClient.GetStatusAsync(it.TorrentId, ct);
-                if (status is null) { await FailTorrentAsync(it, "A torrent disappeared from the download client", BlocklistReason.TorrentError); continue; }
-                latest[it.TorrentId] = status;
+                if (!acquisitionBackends.TryGet(it.Protocol, out var backend))
+                {
+                    logger.LogWarning("Job {JobId}: {Protocol} backend unavailable for in-flight transfer {TransferId}; retaining it for recovery",
+                        job.Id, it.Protocol, it.TransferId);
+                    continue;
+                }
+                var status = await backend.GetStatusAsync(it.TransferId, ct);
+                if (status is null) { await FailTransferAsync(it, "A transfer disappeared from its acquisition backend", BlocklistReason.DownloadFailed); continue; }
+                latest[(it.Protocol, it.TransferId)] = status;
                 if (string.Equals(status.State, "Error", StringComparison.OrdinalIgnoreCase))
                 {
-                    await FailTorrentAsync(it, "A torrent entered an error state", BlocklistReason.TorrentError); continue;
+                    await FailTransferAsync(it, "A transfer entered an error state", BlocklistReason.DownloadFailed); continue;
                 }
 
                 var nowTick = DateTime.UtcNow;
-                if (lastProgress.TryGetValue(it.TorrentId, out var last) && status.Progress > last.Progress)
-                    lastProgress[it.TorrentId] = (status.Progress, nowTick);
-                else if (lastProgress.TryGetValue(it.TorrentId, out var stuck) && nowTick - stuck.ChangedAt > stallTimeout)
+                if (lastProgress.TryGetValue(transferKey, out var last) && status.Progress > last.Progress)
+                    lastProgress[transferKey] = (status.Progress, nowTick);
+                else if (lastProgress.TryGetValue(transferKey, out var stuck) && nowTick - stuck.ChangedAt > stallTimeout)
                 {
-                    await FailTorrentAsync(it, $"Torrent stalled at {status.Progress:F0}% for over {stallTimeout.TotalMinutes:F0}m (no seeders?)", BlocklistReason.Stalled);
+                    await FailTransferAsync(it, $"Transfer stalled at {status.Progress:F0}% for over {stallTimeout.TotalMinutes:F0}m", BlocklistReason.Stalled);
                     continue;
                 }
 
                 // Pack trimmed to specific episodes: once Deluge has resolved the file list, deselect the
                 // files we don't need so only the wanted episodes download. Best-effort and done once; the
                 // importer also filters to NeededEpisodes, so this is purely a bandwidth/disk optimization.
-                if (it is { IsPack: true, NeededEpisodes: { Count: > 0 } needed } && !trimmed.Contains(it.TorrentId) && status.Files.Count > 0)
+                if (backend.Capabilities.SupportsFileSelection &&
+                    it is { IsPack: true, NeededEpisodes: { Count: > 0 } needed } &&
+                    !trimmed.Contains(transferKey) && status.Files.Count > 0)
                 {
-                    trimmed.Add(it.TorrentId);
+                    trimmed.Add(transferKey);
                     var keepSet = needed.ToHashSet();
                     var keep = status.Files.Select(f =>
                     {
@@ -340,47 +363,48 @@ public class FulfillmentPipeline(
                     if (wouldKeep < needed.Count)
                     {
                         logger.LogWarning("Job {JobId} torrent {TorrentId}: trimming to episode(s) {Needed} would keep only {Kept} file(s) (numbering mismatch?) — keeping the whole pack",
-                            job.Id, it.TorrentId, string.Join(",", needed), wouldKeep);
+                            job.Id, it.TransferId, string.Join(",", needed), wouldKeep);
                         // Clear the restriction so the importer's own NeededEpisodes filter also stands down;
                         // otherwise it would re-apply the same partial match at import time.
                         items[i] = it with { NeededEpisodes = null };
                     }
-                    else if (keep.Any(k => !k) && await downloadClient.SetWantedFilesAsync(it.TorrentId, keep, ct))
+                    else if (keep.Any(k => !k) && await backend.SetWantedFilesAsync(it.TransferId, keep, ct))
                         logger.LogInformation("Job {JobId} torrent {TorrentId}: season pack trimmed to episode(s) {Needed} — downloading {Kept}/{Total} file(s)",
-                            job.Id, it.TorrentId, string.Join(",", needed), keep.Count(k => k), keep.Count);
+                            job.Id, it.TransferId, string.Join(",", needed), keep.Count(k => k), keep.Count);
                 }
 
                 progressSum += status.Progress;
 
                 if (status.IsFinished || status.Progress >= 100)
                 {
-                    var sourcePath = ImportSourceResolver.Resolve(status, job.Id, it.TorrentId, logger);
+                    var sourcePath = ImportSourceResolver.Resolve(status, job.Id, it.TransferId, logger);
                     if (sourcePath is null)
                     {
                         // is_finished can lead the actual flush-to-disk; give the files a grace window to
                         // appear before treating an unresolvable path as a real failure.
-                        var firstFinished = finishedSince.TryGetValue(it.TorrentId, out var t) ? t : (finishedSince[it.TorrentId] = nowTick);
+                        var firstFinished = finishedSince.TryGetValue(transferKey, out var t) ? t : (finishedSince[transferKey] = nowTick);
                         if (nowTick - firstFinished < finishSettle)
                         {
                             logger.LogDebug("Job {JobId} torrent {TorrentId}: finished but on-disk path not resolvable yet; re-checking (waited {Elapsed:F0}s of {Grace:F0}s grace)",
-                                job.Id, it.TorrentId, (nowTick - firstFinished).TotalSeconds, finishSettle.TotalSeconds);
+                                job.Id, it.TransferId, (nowTick - firstFinished).TotalSeconds, finishSettle.TotalSeconds);
                             continue;
                         }
-                        await FailTorrentAsync(it, $"Could not resolve an on-disk path for the finished torrent after {finishSettle.TotalSeconds:F0}s (save_path={status.SavePath}, reported name=\"{status.Name}\")", BlocklistReason.PathUnresolvable);
+                        await FailTransferAsync(it, $"Could not resolve an on-disk path for the finished transfer after {finishSettle.TotalSeconds:F0}s (save_path={status.SavePath}, reported name=\"{status.Name}\")", BlocklistReason.PathUnresolvable);
                         continue;
                     }
                     // Surface the "renaming & moving" phase in the admin panel before the (potentially slow,
                     // blocking) import so it doesn't look stuck at 100% while files are being transferred.
-                    await SafeReportProgress(job.Id, (int)Math.Round(progressSum / Math.Max(1, items.Count)), BuildTelemetry(importingId: it.TorrentId));
-                    var result = await importCoordinator.RunOnceAsync(it.TorrentId,
+                    await SafeReportProgress(job.Id, (int)Math.Round(progressSum / Math.Max(1, items.Count)), BuildTelemetry(importingId: transferKey));
+                    var result = await importCoordinator.RunOnceAsync(it.Protocol, it.TransferId,
                         token => importer.ImportAsync(job, it, sourcePath, token), ct);
-                    if (!result.Success) { await FailTorrentAsync(it, result.FailReason ?? "A download completed but import failed", BlocklistReason.ImportFailed); continue; }
+                    if (!result.Success) { await FailTransferAsync(it, result.FailReason ?? "A download completed but import failed", BlocklistReason.ImportFailed); continue; }
 
                     try
                     {
                         var files = result.Files.Select(f => new ImportedFileDto
                         {
-                            TorrentId = it.TorrentId,
+                            TransferId = it.TransferId,
+                            Protocol = it.Protocol,
                             SourcePath = f.SourcePath,
                             DestinationPath = f.DestinationPath,
                             FileType = f.FileType,
@@ -399,16 +423,16 @@ public class FulfillmentPipeline(
 
                     progressSum += 100 - status.Progress; // count the just-imported torrent as fully done this tick
                     items[i] = it with { Imported = true };
-                    await stateStore.SaveAsync(record with { Torrents = items.ToList() }, ct); // persist so a restart resumes
-                    try { await downloadClient.RemoveAsync(it.TorrentId, removeData: false, ct); } // keep files for seeding
-                    catch (Exception ex) { logger.LogDebug(ex, "Torrent removal after import skipped"); }
+                    await stateStore.SaveAsync(record with { Transfers = items.ToList() }, ct); // persist so a restart resumes
+                    try { await backend.RemoveAsync(it.TransferId, removeData: false, ct); }
+                    catch (Exception ex) { logger.LogDebug(ex, "Transfer removal after import skipped"); }
                 }
             }
 
             await SafeReportProgress(job.Id, (int)Math.Round(progressSum / Math.Max(1, items.Count)), BuildTelemetry());
 
             // Terminal when every torrent has either imported or failed — no early abort on a single failure.
-            if (items.All(x => x.Imported || failed.Contains(x.TorrentId))) break;
+            if (items.All(x => x.Imported || failed.Contains(TransferKey(x)))) break;
 
             await Task.Delay(interval, ct);
         }
@@ -520,9 +544,9 @@ public class FulfillmentPipeline(
     // the download actually succeeded, so failures here are logged and swallowed rather than propagated
     // up to the outer catch-all (which would otherwise mark an actually-successful job Failed and delete
     // its resumable state).
-    private async Task SafeReportProgress(int jobId, int progress, IReadOnlyList<DownloadTorrentTelemetry>? torrents = null)
+    private async Task SafeReportProgress(int jobId, int progress, IReadOnlyList<DownloadTransferTelemetry>? transfers = null)
     {
-        try { await api.ReportProgressAsync(jobId, progress, torrents, CancellationToken.None); }
+        try { await api.ReportProgressAsync(jobId, progress, transfers, CancellationToken.None); }
         catch (Exception ex) { logger.LogDebug(ex, "Progress report skipped for job {JobId}", jobId); }
     }
 
@@ -546,8 +570,7 @@ public class FulfillmentPipeline(
         var candidate = new ReleaseCandidate
         {
             ReleaseName = job.ForcedReleaseName ?? job.Title,
-            Magnet = job.ForcedMagnet!,
-            InfoHash = MagnetUtil.InfoHashFromMagnet(job.ForcedMagnet),
+            Acquisition = AcquisitionResource.Torrent(job.ForcedMagnet!, MagnetUtil.InfoHashFromMagnet(job.ForcedMagnet)),
             IndexerId = job.ForcedIndexerId ?? 0,
             Source = "manual"
         };
@@ -558,6 +581,8 @@ public class FulfillmentPipeline(
         };
         return new DownloadPlan(isPack ? DownloadPlanKind.SeasonPack : DownloadPlanKind.Episodes, new[] { item });
     }
+
+    private static string TransferKey(TransferItem transfer) => $"{(int)transfer.Protocol}:{transfer.TransferId}";
 
     private async Task SafeBlocklist(int jobId, BlocklistRequestDto request)
     {

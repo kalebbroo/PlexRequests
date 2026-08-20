@@ -89,8 +89,8 @@ public class PirateBayIndexerProvider(HttpClient http, IOptions<IndexerOptions> 
                 byHash.TryAdd(t.InfoHash!, new ReleaseCandidate
                 {
                     ReleaseName = t.Name!,
-                    Magnet = IndexerParsing.BuildMagnet(t.InfoHash!, t.Name!, Trackers),
-                    InfoHash = t.InfoHash,
+                    Acquisition = AcquisitionResource.Torrent(
+                        IndexerParsing.BuildMagnet(t.InfoHash!, t.Name!, Trackers), t.InfoHash),
                     ImdbId = string.IsNullOrWhiteSpace(t.Imdb) ? null : t.Imdb,
                     Seeders = t.Seeders,
                     Leechers = t.Leechers,

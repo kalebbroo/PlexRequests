@@ -40,16 +40,20 @@ public class LegacyTorrentStateAdopter(
 
                 // Torrents already marked imported in the old state are done; re-registering them would
                 // invite the reconciler to import them a second time.
-                var pending = record.Torrents.Where(t => !t.Imported && !string.IsNullOrWhiteSpace(t.TorrentId)).ToList();
+                var pending = record.Transfers.Where(t => !t.Imported && !string.IsNullOrWhiteSpace(t.TransferId)).ToList();
                 if (pending.Count == 0) continue;
 
-                var ok = await api.RegisterTorrentsAsync(record.Job.Id, pending.Select(t => new TrackedTorrentDto
+                var ok = await api.RegisterTransfersAsync(record.Job.Id, pending.Select(t => new TrackedTransferDto
                 {
                     FulfillmentJobId = record.Job.Id,
-                    TorrentId = t.TorrentId,
+                    TransferId = t.TransferId,
+                    Protocol = t.Protocol,
                     // The old record kept only the client's id. For a v1 torrent that IS the infohash, which
                     // is what the blocklist needs; for anything else it stays null rather than being guessed.
-                    InfoHash = MagnetUtil.Normalize(t.TorrentId),
+                    SourceId = t.SourceId ?? MagnetUtil.Normalize(t.TransferId),
+                    ReleaseName = t.ReleaseName,
+                    Source = t.Source,
+                    IndexerId = t.IndexerId,
                     Season = t.Season,
                     Episode = t.Episode,
                     IsPack = t.IsPack,

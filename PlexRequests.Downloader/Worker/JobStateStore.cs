@@ -5,11 +5,11 @@ using PlexRequestsHosted.Shared.DTOs;
 
 namespace PlexRequests.Downloader.Worker;
 
-/// <summary>One torrent backing a job: its Deluge id, the season/episode it covers, and whether it imported.
+/// <summary>One protocol-neutral transfer backing a job: its backend id, the season/episode it covers, and whether it imported.
 /// <paramref name="NeededEpisodes"/> (when set) restricts a season pack to just those episode numbers — used
 /// to skip unwanted files in the download client and to filter what gets imported into Plex.</summary>
-public record TorrentItem(
-    string TorrentId,
+public record TransferItem(
+    [property: System.Text.Json.Serialization.JsonPropertyName("TorrentId")] string TransferId,
     int? Season,
     int? Episode,
     bool IsPack,
@@ -17,10 +17,16 @@ public record TorrentItem(
     IReadOnlyList<int>? NeededEpisodes = null,
     int Resolution = 0,
     string? Source = null,
-    int? IndexerId = null);
+    int? IndexerId = null,
+    string? ReleaseName = null,
+    PlexRequestsHosted.Shared.Enums.AcquisitionProtocol Protocol = PlexRequestsHosted.Shared.Enums.AcquisitionProtocol.Torrent,
+    string? SourceId = null);
 
-/// <summary>An in-flight download: the claimed job plus the one-or-more torrents fulfilling it.</summary>
-public record ActiveJobRecord(FulfillmentJobDto Job, List<TorrentItem> Torrents);
+/// <summary>An in-flight download: the claimed job plus its one-or-more transfers. The legacy JSON property
+/// name is deliberately retained so deployments resume existing active-jobs.json files without data loss.</summary>
+public record ActiveJobRecord(
+    FulfillmentJobDto Job,
+    [property: System.Text.Json.Serialization.JsonPropertyName("Torrents")] List<TransferItem> Transfers);
 
 public interface IJobStateStore
 {

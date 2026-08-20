@@ -1,38 +1,42 @@
 using System.Collections.Concurrent;
 using PlexRequests.Downloader.Organize;
+using PlexRequestsHosted.Shared.Enums;
 
 namespace PlexRequests.Downloader.Import;
 
 /// <summary>
-/// Serializes imports by the download client's torrent id and shares a successful result with every caller.
-/// Both the durable reconciler and the legacy per-job monitor can observe the same finished torrent; without
+/// Serializes imports by protocol plus backend transfer id and shares a successful result with every caller.
+/// Both the durable reconciler and the per-job monitor can observe the same finished transfer; without
 /// this boundary they independently moved the same source into the same Plex path.
 /// </summary>
-public interface ITorrentImportCoordinator
+public interface ITransferImportCoordinator
 {
     Task<ImportResult> RunOnceAsync(
-        string torrentId,
+        AcquisitionProtocol protocol,
+        string transferId,
         Func<CancellationToken, Task<ImportResult>> import,
         CancellationToken ct);
 }
 
-public sealed class TorrentImportCoordinator : ITorrentImportCoordinator
+public sealed class TransferImportCoordinator : ITransferImportCoordinator
 {
     private static readonly TimeSpan SuccessRetention = TimeSpan.FromMinutes(10);
     private readonly ConcurrentDictionary<string, Entry> _imports = new(StringComparer.OrdinalIgnoreCase);
 
     public async Task<ImportResult> RunOnceAsync(
-        string torrentId,
+        AcquisitionProtocol protocol,
+        string transferId,
         Func<CancellationToken, Task<ImportResult>> import,
         CancellationToken ct)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(torrentId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(transferId);
         ArgumentNullException.ThrowIfNull(import);
         PruneExpiredSuccesses();
 
         var candidate = new Entry(new Lazy<Task<ImportResult>>(
             () => import(ct), LazyThreadSafetyMode.ExecutionAndPublication));
-        var entry = _imports.GetOrAdd(torrentId, candidate);
+        var key = $"{(int)protocol}:{transferId}";
+        var entry = _imports.GetOrAdd(key, candidate);
 
         try
         {
@@ -44,15 +48,15 @@ public sealed class TorrentImportCoordinator : ITorrentImportCoordinator
             else
             {
                 // A genuine failure is retryable by a later pass; only success is shared/cached.
-                _imports.TryRemove(new KeyValuePair<string, Entry>(torrentId, entry));
+                _imports.TryRemove(new KeyValuePair<string, Entry>(key, entry));
             }
             return result;
         }
         catch
         {
-            // Do not poison this torrent id forever because one attempt faulted or was cancelled.
+            // Do not poison this transfer id forever because one attempt faulted or was cancelled.
             if (entry.Work.IsValueCreated && entry.Work.Value.IsCompleted)
-                _imports.TryRemove(new KeyValuePair<string, Entry>(torrentId, entry));
+                _imports.TryRemove(new KeyValuePair<string, Entry>(key, entry));
             throw;
         }
     }

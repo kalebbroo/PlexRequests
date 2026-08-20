@@ -120,8 +120,7 @@ public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> l
     private static ReleaseCandidate ToCandidate(EztvTorrent torrent, IndexerConfigDto indexer, string? fallbackImdbId) => new()
     {
         ReleaseName = torrent.Title ?? string.Empty,
-        Magnet = torrent.MagnetUrl!,
-        InfoHash = torrent.Hash,
+        Acquisition = AcquisitionResource.Torrent(torrent.MagnetUrl!, torrent.Hash),
         ImdbId = string.IsNullOrWhiteSpace(torrent.ImdbId) ? fallbackImdbId : torrent.ImdbId,
         Seeders = torrent.Seeds,
         Leechers = torrent.Peers,

@@ -3,7 +3,7 @@ using PlexRequests.Downloader.Download;
 namespace PlexRequests.Downloader.Worker;
 
 /// <summary>
-/// Works out where on disk a finished torrent actually landed.
+/// Works out where on disk a finished transfer actually landed.
 ///
 /// Lifted verbatim out of FulfillmentPipeline so the reconciler can import too. It has to be ONE
 /// implementation: the fallbacks encode hard-won knowledge about how Deluge reports paths (a single-file
@@ -13,7 +13,7 @@ namespace PlexRequests.Downloader.Worker;
 /// </summary>
 public static class ImportSourceResolver
 {
-    public static string? Resolve(DownloadStatus status, int jobId, string torrentId, ILogger logger)
+    public static string? Resolve(TransferStatus status, int jobId, string transferId, ILogger logger)
     {
         var saveDir = status.SavePath ?? string.Empty;
 
@@ -25,23 +25,23 @@ public static class ImportSourceResolver
 
             if (Directory.Exists(viaFiles) || File.Exists(viaFiles))
             {
-                logger.LogDebug("Job {JobId} torrent {TorrentId}: resolved import source via Deluge's file list -> {Path}", jobId, torrentId, viaFiles);
+                logger.LogDebug("Job {JobId} transfer {TransferId}: resolved import source via backend file list -> {Path}", jobId, transferId, viaFiles);
                 return viaFiles;
             }
-            logger.LogWarning("Job {JobId} torrent {TorrentId}: Deluge reported {Count} file(s) but the derived path doesn't exist ({Path}); falling back to name-based resolution",
-                jobId, torrentId, status.Files.Count, viaFiles);
+            logger.LogWarning("Job {JobId} transfer {TransferId}: backend reported {Count} file(s) but the derived path doesn't exist ({Path}); falling back to name-based resolution",
+                jobId, transferId, status.Files.Count, viaFiles);
         }
 
         var viaName = Path.Combine(saveDir, status.Name);
         if (Directory.Exists(viaName) || File.Exists(viaName))
         {
             if (status.Files.Count == 0)
-                logger.LogDebug("Job {JobId} torrent {TorrentId}: resolved import source via reported name (no file list available) -> {Path}", jobId, torrentId, viaName);
+                logger.LogDebug("Job {JobId} transfer {TransferId}: resolved import source via reported name (no file list available) -> {Path}", jobId, transferId, viaName);
             return viaName;
         }
 
-        logger.LogWarning("Job {JobId} torrent {TorrentId}: reported name \"{Name}\" doesn't exist under {SaveDir} either; falling back to picking the most-recently-modified entry in the save directory",
-            jobId, torrentId, status.Name, saveDir);
+        logger.LogWarning("Job {JobId} transfer {TransferId}: reported name \"{Name}\" doesn't exist under {SaveDir} either; falling back to picking the most-recently-modified entry in the save directory",
+            jobId, transferId, status.Name, saveDir);
 
         if (Directory.Exists(saveDir))
         {
@@ -51,8 +51,8 @@ public static class ImportSourceResolver
                 .FirstOrDefault();
             if (newest is not null)
             {
-                logger.LogWarning("Job {JobId} torrent {TorrentId}: heuristic fallback picked \"{Path}\" (most recently modified in {SaveDir}) — verify this is correct",
-                    jobId, torrentId, newest.Path, saveDir);
+                logger.LogWarning("Job {JobId} transfer {TransferId}: heuristic fallback picked \"{Path}\" (most recently modified in {SaveDir}) — verify this is correct",
+                    jobId, transferId, newest.Path, saveDir);
                 return newest.Path;
             }
         }

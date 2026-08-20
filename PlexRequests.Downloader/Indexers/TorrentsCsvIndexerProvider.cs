@@ -73,8 +73,8 @@ public class TorrentsCsvIndexerProvider(HttpClient http, IOptions<IndexerOptions
                 byHash.TryAdd(t.Infohash!, new ReleaseCandidate
                 {
                     ReleaseName = t.Name!,
-                    Magnet = IndexerParsing.BuildMagnet(t.Infohash!, t.Name!, Trackers),
-                    InfoHash = t.Infohash,
+                    Acquisition = AcquisitionResource.Torrent(
+                        IndexerParsing.BuildMagnet(t.Infohash!, t.Name!, Trackers), t.Infohash),
                     Seeders = t.Seeders ?? 0,
                     Leechers = t.Leechers ?? 0,
                     SizeBytes = t.SizeBytes,

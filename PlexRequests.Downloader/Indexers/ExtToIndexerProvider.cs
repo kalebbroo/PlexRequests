@@ -84,8 +84,8 @@ public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptio
             list.Add(new ReleaseCandidate
             {
                 ReleaseName = NameFromMagnet(magnet),
-                Magnet = magnet,
-                InfoHash = InfoHashRegex().Match(magnet) is { Success: true } m ? m.Groups[1].Value : null,
+                Acquisition = AcquisitionResource.Torrent(magnet,
+                    InfoHashRegex().Match(magnet) is { Success: true } m ? m.Groups[1].Value : null),
                 Seeders = Labelled(rowText, "seed"),
                 Leechers = Labelled(rowText, "leech"),
                 SizeBytes = IndexerParsing.ParseSize(SizeNear(rowText)),
@@ -117,8 +117,8 @@ public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptio
             return new ReleaseCandidate
             {
                 ReleaseName = HttpUtility.HtmlDecode(name!).Trim(),
-                Magnet = magnet,
-                InfoHash = InfoHashRegex().Match(magnet) is { Success: true } m ? m.Groups[1].Value : null,
+                Acquisition = AcquisitionResource.Torrent(magnet,
+                    InfoHashRegex().Match(magnet) is { Success: true } m ? m.Groups[1].Value : null),
                 Seeders = Labelled(text, "seed"),
                 Leechers = Labelled(text, "leech"),
                 SizeBytes = IndexerParsing.ParseSize(SizeNear(text)),

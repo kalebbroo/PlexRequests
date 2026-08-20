@@ -43,13 +43,13 @@ public interface IPlexRequestsApiClient
 
     // ---- Torrent reconciliation ----------------------------------------------------------------
     /// <summary>Record the torrents backing a job, so the link survives this process.</summary>
-    Task<bool> RegisterTorrentsAsync(int jobId, IReadOnlyList<TrackedTorrentDto> torrents, CancellationToken ct);
+    Task<bool> RegisterTransfersAsync(int jobId, IReadOnlyList<TrackedTransferDto> transfers, CancellationToken ct);
     /// <summary>Everything the database still believes is in flight — the reconciler's work list.</summary>
-    Task<List<TrackedTorrentDto>> GetActiveTorrentsAsync(CancellationToken ct);
+    Task<List<TrackedTransferDto>> GetActiveTransfersAsync(CancellationToken ct);
     /// <summary>One job's context, so a torrent can be imported by whoever finds it finished — not only by
     /// the process that added it.</summary>
     Task<FulfillmentJobDto?> GetJobAsync(int jobId, CancellationToken ct);
-    Task<bool> ReportTorrentStateAsync(IReadOnlyList<TorrentStateUpdateDto> updates, CancellationToken ct);
+    Task<bool> ReportTransferStateAsync(IReadOnlyList<TransferStateUpdateDto> updates, CancellationToken ct);
 
     /// <summary>Push the titles currently trending on an indexer. Returns how many resolved to metadata.</summary>
     Task<int> PushRecommendedAsync(IReadOnlyList<RecommendedFeedItemDto> items, CancellationToken ct);
@@ -63,7 +63,7 @@ public interface IPlexRequestsApiClient
     Task<List<EpisodeDto>> GetSeasonEpisodesAsync(int tmdbId, int season, CancellationToken ct);
     /// <summary>Report aggregate 0-100 progress plus (optionally) the live per-torrent telemetry snapshot
     /// that drives the admin live-downloads panel.</summary>
-    Task<bool> ReportProgressAsync(int jobId, int progress, IReadOnlyList<DownloadTorrentTelemetry>? torrents, CancellationToken ct);
+    Task<bool> ReportProgressAsync(int jobId, int progress, IReadOnlyList<DownloadTransferTelemetry>? transfers, CancellationToken ct);
     Task<bool> MarkFulfilledAsync(int requestId, CancellationToken ct);
     Task<bool> MarkFailedAsync(int requestId, string reason, CancellationToken ct);
     /// <summary>Report "no release findable yet" for a normal job: the web app parks it on a retry backoff

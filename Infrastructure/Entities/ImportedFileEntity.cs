@@ -13,7 +13,8 @@ public class ImportedFileEntity
     public int Id { get; set; }
     public int FulfillmentJobId { get; set; }
 
-    [MaxLength(64)] public string? TorrentId { get; set; }
+    [MaxLength(64)] public string? TransferId { get; set; }
+    public PlexRequestsHosted.Shared.Enums.AcquisitionProtocol Protocol { get; set; } = PlexRequestsHosted.Shared.Enums.AcquisitionProtocol.Torrent;
     [MaxLength(2048)] public string SourcePath { get; set; } = string.Empty;
     [MaxLength(2048)] public string DestinationPath { get; set; } = string.Empty;
     [MaxLength(16)] public string FileType { get; set; } = "video"; // "video" | "subtitle"

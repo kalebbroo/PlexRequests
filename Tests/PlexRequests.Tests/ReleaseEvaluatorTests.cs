@@ -225,7 +225,8 @@ public class ReleaseEvaluatorTests
         // Only some indexers report an info hash, so it's derived from the magnet. Without that, a failed
         // release from any other indexer could be grabbed again immediately.
         var hash = new string('b', 40);
-        var candidate = TestData.Release("Severance.S02E07.1080p.WEB-DL", infoHash: hash) with { InfoHash = null };
+        var original = TestData.Release("Severance.S02E07.1080p.WEB-DL", infoHash: hash);
+        var candidate = original with { Acquisition = original.Acquisition with { SourceId = null } };
         var r = _eval.Evaluate(candidate, TestData.Job(),
             TestData.Context(blocklist: new HashSet<string> { hash }));
         Assert.True(Rejected(r, RejectionReason.Blocklisted));

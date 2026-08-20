@@ -57,7 +57,7 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
             {
                 var xml = await _fetch.GetStringAsync(_http, indexer, url, ct);
                 foreach (var c in ParseFeed(xml, indexer))
-                    byKey.TryAdd(c.InfoHash ?? c.Magnet, c);
+                    byKey.TryAdd(c.Acquisition.SourceId ?? c.Acquisition.Locator, c);
                 completedQuery = true;
             }
             catch (InvalidDataException ex) when (job.MediaType == MediaType.Music)
@@ -93,15 +93,15 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
             var candidates = ParseFeed(xml, indexer, out var rawItemCount);
             foreach (var candidate in candidates)
             {
-                var hash = MagnetUtil.Normalize(candidate.InfoHash)
-                           ?? MagnetUtil.InfoHashFromMagnet(candidate.Magnet);
+                var hash = MagnetUtil.Normalize(candidate.Acquisition.SourceId)
+                           ?? MagnetUtil.InfoHashFromMagnet(candidate.Acquisition.Locator);
                 if (hash is null) continue;
                 items.Add(new CatalogItemDto
                 {
                     ExternalId = hash,
                     ReleaseName = candidate.ReleaseName,
                     InfoHash = hash,
-                    MagnetUri = candidate.Magnet,
+                    MagnetUri = candidate.Acquisition.Locator,
                     ImdbId = candidate.ImdbId,
                     Seeders = candidate.SeedersKnown ? candidate.Seeders : null,
                     Leechers = candidate.SeedersKnown ? candidate.Leechers : null,
@@ -225,8 +225,7 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
             candidates.Add(new ReleaseCandidate
             {
                 ReleaseName = title!,
-                Magnet = magnet!,
-                InfoHash = infoHash,
+                Acquisition = AcquisitionResource.Torrent(magnet!, infoHash),
                 ImdbId = Attr("imdbid") ?? Attr("imdb"),
                 Seeders = IndexerParsing.ParseInt(seedersRaw),
                 Leechers = IndexerParsing.ParseInt(Attr("peers") ?? Attr("leechers")),

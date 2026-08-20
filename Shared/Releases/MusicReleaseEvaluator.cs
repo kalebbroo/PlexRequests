@@ -82,11 +82,13 @@ internal static class MusicReleaseEvaluator
             rejections.Add(new(RejectionReason.CatalogScopeMismatch,
                 "an artist-catalog request requires a discography, complete, collection or anthology release"));
 
-        var hash = MagnetUtil.Normalize(candidate.InfoHash) ?? MagnetUtil.InfoHashFromMagnet(candidate.Magnet);
-        if (hash is not null && context.BlocklistedHashes.Contains(hash))
+        var sourceId = candidate.Acquisition.Protocol == AcquisitionProtocol.Torrent
+            ? MagnetUtil.Normalize(candidate.Acquisition.SourceId) ?? MagnetUtil.InfoHashFromMagnet(candidate.Acquisition.Locator)
+            : candidate.Acquisition.SourceId;
+        if (sourceId is not null && context.BlocklistedHashes.Contains(sourceId))
             rejections.Add(new(RejectionReason.Blocklisted, "this release already failed for this request"));
-        if (string.IsNullOrWhiteSpace(candidate.Magnet))
-            rejections.Add(new(RejectionReason.NoMagnet, "no magnet link"));
+        if (string.IsNullOrWhiteSpace(candidate.Acquisition.Locator))
+            rejections.Add(new(RejectionReason.MissingAcquisition, "no acquisition locator"));
 
         var components = new List<ScoreComponent>();
         void Add(string name, double points) { if (points != 0) components.Add(new(name, points)); }

@@ -7,18 +7,18 @@ namespace PlexRequests.Downloader.Import;
 
 public interface ILibraryImporter
 {
-    /// <summary>Organize a finished torrent's payload into the Plex library per the admin-configured
+    /// <summary>Organize a finished transfer's payload into the Plex library per the admin-configured
     /// naming/transfer preferences, and report what actually happened.</summary>
-    Task<ImportResult> ImportAsync(FulfillmentJobDto job, TorrentItem torrent, string sourcePath, CancellationToken ct);
+    Task<ImportResult> ImportAsync(FulfillmentJobDto job, TransferItem transfer, string sourcePath, CancellationToken ct);
 }
 
 /// <summary>Thin adapter: resolves the current library-organization preferences and delegates to
 /// <see cref="ILibraryOrganizer"/>, which does the actual extraction/splitting/naming/transfer.</summary>
 public class LibraryImporter(ILibraryOrganizer organizer, ILibraryOrganizationProvider prefsProvider) : ILibraryImporter
 {
-    public async Task<ImportResult> ImportAsync(FulfillmentJobDto job, TorrentItem torrent, string sourcePath, CancellationToken ct)
+    public async Task<ImportResult> ImportAsync(FulfillmentJobDto job, TransferItem transfer, string sourcePath, CancellationToken ct)
     {
-        var result = await organizer.OrganizeAsync(job, torrent, sourcePath, prefsProvider.Current, ct);
+        var result = await organizer.OrganizeAsync(job, transfer, sourcePath, prefsProvider.Current, ct);
         if (!result.Success) return result;
 
         // An organizer result is not success until every recorded destination can be read back at the size

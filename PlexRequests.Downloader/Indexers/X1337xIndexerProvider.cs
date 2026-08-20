@@ -139,8 +139,8 @@ public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parse
             return new ReleaseCandidate
             {
                 ReleaseName = row.Name,
-                Magnet = magnet,
-                InfoHash = InfoHashRegex().Match(magnet) is { Success: true } m ? m.Groups[1].Value : null,
+                Acquisition = AcquisitionResource.Torrent(magnet,
+                    InfoHashRegex().Match(magnet) is { Success: true } m ? m.Groups[1].Value : null),
                 Seeders = row.Seeders,
                 Leechers = row.Leechers,
                 SizeBytes = row.SizeBytes,
@@ -195,7 +195,7 @@ public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parse
         {
             ReleaseName = r.Name,
             // No detail page was opened, so there's no magnet. Nothing downstream of the feed needs one.
-            Magnet = string.Empty,
+            Acquisition = AcquisitionResource.Torrent(string.Empty),
             Seeders = r.Seeders,
             Leechers = r.Leechers,
             SizeBytes = r.SizeBytes,

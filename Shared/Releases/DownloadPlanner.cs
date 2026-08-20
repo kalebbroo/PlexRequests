@@ -285,7 +285,7 @@ public class DownloadPlanner : IDownloadPlanner
         RejectionReason.PackIncomplete => "incomplete season packs",
         RejectionReason.Blocklisted => "previously failed",
         RejectionReason.TooOld => "too old",
-        RejectionReason.NoMagnet => "without a magnet link",
+        RejectionReason.MissingAcquisition => "without an acquisition locator",
         _ => reason.ToString()
     };
 }

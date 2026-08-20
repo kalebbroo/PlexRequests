@@ -5,8 +5,7 @@ namespace PlexRequestsHosted.Shared.Releases;
 public record ReleaseCandidate
 {
     public required string ReleaseName { get; init; }
-    public required string Magnet { get; init; }
-    public string? InfoHash { get; init; }
+    public required AcquisitionResource Acquisition { get; init; }
     /// <summary>IMDb id the provider reported for this release (e.g. YTS imdb_code, EZTV imdb_id), if any.
     /// When present it's an authoritative identity check against the requested title's IMDb id.</summary>
     public string? ImdbId { get; init; }

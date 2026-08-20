@@ -98,8 +98,7 @@ public class NyaaIndexerProvider(
                 new ReleaseCandidate
                 {
                     ReleaseName = title,
-                    Magnet = magnet,
-                    InfoHash = hash,
+                    Acquisition = AcquisitionResource.Torrent(magnet, hash),
                     Seeders = seeders,
                     Leechers = leechers,
                     SizeBytes = size,

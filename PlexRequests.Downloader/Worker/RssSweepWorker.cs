@@ -106,8 +106,8 @@ public class RssSweepWorker(
                     Season = s,
                     Episode = e,
                     ReleaseName = c.ReleaseName,
-                    Magnet = c.Magnet,
-                    InfoHash = MagnetUtil.Normalize(c.InfoHash) ?? MagnetUtil.InfoHashFromMagnet(c.Magnet),
+                    Magnet = c.Acquisition.Locator,
+                    InfoHash = MagnetUtil.Normalize(c.Acquisition.SourceId) ?? MagnetUtil.InfoHashFromMagnet(c.Acquisition.Locator),
                     IndexerId = c.IndexerId
                 });
             }

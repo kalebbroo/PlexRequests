@@ -97,7 +97,11 @@ public class RecomputeFormatScoresJob(
             if (ct.IsCancellationRequested) break;
 
             var parsed = parser.Parse(file.ReleaseName!);
-            var candidate = new ReleaseCandidate { ReleaseName = file.ReleaseName!, Magnet = string.Empty };
+            var candidate = new ReleaseCandidate
+            {
+                ReleaseName = file.ReleaseName!,
+                Acquisition = AcquisitionResource.Torrent(string.Empty)
+            };
 
             var requestId = requestByJob.TryGetValue(file.FulfillmentJobId, out var rid) ? rid : 0;
             var profileId = (requestId != 0 && profileByRequest.TryGetValue(requestId, out var pid) ? pid : null)

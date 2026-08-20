@@ -180,7 +180,7 @@ public enum CutoffState
 /// conflating the two is how a job came to be marked "no acceptable release found" while nine of its
 /// torrents had finished downloading.
 /// </summary>
-public enum TorrentTrackingState
+public enum TransferTrackingState
 {
     /// <summary>In the client and progressing (or legitimately queued behind it).</summary>
     Active = 0,
@@ -193,6 +193,17 @@ public enum TorrentTrackingState
     /// <summary>The client no longer has it: removed by hand, or its state was lost. Terminal; the job
     /// re-plans for whatever this was supposed to cover rather than waiting on something that is gone.</summary>
     Missing = 4
+}
+
+/// <summary>
+/// The transport used to acquire a release. This is intentionally independent from the provider that
+/// discovered it: an indexer describes candidates, while a matching acquisition backend moves bytes.
+/// </summary>
+public enum AcquisitionProtocol
+{
+    Torrent = 0,
+    DirectAudio = 1,
+    Usenet = 2
 }
 
 /// <summary>Where an episode stands in the monitor's pipeline.</summary>

@@ -6,27 +6,27 @@ using PlexRequestsHosted.Shared.Enums;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
-public interface IFulfillmentTorrentService
+public interface IFulfillmentTransferService
 {
-    /// <summary>Record the torrents backing a job. Idempotent by (job, torrent id) so a retry or a
+    /// <summary>Record the transfers backing a job. Idempotent by (job, protocol, backend id) so a retry or a
     /// re-adopted duplicate updates the existing row instead of creating a second one.</summary>
-    Task<int> RegisterAsync(int jobId, IReadOnlyList<TrackedTorrentDto> torrents);
+    Task<int> RegisterAsync(int jobId, IReadOnlyList<TrackedTransferDto> transfers);
 
     /// <summary>Everything the database believes is still in flight — the reconciler's left-hand side.</summary>
-    Task<List<TrackedTorrentDto>> GetActiveAsync();
+    Task<List<TrackedTransferDto>> GetActiveAsync();
 
     /// <summary>Apply a reconciliation pass. Returns how many rows changed.</summary>
-    Task<int> ApplyAsync(IReadOnlyList<TorrentStateUpdateDto> updates);
+    Task<int> ApplyAsync(IReadOnlyList<TransferStateUpdateDto> updates);
 
-    /// <summary>Per-job torrents for the admin panel, newest job first.</summary>
-    Task<List<TrackedTorrentDto>> GetForJobAsync(int jobId);
+    /// <summary>Per-job transfers for the admin panel, newest job first.</summary>
+    Task<List<TrackedTransferDto>> GetForJobAsync(int jobId);
 
     /// <summary>One-time repair for rows written off as Missing that had in fact been imported. Idempotent.</summary>
     Task<int> CorrectMisclassifiedMissingAsync();
 }
 
 /// <summary>
-/// Owns the durable job↔torrent link.
+/// Owns the durable job↔transfer link.
 ///
 /// Before this existed the link lived only in the downloader's local JSON file and an in-memory telemetry
 /// store, so it did not survive the worker being replaced and could never be queried. The consequence was
@@ -34,40 +34,42 @@ public interface IFulfillmentTorrentService
 /// torrents it had added were still in Deluge, nine of them finished and none imported, with the job
 /// re-searching on a backoff and re-adding the same magnets forever.
 /// </summary>
-public class FulfillmentTorrentService(AppDbContext db, ILogger<FulfillmentTorrentService> logger)
-    : IFulfillmentTorrentService
+public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTransferService> logger)
+    : IFulfillmentTransferService
 {
-    public async Task<int> RegisterAsync(int jobId, IReadOnlyList<TrackedTorrentDto> torrents)
+    public async Task<int> RegisterAsync(int jobId, IReadOnlyList<TrackedTransferDto> transfers)
     {
-        if (torrents.Count == 0) return 0;
+        if (transfers.Count == 0) return 0;
 
-        var ids = torrents.Select(t => t.TorrentId).ToList();
-        var existing = await db.FulfillmentTorrents
-            .Where(t => t.FulfillmentJobId == jobId && ids.Contains(t.TorrentId))
-            .ToDictionaryAsync(t => t.TorrentId, StringComparer.OrdinalIgnoreCase);
+        var ids = transfers.Select(t => t.TransferId).Distinct().ToList();
+        var existing = (await db.FulfillmentTransfers
+            .Where(t => t.FulfillmentJobId == jobId && ids.Contains(t.TransferId))
+            .ToListAsync())
+            .ToDictionary(t => (t.Protocol, t.TransferId), TransferKeyComparer.Instance);
 
         var added = 0;
-        foreach (var t in torrents)
+        foreach (var t in transfers)
         {
-            if (string.IsNullOrWhiteSpace(t.TorrentId)) continue;
+            if (string.IsNullOrWhiteSpace(t.TransferId)) continue;
 
-            if (existing.TryGetValue(t.TorrentId, out var row))
+            if (existing.TryGetValue((t.Protocol, t.TransferId), out var row))
             {
-                // Re-registering an already-known torrent is normal (a duplicate add that adopted the
+                // Re-registering an already-known transfer is normal (a duplicate enqueue that adopted the
                 // existing one). Refresh what we know; never resurrect a terminal state here — the
                 // reconciler owns state transitions.
                 row.ReleaseName ??= t.ReleaseName;
-                row.InfoHash ??= t.InfoHash;
+                row.SourceId ??= t.SourceId;
                 row.Source ??= Trim(t.Source, 128);
                 row.IndexerId ??= t.IndexerId;
                 continue;
             }
 
-            db.FulfillmentTorrents.Add(new FulfillmentTorrentEntity
+            db.FulfillmentTransfers.Add(new FulfillmentTransferEntity
             {
                 FulfillmentJobId = jobId,
-                TorrentId = t.TorrentId,
-                InfoHash = t.InfoHash,
+                TransferId = t.TransferId,
+                Protocol = t.Protocol,
+                SourceId = t.SourceId,
                 ReleaseName = t.ReleaseName,
                 Source = Trim(t.Source, 128),
                 IndexerId = t.IndexerId,
@@ -76,67 +78,66 @@ public class FulfillmentTorrentService(AppDbContext db, ILogger<FulfillmentTorre
                 IsPack = t.IsPack,
                 NeededEpisodesCsv = t.NeededEpisodes is { Count: > 0 } n ? string.Join(",", n) : null,
                 Resolution = t.Resolution,
-                State = TorrentTrackingState.Active,
+                State = TransferTrackingState.Active,
                 AddedAt = DateTime.UtcNow
             });
             added++;
         }
 
         await db.SaveChangesAsync();
-        if (added > 0) logger.LogInformation("Job {JobId}: tracking {Count} torrent(s)", jobId, added);
+        if (added > 0) logger.LogInformation("Job {JobId}: tracking {Count} transfer(s)", jobId, added);
         return added;
     }
 
-    public async Task<List<TrackedTorrentDto>> GetActiveAsync()
+    public async Task<List<TrackedTransferDto>> GetActiveAsync()
     {
-        var active = await db.FulfillmentTorrents.AsNoTracking()
-            .Where(t => t.State == TorrentTrackingState.Active || t.State == TorrentTrackingState.Finished)
+        var active = await db.FulfillmentTransfers.AsNoTracking()
+            .Where(t => t.State == TransferTrackingState.Active || t.State == TransferTrackingState.Finished)
             .OrderBy(t => t.Id)
             .Select(t => ToDto(t))
             .ToListAsync();
 
-        // One physical torrent may back several jobs, but it must be observed/imported only once per pass.
+        // One physical transfer may back several jobs, but it must be observed/imported only once per pass.
         // Choose the newest mapping so a current retry/upgrade supplies the import context rather than a
         // stale historical job; ApplyAsync still fans the resulting state out to every mapping.
         return active
-            .GroupBy(t => t.TorrentId, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(t => (t.Protocol, t.TransferId), TransferKeyComparer.Instance)
             .Select(g => g.OrderByDescending(t => t.Id).First())
             .OrderBy(t => t.Id)
             .ToList();
     }
 
-    public async Task<List<TrackedTorrentDto>> GetForJobAsync(int jobId) =>
-        await db.FulfillmentTorrents.AsNoTracking()
+    public async Task<List<TrackedTransferDto>> GetForJobAsync(int jobId) =>
+        await db.FulfillmentTransfers.AsNoTracking()
             .Where(t => t.FulfillmentJobId == jobId)
             .OrderBy(t => t.Season).ThenBy(t => t.Episode).ThenBy(t => t.Id)
             .Select(t => ToDto(t))
             .ToListAsync();
 
-    public async Task<int> ApplyAsync(IReadOnlyList<TorrentStateUpdateDto> updates)
+    public async Task<int> ApplyAsync(IReadOnlyList<TransferStateUpdateDto> updates)
     {
         if (updates.Count == 0) return 0;
 
-        var ids = updates.Select(u => u.TorrentId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var rows = await db.FulfillmentTorrents.Where(t => ids.Contains(t.TorrentId)).ToListAsync();
-        // A physical torrent can legitimately back more than one fulfillment job. The database therefore
-        // guarantees uniqueness by (job, torrent), not by torrent alone. Keep every job mapping so one
-        // Deluge update advances them all instead of throwing while building a one-row dictionary.
+        var ids = updates.Select(u => u.TransferId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var rows = await db.FulfillmentTransfers.Where(t => ids.Contains(t.TransferId)).ToListAsync();
+        // A physical transfer can legitimately back more than one fulfillment job. Keep every job mapping
+        // so one backend update advances them all instead of throwing while building a one-row dictionary.
         var byId = rows
-            .GroupBy(r => r.TorrentId, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+            .GroupBy(r => (r.Protocol, r.TransferId), TransferKeyComparer.Instance)
+            .ToDictionary(g => g.Key, g => g.ToList(), TransferKeyComparer.Instance);
         var now = DateTime.UtcNow;
         var changed = 0;
 
         foreach (var u in updates)
         {
-            if (!byId.TryGetValue(u.TorrentId, out var matchingRows)) continue;
+            if (!byId.TryGetValue((u.Protocol, u.TransferId), out var matchingRows)) continue;
 
             var state = u.State;
-            if (state == TorrentTrackingState.Missing && await WasImportedAsync(u.TorrentId))
+            if (state == TransferTrackingState.Missing && await WasImportedAsync(u.Protocol, u.TransferId))
             {
-                state = TorrentTrackingState.Imported;
-                logger.LogDebug("Torrent {Torrent} is gone from the client but its files were imported — recording Imported, not Missing",
-                    u.TorrentId);
+                state = TransferTrackingState.Imported;
+                logger.LogDebug("Transfer {Transfer} is gone from its backend but its files were imported — recording Imported, not Missing",
+                    u.TransferId);
             }
 
             foreach (var row in matchingRows)
@@ -154,16 +155,16 @@ public class FulfillmentTorrentService(AppDbContext db, ILogger<FulfillmentTorre
                 row.LastSeenAt = now;
 
                 // A promotion to Imported carries no failure reason — it isn't one.
-                var reason = state == TorrentTrackingState.Imported ? null : u.Reason;
+                var reason = state == TransferTrackingState.Imported ? null : u.Reason;
 
                 if (state != row.State)
                 {
                     row.State = state;
-                    if (state == TorrentTrackingState.Imported) row.ImportedAt = now;
-                    if (state is TorrentTrackingState.Failed or TorrentTrackingState.Missing)
+                    if (state == TransferTrackingState.Imported) row.ImportedAt = now;
+                    if (state is TransferTrackingState.Failed or TransferTrackingState.Missing)
                         row.FailReason = Trim(reason, 512);
-                    logger.LogInformation("Torrent {Torrent} (job {JobId}) -> {State}{Reason}",
-                        row.TorrentId[..Math.Min(12, row.TorrentId.Length)], row.FulfillmentJobId, state,
+                    logger.LogInformation("Transfer {Transfer} (job {JobId}) -> {State}{Reason}",
+                        row.TransferId[..Math.Min(12, row.TransferId.Length)], row.FulfillmentJobId, state,
                         string.IsNullOrWhiteSpace(reason) ? "" : $": {reason}");
                 }
                 changed++;
@@ -174,34 +175,34 @@ public class FulfillmentTorrentService(AppDbContext db, ILogger<FulfillmentTorre
         return changed;
     }
 
-    /// <summary>Did this torrent's files reach the library? The import audit is the authority — it is
+    /// <summary>Did this transfer's files reach the library? The import audit is the authority — it is
     /// written only after files are actually placed.</summary>
-    private Task<bool> WasImportedAsync(string torrentId) =>
-        db.ImportedFiles.AsNoTracking().AnyAsync(f => f.TorrentId == torrentId);
+    private Task<bool> WasImportedAsync(AcquisitionProtocol protocol, string transferId) =>
+        db.ImportedFiles.AsNoTracking().AnyAsync(f => f.Protocol == protocol && f.TransferId == transferId);
 
     public async Task<int> CorrectMisclassifiedMissingAsync()
     {
         // Repairs rows written off before the check above existed. On the live deployment that was 59 of
         // them: torrents the pipeline had imported and removed, which the reconciler then quite reasonably
         // observed were no longer in the client and recorded as lost.
-        var missing = await db.FulfillmentTorrents
-            .Where(t => t.State == TorrentTrackingState.Missing)
+        var missing = await db.FulfillmentTransfers
+            .Where(t => t.State == TransferTrackingState.Missing)
             .ToListAsync();
         if (missing.Count == 0) return 0;
 
-        var ids = missing.Select(t => t.TorrentId).ToList();
-        var importedIds = await db.ImportedFiles.AsNoTracking()
-            .Where(f => f.TorrentId != null && ids.Contains(f.TorrentId))
-            .Select(f => f.TorrentId!)
+        var ids = missing.Select(t => t.TransferId).Distinct().ToList();
+        var importedKeys = await db.ImportedFiles.AsNoTracking()
+            .Where(f => f.TransferId != null && ids.Contains(f.TransferId))
+            .Select(f => new { f.Protocol, TransferId = f.TransferId! })
             .Distinct()
             .ToListAsync();
-        if (importedIds.Count == 0) return 0;
+        if (importedKeys.Count == 0) return 0;
 
-        var set = importedIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var set = importedKeys.Select(x => (x.Protocol, x.TransferId)).ToHashSet(TransferKeyComparer.Instance);
         var fixedUp = 0;
-        foreach (var row in missing.Where(t => set.Contains(t.TorrentId)))
+        foreach (var row in missing.Where(t => set.Contains((t.Protocol, t.TransferId))))
         {
-            row.State = TorrentTrackingState.Imported;
+            row.State = TransferTrackingState.Imported;
             row.ImportedAt ??= row.LastSeenAt ?? DateTime.UtcNow;
             row.FailReason = null;
             fixedUp++;
@@ -210,19 +211,20 @@ public class FulfillmentTorrentService(AppDbContext db, ILogger<FulfillmentTorre
         if (fixedUp > 0)
         {
             await db.SaveChangesAsync();
-            logger.LogInformation("Corrected {Count} torrent(s) recorded as Missing that had actually been imported", fixedUp);
+            logger.LogInformation("Corrected {Count} transfer(s) recorded as Missing that had actually been imported", fixedUp);
         }
         return fixedUp;
     }
 
     private static string? Trim(string? s, int max) => s is { Length: > 0 } && s.Length > max ? s[..max] : s;
 
-    private static TrackedTorrentDto ToDto(FulfillmentTorrentEntity t) => new()
+    private static TrackedTransferDto ToDto(FulfillmentTransferEntity t) => new()
     {
         Id = t.Id,
         FulfillmentJobId = t.FulfillmentJobId,
-        TorrentId = t.TorrentId,
-        InfoHash = t.InfoHash,
+        TransferId = t.TransferId,
+        Protocol = t.Protocol,
+        SourceId = t.SourceId,
         ReleaseName = t.ReleaseName,
         Source = t.Source,
         IndexerId = t.IndexerId,
@@ -245,4 +247,14 @@ public class FulfillmentTorrentService(AppDbContext db, ILogger<FulfillmentTorre
         TrackerStatus = t.TrackerStatus,
         FailReason = t.FailReason
     };
+
+    private sealed class TransferKeyComparer : IEqualityComparer<(AcquisitionProtocol Protocol, string TransferId)>
+    {
+        public static TransferKeyComparer Instance { get; } = new();
+        public bool Equals((AcquisitionProtocol Protocol, string TransferId) x,
+            (AcquisitionProtocol Protocol, string TransferId) y) =>
+            x.Protocol == y.Protocol && StringComparer.OrdinalIgnoreCase.Equals(x.TransferId, y.TransferId);
+        public int GetHashCode((AcquisitionProtocol Protocol, string TransferId) obj) =>
+            HashCode.Combine(obj.Protocol, StringComparer.OrdinalIgnoreCase.GetHashCode(obj.TransferId));
+    }
 }

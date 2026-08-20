@@ -223,7 +223,7 @@ public sealed class ReleaseCatalogTests : IAsyncLifetime
         Assert.Equal("source-12", candidate.Source);
         Assert.Equal(1, candidate.Season);
         Assert.Equal(2, candidate.Episode);
-        Assert.StartsWith("magnet:?xt=urn:btih:", candidate.Magnet);
+        Assert.StartsWith("magnet:?xt=urn:btih:", candidate.Acquisition.Locator);
     }
 
     [Fact]
