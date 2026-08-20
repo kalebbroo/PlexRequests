@@ -44,6 +44,7 @@ public sealed record IndexerSearchResult(
 /// </summary>
 public class IndexerClient(
     IEnumerable<IIndexerImplementation> implementations,
+    IEnumerable<IAcquisitionCandidateSource> acquisitionSources,
     IIndexerSettingsProvider settings,
     IIndexerRateLimiter rateLimiter,
     IMemoryCache cache,
@@ -67,6 +68,8 @@ public class IndexerClient(
         var catalogCandidates = catalogOptions.Value.Enabled && catalogOptions.Value.UseForSearch
             ? await SearchCatalogWithBudgetAsync(job, ct)
             : Array.Empty<ReleaseCandidate>();
+        var directResults = await SearchAcquisitionSourcesAsync(job, ct);
+        var directCandidates = directResults.SelectMany(x => x.Candidates).ToList();
 
         var now = DateTime.UtcNow;
         var applicable = settings.All
@@ -83,10 +86,11 @@ public class IndexerClient(
 
         if (applicable.Count == 0)
         {
-            if (catalogCandidates.Count == 0)
+            if (catalogCandidates.Count == 0 && directCandidates.Count == 0)
                 logger.LogWarning("No enabled indexer supports media type {Type} for \"{Title}\" (anime={IsAnime})",
                     job.MediaType, job.Title, job.IsAnime);
-            return new IndexerSearchResult(catalogCandidates, Array.Empty<ProviderSearchOutcome>());
+            return new IndexerSearchResult(Deduplicate(catalogCandidates.Concat(directCandidates)),
+                directResults.Select(x => x.Outcome).ToList());
         }
 
         var searchedAt = DateTime.UtcNow;
@@ -101,13 +105,37 @@ public class IndexerClient(
                 lock (gate) results.Add(outcome);
             });
 
-        var outcomes = results.Select(r => r.Outcome).ToList();
+        var outcomes = directResults.Select(x => x.Outcome).Concat(results.Select(r => r.Outcome)).ToList();
         await ReportHealthAsync(outcomes, searchedAt, ct);
         if (catalogOptions.Value.Enabled)
-            await WriteThroughAsync(results.SelectMany(x => x.Candidates), job.MediaType, searchedAt, ct);
+            await WriteThroughAsync(results.SelectMany(x => x.Candidates)
+                .Where(x => x.Acquisition.Protocol == AcquisitionProtocol.Torrent), job.MediaType, searchedAt, ct);
 
-        var merged = Deduplicate(catalogCandidates.Concat(results.SelectMany(r => r.Candidates)));
+        var merged = Deduplicate(catalogCandidates.Concat(directCandidates).Concat(results.SelectMany(r => r.Candidates)));
         return new IndexerSearchResult(merged, outcomes);
+    }
+
+    private async Task<List<(IReadOnlyList<ReleaseCandidate> Candidates, ProviderSearchOutcome Outcome)>>
+        SearchAcquisitionSourcesAsync(FulfillmentJobDto job, CancellationToken ct)
+    {
+        var results = new List<(IReadOnlyList<ReleaseCandidate>, ProviderSearchOutcome)>();
+        foreach (var source in acquisitionSources.Where(x => x.AppliesTo(job)))
+        {
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                var candidates = await source.SearchAsync(job, ct);
+                results.Add((candidates, new ProviderSearchOutcome(0, source.Name, true, candidates.Count, null,
+                    (int)sw.ElapsedMilliseconds)));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Acquisition source {Source} failed for {Title}", source.Name, job.Title);
+                results.Add((Array.Empty<ReleaseCandidate>(), new ProviderSearchOutcome(0, source.Name, false, 0,
+                    ex.Message, (int)sw.ElapsedMilliseconds)));
+            }
+        }
+        return results;
     }
 
     internal static bool IsEnabledFor(IndexerConfigDto indexer, IndexerSearchPurpose purpose, DateTime now) =>
@@ -231,10 +259,11 @@ public class IndexerClient(
         foreach (var c in all)
         {
             if (string.IsNullOrWhiteSpace(c.Acquisition.SourceId)) { noHash.Add(c); continue; }
-            if (!byHash.TryGetValue(c.Acquisition.SourceId, out var existing)) { byHash[c.Acquisition.SourceId] = c; continue; }
+            var resourceKey = AcquisitionResource.BlocklistKey(c.Acquisition.Protocol, c.Acquisition.SourceId);
+            if (!byHash.TryGetValue(resourceKey, out var existing)) { byHash[resourceKey] = c; continue; }
 
             var keep = settings.PriorityOf(c.IndexerId) < settings.PriorityOf(existing.IndexerId) ? c : existing;
-            byHash[c.Acquisition.SourceId] = keep with
+            byHash[resourceKey] = keep with
             {
                 Seeders = Math.Max(c.Seeders, existing.Seeders),
                 SeedersKnown = c.SeedersKnown || existing.SeedersKnown,
@@ -257,7 +286,7 @@ public class IndexerClient(
         // Best-effort: telemetry must never fail or delay an actual search.
         try
         {
-            await api.ReportIndexerStatusAsync(outcomes.Select(o => new IndexerStatusReportDto
+            await api.ReportIndexerStatusAsync(outcomes.Where(o => o.IndexerId > 0).Select(o => new IndexerStatusReportDto
             {
                 IndexerId = o.IndexerId,
                 Name = o.Provider,

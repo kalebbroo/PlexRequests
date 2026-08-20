@@ -9,6 +9,7 @@ using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Media;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
@@ -355,16 +356,23 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         }
 
         var now = DateTime.UtcNow;
+        var musicDirectEnabled = await _db.MusicSettings.AsNoTracking()
+            .Where(x => x.IsSingleton)
+            .Select(x => x.DirectDownloadsEnabled)
+            .FirstOrDefaultAsync();
         var requestIds = entities.Select(e => e.MediaRequestId).Distinct().ToList();
         var blocked = await _db.ReleaseBlocklist
-            .Where(b => b.InfoHash != null && (b.ExpiresAt == null || b.ExpiresAt > now))
+            .Where(b => (b.SourceId != null || b.InfoHash != null) && (b.ExpiresAt == null || b.ExpiresAt > now))
             .Where(b => (b.MediaRequestId != null && requestIds.Contains(b.MediaRequestId.Value))
                         || b.Scope != BlocklistScope.Request)
-            .Select(b => new { b.MediaRequestId, b.Scope, b.MediaId, b.MediaType, Hash = b.InfoHash! })
+            .Select(b => new { b.MediaRequestId, b.Scope, b.MediaId, b.MediaType,
+                b.Protocol, b.SourceId, b.InfoHash })
             .ToListAsync();
 
         foreach (var (dto, entity) in dtos.Zip(entities))
         {
+            if (entity.MediaType == MediaType.Music && musicDirectEnabled)
+                dto.AllowedAcquisitionProtocols.Add(AcquisitionProtocol.DirectAudio);
             dto.QualityDefinitions = definitions;
             if (entity.QualityProfileId is int pid && profiles.TryGetValue(pid, out var profile))
             {
@@ -377,7 +385,11 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
                 .Where(b => b.MediaRequestId == entity.MediaRequestId
                             || (b.Scope == BlocklistScope.Media && b.MediaId == entity.MediaId && b.MediaType == entity.MediaType)
                             || b.Scope == BlocklistScope.Global)
-                .Select(b => b.Hash).Distinct().ToList();
+                .SelectMany(b => new[]
+                {
+                    b.InfoHash,
+                    b.SourceId is null ? null : AcquisitionResource.BlocklistKey(b.Protocol, b.SourceId)
+                }).Where(x => x is not null).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
     }
 

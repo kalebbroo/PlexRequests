@@ -13,5 +13,6 @@ public sealed class MusicSettingsEntity
     [MaxLength(32)]
     public string MetadataProvider { get; set; } = "musicbrainz";
     public bool RequestsEnabled { get; set; }
+    public bool DirectDownloadsEnabled { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

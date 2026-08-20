@@ -58,6 +58,28 @@ public sealed class MusicImportTests
     }
 
     [Fact]
+    public async Task Direct_album_keeps_short_valid_tracks_below_the_general_torrent_size_floor()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Directory.CreateDirectory(Path.Combine(root, "download")).FullName;
+            var library = Directory.CreateDirectory(Path.Combine(root, "music")).FullName;
+            await File.WriteAllTextAsync(Path.Combine(source, "01-01 - First [abcdefghijk].m4a"), "short-one");
+            await File.WriteAllTextAsync(Path.Combine(source, "01-02 - Second [ZYXWVUT9876].m4a"), "short-two");
+            var preferences = Preferences(library, minAudioFileSizeMb: 1);
+
+            var result = await CreateOrganizer().OrganizeAsync(AlbumJob(),
+                new TransferItem("direct", null, null, true, Protocol: AcquisitionProtocol.DirectAudio),
+                source, preferences, CancellationToken.None);
+
+            Assert.True(result.Success, result.FailReason);
+            Assert.Equal(2, result.MediaFileCount);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public async Task Plex_verification_matches_album_and_artist_after_normalization()
     {
         const string json = """
@@ -108,11 +130,11 @@ public sealed class MusicImportTests
         new NoArchives(), new NoSeasonPacks(), new NoEpisodes(), new PlexNamingService(),
         new ReleaseParser(), NullLogger<LibraryOrganizer>.Instance);
 
-    private static EffectiveLibraryOrganization Preferences(string library) => new()
+    private static EffectiveLibraryOrganization Preferences(string library, double minAudioFileSizeMb = 0) => new()
     {
         MusicPath = library,
         TransferMode = TransferMode.Copy,
-        MinAudioFileSizeMb = 0
+        MinAudioFileSizeMb = minAudioFileSizeMb
     };
 
     private static FulfillmentJobDto AlbumJob() => new()

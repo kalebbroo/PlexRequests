@@ -5,6 +5,7 @@ using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Media;
+using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
@@ -228,6 +229,10 @@ public class InteractiveSearchService(
             IncludeRejected = task.IncludeRejected
         };
 
+        if (task.MediaType == MediaType.Music && await db.MusicSettings.AsNoTracking()
+                .Where(x => x.IsSingleton).Select(x => x.DirectDownloadsEnabled).FirstOrDefaultAsync())
+            dto.AllowedAcquisitionProtocols.Add(AcquisitionProtocol.DirectAudio);
+
         if (task.QualityProfileId is int pid) dto.QualityProfile = await profiles.GetProfileAsync(pid);
         dto.QualityDefinitions = await db.QualityDefinitions.AsNoTracking().OrderBy(d => d.SortWeight)
             .Select(d => new QualityDefinitionDto
@@ -236,9 +241,17 @@ public class InteractiveSearchService(
             }).ToListAsync();
 
         if (task.MediaRequestId is int reqId)
-            dto.BlocklistedHashes = await db.ReleaseBlocklist
-                .Where(b => b.InfoHash != null && (b.MediaRequestId == reqId || b.Scope != BlocklistScope.Request))
-                .Select(b => b.InfoHash!).ToListAsync();
+        {
+            var blocked = await db.ReleaseBlocklist
+                .Where(b => (b.SourceId != null || b.InfoHash != null)
+                    && (b.MediaRequestId == reqId || b.Scope != BlocklistScope.Request))
+                .Select(b => new { b.Protocol, b.SourceId, b.InfoHash }).ToListAsync();
+            dto.BlocklistedHashes = blocked.SelectMany(b => new[]
+                {
+                    b.InfoHash,
+                    b.SourceId is null ? null : AcquisitionResource.BlocklistKey(b.Protocol, b.SourceId)
+                }).Where(x => x is not null).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
 
         return dto;
     }

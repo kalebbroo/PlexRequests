@@ -200,6 +200,9 @@ public sealed class MusicSettingsDto
     /// <summary>Allow music requests to enter automatic fulfillment. Kept separate from catalog visibility
     /// so an admin can browse/test metadata before a writable music library has been configured.</summary>
     public bool RequestsEnabled { get; set; }
+    /// <summary>Offer YouTube Music's own audio as an acquisition source for YouTube-backed track and
+    /// album requests. This is independent from torrent indexers and can be disabled without hiding the catalog.</summary>
+    public bool DirectDownloadsEnabled { get; set; }
     /// <summary>Concrete configuration gaps that currently prevent safe automatic fulfillment.</summary>
     public List<string> ReadinessIssues { get; set; } = new();
     public DateTime? UpdatedAt { get; set; }
@@ -560,6 +563,9 @@ public class FulfillmentJobDto
     public MediaRef? Media { get; set; }
     public RequestScopeKind RequestScope { get; set; }
     public MusicAcquisitionContextDto? Music { get; set; }
+    /// <summary>Protocols the admin currently permits for this job. Torrent is always present for backward
+    /// compatibility; optional modules add their own protocol when configured and ready.</summary>
+    public List<AcquisitionProtocol> AllowedAcquisitionProtocols { get; set; } = [AcquisitionProtocol.Torrent];
     public string Title { get; set; } = string.Empty;
     public int? Year { get; set; }
     public int? TmdbId { get; set; }
@@ -597,8 +603,8 @@ public class FulfillmentJobDto
     /// </summary>
     public int EmptySearchCount { get; set; }
 
-    /// <summary>Info hashes that already failed for this request and must never be grabbed again.
-    /// Delivered with the job so a search needs no extra round-trip to find out.</summary>
+    /// <summary>Legacy torrent hashes and protocol-qualified source ids that already failed for this
+    /// request. Delivered with the job so a search needs no extra round-trip to find out.</summary>
     public List<string> BlocklistedHashes { get; set; } = new();
 
     /// <summary>An admin chose this exact release. The downloader skips searching and ranking entirely —
@@ -1270,6 +1276,7 @@ public class SearchTaskDto
     public MediaRef? Media { get; set; }
     public RequestScopeKind RequestScope { get; set; }
     public MusicAcquisitionContextDto? Music { get; set; }
+    public List<AcquisitionProtocol> AllowedAcquisitionProtocols { get; set; } = [AcquisitionProtocol.Torrent];
     public string Title { get; set; } = string.Empty;
     public int? Year { get; set; }
     public string? ImdbId { get; set; }
@@ -1291,6 +1298,7 @@ public class SearchResultDto
     public string ReleaseName { get; set; } = string.Empty;
     public string Magnet { get; set; } = string.Empty;
     public string? InfoHash { get; set; }
+    public AcquisitionProtocol Protocol { get; set; } = AcquisitionProtocol.Torrent;
     public int IndexerId { get; set; }
     public string IndexerName { get; set; } = string.Empty;
     public int Seeders { get; set; }
@@ -1369,18 +1377,25 @@ public class SearchTaskStatusDto
 public class BlocklistRequestDto
 {
     public string? InfoHash { get; set; }
+    public AcquisitionProtocol Protocol { get; set; } = AcquisitionProtocol.Torrent;
+    public string? SourceId { get; set; }
     public string? ReleaseName { get; set; }
     public BlocklistReason Reason { get; set; }
     public string? Detail { get; set; }
     public int? Season { get; set; }
     public int? Episode { get; set; }
     public int? IndexerId { get; set; }
+    /// <summary>Optional retry boundary for transient source failures. Null keeps the existing permanent
+    /// behavior used for broken torrent releases.</summary>
+    public DateTime? ExpiresAt { get; set; }
 }
 
 public class BlocklistEntryDto
 {
     public int Id { get; set; }
     public string? InfoHash { get; set; }
+    public AcquisitionProtocol Protocol { get; set; } = AcquisitionProtocol.Torrent;
+    public string? SourceId { get; set; }
     public string? ReleaseName { get; set; }
     public BlocklistScope Scope { get; set; }
     public BlocklistReason Reason { get; set; }

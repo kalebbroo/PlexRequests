@@ -92,6 +92,9 @@ services:
       # Point at your own client, or leave the default to use the --profile torrent Deluge.
       Deluge__Url: ${DELUGE_URL:-http://deluge:8112}
       Deluge__Password: ${DELUGE_PASSWORD:-deluge}
+      DirectAudio__Enabled: ${DIRECT_AUDIO_ENABLED:-true}
+      DirectAudio__ExecutablePath: yt-dlp
+      DirectAudio__StatePath: /app/state/direct-audio
       Library__MoviePath: /data/library/movies
       Library__TvPath: /data/library/tv
       Library__Hardlink: "true"

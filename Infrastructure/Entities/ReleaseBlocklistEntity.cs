@@ -21,6 +21,10 @@ public class ReleaseBlocklistEntity
     /// <summary>Lower-case hex info hash. The primary identity.</summary>
     [MaxLength(40)] public string? InfoHash { get; set; }
 
+    /// <summary>Protocol-qualified source identity. InfoHash remains populated for torrent compatibility.</summary>
+    public AcquisitionProtocol Protocol { get; set; } = AcquisitionProtocol.Torrent;
+    [MaxLength(256)] public string? SourceId { get; set; }
+
     /// <summary>Lower-cased, punctuation-stripped release name — catches a re-upload under a new hash.</summary>
     [MaxLength(512)] public string? NormalizedReleaseName { get; set; }
 

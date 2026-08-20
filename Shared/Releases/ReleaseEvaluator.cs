@@ -146,7 +146,8 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         var sourceId = c.Acquisition.Protocol == AcquisitionProtocol.Torrent
             ? MagnetUtil.Normalize(c.Acquisition.SourceId) ?? MagnetUtil.InfoHashFromMagnet(c.Acquisition.Locator)
             : c.Acquisition.SourceId;
-        if (sourceId is not null && context.BlocklistedHashes.Contains(sourceId))
+        if (sourceId is not null && (context.BlocklistedHashes.Contains(sourceId)
+            || context.BlocklistedHashes.Contains(AcquisitionResource.BlocklistKey(c.Acquisition.Protocol, sourceId))))
             rejections.Add(new Rejection(RejectionReason.Blocklisted, "this release already failed for this request"));
 
         if (string.IsNullOrWhiteSpace(c.Acquisition.Locator))

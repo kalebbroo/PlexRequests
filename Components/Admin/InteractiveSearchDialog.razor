@@ -4,7 +4,7 @@
 @inject PlexRequestsHosted.Services.Implementations.IInteractiveSearchService Search
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
 
-@* Every release the indexers returned for a title, with the verdict and the reasoning.
+@* Every acquisition source result for a title, with the verdict and the reasoning.
    Rejected rows are shown BY DEFAULT and greyed rather than hidden — seeing why the release you expected
    wasn't chosen is the entire reason to run one of these by hand. Grab is available on rejected rows too;
    that is what "force" means. *@
@@ -15,7 +15,7 @@
         {
             <div class="d-flex flex-column align-items-center py-8 gap-3">
                 <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
-                <MudText Typo="Typo.body2" Class="text-muted">Searching your indexers…</MudText>
+                <MudText Typo="Typo.body2" Class="text-muted">Searching acquisition sources…</MudText>
             </div>
         }
         else if (_status.Status == SearchTaskStatus.Expired)
@@ -27,7 +27,7 @@
         else if (_status.Results.Count == 0)
         {
             <MudAlert Severity="Severity.Info" dense="true">
-                No indexer returned anything for this title.
+                No acquisition source returned anything for this title.
                 @if (!string.IsNullOrWhiteSpace(_status.IndexerSummary)) { <span> (@_status.IndexerSummary)</span> }
             </MudAlert>
         }
@@ -45,7 +45,7 @@
             <MudTable Items="Visible" dense="true" Hover="true" Height="440px" FixedHeader="true" Class="elevation-1">
                 <HeaderContent>
                     <MudTh>Release</MudTh>
-                    <MudTh>Indexer</MudTh>
+                    <MudTh>Source</MudTh>
                     <MudTh>Age</MudTh>
                     <MudTh>Size</MudTh>
                     <MudTh>Seeders</MudTh>
@@ -69,7 +69,7 @@
                             <div class="text-muted small">@string.Join(" · ", context.Rejections)</div>
                         }
                     </MudTd>
-                    <MudTd DataLabel="Indexer">@context.IndexerName</MudTd>
+                    <MudTd DataLabel="Source">@context.IndexerName</MudTd>
                     <MudTd DataLabel="Age">@Age(context)</MudTd>
                     <MudTd DataLabel="Size">@(context.SizeKnown ? $"{context.SizeGb:0.##} GB" : "—")</MudTd>
                     <MudTd DataLabel="Seeders">@(context.SeedersKnown ? context.Seeders.ToString() : "—")</MudTd>
@@ -80,11 +80,20 @@
                         </MudTooltip>
                     </MudTd>
                     <MudTd>
-                        <MudButton Size="Size.Small" Variant="@(context.Accepted ? Variant.Filled : Variant.Outlined)"
-                                   Color="@(context.Accepted ? Color.Primary : Color.Warning)"
-                                   Disabled="_grabbing" OnClick="() => Grab(context)">
-                            @(context.Accepted ? "Grab" : "Force")
-                        </MudButton>
+                        @if (context.Protocol == AcquisitionProtocol.Torrent)
+                        {
+                            <MudButton Size="Size.Small" Variant="@(context.Accepted ? Variant.Filled : Variant.Outlined)"
+                                       Color="@(context.Accepted ? Color.Primary : Color.Warning)"
+                                       Disabled="_grabbing" OnClick="() => Grab(context)">
+                                @(context.Accepted ? "Grab" : "Force")
+                            </MudButton>
+                        }
+                        else
+                        {
+                            <MudTooltip Text="Direct sources are selected automatically and cannot be forced as a torrent.">
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Automatic</MudChip>
+                            </MudTooltip>
+                        }
                     </MudTd>
                 </RowTemplate>
             </MudTable>
