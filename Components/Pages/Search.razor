@@ -308,13 +308,12 @@
             {
                 await PlexApiService.AnnotateAvailabilityAsync(results);
                 if (version != _searchVersion) return;
-                var keys = results.Where(m => m.ResolveMediaRef().TryGetTmdbId(out _))
-                    .Select(m => (m.Id, m.MediaType)).ToList();
-                var statuses = await MediaRequestService.GetMyRequestStatusesAsync(keys);
+                var statuses = await MediaRequestService.GetMyRequestStatusesAsync(
+                    results.Select(m => m.ResolveMediaRef()));
                 if (version != _searchVersion) return;
                 foreach (var m in results)
                 {
-                    var k = $"{m.MediaType}:{m.Id}";
+                    var k = m.ResolveMediaRef().StableKey;
                     if (statuses.TryGetValue(k, out var st)) m.RequestStatus = st;
                 }
             }

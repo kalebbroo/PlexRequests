@@ -204,17 +204,20 @@ public sealed class MusicBrainzMetadataProvider(
         detail.Status = Text(doc.RootElement, "type");
         var country = Text(doc.RootElement, "country");
         if (!string.IsNullOrWhiteSpace(country)) detail.Countries.Add(country);
+        var albums = doc.RootElement.TryGetProperty("release-groups", out var groups)
+                     && groups.ValueKind == JsonValueKind.Array
+            ? groups.EnumerateArray().Select(MapReleaseGroup).Where(x => x is not null)
+                .Cast<MediaCardDto>().DistinctBy(x => x.ResolveMediaRef().StableKey).ToList()
+            : new List<MediaCardDto>();
+        foreach (var album in albums)
+            if (string.IsNullOrWhiteSpace(album.Subtitle)) album.Subtitle = card.Title;
         detail.Music = new MusicMetadataDto
         {
             Kind = MediaKind.Artist,
             ArtistId = mediaRef.Id,
             ArtistCredit = card.Title,
-            AlbumTitles = doc.RootElement.TryGetProperty("release-groups", out var groups)
-                          && groups.ValueKind == JsonValueKind.Array
-                ? groups.EnumerateArray().Select(x => Text(x, "title"))
-                    .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!)
-                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList()
-                : new()
+            Albums = albums,
+            AlbumTitles = albums.Select(x => x.Title).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
         };
         return detail;
     }

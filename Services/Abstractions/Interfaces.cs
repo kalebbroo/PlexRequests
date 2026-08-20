@@ -42,8 +42,9 @@ public interface IMediaRequestService
     // Admin processing without a cookie auth check (caller pre-verified admin — Discord bridge).
     Task<bool> ApproveRequestAsAdminAsync(int requestId, string? note = null);
     Task<bool> DenyRequestAsAdminAsync(int requestId, string reason);
-    // UI overlay support: return statuses for a set of media ids
-    Task<Dictionary<string, RequestStatus>> GetMyRequestStatusesAsync(IEnumerable<(int mediaId, MediaType mediaType)> items);
+    /// <summary>Provider-neutral status overlay keyed by <see cref="MediaRef.StableKey"/>. Supports both
+    /// TMDb-backed video and string-backed album, artist, and track identities through one contract.</summary>
+    Task<Dictionary<string, RequestStatus>> GetMyRequestStatusesAsync(IEnumerable<MediaRef> items);
 }
 
 public interface INotificationService

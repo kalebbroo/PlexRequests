@@ -121,6 +121,15 @@
         {
             _enabled = (await MusicSettings.GetAsync()).CatalogEnabled;
             _hub = _enabled ? await Discovery.GetHubAsync() : null;
+            if (_hub is not null)
+            {
+                var cards = _hub.TrendingTracks.Concat(_hub.NewReleases).Concat(_hub.PopularArtists).ToList();
+                var statuses = await MediaRequestService.GetMyRequestStatusesAsync(
+                    cards.Select(x => x.ResolveMediaRef()));
+                foreach (var card in cards)
+                    if (statuses.TryGetValue(card.ResolveMediaRef().StableKey, out var status))
+                        card.RequestStatus = status;
+            }
             _failed = _enabled && _hub is not null
                 && _hub.TrendingTracks.Count + _hub.NewReleases.Count + _hub.PopularArtists.Count == 0;
         }

@@ -1044,44 +1044,75 @@ public class MediaRequestService(
         return ok;
     }
 
-    public async Task<Dictionary<string, RequestStatus>> GetMyRequestStatusesAsync(IEnumerable<(int mediaId, MediaType mediaType)> items)
+    public async Task<Dictionary<string, RequestStatus>> GetMyRequestStatusesAsync(IEnumerable<MediaRef> items)
     {
         var (username, isAdmin) = await GetUserAsync();
-        var ids = items.ToList();
-        if (ids.Count == 0) return new();
-        var mediaIds = ids.Select(i => i.mediaId).Distinct().ToList();
-        // Query by mediaId only (narrow), then match exact (mediaId, mediaType) pairs in memory so a
-        // movie can't inherit a same-id show's status (the old query cross-joined ids × types).
-        var wanted = ids.Select(i => (i.mediaId, i.mediaType)).ToHashSet();
-        IQueryable<MediaRequestEntity> q = _db.MediaRequests.Where(r => mediaIds.Contains(r.MediaId));
-        if (!isAdmin)
-            q = q.Where(r => r.RequestedBy == username);
-        var list = (await q
-            .Select(r => new { r.MediaId, r.MediaType, r.Status })
-            .ToListAsync())
-            .Where(r => wanted.Contains((r.MediaId, r.MediaType)));
-        var dict = new Dictionary<string, RequestStatus>(StringComparer.OrdinalIgnoreCase);
-        foreach (var row in list)
+        var refs = items.Where(x => x is { IsValid: true })
+            .DistinctBy(x => x.StableKey, StringComparer.OrdinalIgnoreCase).ToList();
+        if (refs.Count == 0) return new(StringComparer.OrdinalIgnoreCase);
+
+        var stableKeys = refs.Select(x => x.StableKey).ToList();
+        var identities = await _db.MediaIdentities.AsNoTracking()
+            .Where(x => stableKeys.Contains(x.StableKey))
+            .Select(x => new { x.Id, x.StableKey })
+            .ToListAsync();
+        var identityByInputKey = identities.ToDictionary(x => x.StableKey, x => x.Id,
+            StringComparer.OrdinalIgnoreCase);
+
+        // A card may arrive through a secondary provider alias. Resolve those aliases to the same request
+        // row instead of making the UI status depend on whichever provider originally created the identity.
+        var unresolved = refs.Where(x => !identityByInputKey.ContainsKey(x.StableKey)).ToList();
+        if (unresolved.Count > 0)
         {
-            var key = $"{row.MediaType}:{row.MediaId}";
-            // Use the most advanced status if multiple requests exist
-            if (dict.TryGetValue(key, out var existing))
+            var providers = unresolved.Select(x => MediaRef.NormalizeProvider(x.Provider)).Distinct().ToList();
+            var externalIds = unresolved.Select(x => MediaRef.NormalizeId(x.Provider, x.Id)).Distinct().ToList();
+            var aliases = await _db.MediaExternalIdentifiers.AsNoTracking()
+                .Where(x => providers.Contains(x.Provider) && externalIds.Contains(x.ExternalId))
+                .Select(x => new { x.MediaIdentityId, x.Provider, x.ExternalId, x.MediaType, x.Kind })
+                .ToListAsync();
+            var wanted = unresolved.Select(x => x.StableKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var alias in aliases)
             {
-                var best = BestStatus(existing, row.Status);
-                dict[key] = best;
+                var key = MediaRef.FromExternal(alias.Provider, alias.ExternalId, alias.MediaType, alias.Kind).StableKey;
+                if (wanted.Contains(key)) identityByInputKey[key] = alias.MediaIdentityId;
             }
-            else dict[key] = row.Status;
         }
-        return dict;
+        if (identityByInputKey.Count == 0) return new(StringComparer.OrdinalIgnoreCase);
+
+        var identityIds = identityByInputKey.Values.Distinct().ToList();
+        IQueryable<MediaRequestEntity> query = _db.MediaRequests
+            .Where(x => x.MediaIdentityId != null && identityIds.Contains(x.MediaIdentityId.Value));
+        if (!isAdmin)
+        {
+            var userId = await _db.Users.Where(x => x.Username == username)
+                .Select(x => (int?)x.Id).FirstOrDefaultAsync();
+            query = query.Where(x => (userId != null && x.RequestedByUserId == userId)
+                                     || (x.RequestedByUserId == null && x.RequestedBy == username));
+        }
+        var requests = await query.Select(x => new { IdentityId = x.MediaIdentityId!.Value, x.Status }).ToListAsync();
+        var keysByIdentity = identityByInputKey.GroupBy(x => x.Value)
+            .ToDictionary(x => x.Key, x => x.Select(y => y.Key).ToList());
+        var result = new Dictionary<string, RequestStatus>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in requests)
+        {
+            if (!keysByIdentity.TryGetValue(row.IdentityId, out var keys)) continue;
+            foreach (var key in keys)
+                result[key] = result.TryGetValue(key, out var existing)
+                    ? BestStatus(existing, row.Status) : row.Status;
+        }
+        return result;
     }
 
     private static RequestStatus BestStatus(RequestStatus a, RequestStatus b)
     {
-        // Simple precedence: Available > Approved > Pending > Cancelled/Rejected > None
+        // Preserve the furthest meaningful lifecycle state when duplicate historical rows exist.
         int Rank(RequestStatus s) => s switch
         {
-            RequestStatus.Available => 5,
-            RequestStatus.Approved => 4,
+            RequestStatus.Available => 8,
+            RequestStatus.PartiallyAvailable => 7,
+            RequestStatus.Processing => 6,
+            RequestStatus.Approved => 5,
+            RequestStatus.Searching => 4,
             RequestStatus.Pending => 3,
             RequestStatus.Cancelled => 2,
             RequestStatus.Rejected => 1,

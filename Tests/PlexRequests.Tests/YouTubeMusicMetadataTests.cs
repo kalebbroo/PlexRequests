@@ -140,6 +140,8 @@ public sealed class YouTubeMusicMetadataTests
 
         Assert.NotNull(detail);
         Assert.Equal(new[] { "Preview Album", "Deep Catalog Album" }, detail.Music!.AlbumTitles);
+        Assert.Equal(new[] { "album-preview", "album-deep" },
+            detail.Music.Albums.Select(x => x.ResolveMediaRef().Id));
         Assert.Equal(3, handler.Requests.Count);
     }
 

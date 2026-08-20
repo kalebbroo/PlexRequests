@@ -74,6 +74,29 @@ public sealed class MusicMetadataTests
     }
 
     [Fact]
+    public async Task ArtistDetails_RetainRequestableAlbumIdentitiesAndArtwork()
+    {
+        const string artist = """
+            {"id":"artist-id","name":"Artist","release-groups":[
+              {"id":"album-one","title":"First Album","first-release-date":"2024-01-02","primary-type":"Album"},
+              {"id":"album-two","title":"Second Album","first-release-date":"2026-03-04","primary-type":"Album"}
+            ]}
+            """;
+        var provider = CreateProvider(new QueueHandler(artist));
+
+        var detail = await provider.GetDetailsAsync(
+            MediaRef.FromExternal("musicbrainz", "artist-id", MediaType.Music, MediaKind.Artist));
+
+        Assert.NotNull(detail);
+        Assert.Equal(new[] { "First Album", "Second Album" }, detail.Music!.AlbumTitles);
+        Assert.Equal(new[] { "album-one", "album-two" },
+            detail.Music.Albums.Select(x => x.ResolveMediaRef().Id));
+        Assert.All(detail.Music.Albums, x => Assert.Equal("Artist", x.Subtitle));
+        Assert.Equal("https://coverartarchive.org/release-group/album-one/front-500",
+            detail.Music.Albums[0].PosterUrl);
+    }
+
+    [Fact]
     public async Task TransientFailure_IsRetriedWithoutLeakingAnErrorResult()
     {
         var handler = new QueueHandler(
