@@ -596,7 +596,8 @@ public class MediaRequestService(
                 mediaRef.Kind == MediaKind.Artist ? detail.Title : detail.Music?.ArtistCredit,
                 mediaRef.Kind == MediaKind.Album ? detail.Title : null,
                 mediaRef.Kind == MediaKind.Track ? detail.Title : null,
-                detail.Music?.AlbumTitles));
+                detail.Music?.AlbumTitles,
+                detail.Music?.Tracks.Select(x => x.Title).ToList()));
             if (present.Available)
                 return new MediaRequestResult { Success = false, ErrorMessage = "This music is already available on Plex." };
         }

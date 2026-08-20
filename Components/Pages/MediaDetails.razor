@@ -269,19 +269,44 @@ else
                                     }
                                     @foreach (var track in disc.OrderBy(t => t.TrackNumber))
                                     {
-                                        <div class="episode-row">
-                                            <span style="width:2rem;color:var(--text-secondary);">@track.TrackNumber</span>
-                                            <div style="min-width:0;flex:1;">
-                                                <MudText Typo="Typo.body1">@track.Title</MudText>
+                                        var trackCard = _trackCards.GetValueOrDefault(track.RecordingId);
+                                        <div class="episode-row music-track-row">
+                                            <span class="music-track-number">@track.TrackNumber</span>
+                                            <div class="music-track-name">
+                                                @if (trackCard is not null)
+                                                {
+                                                    <a class="music-track-link" href="@MediaHref(trackCard)">@track.Title</a>
+                                                }
+                                                else
+                                                {
+                                                    <MudText Typo="Typo.body1">@track.Title</MudText>
+                                                }
                                                 @if (!string.IsNullOrWhiteSpace(track.ArtistCredit) && track.ArtistCredit != _media.Music.ArtistCredit)
                                                 {
                                                     <MudText Typo="Typo.caption" Color="Color.Tertiary">@track.ArtistCredit</MudText>
                                                 }
                                             </div>
-                                            @if (track.DurationMs is > 0)
-                                            {
-                                                <span class="text-secondary">@FormatTrackDuration(track.DurationMs.Value)</span>
-                                            }
+                                            <div class="music-track-actions">
+                                                @if (track.DurationMs is > 0)
+                                                {
+                                                    <span class="text-secondary">@FormatTrackDuration(track.DurationMs.Value)</span>
+                                                }
+                                                @if (trackCard is not null)
+                                                {
+                                                    @if (trackCard.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.None && _musicRequestsEnabled)
+                                                    {
+                                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                                                   OnClick="() => RequestSimilar(trackCard)">Request</MudButton>
+                                                    }
+                                                    else if (trackCard.RequestStatus != PlexRequestsHosted.Shared.Enums.RequestStatus.None)
+                                                    {
+                                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@TrackStatus(trackCard)</MudChip>
+                                                    }
+                                                    <a class="music-track-detail" href="@MediaHref(trackCard)" aria-label="View details for @track.Title">
+                                                        <MudIcon Icon="@Icons.Material.Filled.ChevronRight" Size="Size.Small" />
+                                                    </a>
+                                                }
+                                            </div>
                                         </div>
                                     }
                                 }
@@ -526,6 +551,8 @@ else
 
     private PlexRequestsHosted.Shared.DTOs.MediaDetailDto? _media;
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _similarMedia;
+    private Dictionary<string, PlexRequestsHosted.Shared.DTOs.MediaCardDto> _trackCards =
+        new(StringComparer.Ordinal);
     private PlexRequestsHosted.Shared.DTOs.SeasonDto? _selectedSeason;
     private Boolean _loading = true;
     private Boolean _inWatchlist = false;
@@ -562,6 +589,7 @@ else
         _loading = true;
         _media = null;
         _similarMedia = null;
+        _trackCards = new(StringComparer.Ordinal);
         _availableSeasons = new();
         _seasonQuality = new();
         _selectedSeasons.Clear();
@@ -577,6 +605,7 @@ else
             if (version != _loadVersion) return;
             _media = media;
             if (media is null) return;
+            _trackCards = BuildTrackCards(media, mediaRef.Provider);
             if (media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music)
             {
                 _musicRequestsEnabled = (await MusicSettings.GetAsync()).RequestsEnabled;
@@ -588,7 +617,8 @@ else
                     mediaRef.Kind == MediaKind.Artist ? media.Title : media.Music?.ArtistCredit,
                     mediaRef.Kind == MediaKind.Album ? media.Title : null,
                     mediaRef.Kind == MediaKind.Track ? media.Title : null,
-                    media.Music?.AlbumTitles));
+                    media.Music?.AlbumTitles,
+                    media.Music?.Tracks.Select(x => x.Title).ToList()));
                 media.IsAvailable = present.Available;
             }
 
@@ -608,6 +638,7 @@ else
             if (version != _loadVersion) return;
             var statusCards = new List<PlexRequestsHosted.Shared.DTOs.MediaCardDto> { media };
             if (media.Music?.Albums.Count > 0) statusCards.AddRange(media.Music.Albums);
+            statusCards.AddRange(_trackCards.Values);
             var statusMap = await MediaRequestService.GetMyRequestStatusesAsync(
                 statusCards.Select(x => x.ResolveMediaRef()));
             if (version != _loadVersion) return;
@@ -896,6 +927,51 @@ else
         else
             Navigation.NavigateTo($"/media/{media.MediaType.ToString().ToLowerInvariant()}/{mediaRef.Kind.ToString().ToLowerInvariant()}/{Uri.EscapeDataString(mediaRef.Provider)}/{Uri.EscapeDataString(mediaRef.Id)}");
     }
+
+    private static Dictionary<string, PlexRequestsHosted.Shared.DTOs.MediaCardDto> BuildTrackCards(
+        PlexRequestsHosted.Shared.DTOs.MediaDetailDto media, string provider)
+    {
+        if (media.Music?.Tracks.Count is not > 0 || string.IsNullOrWhiteSpace(provider))
+            return new(StringComparer.Ordinal);
+        return media.Music.Tracks
+            .Where(x => !string.IsNullOrWhiteSpace(x.RecordingId))
+            .DistinctBy(x => x.RecordingId, StringComparer.Ordinal)
+            .ToDictionary(x => x.RecordingId, x =>
+            {
+                var mediaRef = MediaRef.FromExternal(provider, x.RecordingId,
+                    PlexRequestsHosted.Shared.Enums.MediaType.Music, MediaKind.Track);
+                return new PlexRequestsHosted.Shared.DTOs.MediaCardDto
+                {
+                    Title = x.Title,
+                    Subtitle = x.ArtistCredit ?? media.Music.ArtistCredit,
+                    Overview = $"Track from {media.Title}",
+                    PosterUrl = media.PosterUrl,
+                    BackdropUrl = media.BackdropUrl,
+                    Year = media.Year,
+                    MediaType = PlexRequestsHosted.Shared.Enums.MediaType.Music,
+                    ExternalId = mediaRef.Id,
+                    ExternalSource = mediaRef.Provider,
+                    MediaRef = mediaRef
+                };
+            }, StringComparer.Ordinal);
+    }
+
+    private static string MediaHref(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        var mediaRef = media.ResolveMediaRef();
+        return $"/media/music/{mediaRef.Kind.ToString().ToLowerInvariant()}/{Uri.EscapeDataString(mediaRef.Provider)}/{Uri.EscapeDataString(mediaRef.Id)}";
+    }
+
+    private static string TrackStatus(PlexRequestsHosted.Shared.DTOs.MediaCardDto media) => media.RequestStatus switch
+    {
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Available => "Available",
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Processing => "Downloading",
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Searching => "Searching",
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Approved => "Approved",
+        PlexRequestsHosted.Shared.Enums.RequestStatus.Pending => "Pending",
+        PlexRequestsHosted.Shared.Enums.RequestStatus.PartiallyAvailable => "Partial",
+        _ => "Requested"
+    };
 
     private String GetRequestStatusText() => _media?.RequestStatus switch
     {

@@ -471,7 +471,8 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
                 job.Music?.Artist,
                 job.Music?.Album,
                 job.Music?.Track,
-                job.Music?.ExpectedAlbums);
+                job.Music?.ExpectedAlbums,
+                job.Music?.Tracks.Select(x => x.Title).ToList());
             var response = await _http.PostAsJsonAsync("/api/fulfillment/verify-library", request, ct);
             if (!response.IsSuccessStatusCode)
                 return new(false, Detail: $"Verification API returned {(int)response.StatusCode}");
