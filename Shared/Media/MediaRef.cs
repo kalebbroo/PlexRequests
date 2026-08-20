@@ -120,6 +120,9 @@ public sealed class MediaSearchQuery
     public required string Query { get; set; }
     public MediaType? MediaType { get; set; }
     public MediaKind? Kind { get; set; }
+    /// <summary>Optional provider preference for a provider-specific experience. The metadata router
+    /// validates it against enabled providers and otherwise falls back to the configured provider.</summary>
+    public string? Provider { get; set; }
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 20;
 }

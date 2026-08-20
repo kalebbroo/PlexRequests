@@ -8,6 +8,32 @@
     margin-bottom: 3rem;
 }
 
+.search-back {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    margin-bottom: 1.25rem;
+    color: var(--text-secondary);
+    text-decoration: none;
+}
+
+.search-back:hover { color: var(--plex-orange); }
+
+.search-context {
+    max-width: 800px;
+    margin: 0 auto 1rem;
+}
+
+.search-context span {
+    color: var(--plex-orange);
+    font-size: .75rem;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+}
+
+.search-context h1 { margin: .15rem 0 0; }
+
 .search-input-container {
     position: relative;
     max-width: 800px;

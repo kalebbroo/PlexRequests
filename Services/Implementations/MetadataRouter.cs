@@ -83,7 +83,9 @@ public class MetadataRouter : IMediaMetadataProvider
         var musicSettings = await _musicSettings.GetAsync();
         var musicEnabled = musicSettings.CatalogEnabled;
         if (query.MediaType == MediaType.Music || query.Kind is MediaKind.Album or MediaKind.Artist or MediaKind.Track)
-            return musicEnabled ? await Pick(MediaType.Music, musicSettings.MetadataProvider).SearchAsync(query) : new();
+            return musicEnabled
+                ? await Pick(MediaType.Music, query.Provider ?? musicSettings.MetadataProvider).SearchAsync(query)
+                : new();
 
         if (query.MediaType is MediaType requested)
             return await Pick(requested).SearchAsync(query);

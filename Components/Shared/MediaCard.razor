@@ -1,13 +1,14 @@
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
 @using PlexRequestsHosted.Shared.Media
-@inject NavigationManager Navigation
 @inject PlexRequestsHosted.Services.Abstractions.IMediaModuleRegistry MediaModules
 @inject PlexRequestsHosted.Services.Abstractions.IMusicSettingsService MusicSettings
 
-@* Unified poster card. CSS-only hover (no JS timer -> no leak), overlay stays INSIDE the card so a
-   grid or row never shifts. Click -> details; quick actions stop propagation. *@
-<div class="@CardClass" @onclick="NavigateToDetails" title="@Media.Title">
+@* The full-card details target is a real anchor, not a Blazor-only click handler. It therefore remains
+   navigable after reconnects, supports open-in-new-tab, and cannot silently dump a user at the home page
+   when a circuit is stale. Quick actions sit above the anchor. *@
+<div class="@CardClass" title="@Media.Title">
+    <a class="mcard-detail-link" href="@DetailsHref" aria-label="View details for @Media.Title"></a>
     <div class="mcard-poster">
         @if (!string.IsNullOrEmpty(Media.PosterUrl))
         {
@@ -75,9 +76,9 @@
                     {
                         <button class="mcard-btn muted" disabled>@GetStatusText()</button>
                     }
-                    <button class="mcard-btn icon" title="Details" @onclick:stopPropagation="true" @onclick="NavigateToDetails">
+                    <a class="mcard-btn icon" title="Details" href="@DetailsHref" aria-label="View details for @Media.Title">
                         <MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Small" />
-                    </button>
+                    </a>
                     @if (OnRemove.HasDelegate)
                     {
                         <button class="mcard-btn icon danger" title="Remove" @onclick:stopPropagation="true" @onclick="HandleRemove">
@@ -116,13 +117,15 @@
         && MediaModules.Get(Media.MediaType).Capabilities.HasFlag(MediaModuleCapabilities.Request)
         && (Media.MediaType != MediaType.Music || _musicRequestsEnabled);
 
-    private void NavigateToDetails()
+    private string DetailsHref
     {
-        var mediaRef = Media.ResolveMediaRef();
-        if (mediaRef.TryGetTmdbId(out var tmdbId))
-            Navigation.NavigateTo($"/media/{Media.MediaType.ToString().ToLowerInvariant()}/{tmdbId}");
-        else
-            Navigation.NavigateTo($"/media/{Media.MediaType.ToString().ToLowerInvariant()}/{mediaRef.Kind.ToString().ToLowerInvariant()}/{Uri.EscapeDataString(mediaRef.Provider)}/{Uri.EscapeDataString(mediaRef.Id)}");
+        get
+        {
+            var mediaRef = Media.ResolveMediaRef();
+            return mediaRef.TryGetTmdbId(out var tmdbId)
+                ? $"/media/{Media.MediaType.ToString().ToLowerInvariant()}/{tmdbId}"
+                : $"/media/{Media.MediaType.ToString().ToLowerInvariant()}/{mediaRef.Kind.ToString().ToLowerInvariant()}/{Uri.EscapeDataString(mediaRef.Provider)}/{Uri.EscapeDataString(mediaRef.Id)}";
+        }
     }
 
     private string GetMediaIcon() => Media.MediaType switch

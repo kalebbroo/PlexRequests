@@ -53,7 +53,7 @@
 
             @if (_hub.TrendingTracks.Count > 0)
             {
-                <div id="trending"><MediaRow Title="Trending on YouTube Music" Items="_hub.TrendingTracks" OnRequest="Request" OnPlay="Play" /></div>
+                <div id="trending"><MediaRow Title="Trending tracks" Items="_hub.TrendingTracks" OnRequest="Request" OnPlay="Play" /></div>
             }
             @if (_hub.NewReleases.Count > 0)
             {
@@ -132,7 +132,7 @@
     private void Search()
     {
         if (!string.IsNullOrWhiteSpace(_search))
-            Navigation.NavigateTo($"/search?type=music&q={Uri.EscapeDataString(_search.Trim())}");
+            Navigation.NavigateTo($"/search?type=music&source=youtube&q={Uri.EscapeDataString(_search.Trim())}");
     }
 
     private async Task Request(MediaCardDto media)

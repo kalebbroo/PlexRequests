@@ -8,16 +8,24 @@
 @using PlexRequestsHosted.Shared.Media
 @implements IDisposable
 
-<PageTitle>Search - Plex Requests</PageTitle>
+<PageTitle>@(MusicOnlyMode ? "Music Search" : "Search") - Plex Requests</PageTitle>
 
 <div class="search-page">
     <div class="search-header">
         <MudContainer MaxWidth="MaxWidth.Large">
+            @if (MusicOnlyMode)
+            {
+                <a class="search-back" href="/music"><MudIcon Icon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" /> Music</a>
+                <div class="search-context">
+                    <span>Music catalog</span>
+                    <h1>Search music</h1>
+                </div>
+            }
             <div class="search-input-container">
                 <MudIcon Icon="@Icons.Material.Filled.Search" Class="search-icon" />
                 <input type="text" 
                        class="search-input" 
-                       placeholder="@(_musicCatalogEnabled ? "Search movies, TV, albums, artists, and tracks…" : "Search for movies, TV shows, genres…")"
+                       placeholder="@(MusicOnlyMode ? "Search albums, artists, and tracks…" : _musicCatalogEnabled ? "Search movies, TV, albums, artists, and tracks…" : "Search for movies, TV shows, genres…")"
                        @bind="_searchQuery"
                        @bind:event="oninput"
                        @onkeyup="HandleKeyUp"
@@ -33,37 +41,41 @@
             
             @if (_showFilters)
             {
-                <div class="search-filters">
-                    <MudChip T="PlexRequestsHosted.Shared.Enums.MediaType?"
-                             Variant="@(_filterType == null ? Variant.Filled : Variant.Outlined)"
-                             OnClick="() => SetTypeFilter(null)">
-                        All
-                    </MudChip>
-                    <MudChip T="PlexRequestsHosted.Shared.Enums.MediaType?"
-                             Variant="@(_filterType == PlexRequestsHosted.Shared.Enums.MediaType.Movie ? Variant.Filled : Variant.Outlined)"
-                             OnClick="() => SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType.Movie)">
-                        Movies
-                    </MudChip>
-                    <MudChip T="PlexRequestsHosted.Shared.Enums.MediaType?"
-                             Variant="@(_filterType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow ? Variant.Filled : Variant.Outlined)"
-                             OnClick="() => SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType.TvShow)">
-                        TV Shows
-                    </MudChip>
-                    @if (_musicCatalogEnabled)
-                    {
+                @if (!MusicOnlyMode)
+                {
+                    <div class="search-filters">
                         <MudChip T="PlexRequestsHosted.Shared.Enums.MediaType?"
-                                 Variant="@(_filterType == PlexRequestsHosted.Shared.Enums.MediaType.Music ? Variant.Filled : Variant.Outlined)"
-                                 OnClick="() => SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType.Music)">
-                            Music
+                                 Variant="@(_filterType == null ? Variant.Filled : Variant.Outlined)"
+                                 OnClick="() => SetTypeFilter(null)">
+                            All
                         </MudChip>
-                    }
-                </div>
-                @if (_filterType == PlexRequestsHosted.Shared.Enums.MediaType.Music)
+                        <MudChip T="PlexRequestsHosted.Shared.Enums.MediaType?"
+                                 Variant="@(_filterType == PlexRequestsHosted.Shared.Enums.MediaType.Movie ? Variant.Filled : Variant.Outlined)"
+                                 OnClick="() => SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType.Movie)">
+                            Movies
+                        </MudChip>
+                        <MudChip T="PlexRequestsHosted.Shared.Enums.MediaType?"
+                                 Variant="@(_filterType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow ? Variant.Filled : Variant.Outlined)"
+                                 OnClick="() => SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType.TvShow)">
+                            TV Shows
+                        </MudChip>
+                        @if (_musicCatalogEnabled)
+                        {
+                            <MudChip T="PlexRequestsHosted.Shared.Enums.MediaType?"
+                                     Variant="@(_filterType == PlexRequestsHosted.Shared.Enums.MediaType.Music ? Variant.Filled : Variant.Outlined)"
+                                     OnClick="() => SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType.Music)">
+                                Music
+                            </MudChip>
+                        }
+                    </div>
+                }
+                @if (MusicOnlyMode || _filterType == PlexRequestsHosted.Shared.Enums.MediaType.Music)
                 {
                     <div class="search-filters music-kinds" aria-label="Music result type">
                         @foreach (var kind in MusicKinds)
                         {
-                            <MudChip T="MediaKind" Variant="@(_musicKind == kind.Kind ? Variant.Filled : Variant.Outlined)"
+                            <MudChip T="MediaKind"
+                                     Variant="@(_musicKind == kind.Kind ? Variant.Filled : Variant.Outlined)"
                                      OnClick="() => SetMusicKind(kind.Kind)">@kind.Label</MudChip>
                         }
                     </div>
@@ -76,11 +88,10 @@
         <MudContainer MaxWidth="MaxWidth.Large">
             @if (string.IsNullOrEmpty(_searchQuery))
             {
-                <!-- Popular Searches / Suggestions -->
                 <div class="suggestions-section">
-                    <h2>Popular Searches</h2>
+                    <h2>@(MusicOnlyMode ? "Try an artist or album" : "Popular Searches")</h2>
                     <div class="suggestion-grid">
-                        @foreach (String suggestion in _popularSearches)
+                        @foreach (String suggestion in ActiveSuggestions)
                         {
                             <button class="suggestion-tile" @onclick="() => SearchFor(suggestion)">
                                 <span>@suggestion</span>
@@ -91,7 +102,7 @@
                     
                     <h2>Browse by Genre</h2>
                     <div class="genre-grid">
-                        @foreach (String genre in _genres)
+                        @foreach (String genre in ActiveGenres)
                         {
                             <button class="genre-tile" @onclick="() => BrowseGenre(genre)">
                                 @genre
@@ -137,7 +148,7 @@
                     <div class="no-results-suggestions">
                         <MudText Typo="Typo.h6">You might like:</MudText>
                         <div class="suggestion-chips">
-                            @foreach (String suggestion in _alternativeSuggestions)
+                            @foreach (String suggestion in ActiveAlternatives)
                             {
                                 <MudChip T="string" OnClick="() => SearchFor(suggestion)">@suggestion</MudChip>
                             }
@@ -165,37 +176,68 @@
         (MediaKind.Album, "Albums"), (MediaKind.Artist, "Artists"), (MediaKind.Track, "Tracks")
     };
 
-    private List<String> _popularSearches = new()
+    private readonly List<String> _popularSearches = new()
     {
         "Action Movies", "Comedy Shows", "New Releases", "Top Rated",
         "Marvel", "Star Wars", "Horror", "Documentary"
     };
 
-    private List<String> _genres = new()
+    private readonly List<String> _genres = new()
     {
         "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary",
         "Drama", "Family", "Fantasy", "Horror", "Mystery", "Romance",
         "Sci-Fi", "Thriller", "War", "Western"
     };
 
-    private List<String> _alternativeSuggestions = new()
+    private readonly List<String> _alternativeSuggestions = new()
     {
         "Trending Now", "Popular Movies", "Award Winners", "Classic Films"
     };
 
+    private static readonly string[] MusicSuggestions =
+    [
+        "Beyoncé", "Kendrick Lamar", "Taylor Swift", "Daft Punk", "Bad Bunny", "SZA", "The Weeknd", "Charli xcx"
+    ];
+
+    private static readonly string[] MusicGenres =
+    [
+        "Pop", "Hip-Hop", "Rock", "R&B", "Electronic", "Jazz", "Country", "Latin", "Metal", "Classical"
+    ];
+
     [SupplyParameterFromQuery(Name = "q")] public string? Q { get; set; }
     [SupplyParameterFromQuery(Name = "type")] public string? QueryType { get; set; }
+    [SupplyParameterFromQuery(Name = "kind")] public string? QueryKind { get; set; }
+    [SupplyParameterFromQuery(Name = "source")] public string? QuerySource { get; set; }
     private string? _lastQ;
+    private string? _lastMode;
+
+    private bool MusicOnlyMode => QueryType?.Equals("music", StringComparison.OrdinalIgnoreCase) == true;
+    private IEnumerable<string> ActiveSuggestions => MusicOnlyMode ? MusicSuggestions : _popularSearches;
+    private IEnumerable<string> ActiveGenres => MusicOnlyMode ? MusicGenres : _genres;
+    private IEnumerable<string> ActiveAlternatives => MusicOnlyMode ? MusicSuggestions.Take(4) : _alternativeSuggestions;
 
     protected override async Task OnParametersSetAsync()
     {
-        if (QueryType?.Equals("music", StringComparison.OrdinalIgnoreCase) == true)
+        var mode = $"{QueryType}:{QueryKind}:{QuerySource}";
+        var modeChanged = mode != _lastMode;
+        if (modeChanged)
         {
-            _filterType = PlexRequestsHosted.Shared.Enums.MediaType.Music;
-            _showFilters = true;
+            _lastMode = mode;
+            if (MusicOnlyMode)
+            {
+                _filterType = PlexRequestsHosted.Shared.Enums.MediaType.Music;
+                if (Enum.TryParse<MediaKind>(QueryKind, true, out var kind)
+                    && kind is MediaKind.Album or MediaKind.Artist or MediaKind.Track)
+                    _musicKind = kind;
+                _showFilters = true;
+            }
+            else
+            {
+                _filterType = null;
+            }
         }
         // Accept a query handed off from the header search box (/search?q=...).
-        if (!string.IsNullOrWhiteSpace(Q) && Q != _lastQ)
+        if (!string.IsNullOrWhiteSpace(Q) && (Q != _lastQ || modeChanged))
         {
             _lastQ = Q;
             _searchQuery = Q!;
@@ -222,7 +264,7 @@
     {
         _debounceTimer?.Stop();
         _debounceTimer?.Start();
-        _showFilters = !string.IsNullOrEmpty(_searchQuery);
+        _showFilters = MusicOnlyMode || !string.IsNullOrEmpty(_searchQuery);
     }
 
     private async Task PerformSearch()
@@ -238,7 +280,7 @@
 
         var version = Interlocked.Increment(ref _searchVersion);
         var query = _searchQuery.Trim();
-        var type = _filterType;
+        var type = MusicOnlyMode ? PlexRequestsHosted.Shared.Enums.MediaType.Music : _filterType;
         var kind = type == PlexRequestsHosted.Shared.Enums.MediaType.Music ? _musicKind : (MediaKind?)null;
         _isSearching = true;
         StateHasChanged();
@@ -250,6 +292,7 @@
                 Query = query,
                 MediaType = type,
                 Kind = kind,
+                Provider = MusicOnlyMode ? QuerySource : null,
                 PageSize = 40
             });
             if (version != _searchVersion) return;
@@ -303,6 +346,12 @@
 
     private void BrowseGenre(String genre)
     {
+        if (MusicOnlyMode)
+        {
+            _searchQuery = genre;
+            _ = PerformSearch();
+            return;
+        }
         // The typed grid reads ?genre=; plain /browse (Home) ignores it.
         Navigation.NavigateTo($"/browse/movie?genre={Uri.EscapeDataString(genre)}");
     }
@@ -313,17 +362,19 @@
         _searchQuery = "";
         _searchResults = null;
         _isSearching = false;
-        _showFilters = false;
+        _showFilters = MusicOnlyMode;
     }
 
     private void SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType? type)
     {
+        if (MusicOnlyMode) return;
         _filterType = type;
         _ = PerformSearch();
     }
 
     private void SetMusicKind(MediaKind kind)
     {
+        _filterType = PlexRequestsHosted.Shared.Enums.MediaType.Music;
         _musicKind = kind;
         _ = PerformSearch();
     }

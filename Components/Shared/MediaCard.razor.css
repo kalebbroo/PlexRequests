@@ -1,7 +1,20 @@
 .mcard {
+    position: relative;
     cursor: pointer;
     border-radius: var(--radius-md);
     transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.mcard-detail-link {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    border-radius: var(--radius-md);
+}
+
+.mcard-detail-link:focus-visible {
+    outline: 3px solid var(--plex-orange);
+    outline-offset: 3px;
 }
 
 .mcard-poster {
@@ -150,7 +163,7 @@
     color: var(--text-tertiary);
 }
 
-.mcard-actions { display: flex; gap: 6px; margin-top: 2px; }
+.mcard-actions { position: relative; z-index: 4; display: flex; gap: 6px; margin-top: 2px; }
 
 .mcard-btn {
     display: inline-flex;
@@ -164,6 +177,7 @@
     padding: 5px 10px;
     cursor: pointer;
     transition: filter var(--transition-fast), background-color var(--transition-fast);
+    text-decoration: none;
 }
 .mcard-btn.primary { background: var(--plex-orange); color: #000; flex: 1; }
 .mcard-btn.primary:hover { filter: brightness(1.08); }
