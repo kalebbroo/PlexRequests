@@ -236,6 +236,7 @@ public sealed class MusicBrainzMetadataProvider(
             ArtistId = FirstArtistId(doc.RootElement),
             ArtistCredit = ArtistCredit(doc.RootElement),
             ReleaseGroupId = releaseGroupId,
+            AlbumTitle = FirstReleaseTitle(doc.RootElement),
             TrackCount = 1,
             Tracks =
             [
@@ -452,6 +453,17 @@ public sealed class MusicBrainzMetadataProvider(
                 if (!string.IsNullOrWhiteSpace(id)) return id;
             }
         return null;
+    }
+
+    private static string? FirstReleaseTitle(JsonElement row)
+    {
+        if (!row.TryGetProperty("releases", out var releases) || releases.ValueKind != JsonValueKind.Array)
+            return null;
+        return releases.EnumerateArray()
+            .OrderByDescending(x => string.Equals(Text(x, "status"), "Official", StringComparison.OrdinalIgnoreCase))
+            .ThenBy(x => Text(x, "date") ?? "9999")
+            .Select(x => Text(x, "title"))
+            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
     }
 
     private static string? FirstLabel(JsonElement row)

@@ -307,7 +307,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         {
             var current = string.IsNullOrWhiteSpace(job.AcquisitionContextJson)
                 ? null : JsonSerializer.Deserialize<MusicAcquisitionContextDto>(job.AcquisitionContextJson);
-            if (current?.Kind == MediaKind.Artist || !string.IsNullOrWhiteSpace(current?.Artist)) return;
+            if (current?.Kind == MediaKind.Artist
+                || (current?.SchemaVersion >= 2 && !string.IsNullOrWhiteSpace(current.Artist))) return;
         }
         catch (JsonException) { /* replace malformed transitional context from authoritative metadata */ }
         try
@@ -842,10 +843,13 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
         var artist = kind == MediaKind.Artist ? detail?.Title ?? title : detail?.Music?.ArtistCredit;
         return new MusicAcquisitionContextDto
         {
+            SchemaVersion = 2,
             Kind = kind,
             Artist = artist,
-            Album = kind == MediaKind.Album ? detail?.Title ?? title : null,
+            Album = kind == MediaKind.Album ? detail?.Title ?? title
+                : kind == MediaKind.Track ? detail?.Music?.AlbumTitle : null,
             Track = kind == MediaKind.Track ? detail?.Title ?? title : null,
+            ArtworkUrl = detail?.PosterUrl,
             TrackCount = detail?.Music?.TrackCount ?? 0,
             Tracks = detail?.Music?.Tracks.Select(t => new MusicTrackMetadataDto
             {

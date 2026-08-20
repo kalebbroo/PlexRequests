@@ -29,12 +29,16 @@ public sealed class YouTubeMusicDirectSource(IOptions<DirectAudioOptions> option
             .Where(x => YouTubeMusicLocator.IsVideoId(x.RecordingId))
             .OrderBy(x => Math.Max(1, x.DiscNumber)).ThenBy(x => Math.Max(1, x.TrackNumber))
             .Select((x, index) => new YouTubeMusicTrack(x.RecordingId, x.Title,
-                Math.Max(1, x.DiscNumber), Math.Max(1, x.TrackNumber > 0 ? x.TrackNumber : index + 1)))
+                Math.Max(1, x.DiscNumber), Math.Max(1, x.TrackNumber > 0 ? x.TrackNumber : index + 1),
+                x.ArtistCredit ?? job.Music.Artist, job.Music.Album,
+                job.Music.TrackCount, job.Year, job.Music.Artist))
             .ToList();
         if (job.Music.Kind == MediaKind.Track) tracks = tracks.Take(1).ToList();
         var expected = job.Music.Kind == MediaKind.Track ? 1 : Math.Max(job.Music.TrackCount, job.Music.Tracks.Count);
         if (tracks.Count == 0 || (expected > 0 && tracks.Count != expected))
             return Task.FromResult<IReadOnlyList<ReleaseCandidate>>(Array.Empty<ReleaseCandidate>());
+        var discCount = tracks.Max(x => x.DiscNumber);
+        tracks = tracks.Select(x => x with { TrackCount = tracks.Count, DiscCount = discCount }).ToList();
 
         var sourceId = $"youtube:{job.Music.Kind.ToString().ToLowerInvariant()}:{job.Media.Id}";
         var display = string.Join(" - ", new[] { job.Music.Artist, job.Music.Album ?? job.Music.Track ?? job.Title }
@@ -44,7 +48,8 @@ public sealed class YouTubeMusicDirectSource(IOptions<DirectAudioOptions> option
             new ReleaseCandidate
             {
                 ReleaseName = display,
-                Acquisition = AcquisitionResource.DirectAudio(new YouTubeMusicLocator(1, tracks).Encode(), sourceId),
+                Acquisition = AcquisitionResource.DirectAudio(
+                    new YouTubeMusicLocator(2, tracks, job.Music.ArtworkUrl).Encode(), sourceId),
                 Source = Name,
                 SeedersKnown = false,
                 SizeKnown = false,

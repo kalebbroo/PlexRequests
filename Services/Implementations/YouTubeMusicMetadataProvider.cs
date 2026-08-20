@@ -407,6 +407,7 @@ public sealed partial class YouTubeMusicMetadataProvider(
                 ArtistId = artists.Select(x => x.Id).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)),
                 ArtistCredit = artist,
                 ReleaseGroupId = album.Id,
+                AlbumTitle = album.Name,
                 TrackCount = 1,
                 Tracks =
                 [
