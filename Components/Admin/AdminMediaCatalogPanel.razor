@@ -63,7 +63,8 @@ else
         <MudSwitch T="bool" @bind-Value="_settings.DirectDownloadsEnabled" Color="Color.Primary"
                    Label="Allow direct audio from YouTube Music" />
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="d-block mt-1 mb-3">
-            Uses YouTube Music only for YouTube-backed tracks and albums. Torrent indexers remain available as a fallback.
+            Uses YouTube Music only for YouTube-backed tracks and albums, preserving native AAC while embedding
+            Plex-ready artist, album, track, year, and cover metadata. Torrent indexers remain available as a fallback.
         </MudText>
         <MudSwitch T="bool" @bind-Value="_settings.RequestsEnabled" Color="Color.Primary"
                    Label="Enable music requests and automatic fulfillment" Disabled="_settings.ReadinessIssues.Count > 0" />

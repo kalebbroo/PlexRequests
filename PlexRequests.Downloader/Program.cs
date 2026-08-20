@@ -172,6 +172,16 @@ builder.Services.AddHttpClient<IDownloadClient, DelugeDownloadClient>(http =>
     CookieContainer = delugeCookies,
     UseCookies = true
 });
+builder.Services.AddHttpClient(nameof(DirectAudioMediaEnricher), http =>
+{
+    http.Timeout = TimeSpan.FromSeconds(30);
+    http.DefaultRequestHeaders.UserAgent.ParseAdd("PlexRequests/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = false,
+    UseCookies = false
+});
+builder.Services.AddSingleton<IDirectAudioMediaEnricher, DirectAudioMediaEnricher>();
 builder.Services.AddSingleton<IAcquisitionBackend, TorrentAcquisitionBackend>();
 builder.Services.AddSingleton<IAcquisitionBackend, YouTubeMusicAcquisitionBackend>();
 builder.Services.AddSingleton<IAcquisitionBackendRegistry, AcquisitionBackendRegistry>();

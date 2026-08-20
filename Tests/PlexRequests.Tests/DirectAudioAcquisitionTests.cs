@@ -27,6 +27,14 @@ public sealed class DirectAudioAcquisitionTests
         Assert.Equal(input.Tracks, decoded.Tracks);
         Assert.False(YouTubeMusicLocator.TryDecode(
             new YouTubeMusicLocator(1, [new YouTubeMusicTrack("not-valid", "Bad", 1, 1)]).Encode(), out _));
+
+        var enriched = new YouTubeMusicLocator(2,
+            [new YouTubeMusicTrack("abcdefghijk", "First", 1, 1, "Artist", "Album", 1, 2026)],
+            "https://lh3.googleusercontent.com/cover");
+        Assert.True(YouTubeMusicLocator.TryDecode(enriched.Encode(), out var decodedV2));
+        Assert.Equal(2, decodedV2.Version);
+        Assert.Equal("Artist", decodedV2.Tracks[0].Artist);
+        Assert.Equal(enriched.ArtworkUrl, decodedV2.ArtworkUrl);
     }
 
     [Fact]
@@ -39,7 +47,18 @@ public sealed class DirectAudioAcquisitionTests
         Assert.Equal(AcquisitionProtocol.DirectAudio, candidate.Acquisition.Protocol);
         Assert.Equal("YouTube Music direct", candidate.Source);
         Assert.True(YouTubeMusicLocator.TryDecode(candidate.Acquisition.Locator, out var locator));
+        Assert.Equal(2, locator.Version);
         Assert.Equal(new[] { "abcdefghijk", "ZYXWVUT9876" }, locator.Tracks.Select(x => x.VideoId));
+        Assert.All(locator.Tracks, x =>
+        {
+            Assert.Equal("Test Artist", x.Artist);
+            Assert.Equal("Test Album", x.Album);
+            Assert.Equal(2026, x.Year);
+            Assert.Equal(2, x.TrackCount);
+            Assert.Equal(1, x.DiscCount);
+            Assert.Equal("Test Artist", x.AlbumArtist);
+        });
+        Assert.Equal(job.Music!.ArtworkUrl, locator.ArtworkUrl);
 
         job.AllowedAcquisitionProtocols = [AcquisitionProtocol.Torrent];
         Assert.False(source.AppliesTo(job));
@@ -93,7 +112,8 @@ public sealed class DirectAudioAcquisitionTests
                 TrackTimeoutMinutes = 2
             });
             var lifetime = new TestLifetime();
-            var backend = new YouTubeMusicAcquisitionBackend(options, lifetime,
+            var enricher = new RecordingEnricher();
+            var backend = new YouTubeMusicAcquisitionBackend(options, lifetime, enricher,
                 NullLogger<YouTubeMusicAcquisitionBackend>.Instance);
             var resource = AcquisitionResource.DirectAudio(new YouTubeMusicLocator(1,
                 [new YouTubeMusicTrack("abcdefghijk", "Test Track", 1, 1)]).Encode(), "youtube:track:abcdefghijk");
@@ -111,8 +131,10 @@ public sealed class DirectAudioAcquisitionTests
             Assert.True(status.IsFinished, status.ProviderStatus);
             Assert.Single(status.Files);
             Assert.True(status.TotalSizeBytes >= 64 * 1024);
+            Assert.Single(enricher.Tagged);
+            Assert.Equal("Test Track", enricher.Tagged[0].Track.Title);
 
-            var afterRestart = new YouTubeMusicAcquisitionBackend(options, lifetime,
+            var afterRestart = new YouTubeMusicAcquisitionBackend(options, lifetime, enricher,
                 NullLogger<YouTubeMusicAcquisitionBackend>.Instance);
             var recovered = await afterRestart.GetStatusAsync(id!, CancellationToken.None);
             Assert.NotNull(recovered);
@@ -135,12 +157,14 @@ public sealed class DirectAudioAcquisitionTests
         Media = MediaRef.FromExternal("youtube", "MPRE-album", MediaType.Music, MediaKind.Album),
         RequestScope = RequestScopeKind.Album,
         Title = "Test Album",
+        Year = 2026,
         AllowedAcquisitionProtocols = [AcquisitionProtocol.Torrent, AcquisitionProtocol.DirectAudio],
         Music = new MusicAcquisitionContextDto
         {
             Kind = MediaKind.Album,
             Artist = "Test Artist",
             Album = "Test Album",
+            ArtworkUrl = "https://lh3.googleusercontent.com/test-cover",
             TrackCount = 2,
             Tracks =
             [
@@ -159,5 +183,18 @@ public sealed class DirectAudioAcquisitionTests
         public CancellationToken ApplicationStopping => _stopping.Token;
         public CancellationToken ApplicationStopped => _stopped.Token;
         public void StopApplication() => _stopping.Cancel();
+    }
+
+    private sealed class RecordingEnricher : IDirectAudioMediaEnricher
+    {
+        public List<(string Path, YouTubeMusicTrack Track)> Tagged { get; } = new();
+        public Task<string?> FetchArtworkAsync(string? artworkUrl, string payloadPath, CancellationToken ct) =>
+            Task.FromResult<string?>(null);
+        public Task WriteTagsAsync(string audioPath, YouTubeMusicTrack track, string? artworkPath,
+            CancellationToken ct)
+        {
+            Tagged.Add((audioPath, track));
+            return Task.CompletedTask;
+        }
     }
 }

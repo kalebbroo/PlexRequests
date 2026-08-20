@@ -145,6 +145,9 @@ public sealed class MusicMetadataDto
     public List<string> SecondaryTypes { get; set; } = new();
     public string? ReleaseGroupId { get; set; }
     public string? ReleaseId { get; set; }
+    /// <summary>Album containing a track result. Album detail rows continue to use the parent
+    /// <see cref="MediaDetailDto.Title"/>; this prevents a requested song from being filed under Singles.</summary>
+    public string? AlbumTitle { get; set; }
     public int TrackCount { get; set; }
     public List<MusicTrackMetadataDto> Tracks { get; set; } = new();
     public List<string> AlbumTitles { get; set; } = new();
@@ -157,10 +160,15 @@ public sealed class MusicMetadataDto
 /// </summary>
 public sealed class MusicAcquisitionContextDto
 {
+    /// <summary>Durable payload shape. Jobs created before enrichment support deserialize as v1 and are
+    /// refreshed once when claimed; current jobs freeze album identity and artwork as v2.</summary>
+    public int SchemaVersion { get; set; } = 1;
     public MediaKind Kind { get; set; }
     public string? Artist { get; set; }
     public string? Album { get; set; }
     public string? Track { get; set; }
+    /// <summary>Provider artwork frozen with the job so acquisition never has to re-query metadata.</summary>
+    public string? ArtworkUrl { get; set; }
     public int TrackCount { get; set; }
     /// <summary>Immutable track order captured from metadata when the job is enqueued. The downloader uses
     /// this to name an album deterministically without making provider calls from the VPN container.</summary>

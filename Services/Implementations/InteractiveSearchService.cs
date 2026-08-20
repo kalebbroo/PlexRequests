@@ -43,7 +43,13 @@ public class InteractiveSearchService(
     IQualityProfileService profiles,
     ILogger<InteractiveSearchService> logger) : IInteractiveSearchService
 {
-    private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    // Fulfillment jobs predate search tasks and persisted their snapshots with CLR/Pascal-case names.
+    // Search-task payloads use camelCase, so accept both when crossing that compatibility boundary.
+    private static readonly JsonSerializerOptions Json = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
 
     /// <summary>Results are capped before storing. This table is transient scratch space, not a data store.</summary>
     private const int MaxStoredResults = 300;
@@ -52,6 +58,54 @@ public class InteractiveSearchService(
     public async Task<int> CreateAsync(int? mediaRequestId, MediaType mediaType, int mediaId, string title,
         int? year, string? imdbId, int? season, int? episode, int? userId)
     {
+        // The admin Jobs panel still calls this compatibility overload. Music has no TMDb integer id, so
+        // reconstruct its provider-neutral identity and immutable acquisition snapshot from the durable job
+        // instead of manufacturing an invalid tmdb:0 search and silently losing direct-source candidates.
+        if (mediaType == MediaType.Music && mediaRequestId is int musicRequestId)
+        {
+            var snapshot = await db.FulfillmentJobs.AsNoTracking()
+                .Where(j => j.MediaRequestId == musicRequestId && j.MediaType == MediaType.Music)
+                .OrderByDescending(j => j.Id)
+                .Select(j => new
+                {
+                    j.ExternalSource,
+                    j.ExternalId,
+                    j.MediaKind,
+                    j.RequestScopeKind,
+                    j.Title,
+                    j.Year,
+                    j.AcquisitionContextJson
+                })
+                .FirstOrDefaultAsync();
+
+            if (snapshot is not null)
+            {
+                MusicAcquisitionContextDto? music = null;
+                if (!string.IsNullOrWhiteSpace(snapshot.AcquisitionContextJson))
+                {
+                    try
+                    {
+                        music = JsonSerializer.Deserialize<MusicAcquisitionContextDto>(
+                            snapshot.AcquisitionContextJson, Json);
+                    }
+                    catch (JsonException ex)
+                    {
+                        logger.LogWarning(ex,
+                            "Music request #{RequestId} has an invalid acquisition snapshot; interactive search will continue without it",
+                            musicRequestId);
+                    }
+                }
+
+                var provider = string.IsNullOrWhiteSpace(snapshot.ExternalSource) ? "request" : snapshot.ExternalSource;
+                var externalId = string.IsNullOrWhiteSpace(snapshot.ExternalId)
+                    ? musicRequestId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : snapshot.ExternalId;
+                var mediaRef = MediaRef.FromExternal(provider, externalId, MediaType.Music, snapshot.MediaKind);
+                return await CreateCoreAsync(mediaRequestId, mediaRef, snapshot.RequestScopeKind,
+                    snapshot.Title, snapshot.Year ?? year, imdbId, null, null, music, userId);
+            }
+        }
+
         var scope = episode.HasValue ? RequestScopeKind.Episodes
             : season.HasValue ? RequestScopeKind.Seasons
             : mediaType is MediaType.TvShow or MediaType.Anime ? RequestScopeKind.Series

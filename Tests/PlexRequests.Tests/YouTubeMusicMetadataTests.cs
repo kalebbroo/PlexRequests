@@ -110,6 +110,7 @@ public sealed class YouTubeMusicMetadataTests
         Assert.Equal("Instant Crush", detail.Title);
         Assert.Equal("Daft Punk", detail.Music!.ArtistCredit);
         Assert.Equal("album-id", detail.Music.ReleaseGroupId);
+        Assert.Equal("Random Access Memories", detail.Music.AlbumTitle);
         Assert.Equal(338000, Assert.Single(detail.Music.Tracks).DurationMs);
         Assert.Contains("youtubei/v1/next", handler.Requests[1], StringComparison.Ordinal);
         Assert.DoesNotContain(handler.Requests, x => x.Contains("player", StringComparison.OrdinalIgnoreCase));

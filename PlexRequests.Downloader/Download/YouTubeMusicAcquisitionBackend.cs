@@ -21,6 +21,7 @@ public sealed partial class YouTubeMusicAcquisitionBackend : IAcquisitionBackend
     private static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
         { ".m4a", ".aac", ".opus", ".ogg", ".mp3", ".webm" };
     private readonly DirectAudioOptions _options;
+    private readonly IDirectAudioMediaEnricher _enricher;
     private readonly ILogger<YouTubeMusicAcquisitionBackend> _logger;
     private readonly CancellationToken _stoppingToken;
     private readonly string _root;
@@ -30,9 +31,11 @@ public sealed partial class YouTubeMusicAcquisitionBackend : IAcquisitionBackend
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _stateLocks = new(StringComparer.Ordinal);
 
     public YouTubeMusicAcquisitionBackend(IOptions<DirectAudioOptions> options,
-        IHostApplicationLifetime lifetime, ILogger<YouTubeMusicAcquisitionBackend> logger)
+        IHostApplicationLifetime lifetime, IDirectAudioMediaEnricher enricher,
+        ILogger<YouTubeMusicAcquisitionBackend> logger)
     {
         _options = options.Value;
+        _enricher = enricher;
         _logger = logger;
         _stoppingToken = lifetime.ApplicationStopping;
         _root = Path.GetFullPath(_options.StatePath);
@@ -65,6 +68,7 @@ public sealed partial class YouTubeMusicAcquisitionBackend : IAcquisitionBackend
                     DisplayName = request.DisplayName,
                     SourceId = request.Resource.SourceId,
                     Tracks = locator.Tracks.ToList(),
+                    ArtworkUrl = locator.ArtworkUrl,
                     Phase = DirectAudioPhase.Queued,
                     UpdatedAt = DateTime.UtcNow
                 };
@@ -178,22 +182,39 @@ public sealed partial class YouTubeMusicAcquisitionBackend : IAcquisitionBackend
 
                 try
                 {
+                    var artworkPath = FindArtworkFile(transferId);
+                    if (artworkPath is null && !string.IsNullOrWhiteSpace(state.ArtworkUrl))
+                    {
+                        try
+                        {
+                            artworkPath = await _enricher.FetchArtworkAsync(state.ArtworkUrl,
+                                PayloadPath(transferId), ct);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            // Artwork is valuable but never worth losing otherwise valid music. Plex can
+                            // still match the embedded text tags and may supply its own image later.
+                            _logger.LogWarning(ex, "Direct-audio artwork enrichment skipped for {TransferId}",
+                                transferId);
+                        }
+                    }
+
                     for (var index = 0; index < state.Tracks.Count; index++)
                     {
                         var track = state.Tracks[index];
-                        if (FindTrackFile(transferId, track.VideoId) is not null)
+                        var audioPath = FindTrackFile(transferId, track.VideoId);
+                        if (audioPath is null)
                         {
-                            state.Progress = (index + 1d) / state.Tracks.Count * 100;
+                            state.CurrentTrack = track.Title;
+                            state.Progress = index * 100d / state.Tracks.Count;
                             await WriteStateLockedAsync(state, ct);
-                            continue;
+                            await DownloadTrackAsync(transferId, track, index, state.Tracks.Count,
+                                progress => UpdateProgressAsync(state, index, progress, ct), ct);
+                            audioPath = FindTrackFile(transferId, track.VideoId);
                         }
-                        state.CurrentTrack = track.Title;
-                        state.Progress = index * 100d / state.Tracks.Count;
-                        await WriteStateLockedAsync(state, ct);
-                        await DownloadTrackAsync(transferId, track, index, state.Tracks.Count,
-                            progress => UpdateProgressAsync(state, index, progress, ct), ct);
-                        if (FindTrackFile(transferId, track.VideoId) is null)
+                        if (audioPath is null)
                             throw new InvalidOperationException($"yt-dlp exited without producing audio for {track.VideoId}");
+                        await _enricher.WriteTagsAsync(audioPath, track, artworkPath, ct);
                         state.Progress = (index + 1d) / state.Tracks.Count * 100;
                         await WriteStateLockedAsync(state, ct);
                     }
@@ -324,6 +345,9 @@ public sealed partial class YouTubeMusicAcquisitionBackend : IAcquisitionBackend
 
     private string? FindTrackFile(string transferId, string videoId) => CompletedFiles(transferId)
         .FirstOrDefault(x => Path.GetFileName(x).Contains($"[{videoId}]", StringComparison.Ordinal));
+    private string? FindArtworkFile(string transferId) => new[] { "cover.jpg", "cover.png" }
+        .Select(x => Path.Combine(PayloadPath(transferId), x))
+        .FirstOrDefault(File.Exists);
 
     private async Task<DirectAudioState?> ReadStateAsync(string transferId, CancellationToken ct)
     {
@@ -383,6 +407,7 @@ public sealed partial class YouTubeMusicAcquisitionBackend : IAcquisitionBackend
         public string DisplayName { get; set; } = string.Empty;
         public string SourceId { get; set; } = string.Empty;
         public List<YouTubeMusicTrack> Tracks { get; set; } = new();
+        public string? ArtworkUrl { get; set; }
         public DirectAudioPhase Phase { get; set; }
         public int Attempts { get; set; }
         public double Progress { get; set; }

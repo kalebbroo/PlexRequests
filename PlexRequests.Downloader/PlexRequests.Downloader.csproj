@@ -21,6 +21,9 @@
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.0.0" />
     <PackageReference Include="HtmlAgilityPack" Version="1.11.72" />
     <PackageReference Include="SharpCompress" Version="0.50.0" />
+    <!-- Small managed tag writer for Plex-grade M4A metadata and embedded artwork. This avoids
+         pulling ffmpeg into the runtime or transcoding YouTube's native AAC stream. -->
+    <PackageReference Include="TagLibSharp" Version="2.3.0" />
   </ItemGroup>
 
   <ItemGroup>
