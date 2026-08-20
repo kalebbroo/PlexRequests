@@ -82,7 +82,7 @@ public class CustomFormatTests
 
     private bool Matches(CustomFormatDto format, string releaseName) =>
         CustomFormatMatcher.Matches(format, _parser.Parse(releaseName),
-            new ReleaseCandidate { ReleaseName = releaseName, Magnet = "" });
+            new ReleaseCandidate { ReleaseName = releaseName, Acquisition = AcquisitionResource.Torrent("") });
 
     [Fact]
     public void Optional_specs_are_an_any_of_set()
@@ -121,7 +121,11 @@ public class CustomFormatTests
     {
         var f = Format("x265", Spec(FormatField.VideoCodec, FormatOp.Equals, "x265"));
         var parsed = _parser.Parse("Movie.2019.1080p.BluRay.x265-GRP");
-        var candidate = new ReleaseCandidate { ReleaseName = "Movie.2019.1080p.BluRay.x265-GRP", Magnet = "" };
+        var candidate = new ReleaseCandidate
+        {
+            ReleaseName = "Movie.2019.1080p.BluRay.x265-GRP",
+            Acquisition = AcquisitionResource.Torrent("")
+        };
 
         var (liked, matched) = CustomFormatMatcher.Score(parsed, candidate, new[] { f }, new Dictionary<int, int> { [1] = 100 });
         var (disliked, _) = CustomFormatMatcher.Score(parsed, candidate, new[] { f }, new Dictionary<int, int> { [1] = -500 });
@@ -138,7 +142,11 @@ public class CustomFormatTests
         f.Enabled = false;
         var (score, matched) = CustomFormatMatcher.Score(
             _parser.Parse("Movie.2019.1080p.x265-GRP"),
-            new ReleaseCandidate { ReleaseName = "Movie.2019.1080p.x265-GRP", Magnet = "" },
+            new ReleaseCandidate
+            {
+                ReleaseName = "Movie.2019.1080p.x265-GRP",
+                Acquisition = AcquisitionResource.Torrent("")
+            },
             new[] { f }, new Dictionary<int, int> { [1] = 100 });
         Assert.Equal(0, score);
         Assert.Empty(matched);

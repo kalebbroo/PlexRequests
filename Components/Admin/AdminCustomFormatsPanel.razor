@@ -159,7 +159,11 @@ else
     {
         if (string.IsNullOrWhiteSpace(_testName)) return false;
         var parsed = _parser.Parse(_testName);
-        var candidate = new ReleaseCandidate { ReleaseName = _testName, Magnet = string.Empty };
+        var candidate = new ReleaseCandidate
+        {
+            ReleaseName = _testName,
+            Acquisition = AcquisitionResource.Torrent(string.Empty)
+        };
         try { return CustomFormatMatcher.Matches(f, parsed, candidate); }
         catch { return false; }
     }

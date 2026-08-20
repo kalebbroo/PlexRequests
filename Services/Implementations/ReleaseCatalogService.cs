@@ -306,8 +306,8 @@ public sealed class ReleaseCatalogService(
             return new ReleaseCandidate
             {
                 ReleaseName = release.ReleaseName,
-                Magnet = release.MagnetUri ?? BuildMinimalMagnet(release.InfoHash, release.ReleaseName),
-                InfoHash = release.InfoHash,
+                Acquisition = AcquisitionResource.Torrent(
+                    release.MagnetUri ?? BuildMinimalMagnet(release.InfoHash, release.ReleaseName), release.InfoHash),
                 ImdbId = release.ImdbId,
                 Seeders = sighting?.Seeders ?? 0,
                 Leechers = sighting?.Leechers ?? 0,

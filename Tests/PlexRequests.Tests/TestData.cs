@@ -119,8 +119,9 @@ public static class TestData
         {
             ReleaseName = name,
             // A real btih is 40 hex chars; a GUID gives only 32, so pad to length.
-            Magnet = $"magnet:?xt=urn:btih:{infoHash ?? Guid.NewGuid().ToString("N").PadRight(40, '0')}&dn={Uri.EscapeDataString(name)}",
-            InfoHash = infoHash,
+            Acquisition = AcquisitionResource.Torrent(
+                $"magnet:?xt=urn:btih:{infoHash ?? Guid.NewGuid().ToString("N").PadRight(40, '0')}&dn={Uri.EscapeDataString(name)}",
+                infoHash),
             ImdbId = imdbId,
             Seeders = seeders,
             SizeBytes = (long)(sizeGb * 1024 * 1024 * 1024),

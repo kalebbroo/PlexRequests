@@ -147,8 +147,10 @@ public class InteractiveSearchWorker(
     private static SearchResultDto ToDto(RankedCandidate r) => new()
     {
         ReleaseName = r.Candidate.ReleaseName,
-        Magnet = r.Candidate.Magnet,
-        InfoHash = MagnetUtil.Normalize(r.Candidate.InfoHash) ?? MagnetUtil.InfoHashFromMagnet(r.Candidate.Magnet),
+        Magnet = r.Candidate.Acquisition.Protocol == AcquisitionProtocol.Torrent ? r.Candidate.Acquisition.Locator : string.Empty,
+        InfoHash = r.Candidate.Acquisition.Protocol == AcquisitionProtocol.Torrent
+            ? MagnetUtil.Normalize(r.Candidate.Acquisition.SourceId) ?? MagnetUtil.InfoHashFromMagnet(r.Candidate.Acquisition.Locator)
+            : null,
         IndexerId = r.Candidate.IndexerId,
         IndexerName = r.Candidate.Source,
         Seeders = r.Candidate.Seeders,

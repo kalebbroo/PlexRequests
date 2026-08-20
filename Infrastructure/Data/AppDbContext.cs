@@ -27,7 +27,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
     public DbSet<FulfillmentJobEntity> FulfillmentJobs => Set<FulfillmentJobEntity>();
     public DbSet<ImportedFileEntity> ImportedFiles => Set<ImportedFileEntity>();
-    public DbSet<FulfillmentTorrentEntity> FulfillmentTorrents => Set<FulfillmentTorrentEntity>();
+    public DbSet<FulfillmentTransferEntity> FulfillmentTransfers => Set<FulfillmentTransferEntity>();
     public DbSet<BridgeOutboxEntity> BridgeOutbox => Set<BridgeOutboxEntity>();
     public DbSet<ScheduledJobEntity> ScheduledJobs => Set<ScheduledJobEntity>();
     public DbSet<JobRunEntity> JobRuns => Set<JobRunEntity>();
@@ -196,16 +196,21 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
-        modelBuilder.Entity<FulfillmentTorrentEntity>(b =>
+        modelBuilder.Entity<FulfillmentTransferEntity>(b =>
         {
+            // Keep the deployed table/column names while the code and API become protocol-neutral. This
+            // turns the production migration into one additive Protocol column rather than a risky rename.
+            b.ToTable("FulfillmentTorrents");
             b.HasKey(x => x.Id);
             // The join key the reconciler uses every cycle, and the uniqueness that makes registering a
             // torrent idempotent — re-adding the same one after a restart updates rather than duplicates.
-            b.HasIndex(x => x.TorrentId);
-            b.HasIndex(x => new { x.FulfillmentJobId, x.TorrentId }).IsUnique();
+            b.Property(x => x.TransferId).HasColumnName("TorrentId");
+            b.Property(x => x.SourceId).HasColumnName("InfoHash");
+            b.HasIndex(x => x.TransferId);
+            b.HasIndex(x => new { x.FulfillmentJobId, x.Protocol, x.TransferId }).IsUnique();
             // "Everything still in flight" is the reconciler's hot query.
             b.HasIndex(x => x.State);
-            b.HasIndex(x => x.InfoHash);
+            b.HasIndex(x => x.SourceId);
             // A job's torrents are meaningless without the job.
             b.HasOne(x => x.Job).WithMany()
                 .HasForeignKey(x => x.FulfillmentJobId)
@@ -274,6 +279,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<ImportedFileEntity>(b =>
         {
             b.HasKey(x => x.Id);
+            b.Property(x => x.TransferId).HasColumnName("TorrentId");
             b.HasIndex(x => x.FulfillmentJobId);
 
             b.HasOne(x => x.FulfillmentJob)

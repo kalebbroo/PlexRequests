@@ -131,7 +131,7 @@ builder.Services.AddHostedService<PlexRequests.Downloader.Worker.LegacyTorznabIm
 builder.Services.AddHostedService<PlexRequests.Downloader.Worker.InteractiveSearchWorker>();
 // Reconciles the database's view of what is downloading against the client's, every cycle. Stateless by
 // design: a restart loses nothing because it holds nothing between passes.
-builder.Services.AddHostedService<PlexRequests.Downloader.Worker.TorrentReconciler>();
+builder.Services.AddHostedService<PlexRequests.Downloader.Worker.TransferReconciler>();
 // One-time-per-start bridge: without it the reconciler cannot see anything that was already downloading
 // when it shipped — which is exactly the set it exists to rescue.
 builder.Services.AddHostedService<PlexRequests.Downloader.Worker.LegacyTorrentStateAdopter>();
@@ -170,6 +170,8 @@ builder.Services.AddHttpClient<IDownloadClient, DelugeDownloadClient>(http =>
     CookieContainer = delugeCookies,
     UseCookies = true
 });
+builder.Services.AddSingleton<IAcquisitionBackend, TorrentAcquisitionBackend>();
+builder.Services.AddSingleton<IAcquisitionBackendRegistry, AcquisitionBackendRegistry>();
 
 // Library organizer: archive extraction, season-pack splitting, Plex-convention naming/transfer.
 builder.Services.AddSingleton<IArchiveExtractor, ArchiveExtractor>();
@@ -180,7 +182,7 @@ builder.Services.AddSingleton<ILibraryOrganizer, LibraryOrganizer>();
 builder.Services.AddSingleton<ILibraryImporter, LibraryImporter>();
 // The legacy job monitor and the durable reconciler can see the same completed torrent. They share this
 // single-flight boundary so exactly one physical library import occurs and both callers receive its result.
-builder.Services.AddSingleton<ITorrentImportCoordinator, TorrentImportCoordinator>();
+builder.Services.AddSingleton<ITransferImportCoordinator, TransferImportCoordinator>();
 builder.Services.AddHttpClient<IVpnGuard, VpnGuard>();
 
 // Pipeline + restart-resumable state + the orchestrating worker.

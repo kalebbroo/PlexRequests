@@ -228,7 +228,7 @@ builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexReq
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.SearchTaskCleanupJob>();
 // The durable job<->torrent link the reconciler joins on. Without it the link lived only in the worker's
 // local file and an in-memory store, so a worker restart orphaned every in-flight download.
-builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IFulfillmentTorrentService, PlexRequestsHosted.Services.Implementations.FulfillmentTorrentService>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IFulfillmentTransferService, PlexRequestsHosted.Services.Implementations.FulfillmentTransferService>();
 // Re-derives tier + format score for already-imported files from their stored release names, so editing a
 // custom format reaches the library you already have and not only the next download.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.RecomputeFormatScoresJob>();
@@ -475,7 +475,7 @@ using (var scope = app.Services.CreateScope())
             .SeedAsync();
         // Repair torrents written off as Missing that had in fact been imported — see the note on
         // CorrectMisclassifiedMissingAsync. Idempotent, so it costs one query once the data is clean.
-        await scope.ServiceProvider.GetRequiredService<PlexRequestsHosted.Services.Implementations.IFulfillmentTorrentService>()
+        await scope.ServiceProvider.GetRequiredService<PlexRequestsHosted.Services.Implementations.IFulfillmentTransferService>()
             .CorrectMisclassifiedMissingAsync();
     }
     catch (Exception ex)
@@ -747,7 +747,7 @@ app.MapPost("/api/fulfillment/indexer-status", async (List<PlexRequestsHosted.Sh
 // The downloader registers what it added, then reconciles it against the download client on every pass.
 // This is a pull-and-push loop over durable state rather than in-process monitoring, so it is indifferent
 // to either side restarting: the next cycle re-derives everything from the client plus the database.
-app.MapPost("/api/fulfillment/{jobId:int}/torrents", async (int jobId, List<PlexRequestsHosted.Shared.DTOs.TrackedTorrentDto> body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IFulfillmentTorrentService svc) =>
+app.MapPost("/api/fulfillment/{jobId:int}/transfers", async (int jobId, List<PlexRequestsHosted.Shared.DTOs.TrackedTransferDto> body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IFulfillmentTransferService svc) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     return Results.Ok(await svc.RegisterAsync(jobId, body));
@@ -816,13 +816,13 @@ app.MapGet("/api/fulfillment/jobs/{jobId:int}", async (int jobId, HttpContext ct
     return job is null ? Results.NotFound() : Results.Ok(job);
 });
 
-app.MapGet("/api/fulfillment/torrents/active", async (HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IFulfillmentTorrentService svc) =>
+app.MapGet("/api/fulfillment/transfers/active", async (HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IFulfillmentTransferService svc) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     return Results.Ok(await svc.GetActiveAsync());
 });
 
-app.MapPost("/api/fulfillment/torrents/state", async (List<PlexRequestsHosted.Shared.DTOs.TorrentStateUpdateDto> body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IFulfillmentTorrentService svc) =>
+app.MapPost("/api/fulfillment/transfers/state", async (List<PlexRequestsHosted.Shared.DTOs.TransferStateUpdateDto> body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IFulfillmentTransferService svc) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     return Results.Ok(await svc.ApplyAsync(body));
@@ -980,24 +980,25 @@ app.MapPost("/api/fulfillment/{jobId:int}/imported-files", async (int jobId, Lis
     await importedFilesWriteLock.WaitAsync(ctx.RequestAborted);
     try
     {
-        static string AuditKey(string? torrentId, string destinationPath, string fileType) =>
-            $"{torrentId?.Trim()}\u001f{destinationPath.Trim()}\u001f{fileType.Trim()}";
+        static string AuditKey(AcquisitionProtocol protocol, string? transferId, string destinationPath, string fileType) =>
+            $"{(int)protocol}\u001f{transferId?.Trim()}\u001f{destinationPath.Trim()}\u001f{fileType.Trim()}";
 
         var existing = await db.ImportedFiles.AsNoTracking()
             .Where(f => f.FulfillmentJobId == jobId)
-            .Select(f => new { f.TorrentId, f.DestinationPath, f.FileType })
+            .Select(f => new { f.Protocol, f.TransferId, f.DestinationPath, f.FileType })
             .ToListAsync(ctx.RequestAborted);
-        var known = existing.Select(f => AuditKey(f.TorrentId, f.DestinationPath, f.FileType))
+        var known = existing.Select(f => AuditKey(f.Protocol, f.TransferId, f.DestinationPath, f.FileType))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var added = 0;
         foreach (var f in files)
         {
-            if (!known.Add(AuditKey(f.TorrentId, f.DestinationPath, f.FileType))) continue;
+            if (!known.Add(AuditKey(f.Protocol, f.TransferId, f.DestinationPath, f.FileType))) continue;
             db.ImportedFiles.Add(new PlexRequestsHosted.Infrastructure.Entities.ImportedFileEntity
             {
                 FulfillmentJobId = jobId,
-                TorrentId = f.TorrentId,
+                TransferId = f.TransferId,
+                Protocol = f.Protocol,
                 SourcePath = f.SourcePath,
                 DestinationPath = f.DestinationPath,
                 FileType = f.FileType,
@@ -1053,7 +1054,7 @@ app.MapPost("/api/fulfillment/{jobId:int}/progress", async (int jobId, ProgressR
     var ok = await queue.ReportProgressAsync(jobId, body.Progress);
     if (!ok) return Results.NotFound();
     // Stash the live per-torrent snapshot for the admin downloads panel (ephemeral; not persisted).
-    if (body.Torrents is not null) telemetry.Update(jobId, body.Torrents);
+    if (body.Transfers is not null) telemetry.Update(jobId, body.Transfers);
     var job = await db.FulfillmentJobs.FirstOrDefaultAsync(j => j.Id == jobId);
     if (job is not null)
     {

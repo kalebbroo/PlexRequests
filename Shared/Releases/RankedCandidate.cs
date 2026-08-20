@@ -36,7 +36,7 @@ public enum RejectionReason
     CustomFormatScoreTooLow,
     LanguageNotAllowed,
     TooOld,
-    NoMagnet
+    MissingAcquisition
 }
 
 /// <summary>One reason a release was rejected, with enough detail to explain it to a human.</summary>

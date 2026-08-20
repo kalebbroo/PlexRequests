@@ -10,7 +10,7 @@ namespace PlexRequests.Downloader.Organize;
 
 public interface ILibraryOrganizer
 {
-    Task<ImportResult> OrganizeAsync(FulfillmentJobDto job, TorrentItem torrent, string sourcePath, EffectiveLibraryOrganization prefs, CancellationToken ct);
+    Task<ImportResult> OrganizeAsync(FulfillmentJobDto job, TransferItem transfer, string sourcePath, EffectiveLibraryOrganization prefs, CancellationToken ct);
 }
 
 /// <summary>
@@ -27,7 +27,7 @@ public class LibraryOrganizer(
     IReleaseParser parser,
     ILogger<LibraryOrganizer> logger) : ILibraryOrganizer
 {
-    public async Task<ImportResult> OrganizeAsync(FulfillmentJobDto job, TorrentItem torrent, string sourcePath, EffectiveLibraryOrganization prefs, CancellationToken ct)
+    public async Task<ImportResult> OrganizeAsync(FulfillmentJobDto job, TransferItem transfer, string sourcePath, EffectiveLibraryOrganization prefs, CancellationToken ct)
     {
         string? stagingRoot = null;
         try
@@ -49,7 +49,7 @@ public class LibraryOrganizer(
                 // Staged under the source's own parent directory (same filesystem as the download), so a
                 // Hardlink transfer still works for the extracted files afterward.
                 var parent = Directory.Exists(sourcePath) ? Directory.GetParent(sourcePath)?.FullName : Path.GetDirectoryName(sourcePath);
-                stagingRoot = Path.Combine(parent ?? Path.GetTempPath(), ".plexrequests-staging", $"{job.Id}-{torrent.TorrentId}");
+                stagingRoot = Path.Combine(parent ?? Path.GetTempPath(), ".plexrequests-staging", $"{job.Id}-{transfer.TransferId}");
                 foreach (var archive in archiveEntryPoints)
                     await extractor.ExtractAsync(archive, stagingRoot, ct);
                 files = Directory.EnumerateFiles(stagingRoot, "*", SearchOption.AllDirectories).ToList();
@@ -64,7 +64,7 @@ public class LibraryOrganizer(
             {
                 MediaType.Movie => OrganizeMovie(job, mediaFiles, files, prefs),
                 MediaType.Music => OrganizeMusic(job, contentRoot, mediaFiles, files, prefs),
-                _ => OrganizeTv(job, torrent, mediaFiles, files, prefs, await ExpectedEpisodeCountAsync(job, torrent, ct))
+                _ => OrganizeTv(job, transfer, mediaFiles, files, prefs, await ExpectedEpisodeCountAsync(job, transfer, ct))
             };
 
             var primaryType = job.MediaType == MediaType.Music ? "audio" : "video";
@@ -94,9 +94,9 @@ public class LibraryOrganizer(
         }
     }
 
-    private async Task<int?> ExpectedEpisodeCountAsync(FulfillmentJobDto job, TorrentItem torrent, CancellationToken ct)
+    private async Task<int?> ExpectedEpisodeCountAsync(FulfillmentJobDto job, TransferItem transfer, CancellationToken ct)
     {
-        if (torrent.Season is not int season) return null;
+        if (transfer.Season is not int season) return null;
         var fromTargets = job.SeasonTargets.FirstOrDefault(t => t.Season == season)?.EpisodeCount;
         if (fromTargets is > 0) return fromTargets;
         var episodes = await episodeTitles.GetSeasonEpisodesAsync(job.TmdbId, season, ct);
@@ -198,16 +198,16 @@ public class LibraryOrganizer(
         return records;
     }
 
-    private List<ImportedFileRecord> OrganizeTv(FulfillmentJobDto job, TorrentItem torrent, List<string> videoFiles, List<string> allFiles, EffectiveLibraryOrganization prefs, int? expectedEpisodeCount)
+    private List<ImportedFileRecord> OrganizeTv(FulfillmentJobDto job, TransferItem transfer, List<string> videoFiles, List<string> allFiles, EffectiveLibraryOrganization prefs, int? expectedEpisodeCount)
     {
         var records = new List<ImportedFileRecord>();
 
-        if (!torrent.IsPack)
+        if (!transfer.IsPack)
         {
             // Single-episode item — pick the largest video file (packs sometimes bundle a sample/extra
             // alongside the real episode even when it's not nominally a "pack").
             var best = videoFiles.OrderByDescending(f => SafeLength(f)).FirstOrDefault();
-            if (best is null || torrent.Season is not int s || torrent.Episode is not int e) return records;
+            if (best is null || transfer.Season is not int s || transfer.Episode is not int e) return records;
 
             var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, s, e, CancellationToken.None).GetAwaiter().GetResult();
             var dest = naming.BuildEpisodePath(prefs, job, s, e, title, Path.GetExtension(best));
@@ -216,14 +216,14 @@ public class LibraryOrganizer(
             return records;
         }
 
-        if (torrent.Season is int season)
+        if (transfer.Season is int season)
         {
             if (prefs.SplitSeasonPacks)
             {
                 var mapped = splitter.Map(videoFiles, season, expectedEpisodeCount);
                 // If this pack was chosen to satisfy only specific episodes (an episode-level request, or a
                 // partially-missing season), import just those — don't re-place episodes Plex already has.
-                if (torrent.NeededEpisodes is { Count: > 0 } needed)
+                if (transfer.NeededEpisodes is { Count: > 0 } needed)
                 {
                     var keep = needed.ToHashSet();
                     var before = mapped.Count;

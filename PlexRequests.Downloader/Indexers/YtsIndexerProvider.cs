@@ -56,8 +56,7 @@ public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> option
                 candidates.Add(new ReleaseCandidate
                 {
                     ReleaseName = name,
-                    Magnet = BuildMagnet(tor.Hash!, name),
-                    InfoHash = tor.Hash,
+                    Acquisition = AcquisitionResource.Torrent(BuildMagnet(tor.Hash!, name), tor.Hash),
                     ImdbId = m.ImdbCode,
                     Seeders = tor.Seeds,
                     Leechers = tor.Peers,

@@ -43,9 +43,9 @@ public sealed class CatalogMaintenanceWorker(
         var receiptCutoff = now - TimeSpan.FromDays(7);
 
         await using var app = await appFactory.CreateDbContextAsync(cancellationToken);
-        var torrentHashes = await app.FulfillmentTorrents.AsNoTracking()
-            .Where(x => x.InfoHash != null)
-            .Select(x => x.InfoHash!)
+        var torrentHashes = await app.FulfillmentTransfers.AsNoTracking()
+            .Where(x => x.Protocol == PlexRequestsHosted.Shared.Enums.AcquisitionProtocol.Torrent && x.SourceId != null)
+            .Select(x => x.SourceId!)
             .ToListAsync(cancellationToken);
         var blockedHashes = await app.ReleaseBlocklist.AsNoTracking()
             .Where(x => x.InfoHash != null)

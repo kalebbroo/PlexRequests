@@ -26,26 +26,26 @@ public sealed class DownloadMonitorService(AppDbContext db, IDownloadTelemetrySt
             .OrderByDescending(j => j.CompletedAt ?? j.LastUpdatedAt ?? j.CreatedAt)
             .ToListAsync();
         var jobIds = jobs.Select(job => job.Id).ToList();
-        var persistedTorrents = jobIds.Count == 0
-            ? new List<FulfillmentTorrentEntity>()
-            : await db.FulfillmentTorrents.AsNoTracking()
-                .Where(torrent => jobIds.Contains(torrent.FulfillmentJobId))
-                .OrderBy(torrent => torrent.Id)
+        var persistedTransfers = jobIds.Count == 0
+            ? new List<FulfillmentTransferEntity>()
+            : await db.FulfillmentTransfers.AsNoTracking()
+                .Where(transfer => jobIds.Contains(transfer.FulfillmentJobId))
+                .OrderBy(transfer => transfer.Id)
                 .ToListAsync();
-        var persistedByJob = persistedTorrents
-            .GroupBy(torrent => torrent.FulfillmentJobId)
+        var persistedByJob = persistedTransfers
+            .GroupBy(transfer => transfer.FulfillmentJobId)
             .ToDictionary(group => group.Key, group => group.ToList());
 
         var views = new List<DownloadJobView>(jobs.Count);
         foreach (var j in jobs)
         {
             var isActive = Array.IndexOf(Active, j.Status) >= 0;
-            var torrents = isActive ? telemetry.Get(j.Id).ToList() : new List<DownloadTorrentTelemetry>();
+            var transfers = isActive ? telemetry.Get(j.Id).ToList() : new List<DownloadTransferTelemetry>();
             // The in-memory snapshot is the freshest source, but it is deliberately lost on a web/worker
             // restart. Fall back to durable tracking rows so the panel self-heals instead of turning blank,
             // and so recently completed jobs retain release/source details.
-            if (torrents.Count == 0 && persistedByJob.TryGetValue(j.Id, out var persisted))
-                torrents = persisted.Select(ToTelemetry).ToList();
+            if (transfers.Count == 0 && persistedByJob.TryGetValue(j.Id, out var persisted))
+                transfers = persisted.Select(ToTelemetry).ToList();
             views.Add(new DownloadJobView
             {
                 JobId = j.Id,
@@ -61,43 +61,44 @@ public sealed class DownloadMonitorService(AppDbContext db, IDownloadTelemetrySt
                 LastError = j.LastError,
                 UpdatedAt = j.CompletedAt ?? j.LastUpdatedAt ?? j.CreatedAt,
                 IsActive = isActive,
-                Stage = StageLabel(j.Status, torrents),
-                Torrents = torrents
+                Stage = StageLabel(j.Status, transfers),
+                Transfers = transfers
             });
         }
         return views;
     }
 
-    private static DownloadTorrentTelemetry ToTelemetry(FulfillmentTorrentEntity torrent) => new()
+    private static DownloadTransferTelemetry ToTelemetry(FulfillmentTransferEntity transfer) => new()
     {
-        Name = torrent.ReleaseName ?? torrent.TorrentId,
-        Source = torrent.Source,
-        IndexerId = torrent.IndexerId,
-        Stage = torrent.State switch
+        Name = transfer.ReleaseName ?? transfer.TransferId,
+        Protocol = transfer.Protocol,
+        Source = transfer.Source,
+        IndexerId = transfer.IndexerId,
+        Stage = transfer.State switch
         {
-            TorrentTrackingState.Finished => DownloadTorrentStage.Finishing,
-            TorrentTrackingState.Imported => DownloadTorrentStage.Imported,
-            TorrentTrackingState.Failed => DownloadTorrentStage.Failed,
-            TorrentTrackingState.Missing => DownloadTorrentStage.Missing,
-            _ => DownloadTorrentStage.Downloading
+            TransferTrackingState.Finished => DownloadTransferStage.Finishing,
+            TransferTrackingState.Imported => DownloadTransferStage.Imported,
+            TransferTrackingState.Failed => DownloadTransferStage.Failed,
+            TransferTrackingState.Missing => DownloadTransferStage.Missing,
+            _ => DownloadTransferStage.Downloading
         },
-        ProgressPercent = torrent.Progress,
-        DownloadRateBytesPerSec = torrent.DownloadRateBytesPerSec,
-        Seeds = torrent.Seeds,
-        Peers = torrent.Peers,
-        TotalSizeBytes = torrent.TotalSizeBytes,
-        Season = torrent.Season,
-        Episode = torrent.Episode
+        ProgressPercent = transfer.Progress,
+        DownloadRateBytesPerSec = transfer.DownloadRateBytesPerSec,
+        Seeds = transfer.Seeds,
+        Peers = transfer.Peers,
+        TotalSizeBytes = transfer.TotalSizeBytes,
+        Season = transfer.Season,
+        Episode = transfer.Episode
     };
 
     // Human lifecycle label spanning approved → downloading → renaming/moving → available.
-    private static string StageLabel(FulfillmentStatus status, List<DownloadTorrentTelemetry> torrents) => status switch
+    private static string StageLabel(FulfillmentStatus status, List<DownloadTransferTelemetry> transfers) => status switch
     {
         FulfillmentStatus.Queued => "Approved — queued",
         FulfillmentStatus.Claimed => "Starting download",
-        FulfillmentStatus.Downloading when torrents.Any(t => t.Stage == DownloadTorrentStage.Importing)
+        FulfillmentStatus.Downloading when transfers.Any(t => t.Stage == DownloadTransferStage.Importing)
             => "Renaming & moving",
-        FulfillmentStatus.Downloading when torrents.Count > 0 && torrents.All(t => t.Stage is DownloadTorrentStage.Finishing or DownloadTorrentStage.Imported)
+        FulfillmentStatus.Downloading when transfers.Count > 0 && transfers.All(t => t.Stage is DownloadTransferStage.Finishing or DownloadTransferStage.Imported)
             => "Finishing",
         FulfillmentStatus.Downloading => "Downloading",
         FulfillmentStatus.Deferred => "Waiting for a release",

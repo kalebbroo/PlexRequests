@@ -10,7 +10,7 @@ using PlexRequestsHosted.Shared.Releases;
 namespace PlexRequests.Downloader.Worker;
 
 /// <summary>
-/// Continuously reconciles what the database believes is downloading against what the download client is
+/// Continuously reconciles what the database believes is downloading against the protocol-specific backend
 /// actually doing, and drives every state change from that comparison.
 ///
 /// This replaces per-job, in-process monitoring, which had a structural flaw rather than a bug: a job's
@@ -24,13 +24,13 @@ namespace PlexRequests.Downloader.Worker;
 /// from the client plus the database. A restart at any moment is therefore a no-op, which is the property
 /// that makes it hard to break — there is no in-memory state left to lose.
 /// </summary>
-public class TorrentReconciler(
+public class TransferReconciler(
     IPlexRequestsApiClient api,
-    IDownloadClient downloadClient,
+    IAcquisitionBackendRegistry acquisitionBackends,
     ILibraryImporter importer,
-    ITorrentImportCoordinator importCoordinator,
+    ITransferImportCoordinator importCoordinator,
     IOptions<WorkerOptions> workerOptions,
-    ILogger<TorrentReconciler> logger) : BackgroundService
+    ILogger<TransferReconciler> logger) : BackgroundService
 {
     private readonly TimeSpan _interval =
         TimeSpan.FromSeconds(Math.Clamp(workerOptions.Value.MonitorIntervalSeconds, 10, 120));
@@ -57,7 +57,7 @@ public class TorrentReconciler(
         try { await Task.Delay(TimeSpan.FromSeconds(25), stoppingToken); }
         catch (OperationCanceledException) { return; }
 
-        logger.LogInformation("Torrent reconciler started (every {Seconds}s)", _interval.TotalSeconds);
+        logger.LogInformation("Transfer reconciler started (every {Seconds}s)", _interval.TotalSeconds);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -72,10 +72,10 @@ public class TorrentReconciler(
 
     internal async Task<int> ReconcileOnceAsync(CancellationToken ct)
     {
-        var tracked = await api.GetActiveTorrentsAsync(ct);
+        var tracked = await api.GetActiveTransfersAsync(ct);
         if (tracked.Count == 0) return 0;
 
-        var updates = new List<TorrentStateUpdateDto>();
+        var updates = new List<TransferStateUpdateDto>();
         var flushed = 0;
         var now = DateTime.UtcNow;
 
@@ -83,55 +83,61 @@ public class TorrentReconciler(
         {
             if (ct.IsCancellationRequested) break;
 
-            // One status call per tracked torrent. Deluge exposes a bulk form, but the per-torrent call is
-            // what the existing client already speaks and the set here is bounded by what we ourselves
-            // added — not by everything in the client, which may include the operator's own torrents.
-            DownloadStatus? status = null;
+            // One status call per tracked transfer. The set is bounded by what we ourselves enqueued, not
+            // by unrelated work an operator may have placed in the same backend.
+            if (!acquisitionBackends.TryGet(t.Protocol, out var backend))
+            {
+                logger.LogWarning("No {Protocol} backend is available for tracked transfer {TransferId}; retaining it for a later pass",
+                    t.Protocol, t.TransferId);
+                continue;
+            }
+
+            TransferStatus? status = null;
             using var perCall = CancellationTokenSource.CreateLinkedTokenSource(ct);
             perCall.CancelAfter(StatusTimeout);
-            try { status = await downloadClient.GetStatusAsync(t.TorrentId, perCall.Token); }
+            try { status = await backend.GetStatusAsync(t.TransferId, perCall.Token); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 // Our own ceiling fired, not shutdown. Treat exactly like an unreachable client: say nothing
-                // about this torrent and try again next cycle. Never infer absence from a timeout.
-                logger.LogDebug("Status call for {Torrent} exceeded {Seconds}s; skipping this pass",
-                    t.TorrentId, StatusTimeout.TotalSeconds);
+                // about this transfer and try again next cycle. Never infer absence from a timeout.
+                logger.LogDebug("Status call for {Transfer} exceeded {Seconds}s; skipping this pass",
+                    t.TransferId, StatusTimeout.TotalSeconds);
                 continue;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // A failed status call is not evidence the torrent is gone — the client may simply be
+                // A failed status call is not evidence the transfer is gone — the backend may simply be
                 // unreachable. Skipping leaves the row untouched for the next pass, which is the safe
                 // reading: never declare a download dead because we could not ask about it.
-                logger.LogDebug(ex, "Status unavailable for {Torrent}; leaving it for the next pass", t.TorrentId);
+                logger.LogDebug(ex, "Status unavailable for {Transfer}; leaving it for the next pass", t.TransferId);
                 continue;
             }
 
-            var obs = Observe(status);
-            var decision = TorrentHealth.Decide(obs, t.AddedAt, t.ProgressChangedAt, now);
+            var decision = backend.EvaluateHealth(status, t.AddedAt, t.ProgressChangedAt, now);
 
-            var update = new TorrentStateUpdateDto
+            var update = new TransferStateUpdateDto
             {
-                TorrentId = t.TorrentId,
-                Progress = obs.Progress,
-                Seeds = obs.Seeds,
-                Peers = obs.Peers,
+                TransferId = t.TransferId,
+                Protocol = t.Protocol,
+                Progress = status?.Progress ?? 0,
+                Seeds = status?.Seeds ?? 0,
+                Peers = status?.Peers ?? 0,
                 DownloadRateBytesPerSec = status?.DownloadRate ?? 0,
                 TotalSizeBytes = status?.TotalSizeBytes ?? 0,
-                TrackerStatus = obs.TrackerStatus,
+                TrackerStatus = status?.ProviderStatus,
                 Reason = decision.Reason,
                 State = decision.Verdict switch
                 {
-                    TorrentVerdict.Import => TorrentTrackingState.Finished,
-                    TorrentVerdict.Fail => TorrentTrackingState.Failed,
-                    TorrentVerdict.Gone => TorrentTrackingState.Missing,
-                    _ => TorrentTrackingState.Active
+                    TransferVerdict.Import => TransferTrackingState.Finished,
+                    TransferVerdict.Fail => TransferTrackingState.Failed,
+                    TransferVerdict.Missing => TransferTrackingState.Missing,
+                    _ => TransferTrackingState.Active
                 }
             };
-            // A finished torrent is imported here and now, by whoever noticed — not only by the process that
+            // A finished transfer is imported here and now, by whoever noticed — not only by the process that
             // added it. That is the whole point: nine finished episodes sat unimported for days because the
             // only code that could import them belonged to a worker that had been replaced.
-            if (decision.Verdict == TorrentVerdict.Import && status is not null)
+            if (decision.Verdict == TransferVerdict.Import && status is not null)
             {
                 var outcome = await TryImportAsync(t, status, ct);
                 update.State = outcome.State;
@@ -140,56 +146,31 @@ public class TorrentReconciler(
 
             updates.Add(update);
 
-            if (update.State == TorrentTrackingState.Failed && decision.Blocklist)
-                await SafeBlocklist(t, update.Reason, obs.ClientState.Equals("error", StringComparison.OrdinalIgnoreCase), ct);
+            if (update.State == TransferTrackingState.Failed && decision.Blocklist && t.Protocol == AcquisitionProtocol.Torrent)
+                await SafeBlocklist(t, update.Reason, status?.State.Equals("error", StringComparison.OrdinalIgnoreCase) == true, ct);
 
             if (updates.Count - flushed >= FlushEvery)
             {
-                await api.ReportTorrentStateAsync(updates.Skip(flushed).ToList(), ct);
+                await api.ReportTransferStateAsync(updates.Skip(flushed).ToList(), ct);
                 flushed = updates.Count;
             }
         }
 
         if (updates.Count == 0) return 0;
-        if (flushed < updates.Count) await api.ReportTorrentStateAsync(updates.Skip(flushed).ToList(), ct);
+        if (flushed < updates.Count) await api.ReportTransferStateAsync(updates.Skip(flushed).ToList(), ct);
 
-        var finished = updates.Count(u => u.State == TorrentTrackingState.Finished);
-        var failed = updates.Count(u => u.State == TorrentTrackingState.Failed);
-        var gone = updates.Count(u => u.State == TorrentTrackingState.Missing);
+        var finished = updates.Count(u => u.State == TransferTrackingState.Finished);
+        var failed = updates.Count(u => u.State == TransferTrackingState.Failed);
+        var gone = updates.Count(u => u.State == TransferTrackingState.Missing);
         if (finished + failed + gone > 0)
-            logger.LogInformation("Reconciled {Total} torrent(s): {Finished} finished, {Failed} failed, {Gone} missing",
+            logger.LogInformation("Reconciled {Total} transfer(s): {Finished} finished, {Failed} failed, {Gone} missing",
                 updates.Count, finished, failed, gone);
 
         return updates.Count;
     }
 
     /// <summary>
-    /// Translate the client's status into the observation the pure rules consume. A null status means the
-    /// client answered and does not have this torrent — genuinely gone, as opposed to the exception path
-    /// above where we could not ask at all. The two must not be conflated: one is a fact, the other is
-    /// ignorance, and only the fact justifies giving up.
-    /// </summary>
-    private static TorrentObservation Observe(DownloadStatus? status)
-    {
-        if (status is null) return new TorrentObservation { PresentInClient = false };
-
-        return new TorrentObservation
-        {
-            PresentInClient = true,
-            ClientState = status.State ?? string.Empty,
-            Progress = status.Progress,
-            Seeds = status.Seeds,
-            Peers = status.Peers,
-            IsFinished = status.IsFinished,
-            TrackerStatus = status.TrackerStatus,
-            // A magnet has no size until its metadata resolves; that is how we tell "still resolving"
-            // apart from "downloading nothing".
-            HasMetadata = status.TotalSizeBytes > 0
-        };
-    }
-
-    /// <summary>
-    /// Move a finished torrent's files into the library.
+    /// Move a finished transfer's files into the library.
     ///
     /// Two failure shapes are kept apart. A path that will not resolve yet is NOT a failure: Deluge reports
     /// is_finished before the data is necessarily flushed, so the row simply stays Finished and the next
@@ -197,33 +178,37 @@ public class TorrentReconciler(
     /// An import that genuinely fails IS terminal, and blocklists, because retrying it forever would peg
     /// the disk and never succeed.
     /// </summary>
-    private async Task<(TorrentTrackingState State, string? Reason)> TryImportAsync(
-        TrackedTorrentDto t, DownloadStatus status, CancellationToken ct)
+    private async Task<(TransferTrackingState State, string? Reason)> TryImportAsync(
+        TrackedTransferDto t, TransferStatus status, CancellationToken ct)
     {
         var job = await api.GetJobAsync(t.FulfillmentJobId, ct);
         if (job is null)
-            return (TorrentTrackingState.Finished, "Waiting: the job could not be read");
+            return (TransferTrackingState.Finished, "Waiting: the job could not be read");
 
-        var sourcePath = ImportSourceResolver.Resolve(status, t.FulfillmentJobId, t.TorrentId, logger);
+        var sourcePath = ImportSourceResolver.Resolve(status, t.FulfillmentJobId, t.TransferId, logger);
         if (sourcePath is null)
-            return (TorrentTrackingState.Finished, "Waiting: files not on disk yet");
+            return (TransferTrackingState.Finished, "Waiting: files not on disk yet");
 
-        var item = new TorrentItem(t.TorrentId, t.Season, t.Episode, t.IsPack,
+        var item = new TransferItem(t.TransferId, t.Season, t.Episode, t.IsPack,
             NeededEpisodes: t.NeededEpisodes.Count > 0 ? t.NeededEpisodes : null,
             Resolution: t.Resolution,
             Source: t.Source,
-            IndexerId: t.IndexerId);
+            IndexerId: t.IndexerId,
+            ReleaseName: t.ReleaseName,
+            Protocol: t.Protocol,
+            SourceId: t.SourceId);
 
-        var result = await importCoordinator.RunOnceAsync(t.TorrentId,
+        var result = await importCoordinator.RunOnceAsync(t.Protocol, t.TransferId,
             token => importer.ImportAsync(job, item, sourcePath, token), ct);
         if (!result.Success)
-            return (TorrentTrackingState.Failed, result.FailReason ?? "Import failed");
+            return (TransferTrackingState.Failed, result.FailReason ?? "Import failed");
 
         try
         {
             await api.ReportImportedFilesAsync(job.Id, result.Files.Select(f => new ImportedFileDto
             {
-                TorrentId = t.TorrentId,
+                TransferId = t.TransferId,
+                Protocol = t.Protocol,
                 SourcePath = f.SourcePath,
                 DestinationPath = f.DestinationPath,
                 FileType = f.FileType,
@@ -238,16 +223,19 @@ public class TorrentReconciler(
         try { await api.RefreshLibraryAsync(job.MediaType, ct); }
         catch (Exception ex) { logger.LogDebug(ex, "Plex refresh trigger skipped"); }
 
-        // Files are kept so the torrent can go on seeding; only the client's entry goes.
-        try { await downloadClient.RemoveAsync(t.TorrentId, removeData: false, ct); }
-        catch (Exception ex) { logger.LogDebug(ex, "Torrent removal after import skipped"); }
+        // Keep source data where the backend supports it (torrent seeding); remove only its tracking entry.
+        if (acquisitionBackends.TryGet(t.Protocol, out var backend))
+        {
+            try { await backend.RemoveAsync(t.TransferId, removeData: false, ct); }
+            catch (Exception ex) { logger.LogDebug(ex, "Transfer removal after import skipped"); }
+        }
 
         logger.LogInformation("Imported {Count} file(s) for job {JobId} from {Release}",
-            result.Files.Count, job.Id, t.ReleaseName ?? t.TorrentId);
-        return (TorrentTrackingState.Imported, null);
+            result.Files.Count, job.Id, t.ReleaseName ?? t.TransferId);
+        return (TransferTrackingState.Imported, null);
     }
 
-    private async Task SafeBlocklist(TrackedTorrentDto t, string? reason, bool clientError, CancellationToken ct)
+    private async Task SafeBlocklist(TrackedTransferDto t, string? reason, bool clientError, CancellationToken ct)
     {
         // Blocklisting is what stops the job picking the same dead release on its next search. Best-effort:
         // failing to record it must not prevent the torrent being marked failed, or the job would keep
@@ -256,7 +244,7 @@ public class TorrentReconciler(
         {
             await api.BlocklistAsync(t.FulfillmentJobId, new BlocklistRequestDto
             {
-                InfoHash = t.InfoHash,
+                InfoHash = t.SourceId,
                 ReleaseName = t.ReleaseName ?? string.Empty,
                 // Stalled covers both shapes the reconciler gives up on — no progress with no peers, and a
                 // magnet whose metadata never arrived. TorrentError is reserved for the client saying so.
@@ -268,7 +256,7 @@ public class TorrentReconciler(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogDebug(ex, "Could not blocklist {Torrent}", t.TorrentId);
+            logger.LogDebug(ex, "Could not blocklist {Transfer}", t.TransferId);
         }
     }
 }

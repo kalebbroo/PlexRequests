@@ -406,7 +406,7 @@ public class UserDto : BaseDto
 // Wire types for the fulfillment worker API — shared by the web app (endpoints) and the downloader (client).
 public record ClaimRequest(string? WorkerId, int? Max);
 
-public record ProgressRequest(int Progress, string? WorkerId, List<DownloadTorrentTelemetry>? Torrents = null);
+public record ProgressRequest(int Progress, string? WorkerId, List<DownloadTransferTelemetry>? Transfers = null);
 /// <param name="CandidatesRejected">
 /// True when the search DID return releases but none were acceptable. That is the only situation in which
 /// holding out for the preferred quality is costing anything, so it's the counter that decides when to
@@ -415,19 +415,20 @@ public record ProgressRequest(int Progress, string? WorkerId, List<DownloadTorre
 public record FailRequest(string? Reason, bool CandidatesRejected = false);
 
 /// <summary>
-/// Live, per-torrent download telemetry the downloader worker samples from the download client each
+/// Live, per-transfer telemetry the downloader worker samples from the active backend each
 /// monitor tick and pushes up with its progress report. Ephemeral — the web app holds only the latest
 /// snapshot in memory to drive the admin live-downloads panel; it is never persisted.
 /// </summary>
-public class DownloadTorrentTelemetry
+public class DownloadTransferTelemetry
 {
-    /// <summary>Torrent display name (from the release/magnet), for the admin row label.</summary>
+    /// <summary>Transfer display name, for the admin row label.</summary>
     public string Name { get; set; } = string.Empty;
+    public AcquisitionProtocol Protocol { get; set; } = AcquisitionProtocol.Torrent;
     /// <summary>Indexer/provider that supplied the selected release, when known.</summary>
     public string? Source { get; set; }
     public int? IndexerId { get; set; }
     /// <summary>Where this torrent is in its lifecycle: Downloading, Finishing, Importing, or Imported.</summary>
-    public DownloadTorrentStage Stage { get; set; } = DownloadTorrentStage.Downloading;
+    public DownloadTransferStage Stage { get; set; } = DownloadTransferStage.Downloading;
     /// <summary>0-100 completion for this torrent.</summary>
     public double ProgressPercent { get; set; }
     /// <summary>Current download rate in bytes/sec (0 once finished/seeding).</summary>
@@ -443,18 +444,19 @@ public class DownloadTorrentTelemetry
 }
 
 /// <summary>
-/// One torrent backing a job, as the database durably knows it. Distinct from
-/// <see cref="DownloadTorrentTelemetry"/>, which is an in-memory snapshot for the live panel and is lost
+/// One transfer backing a job, as the database durably knows it. Distinct from
+/// <see cref="DownloadTransferTelemetry"/>, which is an in-memory snapshot for the live panel and is lost
 /// whenever the worker restarts — this is the record that survives, and the join key the reconciler uses.
 /// </summary>
-public class TrackedTorrentDto
+public class TrackedTransferDto
 {
     public int Id { get; set; }
     public int FulfillmentJobId { get; set; }
-    /// <summary>The download client's own id. Never computed by us.</summary>
-    public string TorrentId { get; set; } = string.Empty;
-    /// <summary>v1 infohash from the magnet, for blocklisting. Differs from TorrentId for v2 torrents.</summary>
-    public string? InfoHash { get; set; }
+    /// <summary>The acquisition backend's own id. Never computed by us.</summary>
+    public string TransferId { get; set; } = string.Empty;
+    public AcquisitionProtocol Protocol { get; set; } = AcquisitionProtocol.Torrent;
+    /// <summary>Stable provider identity for deduplication/blocklisting (an info hash for torrents).</summary>
+    public string? SourceId { get; set; }
     public string? ReleaseName { get; set; }
     public string? Source { get; set; }
     public int? IndexerId { get; set; }
@@ -464,7 +466,7 @@ public class TrackedTorrentDto
     public List<int> NeededEpisodes { get; set; } = new();
     public int Resolution { get; set; }
 
-    public TorrentTrackingState State { get; set; }
+    public TransferTrackingState State { get; set; }
     public double Progress { get; set; }
     public int Seeds { get; set; }
     public int Peers { get; set; }
@@ -476,11 +478,12 @@ public class TrackedTorrentDto
     public string? FailReason { get; set; }
 }
 
-/// <summary>One torrent's outcome from a reconciliation pass.</summary>
-public class TorrentStateUpdateDto
+/// <summary>One transfer's outcome from a reconciliation pass.</summary>
+public class TransferStateUpdateDto
 {
-    public string TorrentId { get; set; } = string.Empty;
-    public TorrentTrackingState State { get; set; }
+    public string TransferId { get; set; } = string.Empty;
+    public AcquisitionProtocol Protocol { get; set; } = AcquisitionProtocol.Torrent;
+    public TransferTrackingState State { get; set; }
     public double Progress { get; set; }
     public int Seeds { get; set; }
     public int Peers { get; set; }
@@ -491,8 +494,8 @@ public class TorrentStateUpdateDto
     public string? Reason { get; set; }
 }
 
-/// <summary>Per-torrent lifecycle stage surfaced in the admin live-downloads panel.</summary>
-public enum DownloadTorrentStage
+/// <summary>Per-transfer lifecycle stage surfaced in the admin live-downloads panel.</summary>
+public enum DownloadTransferStage
 {
     /// <summary>Actively pulling bytes.</summary>
     Downloading = 0,
@@ -532,7 +535,7 @@ public class DownloadJobView
     public bool IsActive { get; set; }
     /// <summary>Human lifecycle label for the whole job (e.g. "Approved — queued", "Downloading", "Available").</summary>
     public string Stage { get; set; } = string.Empty;
-    public List<DownloadTorrentTelemetry> Torrents { get; set; } = new();
+    public List<DownloadTransferTelemetry> Transfers { get; set; } = new();
 }
 public record RefreshLibraryRequest(MediaType MediaType);
 
@@ -1058,7 +1061,8 @@ public class LibraryRootRuleDto
 /// <summary>One file placed into the library by the organizer — the durable audit trail for a fulfillment job.</summary>
 public class ImportedFileDto
 {
-    public string? TorrentId { get; set; }
+    public string? TransferId { get; set; }
+    public AcquisitionProtocol Protocol { get; set; } = AcquisitionProtocol.Torrent;
     public string SourcePath { get; set; } = string.Empty;
     public string DestinationPath { get; set; } = string.Empty;
     /// <summary>"video" | "audio" | "subtitle".</summary>

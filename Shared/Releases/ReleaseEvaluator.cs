@@ -143,12 +143,14 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
             rejections.Add(new Rejection(RejectionReason.MediaTypeMismatch, "this is a TV release but the request is a movie"));
 
         // ---- Blocklist / age -------------------------------------------------------------------------
-        var hash = MagnetUtil.Normalize(c.InfoHash) ?? MagnetUtil.InfoHashFromMagnet(c.Magnet);
-        if (hash is not null && context.BlocklistedHashes.Contains(hash))
+        var sourceId = c.Acquisition.Protocol == AcquisitionProtocol.Torrent
+            ? MagnetUtil.Normalize(c.Acquisition.SourceId) ?? MagnetUtil.InfoHashFromMagnet(c.Acquisition.Locator)
+            : c.Acquisition.SourceId;
+        if (sourceId is not null && context.BlocklistedHashes.Contains(sourceId))
             rejections.Add(new Rejection(RejectionReason.Blocklisted, "this release already failed for this request"));
 
-        if (string.IsNullOrWhiteSpace(c.Magnet))
-            rejections.Add(new Rejection(RejectionReason.NoMagnet, "no magnet link"));
+        if (string.IsNullOrWhiteSpace(c.Acquisition.Locator))
+            rejections.Add(new Rejection(RejectionReason.MissingAcquisition, "no acquisition locator"));
 
         // Custom formats: a user-defined score on top of the structural one, and a floor the profile can
         // set so "never take anything scoring below X" is expressible.

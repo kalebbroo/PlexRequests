@@ -66,10 +66,10 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         }
     }
 
-    public async Task<bool> ReportProgressAsync(int jobId, int progress, IReadOnlyList<DownloadTorrentTelemetry>? torrents, CancellationToken ct)
+    public async Task<bool> ReportProgressAsync(int jobId, int progress, IReadOnlyList<DownloadTransferTelemetry>? transfers, CancellationToken ct)
     {
         var resp = await _http.PostAsJsonAsync($"/api/fulfillment/{jobId}/progress",
-            new ProgressRequest(progress, _worker.WorkerId, torrents?.ToList()), ct);
+            new ProgressRequest(progress, _worker.WorkerId, transfers?.ToList()), ct);
         return resp.IsSuccessStatusCode;
     }
 
@@ -310,27 +310,27 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         }
     }
 
-    public async Task<bool> RegisterTorrentsAsync(int jobId, IReadOnlyList<TrackedTorrentDto> torrents, CancellationToken ct)
+    public async Task<bool> RegisterTransfersAsync(int jobId, IReadOnlyList<TrackedTransferDto> transfers, CancellationToken ct)
     {
         try
         {
-            var resp = await _http.PostAsJsonAsync($"/api/fulfillment/{jobId}/torrents", torrents, ct);
+            var resp = await _http.PostAsJsonAsync($"/api/fulfillment/{jobId}/transfers", transfers, ct);
             return resp.IsSuccessStatusCode;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Not best-effort in spirit — losing this loses the durable link — but the reconciler recovers
             // on the next pass once the web app is reachable again, so a failure here is a delay, not a leak.
-            _logger.LogWarning(ex, "Could not register torrents for job {JobId}", jobId);
+            _logger.LogWarning(ex, "Could not register transfers for job {JobId}", jobId);
             return false;
         }
     }
 
-    public async Task<List<TrackedTorrentDto>> GetActiveTorrentsAsync(CancellationToken ct)
+    public async Task<List<TrackedTransferDto>> GetActiveTransfersAsync(CancellationToken ct)
     {
         try
         {
-            var list = await _http.GetFromJsonAsync<List<TrackedTorrentDto>>("/api/fulfillment/torrents/active", ct);
+            var list = await _http.GetFromJsonAsync<List<TrackedTransferDto>>("/api/fulfillment/transfers/active", ct);
             return list ?? new();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -351,16 +351,16 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         }
     }
 
-    public async Task<bool> ReportTorrentStateAsync(IReadOnlyList<TorrentStateUpdateDto> updates, CancellationToken ct)
+    public async Task<bool> ReportTransferStateAsync(IReadOnlyList<TransferStateUpdateDto> updates, CancellationToken ct)
     {
         try
         {
-            var resp = await _http.PostAsJsonAsync("/api/fulfillment/torrents/state", updates, ct);
+            var resp = await _http.PostAsJsonAsync("/api/fulfillment/transfers/state", updates, ct);
             return resp.IsSuccessStatusCode;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "Could not report torrent state");
+            _logger.LogWarning(ex, "Could not report transfer state");
             return false;
         }
     }

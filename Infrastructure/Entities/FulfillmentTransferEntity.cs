@@ -5,8 +5,9 @@ using PlexRequestsHosted.Shared.Enums;
 namespace PlexRequestsHosted.Infrastructure.Entities;
 
 /// <summary>
-/// One torrent backing one fulfillment job — the durable link between what we asked for and what the
-/// download client is actually doing.
+/// One transfer backing one fulfillment job — the durable link between what we asked for and what the
+/// acquisition backend is actually doing. The physical table and two column names remain legacy-named so
+/// the migration is additive and cannot strand in-flight production downloads.
 ///
 /// This did not exist. The link lived in the downloader's local JSON file and in an in-memory telemetry
 /// store, so it was lost whenever the worker was replaced, and nothing could ever answer "which job owns
@@ -14,20 +15,19 @@ namespace PlexRequestsHosted.Infrastructure.Entities;
 /// "Deferred — no acceptable release found yet" while sixty-seven torrents it had added sat in Deluge,
 /// nine of them finished, none of them imported, and the job re-searching on a backoff forever.
 ///
-/// Two identifiers are kept deliberately. <see cref="TorrentId"/> is whatever the client calls it and is
-/// the join key; <see cref="InfoHash"/> is derived from the magnet and is what the blocklist matches on.
-/// For a v2 or hybrid torrent these are different values, so collapsing them would silently break one use
-/// or the other.
+/// TransferId and SourceId stay separate deliberately: the first is the backend join key, while the second
+/// is the source's stable identity for dedupe/blocklisting. They are not interchangeable for every protocol.
 /// </summary>
-public class FulfillmentTorrentEntity
+public class FulfillmentTransferEntity
 {
     public int Id { get; set; }
     public int FulfillmentJobId { get; set; }
 
-    /// <summary>The download client's own id. Join key — never computed by us, always taken from the client.</summary>
-    [MaxLength(64)] public string TorrentId { get; set; } = string.Empty;
-    /// <summary>v1 infohash from the magnet, for blocklisting. May differ from <see cref="TorrentId"/>.</summary>
-    [MaxLength(64)] public string? InfoHash { get; set; }
+    /// <summary>The backend's own id. Join key — never computed by us.</summary>
+    [MaxLength(64)] public string TransferId { get; set; } = string.Empty;
+    public AcquisitionProtocol Protocol { get; set; } = AcquisitionProtocol.Torrent;
+    /// <summary>Stable source identity (the info hash for torrents), for dedupe and blocklisting.</summary>
+    [MaxLength(64)] public string? SourceId { get; set; }
     [MaxLength(512)] public string? ReleaseName { get; set; }
     [MaxLength(128)] public string? Source { get; set; }
     public int? IndexerId { get; set; }
@@ -41,7 +41,7 @@ public class FulfillmentTorrentEntity
     public int Resolution { get; set; }
 
     // --- Last observed state, written by the reconciler --------------------------------------------
-    public TorrentTrackingState State { get; set; } = TorrentTrackingState.Active;
+    public TransferTrackingState State { get; set; } = TransferTrackingState.Active;
     /// <summary>0-100.</summary>
     public double Progress { get; set; }
     public int Seeds { get; set; }

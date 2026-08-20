@@ -230,11 +230,11 @@ public class IndexerClient(
 
         foreach (var c in all)
         {
-            if (string.IsNullOrWhiteSpace(c.InfoHash)) { noHash.Add(c); continue; }
-            if (!byHash.TryGetValue(c.InfoHash, out var existing)) { byHash[c.InfoHash] = c; continue; }
+            if (string.IsNullOrWhiteSpace(c.Acquisition.SourceId)) { noHash.Add(c); continue; }
+            if (!byHash.TryGetValue(c.Acquisition.SourceId, out var existing)) { byHash[c.Acquisition.SourceId] = c; continue; }
 
             var keep = settings.PriorityOf(c.IndexerId) < settings.PriorityOf(existing.IndexerId) ? c : existing;
-            byHash[c.InfoHash] = keep with
+            byHash[c.Acquisition.SourceId] = keep with
             {
                 Seeders = Math.Max(c.Seeders, existing.Seeders),
                 SeedersKnown = c.SeedersKnown || existing.SeedersKnown,
@@ -286,16 +286,16 @@ public class IndexerClient(
             {
                 var items = source.Select(candidate =>
                 {
-                    var infoHash = MagnetUtil.Normalize(candidate.InfoHash)
-                                   ?? MagnetUtil.InfoHashFromMagnet(candidate.Magnet);
+                    var infoHash = MagnetUtil.Normalize(candidate.Acquisition.SourceId)
+                                   ?? MagnetUtil.InfoHashFromMagnet(candidate.Acquisition.Locator);
                     var externalId = infoHash ?? Convert.ToHexString(
-                        SHA256.HashData(Encoding.UTF8.GetBytes(candidate.Magnet)));
+                        SHA256.HashData(Encoding.UTF8.GetBytes(candidate.Acquisition.Locator)));
                     return new CatalogItemDto
                     {
                         ExternalId = externalId,
                         ReleaseName = candidate.ReleaseName,
                         InfoHash = infoHash,
-                        MagnetUri = candidate.Magnet,
+                        MagnetUri = candidate.Acquisition.Locator,
                         ImdbId = candidate.ImdbId,
                         Seeders = candidate.SeedersKnown ? candidate.Seeders : null,
                         Leechers = candidate.SeedersKnown ? candidate.Leechers : null,

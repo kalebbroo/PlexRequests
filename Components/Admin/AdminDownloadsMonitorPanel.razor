@@ -57,33 +57,33 @@
                             <MudAlert Severity="@(job.Status == FulfillmentStatus.Failed ? Severity.Error : Severity.Warning)" dense="true" Class="download-alert">@job.LastError</MudAlert>
                         }
 
-                        @if (job.Torrents.Count > 0)
+                        @if (job.Transfers.Count > 0)
                         {
                             <div class="transfer-stats">
-                                <div><MudIcon Icon="@Icons.Material.Filled.Speed" Size="Size.Small" /><span>Speed</span><strong>@Rate(job.Torrents.Sum(t => t.DownloadRateBytesPerSec))</strong></div>
-                                <div><MudIcon Icon="@Icons.Material.Filled.CloudDownload" Size="Size.Small" /><span>Size</span><strong>@FmtSize(job.Torrents.Sum(t => t.TotalSizeBytes))</strong></div>
-                                <div><MudIcon Icon="@Icons.Material.Filled.PeopleAlt" Size="Size.Small" /><span>Peers</span><strong>@job.Torrents.Sum(t => t.Seeds) / @job.Torrents.Sum(t => t.Peers)</strong></div>
+                                <div><MudIcon Icon="@Icons.Material.Filled.Speed" Size="Size.Small" /><span>Speed</span><strong>@Rate(job.Transfers.Sum(t => t.DownloadRateBytesPerSec))</strong></div>
+                                <div><MudIcon Icon="@Icons.Material.Filled.CloudDownload" Size="Size.Small" /><span>Size</span><strong>@FmtSize(job.Transfers.Sum(t => t.TotalSizeBytes))</strong></div>
+                                <div><MudIcon Icon="@Icons.Material.Filled.PeopleAlt" Size="Size.Small" /><span>Peers</span><strong>@job.Transfers.Where(t => t.Protocol == AcquisitionProtocol.Torrent).Sum(t => t.Seeds) / @job.Transfers.Where(t => t.Protocol == AcquisitionProtocol.Torrent).Sum(t => t.Peers)</strong></div>
                                 <div><MudIcon Icon="@Icons.Material.Filled.Timer" Size="Size.Small" /><span>ETA</span><strong>@Eta(JobEta(job))</strong></div>
                             </div>
 
                             <details class="release-details">
-                                <summary><span><MudIcon Icon="@Icons.Material.Filled.Subject" Size="Size.Small" />Release details</span><span>@job.Torrents.Count @Plural(job.Torrents.Count, "file", "files")</span></summary>
+                                <summary><span><MudIcon Icon="@Icons.Material.Filled.Subject" Size="Size.Small" />Release details</span><span>@job.Transfers.Count @Plural(job.Transfers.Count, "transfer", "transfers")</span></summary>
                                 <div class="release-table-wrap">
                                     <table>
                                         <thead><tr><th>Release</th><th>Source</th><th>Stage</th><th>Progress</th><th>Transfer</th><th>Health</th></tr></thead>
                                         <tbody>
-                                            @foreach (var torrent in job.Torrents)
+                                            @foreach (var transfer in job.Transfers)
                                             {
                                                 <tr>
                                                     <td>
-                                                        @if (torrent.Season is int season && torrent.Episode is int episode) { <span class="episode-tag">S@(season.ToString("00"))E@(episode.ToString("00"))</span> }
-                                                        <span class="release-name">@torrent.Name</span>
+                                                        @if (transfer.Season is int season && transfer.Episode is int episode) { <span class="episode-tag">S@(season.ToString("00"))E@(episode.ToString("00"))</span> }
+                                                        <span class="release-name">@transfer.Name</span>
                                                     </td>
-                                                    <td>@(string.IsNullOrWhiteSpace(torrent.Source) ? "Unknown" : torrent.Source)</td>
-                                                    <td><span class="torrent-stage @TorrentStageClass(torrent.Stage)">@TorrentStageLabel(torrent.Stage)</span></td>
-                                                    <td>@torrent.ProgressPercent.ToString("0.0")%</td>
-                                                    <td>@Rate(torrent.DownloadRateBytesPerSec)<small>@Eta(torrent.EtaSeconds)</small></td>
-                                                    <td>@torrent.Seeds seeds<small>@torrent.Peers peers</small></td>
+                                                    <td>@(string.IsNullOrWhiteSpace(transfer.Source) ? transfer.Protocol.ToString() : transfer.Source)<small>@transfer.Protocol</small></td>
+                                                    <td><span class="torrent-stage @TransferStageClass(transfer.Stage)">@TransferStageLabel(transfer.Stage)</span></td>
+                                                    <td>@transfer.ProgressPercent.ToString("0.0")%</td>
+                                                    <td>@Rate(transfer.DownloadRateBytesPerSec)<small>@Eta(transfer.EtaSeconds)</small></td>
+                                                    <td>@if (transfer.Protocol == AcquisitionProtocol.Torrent) { <text>@transfer.Seeds seeds<small>@transfer.Peers peers</small></text> } else { <text>—</text> }</td>
                                                 </tr>
                                             }
                                         </tbody>
@@ -143,34 +143,34 @@
         FulfillmentStatus.Completed => "success",
         FulfillmentStatus.Failed => "error",
         FulfillmentStatus.PartiallyCompleted => "warning",
-        FulfillmentStatus.Downloading when job.Torrents.Any(t => t.Stage == DownloadTorrentStage.Importing) => "warning",
+        FulfillmentStatus.Downloading when job.Transfers.Any(t => t.Stage == DownloadTransferStage.Importing) => "warning",
         FulfillmentStatus.Downloading => "active",
         FulfillmentStatus.Deferred => "waiting",
         _ => "queued"
     };
 
-    private static string TorrentStageClass(DownloadTorrentStage stage) => stage switch
+    private static string TransferStageClass(DownloadTransferStage stage) => stage switch
     {
-        DownloadTorrentStage.Imported => "success",
-        DownloadTorrentStage.Importing => "warning",
-        DownloadTorrentStage.Failed or DownloadTorrentStage.Missing => "error",
-        DownloadTorrentStage.Downloading => "active",
+        DownloadTransferStage.Imported => "success",
+        DownloadTransferStage.Importing => "warning",
+        DownloadTransferStage.Failed or DownloadTransferStage.Missing => "error",
+        DownloadTransferStage.Downloading => "active",
         _ => "queued"
     };
 
-    private static string TorrentStageLabel(DownloadTorrentStage stage) => stage switch
+    private static string TransferStageLabel(DownloadTransferStage stage) => stage switch
     {
-        DownloadTorrentStage.Finishing => "Finishing",
-        DownloadTorrentStage.Importing => "Moving",
-        DownloadTorrentStage.Imported => "Imported",
-        DownloadTorrentStage.Failed => "Failed",
-        DownloadTorrentStage.Missing => "Missing",
+        DownloadTransferStage.Finishing => "Finishing",
+        DownloadTransferStage.Importing => "Moving",
+        DownloadTransferStage.Imported => "Imported",
+        DownloadTransferStage.Failed => "Failed",
+        DownloadTransferStage.Missing => "Missing",
         _ => "Downloading"
     };
 
     private static long? JobEta(DownloadJobView job)
     {
-        var known = job.Torrents.Where(t => t.Stage == DownloadTorrentStage.Downloading && t.EtaSeconds is > 0).Select(t => t.EtaSeconds!.Value).ToList();
+        var known = job.Transfers.Where(t => t.Stage == DownloadTransferStage.Downloading && t.EtaSeconds is > 0).Select(t => t.EtaSeconds!.Value).ToList();
         return known.Count == 0 ? null : known.Max();
     }
 

@@ -1,15 +1,16 @@
 using PlexRequests.Downloader.Import;
 using PlexRequests.Downloader.Organize;
+using PlexRequestsHosted.Shared.Enums;
 using Xunit;
 
 namespace PlexRequests.Tests;
 
-public sealed class TorrentImportCoordinatorTests
+public sealed class TransferImportCoordinatorTests
 {
     [Fact]
     public async Task Concurrent_callers_share_one_successful_physical_import()
     {
-        var coordinator = new TorrentImportCoordinator();
+        var coordinator = new TransferImportCoordinator();
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
@@ -25,9 +26,9 @@ public sealed class TorrentImportCoordinatorTests
             });
         }
 
-        var first = coordinator.RunOnceAsync("same-torrent", Import, CancellationToken.None);
+        var first = coordinator.RunOnceAsync(AcquisitionProtocol.Torrent, "same-torrent", Import, CancellationToken.None);
         await started.Task;
-        var second = coordinator.RunOnceAsync("same-torrent", Import, CancellationToken.None);
+        var second = coordinator.RunOnceAsync(AcquisitionProtocol.Torrent, "same-torrent", Import, CancellationToken.None);
         release.TrySetResult();
 
         var results = await Task.WhenAll(first, second);
@@ -39,7 +40,7 @@ public sealed class TorrentImportCoordinatorTests
     [Fact]
     public async Task Failed_import_is_not_cached_and_can_self_heal_on_next_pass()
     {
-        var coordinator = new TorrentImportCoordinator();
+        var coordinator = new TransferImportCoordinator();
         var calls = 0;
 
         Task<ImportResult> Import(CancellationToken _)
@@ -53,11 +54,28 @@ public sealed class TorrentImportCoordinatorTests
                 }));
         }
 
-        var first = await coordinator.RunOnceAsync("retryable-torrent", Import, CancellationToken.None);
-        var second = await coordinator.RunOnceAsync("retryable-torrent", Import, CancellationToken.None);
+        var first = await coordinator.RunOnceAsync(AcquisitionProtocol.Torrent, "retryable-torrent", Import, CancellationToken.None);
+        var second = await coordinator.RunOnceAsync(AcquisitionProtocol.Torrent, "retryable-torrent", Import, CancellationToken.None);
 
         Assert.False(first.Success);
         Assert.True(second.Success);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task Same_backend_id_on_different_protocols_does_not_share_an_import()
+    {
+        var coordinator = new TransferImportCoordinator();
+        var calls = 0;
+        Task<ImportResult> Import(CancellationToken _) => Task.FromResult(
+            ImportResult.Ok(new[]
+            {
+                new ImportedFileRecord("source", $"destination-{Interlocked.Increment(ref calls)}", "audio", null, null, 100)
+            }));
+
+        await coordinator.RunOnceAsync(AcquisitionProtocol.Torrent, "same-id", Import, CancellationToken.None);
+        await coordinator.RunOnceAsync(AcquisitionProtocol.DirectAudio, "same-id", Import, CancellationToken.None);
+
         Assert.Equal(2, calls);
     }
 }

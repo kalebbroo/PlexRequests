@@ -26,7 +26,7 @@ public sealed class MusicImportTests
             await File.WriteAllTextAsync(Path.Combine(source, "01 - First.flac"), "first");
 
             var result = await CreateOrganizer().OrganizeAsync(AlbumJob(),
-                new TorrentItem("torrent", null, null, true), source, Preferences(library), CancellationToken.None);
+                new TransferItem("torrent", null, null, true), source, Preferences(library), CancellationToken.None);
 
             Assert.True(result.Success, result.FailReason);
             Assert.Equal(2, result.MediaFileCount);
@@ -48,7 +48,7 @@ public sealed class MusicImportTests
             await File.WriteAllTextAsync(Path.Combine(source, "01 - First.flac"), "first");
 
             var result = await CreateOrganizer().OrganizeAsync(AlbumJob(),
-                new TorrentItem("torrent", null, null, true), source, Preferences(library), CancellationToken.None);
+                new TransferItem("torrent", null, null, true), source, Preferences(library), CancellationToken.None);
 
             Assert.False(result.Success);
             Assert.Contains("expects 2 tracks", result.FailReason);

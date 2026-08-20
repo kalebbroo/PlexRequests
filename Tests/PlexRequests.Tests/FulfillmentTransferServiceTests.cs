@@ -10,7 +10,7 @@ using Xunit;
 
 namespace PlexRequests.Tests;
 
-public sealed class FulfillmentTorrentServiceTests
+public sealed class FulfillmentTransferServiceTests
 {
     [Fact]
     public async Task One_physical_torrent_updates_every_job_mapping()
@@ -50,25 +50,33 @@ public sealed class FulfillmentTorrentServiceTests
         await db.SaveChangesAsync();
 
         const string torrentId = "5282169f1f68b449306b424802296d1e7d730f4d";
-        db.FulfillmentTorrents.AddRange(
-            new FulfillmentTorrentEntity { FulfillmentJobId = firstJob.Id, TorrentId = torrentId },
-            new FulfillmentTorrentEntity { FulfillmentJobId = secondJob.Id, TorrentId = torrentId });
+        db.FulfillmentTransfers.AddRange(
+            new FulfillmentTransferEntity { FulfillmentJobId = firstJob.Id, TransferId = torrentId },
+            new FulfillmentTransferEntity { FulfillmentJobId = secondJob.Id, TransferId = torrentId },
+            // Backend ids are opaque and may collide across protocols. This row must remain independent.
+            new FulfillmentTransferEntity
+            {
+                FulfillmentJobId = secondJob.Id,
+                TransferId = torrentId,
+                Protocol = AcquisitionProtocol.DirectAudio
+            });
         await db.SaveChangesAsync();
 
-        var service = new FulfillmentTorrentService(
+        var service = new FulfillmentTransferService(
             db,
-            NullLogger<FulfillmentTorrentService>.Instance);
+            NullLogger<FulfillmentTransferService>.Instance);
 
         var active = await service.GetActiveAsync();
-        var current = Assert.Single(active);
+        Assert.Equal(2, active.Count);
+        var current = Assert.Single(active, x => x.Protocol == AcquisitionProtocol.Torrent);
         Assert.Equal(secondJob.Id, current.FulfillmentJobId);
 
         var changed = await service.ApplyAsync(new[]
         {
-            new TorrentStateUpdateDto
+            new TransferStateUpdateDto
             {
-                TorrentId = torrentId,
-                State = TorrentTrackingState.Active,
+                TransferId = torrentId,
+                State = TransferTrackingState.Active,
                 Progress = 42.5,
                 Seeds = 8,
                 Peers = 3,
@@ -76,10 +84,10 @@ public sealed class FulfillmentTorrentServiceTests
             }
         });
 
-        var rows = await db.FulfillmentTorrents.OrderBy(x => x.Id).ToListAsync();
+        var rows = await db.FulfillmentTransfers.OrderBy(x => x.Id).ToListAsync();
         Assert.Equal(2, changed);
-        Assert.Equal(2, rows.Count);
-        Assert.All(rows, row =>
+        Assert.Equal(3, rows.Count);
+        Assert.All(rows.Where(row => row.Protocol == AcquisitionProtocol.Torrent), row =>
         {
             Assert.Equal(42.5, row.Progress);
             Assert.Equal(8, row.Seeds);
@@ -87,5 +95,8 @@ public sealed class FulfillmentTorrentServiceTests
             Assert.Equal(1_000, row.TotalSizeBytes);
             Assert.NotNull(row.LastSeenAt);
         });
+        var direct = Assert.Single(rows, row => row.Protocol == AcquisitionProtocol.DirectAudio);
+        Assert.Equal(0, direct.Progress);
+        Assert.Null(direct.LastSeenAt);
     }
 }
