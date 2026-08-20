@@ -304,10 +304,10 @@
         try
         {
             await PlexApiService.AnnotateAvailabilityAsync(items);
-            var keys = items.Select(m => (m.Id, m.MediaType)).ToList();
-            var statuses = await MediaRequestService.GetMyRequestStatusesAsync(keys);
+            var statuses = await MediaRequestService.GetMyRequestStatusesAsync(
+                items.Select(m => m.ResolveMediaRef()));
             foreach (var m in items)
-                if (statuses.TryGetValue($"{m.MediaType}:{m.Id}", out var st)) m.RequestStatus = st;
+                if (statuses.TryGetValue(m.ResolveMediaRef().StableKey, out var st)) m.RequestStatus = st;
         }
         catch { /* best-effort */ }
     }

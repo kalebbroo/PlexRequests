@@ -351,6 +351,7 @@ public sealed partial class YouTubeMusicMetadataProvider(
                 Kind = MediaKind.Artist,
                 ArtistId = canonical.Id,
                 ArtistCredit = title,
+                Albums = albums,
                 AlbumTitles = albums.Select(x => x.Title).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
             }
         };

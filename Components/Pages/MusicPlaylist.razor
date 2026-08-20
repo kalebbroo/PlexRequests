@@ -55,7 +55,18 @@
         _hasLoaded = true;
         _loadedId = Id;
         _loading = true;
-        try { _playlist = string.IsNullOrWhiteSpace(Id) ? null : await Discovery.GetPlaylistAsync(Id); }
+        try
+        {
+            _playlist = string.IsNullOrWhiteSpace(Id) ? null : await Discovery.GetPlaylistAsync(Id);
+            if (_playlist?.Tracks.Count > 0)
+            {
+                var statuses = await MediaRequestService.GetMyRequestStatusesAsync(
+                    _playlist.Tracks.Select(x => x.ResolveMediaRef()));
+                foreach (var track in _playlist.Tracks)
+                    if (statuses.TryGetValue(track.ResolveMediaRef().StableKey, out var status))
+                        track.RequestStatus = status;
+            }
+        }
         catch { _playlist = null; }
         finally { _loading = false; }
     }

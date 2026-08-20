@@ -150,6 +150,9 @@ public sealed class MusicMetadataDto
     public string? AlbumTitle { get; set; }
     public int TrackCount { get; set; }
     public List<MusicTrackMetadataDto> Tracks { get; set; } = new();
+    /// <summary>Requestable album cards for an artist detail page. This retains the provider identities
+    /// and artwork already returned by the catalog instead of reducing the discography to plain text.</summary>
+    public List<MediaCardDto> Albums { get; set; } = new();
     public List<string> AlbumTitles { get; set; } = new();
 }
 

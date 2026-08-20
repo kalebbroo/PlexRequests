@@ -243,6 +243,20 @@ else
         <section class="details-tabs">
             <MudContainer MaxWidth="MaxWidth.Large">
                 <MudTabs Elevation="0" Rounded="false" Centered="false" Color="Color.Default" SliderColor="Color.Primary" Class="custom-tabs">
+                    @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music
+                        && _media.Music?.Kind == MediaKind.Artist && _media.Music.Albums.Count > 0)
+                    {
+                        <MudTabPanel Text="Albums">
+                            <div class="similar-section">
+                                <div class="similar-grid">
+                                    @foreach (var album in _media.Music.Albums)
+                                    {
+                                        <PlexRequestsHosted.Components.Shared.MediaCard Media="album" OnRequest="RequestSimilar" />
+                                    }
+                                </div>
+                            </div>
+                        </MudTabPanel>
+                    }
                     @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music && _media.Music?.Tracks.Count > 0)
                     {
                         <MudTabPanel Text="Tracks">
@@ -456,23 +470,27 @@ else
                         </div>
                     </MudTabPanel>
                     
-                    <MudTabPanel Text="Similar">
-                        <div class="similar-section">
-                            @if (_similarMedia?.Any() == true)
-                            {
-                                <div class="similar-grid">
-                                    @foreach (PlexRequestsHosted.Shared.DTOs.MediaCardDto similar in _similarMedia)
-                                    {
-                                        <PlexRequestsHosted.Components.Shared.MediaCard Media="similar" OnRequest="RequestSimilar" />
-                                    }
-                                </div>
-                            }
-                            else
-                            {
-                                <MudText Typo="Typo.body1">No similar titles available</MudText>
-                            }
-                        </div>
-                    </MudTabPanel>
+                    @if (_media.MediaType != PlexRequestsHosted.Shared.Enums.MediaType.Music
+                        || _media.Music?.Kind != MediaKind.Artist)
+                    {
+                        <MudTabPanel Text="Similar">
+                            <div class="similar-section">
+                                @if (_similarMedia?.Any() == true)
+                                {
+                                    <div class="similar-grid">
+                                        @foreach (PlexRequestsHosted.Shared.DTOs.MediaCardDto similar in _similarMedia)
+                                        {
+                                            <PlexRequestsHosted.Components.Shared.MediaCard Media="similar" OnRequest="RequestSimilar" />
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.body1">No similar titles available</MudText>
+                                }
+                            </div>
+                        </MudTabPanel>
+                    }
                 </MudTabs>
             </MudContainer>
         </section>
@@ -582,15 +600,22 @@ else
             // Phase 2: enrich (badges, watchlist, seasons, recommendations). The recommendations fetch
             // is a TMDB call (own HttpClient) so it can overlap the DB work; the DB calls themselves
             // run sequentially because scoped services share the circuit's single AppDbContext.
-            var similarTask = PlexApiService.GetSimilarAsync(mediaRef, 12);
+            var similarTask = mediaRef.Kind == MediaKind.Artist
+                ? Task.FromResult(new List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>())
+                : PlexApiService.GetSimilarAsync(mediaRef, 12);
 
             await PlexApiService.AnnotateAvailabilityAsync(new List<PlexRequestsHosted.Shared.DTOs.MediaCardDto> { media });
             if (version != _loadVersion) return;
+            var statusCards = new List<PlexRequestsHosted.Shared.DTOs.MediaCardDto> { media };
+            if (media.Music?.Albums.Count > 0) statusCards.AddRange(media.Music.Albums);
+            var statusMap = await MediaRequestService.GetMyRequestStatusesAsync(
+                statusCards.Select(x => x.ResolveMediaRef()));
+            if (version != _loadVersion) return;
+            foreach (var card in statusCards)
+                if (statusMap.TryGetValue(card.ResolveMediaRef().StableKey, out var status))
+                    card.RequestStatus = status;
             if (mediaRef.TryGetTmdbId(out _))
             {
-                var statuses = await MediaRequestService.GetMyRequestStatusesAsync(new List<(int, PlexRequestsHosted.Shared.Enums.MediaType)> { (media.Id, media.MediaType) });
-                if (version != _loadVersion) return;
-                if (statuses.TryGetValue($"{media.MediaType}:{media.Id}", out var st)) media.RequestStatus = st;
                 var inWatchlist = await MediaRequestService.IsInWatchlistAsync(media.Id, media.MediaType);
                 if (version != _loadVersion) return;
                 _inWatchlist = inWatchlist;
@@ -629,11 +654,11 @@ else
             {
                 await PlexApiService.AnnotateAvailabilityAsync(similarMedia);
                 if (version != _loadVersion) return;
-                var map = await MediaRequestService.GetMyRequestStatusesAsync(similarMedia
-                    .Where(m => m.ResolveMediaRef().TryGetTmdbId(out _)).Select(m => (m.Id, m.MediaType)).ToList());
+                var map = await MediaRequestService.GetMyRequestStatusesAsync(
+                    similarMedia.Select(m => m.ResolveMediaRef()));
                 if (version != _loadVersion) return;
                 foreach (var m in similarMedia)
-                    if (map.TryGetValue($"{m.MediaType}:{m.Id}", out var st2)) m.RequestStatus = st2;
+                    if (map.TryGetValue(m.ResolveMediaRef().StableKey, out var st2)) m.RequestStatus = st2;
                 await InvokeAsync(StateHasChanged);
             }
         }
