@@ -123,6 +123,8 @@ public class PlexMusicService(HttpClient http, IOptions<PlexConfiguration> optio
                     if (!byId && !MatchesNames(item, request)) continue;
                     if (request.Kind == Shared.Enums.MediaKind.Artist)
                         return await VerifyArtistCatalogAsync(ratingKey, request.ExpectedAlbums, ct);
+                    if (request.Kind == Shared.Enums.MediaKind.Album)
+                        return await VerifyAlbumTracksAsync(ratingKey, request.ExpectedTracks, ct);
                     return new(true, ratingKey, byId
                         ? "Matched Plex provider id"
                         : "Matched normalized music identity");
@@ -149,6 +151,39 @@ public class PlexMusicService(HttpClient http, IOptions<PlexConfiguration> optio
         return missing.Count == 0
             ? new(true, ratingKey, $"Plex contains all {expectedAlbums.Count} expected artist releases")
             : new(false, ratingKey, $"Plex artist catalog is missing {missing.Count} expected release(s)");
+    }
+
+    private async Task<PlexVerificationResult> VerifyAlbumTracksAsync(string ratingKey,
+        IReadOnlyList<string>? expectedTracks, CancellationToken ct)
+    {
+        if (expectedTracks is not { Count: > 0 })
+            return new(false, ratingKey, "Album metadata did not contain a track completion contract");
+        ct.ThrowIfCancellationRequested();
+        using var doc = await GetJsonAsync(
+            $"{Base}/library/metadata/{Uri.EscapeDataString(ratingKey)}/children?X-Plex-Token={Tok}", ct);
+        if (doc is null) return new(false, ratingKey, "Plex did not return the album track list");
+        var container = doc.RootElement.TryGetProperty("MediaContainer", out var mediaContainer)
+            ? mediaContainer : doc.RootElement;
+        var actualTracks = container.TryGetProperty("Metadata", out var metadata)
+                           && metadata.ValueKind == JsonValueKind.Array
+            ? metadata.EnumerateArray().Where(x => Str(x, "type") == "track")
+                .Select(x => Str(x, "title")).ToList()
+            : new List<string>();
+
+        var have = actualTracks.Select(Normalize).Where(x => x.Length > 0)
+            .GroupBy(x => x).ToDictionary(x => x.Key, x => x.Count());
+        var missing = new List<string>();
+        foreach (var track in expectedTracks)
+        {
+            var key = Normalize(track);
+            if (key.Length > 0 && have.TryGetValue(key, out var count) && count > 0)
+                have[key] = count - 1;
+            else
+                missing.Add(track);
+        }
+        return missing.Count == 0
+            ? new(true, ratingKey, $"Plex contains all {expectedTracks.Count} expected album tracks")
+            : new(false, ratingKey, $"Plex album is missing {missing.Count} of {expectedTracks.Count} expected track(s)");
     }
 
     private async Task<JsonDocument?> GetJsonAsync(string url, CancellationToken ct = default)

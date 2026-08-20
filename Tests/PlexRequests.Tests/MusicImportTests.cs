@@ -82,12 +82,18 @@ public sealed class MusicImportTests
     [Fact]
     public async Task Plex_verification_matches_album_and_artist_after_normalization()
     {
-        const string json = """
+        const string search = """
             {"MediaContainer":{"Hub":[{"type":"album","Metadata":[
               {"type":"album","ratingKey":"77","title":"Random Access Memories","parentTitle":"Daft Punk"}
             ]}]}}
             """;
-        var http = new HttpClient(new JsonHandler(json));
+        const string tracks = """
+            {"MediaContainer":{"Metadata":[
+              {"type":"track","title":"Give Life Back to Music"},
+              {"type":"track","title":"Instant Crush"}
+            ]}}
+            """;
+        var http = new HttpClient(new JsonHandler(search, tracks));
         var service = new PlexMusicService(http, Options.Create(new PlexConfiguration
         {
             PrimaryServerUrl = "http://plex:32400", ServerToken = "token"
@@ -95,10 +101,35 @@ public sealed class MusicImportTests
 
         var result = await service.VerifyAsync(new PlexVerificationRequest(
             MediaType.Music, MediaKind.Album, "musicbrainz", "unknown-release-group",
-            "Daft-Punk", "Random Access Memories!", null));
+            "Daft-Punk", "Random Access Memories!", null, ExpectedTracks:
+            ["Give Life Back to Music", "Instant Crush"]));
 
         Assert.True(result.Available);
         Assert.Equal("77", result.RatingKey);
+    }
+
+    [Fact]
+    public async Task Album_verification_rejects_a_partial_album_with_a_duplicate_track_title()
+    {
+        const string search = """
+            {"MediaContainer":{"Hub":[{"type":"album","Metadata":[
+              {"type":"album","ratingKey":"77","title":"Album","parentTitle":"Artist"}
+            ]}]}}
+            """;
+        const string partial = """
+            {"MediaContainer":{"Metadata":[{"type":"track","title":"First"}]}}
+            """;
+        var service = new PlexMusicService(new HttpClient(new JsonHandler(search, partial)),
+            Options.Create(new PlexConfiguration { PrimaryServerUrl = "http://plex:32400", ServerToken = "token" }),
+            NullLogger<PlexMusicService>.Instance);
+
+        var result = await service.VerifyAsync(new PlexVerificationRequest(
+            MediaType.Music, MediaKind.Album, "youtube", "album-id",
+            "Artist", "Album", null, ExpectedTracks: ["First", "First"]));
+
+        Assert.False(result.Available);
+        Assert.Equal("77", result.RatingKey);
+        Assert.Contains("missing 1 of 2", result.Detail);
     }
 
     [Fact]

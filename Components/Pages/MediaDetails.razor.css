@@ -380,3 +380,18 @@
 .episode-num { font-weight: 700; color: var(--text-secondary); min-width: 34px; }
 .episode-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .season-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+
+.music-track-row { min-height: 44px; padding: 5px 4px; border-bottom: 1px solid rgba(255,255,255,0.055); }
+.music-track-number { width: 2rem; color: var(--text-secondary); text-align: right; padding-right: 6px; }
+.music-track-name { min-width: 0; flex: 1; }
+.music-track-link { color: inherit; text-decoration: none; font-size: 1rem; font-weight: 500; }
+.music-track-link:hover { color: var(--mud-palette-primary); text-decoration: underline; }
+.music-track-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.music-track-detail { color: var(--text-secondary); display: inline-flex; padding: 4px; border-radius: 50%; }
+.music-track-detail:hover { color: var(--mud-palette-primary); background: rgba(255,255,255,0.06); }
+
+@media (max-width: 600px) {
+    .music-track-actions { gap: 5px; }
+    .music-track-row { align-items: flex-start; }
+    .music-track-actions .text-secondary { display: none; }
+}
