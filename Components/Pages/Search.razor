@@ -263,7 +263,7 @@
         // each keystroke restarts it. (The old code allocated a new timer per keystroke
         // and never disposed them, and AutoReset defaulted to true = repeated firing.)
         _debounceTimer = new System.Timers.Timer(300) { AutoReset = false };
-        _debounceTimer.Elapsed += (_, _) => _ = InvokeAsync(PerformSearch);
+        _debounceTimer.Elapsed += (_, _) => _ = InvokeAsync(RunDebouncedSearchAsync);
     }
 
     protected override async Task OnInitializedAsync()
@@ -355,6 +355,11 @@
 
     private void SearchFor(String query)
     {
+        if (MusicOnlyMode)
+        {
+            Navigation.NavigateTo(BuildMusicSearchUri(_musicKind, query));
+            return;
+        }
         _searchQuery = query;
         _ = PerformSearch();
     }
@@ -363,8 +368,7 @@
     {
         if (MusicOnlyMode)
         {
-            _searchQuery = genre;
-            _ = PerformSearch();
+            Navigation.NavigateTo(BuildMusicSearchUri(_musicKind, genre));
             return;
         }
         // The typed grid reads ?genre=; plain /browse (Home) ignores it.
@@ -373,6 +377,12 @@
 
     private void ClearSearch()
     {
+        if (MusicOnlyMode)
+        {
+            _debounceTimer?.Stop();
+            Navigation.NavigateTo(BuildMusicSearchUri(_musicKind), replace: true);
+            return;
+        }
         Interlocked.Increment(ref _searchVersion);
         _searchQuery = "";
         _searchResults = null;
@@ -389,9 +399,44 @@
 
     private void SetMusicKind(MediaKind kind)
     {
+        if (MusicOnlyMode)
+        {
+            _debounceTimer?.Stop();
+            Navigation.NavigateTo(BuildMusicSearchUri(kind, _searchQuery));
+            return;
+        }
         _filterType = PlexRequestsHosted.Shared.Enums.MediaType.Music;
         _musicKind = kind;
         _ = PerformSearch();
+    }
+
+    private Task RunDebouncedSearchAsync()
+    {
+        if (!MusicOnlyMode) return PerformSearch();
+
+        var target = BuildMusicSearchUri(_musicKind, _searchQuery);
+        var current = $"/{Navigation.ToBaseRelativePath(Navigation.Uri)}";
+        if (string.Equals(current, target, StringComparison.Ordinal))
+            return PerformSearch();
+
+        // Replace while typing so one search does not create a browser-history entry per pause.
+        // OnParametersSetAsync owns the resulting search and cancels any stale provider response.
+        Navigation.NavigateTo(target, replace: true);
+        return Task.CompletedTask;
+    }
+
+    private string BuildMusicSearchUri(MediaKind kind, string? query = null)
+    {
+        var parameters = new List<string>
+        {
+            "type=music",
+            $"kind={kind.ToString().ToLowerInvariant()}"
+        };
+        if (!string.IsNullOrWhiteSpace(QuerySource))
+            parameters.Add($"source={Uri.EscapeDataString(QuerySource.Trim())}");
+        if (!string.IsNullOrWhiteSpace(query))
+            parameters.Add($"q={Uri.EscapeDataString(query.Trim())}");
+        return $"/search?{string.Join('&', parameters)}";
     }
 
     private async Task RequestMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
