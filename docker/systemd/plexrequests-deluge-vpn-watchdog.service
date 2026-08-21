@@ -1,0 +1,14 @@
+[Unit]
+Description=Plex Requests Deluge VPN rebind watchdog
+After=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/plexrequests-deluge-vpn-watchdog
+ExecStart=/bin/sh /usr/local/sbin/plexrequests-deluge-vpn-watchdog
+TimeoutStartSec=30
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+RuntimeDirectory=plexrequests
+RuntimeDirectoryMode=0700

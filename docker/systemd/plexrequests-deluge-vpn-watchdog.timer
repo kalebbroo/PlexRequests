@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Deluge VPN interface binding
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=15s
+AccuracySec=2s
+Unit=plexrequests-deluge-vpn-watchdog.service
+
+[Install]
+WantedBy=timers.target

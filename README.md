@@ -245,6 +245,11 @@ Set `FULFILLMENT_API_KEY` (the same value on web + downloader) and pick a scenar
 | **Managed torrent client** | `docker compose --profile torrent up -d` | + a Deluge container the downloader auto-uses (`http://deluge:8112`). |
 | **Managed VPN + client (kill-switch)** | `docker compose -f docker-compose.vpn.yml up -d` | web + gluetun + Deluge + downloader, with the torrent stack locked to the VPN tunnel. |
 
+If a **native Deluge** service is bound to a host VPN interface such as `tun0`, install the optional
+rebind watchdog with `sudo ./scripts/install-deluge-vpn-watchdog.sh --interface tun0`. It fails closed
+while the interface/routes are absent and restarts Deluge when the VPN client recreates the interface,
+preventing a healthy-looking Deluge API with every tracker stuck on `No such device`.
+
 Full design, the worker API contract, indexer notes (including the Cloudflare caveat for scraped sources),
 and VPN details are in **[docs/fulfillment-pipeline.md](docs/fulfillment-pipeline.md)**.
 
