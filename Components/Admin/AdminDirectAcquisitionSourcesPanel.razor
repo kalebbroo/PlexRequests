@@ -1,0 +1,117 @@
+@using PlexRequestsHosted.Shared.DTOs
+@inject PlexRequestsHosted.Services.Abstractions.IMusicSettingsService Settings
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
+
+<MudPaper Class="pa-2 mb-4" Elevation="1">
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap pa-2">
+        <div>
+            <MudText Typo="Typo.subtitle1">Direct acquisition sources</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Tertiary">
+                Built-in sources that deliver media directly instead of returning torrent or Usenet releases.
+            </MudText>
+        </div>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">1 source</MudChip>
+    </div>
+
+    @if (_loading || _settings is null)
+    {
+        <div class="d-flex justify-content-center py-4">
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Small" />
+        </div>
+    }
+    else
+    {
+        <MudTable T="MusicSettingsDto" Items="DirectSources" dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>Source</MudTh>
+                <MudTh>Media</MudTh>
+                <MudTh>Delivery</MudTh>
+                <MudTh>Health</MudTh>
+                <MudTh>Enabled</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Source">
+                    <div class="d-flex align-items-center gap-2">
+                        <MudIcon Icon="@Icons.Material.Filled.LibraryMusic" Color="Color.Primary" />
+                        <div>
+                            <b>YouTube Music</b>
+                            <div class="text-muted small">Built-in acquisition provider</div>
+                        </div>
+                    </div>
+                </MudTd>
+                <MudTd DataLabel="Media">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Music</MudChip>
+                </MudTd>
+                <MudTd DataLabel="Delivery">
+                    <b>Direct audio</b>
+                    <div class="text-muted small">Native AAC with Plex metadata</div>
+                </MudTd>
+                <MudTd DataLabel="Health">
+                    @if (context.DirectDownloadsEnabled)
+                    {
+                        <MudTooltip Text="Resolved on demand by the downloader; torrent indexer circuits do not affect this source.">
+                            <MudChip T="string" Color="Color.Success" Size="Size.Small"
+                                     Icon="@Icons.Material.Filled.CheckCircle">ready on demand</MudChip>
+                        </MudTooltip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Default" Size="Size.Small">disabled</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Enabled">
+                    <MudSwitch T="bool" Color="Color.Primary" Value="@context.DirectDownloadsEnabled"
+                               ValueChanged="SetEnabled" Disabled="_saving"
+                               aria-label="Enable YouTube Music direct acquisition" />
+                </MudTd>
+                <MudTd>
+                    <MudTooltip Text="Configure the music catalog and request pipeline.">
+                        <MudIconButton Icon="@Icons.Material.Filled.Settings" Size="Size.Small"
+                                       Href="/admin?tab=library&sub=catalogs"
+                                       aria-label="Configure YouTube Music" />
+                    </MudTooltip>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudPaper>
+
+@code {
+    private MusicSettingsDto? _settings;
+    private bool _loading = true;
+    private bool _saving;
+
+    private IEnumerable<MusicSettingsDto> DirectSources => _settings is null ? [] : [_settings];
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _settings = await Settings.GetAsync(); }
+        finally { _loading = false; }
+    }
+
+    private async Task SetEnabled(bool enabled)
+    {
+        if (_settings is null) return;
+        var previous = _settings.DirectDownloadsEnabled;
+        _settings.DirectDownloadsEnabled = enabled;
+        _saving = true;
+        try
+        {
+            await Settings.UpdateAsync(_settings);
+            _settings = await Settings.GetAsync();
+            await Toast.ShowSuccessAsync($"YouTube Music direct acquisition {(enabled ? "enabled" : "disabled")}.");
+        }
+        catch (InvalidOperationException ex)
+        {
+            _settings.DirectDownloadsEnabled = previous;
+            await Toast.ShowErrorAsync(ex.Message);
+        }
+        catch
+        {
+            _settings.DirectDownloadsEnabled = previous;
+            await Toast.ShowErrorAsync("YouTube Music could not be updated.");
+        }
+        finally { _saving = false; }
+    }
+}
