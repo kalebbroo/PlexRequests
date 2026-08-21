@@ -575,7 +575,8 @@ public sealed record PlexVerificationRequest(
     string? Album,
     string? Track,
     List<string>? ExpectedAlbums = null,
-    List<string>? ExpectedTracks = null);
+    List<string>? ExpectedTracks = null,
+    int? ExpectedDurationMs = null);
 
 public sealed record PlexVerificationResult(bool Available, string? RatingKey = null, string? Detail = null);
 

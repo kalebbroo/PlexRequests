@@ -154,8 +154,14 @@ public class LibraryOrganizer(
         if (music.Kind == MediaKind.Track)
         {
             var wanted = CleanLabel(music.Track ?? job.Title, job.Title);
-            var best = audioFiles.FirstOrDefault(f => ContainsNormalized(Path.GetFileNameWithoutExtension(f), wanted))
-                       ?? audioFiles.OrderByDescending(SafeLength).FirstOrDefault();
+            var namedMatches = audioFiles
+                .Where(f => ContainsNormalized(Path.GetFileNameWithoutExtension(f), wanted))
+                .OrderByDescending(SafeLength).ToList();
+            var best = namedMatches.FirstOrDefault();
+            if (best is null && audioFiles.Count == 1) best = audioFiles[0];
+            if (best is null && audioFiles.Count > 1)
+                throw new InvalidOperationException(
+                    $"Track payload is ambiguous: none of its {audioFiles.Count} audio files match '{wanted}'");
             if (best is null) return records;
             var album = CleanLabel(music.Album, "Singles");
             var dest = naming.BuildMusicTrackPath(prefs, job, artist, album, 1, 1, wanted, Path.GetExtension(best));

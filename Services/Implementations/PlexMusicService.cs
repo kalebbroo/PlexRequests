@@ -24,6 +24,7 @@ public interface IPlexMusicService
 /// </summary>
 public class PlexMusicService(HttpClient http, IOptions<PlexConfiguration> options, ILogger<PlexMusicService> logger) : IPlexMusicService
 {
+    private const int TrackDurationToleranceMs = 8_000;
     private readonly PlexConfiguration _cfg = options.Value;
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
@@ -106,7 +107,7 @@ public class PlexMusicService(HttpClient http, IOptions<PlexConfiguration> optio
 
         try
         {
-            var doc = await GetJsonAsync($"{Base}/hubs/search?query={Uri.EscapeDataString(query)}&limit=50&X-Plex-Token={Tok}", ct);
+            using var doc = await GetJsonAsync($"{Base}/hubs/search?query={Uri.EscapeDataString(query)}&limit=50&X-Plex-Token={Tok}", ct);
             if (doc is null) return new(false, Detail: "Plex search did not return a response");
             var mc = doc.RootElement.TryGetProperty("MediaContainer", out var m) ? m : doc.RootElement;
             if (!mc.TryGetProperty("Hub", out var hubs) || hubs.ValueKind != JsonValueKind.Array)
@@ -120,7 +121,13 @@ public class PlexMusicService(HttpClient http, IOptions<PlexConfiguration> optio
                     if (!MatchesKind(item, request.Kind)) continue;
                     var ratingKey = Str(item, "ratingKey");
                     var byId = HasExternalId(item, request.ExternalSource, request.ExternalId);
-                    if (!byId && !MatchesNames(item, request)) continue;
+                    if (!byId)
+                    {
+                        var matched = request.Kind == Shared.Enums.MediaKind.Track
+                            ? await MatchesTrackAsync(item, ratingKey, request, ct)
+                            : MatchesNames(item, request);
+                        if (!matched) continue;
+                    }
                     if (request.Kind == Shared.Enums.MediaKind.Artist)
                         return await VerifyArtistCatalogAsync(ratingKey, request.ExpectedAlbums, ct);
                     if (request.Kind == Shared.Enums.MediaKind.Album)
@@ -216,9 +223,50 @@ public class PlexMusicService(HttpClient http, IOptions<PlexConfiguration> optio
         return request.Kind switch
         {
             Shared.Enums.MediaKind.Artist => Same(title, request.Artist),
-            Shared.Enums.MediaKind.Track => Same(title, request.Track) && Same(artist, request.Artist),
+            Shared.Enums.MediaKind.Track => MatchesTrack(item, request),
             _ => Same(title, request.Album) && Same(artist, request.Artist)
         };
+    }
+
+    private async Task<bool> MatchesTrackAsync(JsonElement item, string ratingKey,
+        PlexVerificationRequest request, CancellationToken ct)
+    {
+        var title = Str(item, "title");
+        var artist = Str(item, "grandparentTitle");
+        var album = Str(item, "parentTitle");
+        var duration = Int(item, "duration");
+        // Explicitly different search metadata is authoritative enough to reject without another Plex call.
+        // Fetch the full item only when the compact hub omitted a field needed by the contract.
+        if ((title.Length > 0 && !Same(title, request.Track))
+            || (artist.Length > 0 && !Same(artist, request.Artist))
+            || (album.Length > 0 && !string.IsNullOrWhiteSpace(request.Album) && !Same(album, request.Album))
+            || (duration is > 0 && request.ExpectedDurationMs is > 0
+                && Math.Abs(duration.Value - request.ExpectedDurationMs.Value) > TrackDurationToleranceMs))
+            return false;
+        var incomplete = title.Length == 0 || artist.Length == 0
+            || (!string.IsNullOrWhiteSpace(request.Album) && album.Length == 0)
+            || (request.ExpectedDurationMs is > 0 && duration is not > 0);
+        if (!incomplete) return true;
+        if (string.IsNullOrWhiteSpace(ratingKey)) return false;
+        using var doc = await GetJsonAsync(
+            $"{Base}/library/metadata/{Uri.EscapeDataString(ratingKey)}?X-Plex-Token={Tok}", ct);
+        if (doc is null) return false;
+        var container = doc.RootElement.TryGetProperty("MediaContainer", out var mediaContainer)
+            ? mediaContainer : doc.RootElement;
+        if (!container.TryGetProperty("Metadata", out var metadata)
+            || metadata.ValueKind != JsonValueKind.Array) return false;
+        return metadata.EnumerateArray().Any(x => Str(x, "type") == "track" && MatchesTrack(x, request));
+    }
+
+    private static bool MatchesTrack(JsonElement item, PlexVerificationRequest request)
+    {
+        if (!Same(Str(item, "title"), request.Track)
+            || !Same(Str(item, "grandparentTitle"), request.Artist)) return false;
+        if (!string.IsNullOrWhiteSpace(request.Album)
+            && !Same(Str(item, "parentTitle"), request.Album)) return false;
+        var duration = Int(item, "duration");
+        return request.ExpectedDurationMs is not > 0 || duration is not > 0
+            || Math.Abs(duration.Value - request.ExpectedDurationMs.Value) <= TrackDurationToleranceMs;
     }
 
     private static bool HasExternalId(JsonElement item, string? source, string? externalId)

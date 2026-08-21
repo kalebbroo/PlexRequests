@@ -594,10 +594,12 @@ public class MediaRequestService(
             var present = await _plexMusic.VerifyAsync(new PlexVerificationRequest(
                 MediaType.Music, mediaRef.Kind, mediaRef.Provider, mediaRef.Id,
                 mediaRef.Kind == MediaKind.Artist ? detail.Title : detail.Music?.ArtistCredit,
-                mediaRef.Kind == MediaKind.Album ? detail.Title : null,
+                mediaRef.Kind == MediaKind.Album ? detail.Title
+                    : mediaRef.Kind == MediaKind.Track ? detail.Music?.AlbumTitle : null,
                 mediaRef.Kind == MediaKind.Track ? detail.Title : null,
                 detail.Music?.AlbumTitles,
-                detail.Music?.Tracks.Select(x => x.Title).ToList()));
+                detail.Music?.Tracks.Select(x => x.Title).ToList(),
+                detail.Music?.Tracks.FirstOrDefault()?.DurationMs));
             if (present.Available)
                 return new MediaRequestResult { Success = false, ErrorMessage = "This music is already available on Plex." };
         }
