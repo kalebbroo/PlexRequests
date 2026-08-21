@@ -929,12 +929,7 @@ public class MediaRequestService(
         ExternalSource = r.ExternalSource,
         MediaRef = !string.IsNullOrWhiteSpace(r.ExternalId)
             ? PlexRequestsHosted.Shared.Media.MediaRef.FromExternal(r.ExternalSource ?? "external", r.ExternalId,
-                r.MediaType, r.RequestScopeKind switch
-                {
-                    RequestScopeKind.ArtistCatalog => MediaKind.Artist,
-                    RequestScopeKind.Track => MediaKind.Track,
-                    _ => r.MediaType.DefaultKind()
-                })
+                r.MediaType, r.RequestScopeKind.ToMediaKind(r.MediaType))
             : PlexRequestsHosted.Shared.Media.MediaRef.FromTmdb(r.MediaId, r.MediaType),
         RequestScopeKind = r.RequestScopeKind,
         RequestedByUserId = r.RequestedByUserId ?? 0,

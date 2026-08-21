@@ -5,6 +5,7 @@ using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.Jobs;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 using System.Text.Json;
 
 namespace PlexRequestsHosted.Services.Background;
@@ -73,9 +74,23 @@ public class AvailabilityReconciliationService(
         foreach (var req in open)
         {
             if (ct.IsCancellationRequested) break;
-            var satisfied = req.MediaType == MediaType.Music
-                ? await IsMusicSatisfiedAsync(req, ct)
-                : await IsSatisfiedAsync(req, titleAvailable, plex, seasonEvaluator, ct);
+            bool satisfied;
+            try
+            {
+                satisfied = req.MediaType == MediaType.Music
+                    ? await IsMusicSatisfiedAsync(req, ct)
+                    : await IsSatisfiedAsync(req, titleAvailable, plex, seasonEvaluator, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                // One corrupt legacy row or one provider-specific Plex response must not prevent every
+                // unrelated request later in this pass from becoming Available. No entity state has been
+                // changed yet, so skipping this probe is safe and the next scheduled pass retries it.
+                logger.LogWarning(ex, "Availability probe failed for request {RequestId} {Title}; continuing",
+                    req.Id, req.Title);
+                continue;
+            }
             if (!satisfied) continue;
 
             req.Status = RequestStatus.Available;
@@ -104,35 +119,44 @@ public class AvailabilityReconciliationService(
             .Where(j => j.MediaRequestId == req.Id && j.AcquisitionContextJson != null)
             .OrderByDescending(j => j.Id)
             .Select(j => j.AcquisitionContextJson)
-            .FirstOrDefaultAsync(ct);
-        MusicAcquisitionContextDto? context = null;
-        try
+            .ToListAsync(ct);
+        var context = SelectMusicCompletionContext(req.RequestScopeKind, contextJson);
+        if (context is null)
         {
-            if (!string.IsNullOrWhiteSpace(contextJson))
-                context = JsonSerializer.Deserialize<MusicAcquisitionContextDto>(contextJson);
+            // The fulfillment queue refreshes incomplete contexts whenever it claims the job. Guessing from
+            // the request title here can mark a same-named track/album as Available without the immutable
+            // artist and track/album inventory that the downloader itself requires.
+            logger.LogDebug("Request {RequestId} has no scope-correct music completion contract yet", req.Id);
+            return false;
         }
-        catch (JsonException ex)
-        {
-            logger.LogDebug(ex, "Music verification context for request {RequestId} is malformed", req.Id);
-        }
-        context ??= new MusicAcquisitionContextDto
-        {
-            Kind = req.RequestScopeKind switch
-            {
-                RequestScopeKind.ArtistCatalog => MediaKind.Artist,
-                RequestScopeKind.Track => MediaKind.Track,
-                _ => MediaKind.Album
-            },
-            Artist = req.RequestScopeKind == RequestScopeKind.ArtistCatalog ? req.Title : null,
-            Album = req.RequestScopeKind == RequestScopeKind.Album ? req.Title : null,
-            Track = req.RequestScopeKind == RequestScopeKind.Track ? req.Title : null
-        };
         var result = await music.VerifyAsync(new PlexVerificationRequest(
             MediaType.Music, context.Kind, req.ExternalSource, req.ExternalId,
             context.Artist, context.Album, context.Track, context.ExpectedAlbums,
-            context.Tracks.Select(x => x.Title).ToList(),
-            context.Tracks.FirstOrDefault()?.DurationMs), ct);
+            context.Tracks?.Select(x => x.Title).ToList(),
+            context.Tracks?.FirstOrDefault()?.DurationMs), ct);
         return result.Available;
+    }
+
+    /// <summary>Select the newest durable context that can actually prove completion for this request.
+    /// Legacy history is intentionally scanned newest-first: a malformed or incomplete retry must not hide
+    /// an older valid contract, while a complete contract for a different scope must never be reused.</summary>
+    internal static MusicAcquisitionContextDto? SelectMusicCompletionContext(
+        RequestScopeKind requestScope, IEnumerable<string?> serializedContexts)
+    {
+        var expectedKind = requestScope.ToMediaKind(MediaType.Music);
+        foreach (var json in serializedContexts)
+        {
+            if (string.IsNullOrWhiteSpace(json)) continue;
+            try
+            {
+                var context = JsonSerializer.Deserialize<MusicAcquisitionContextDto>(json);
+                if (context?.SchemaVersion >= 2 && context.Kind == expectedKind
+                    && context.HasCompletionContract)
+                    return context;
+            }
+            catch (JsonException) { /* malformed history is ignored; a newer/older retry may be valid */ }
+        }
+        return null;
     }
 
     private static async Task<bool> IsSatisfiedAsync(MediaRequestEntity req, Dictionary<(MediaType, int), bool> titleAvailable,

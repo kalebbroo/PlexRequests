@@ -236,7 +236,7 @@ public sealed class BridgeOutboxService(
             ? request.MediaRef
             : !string.IsNullOrWhiteSpace(request.ExternalId)
                 ? MediaRef.FromExternal(request.ExternalSource ?? "external", request.ExternalId,
-                    request.MediaType, KindFromScope(request.RequestScopeKind, request.MediaType))
+                    request.MediaType, request.RequestScopeKind.ToMediaKind(request.MediaType))
                 : LegacyMedia(request.Id, request.MediaId, request.MediaType, request.RequestScopeKind);
         return CreateRow(request.Id, request.MediaId, media, request.RequestScopeKind, request.Title,
             request.PosterUrl, request.Status, request.RequestedByUserId > 0 ? request.RequestedByUserId : null,
@@ -268,7 +268,7 @@ public sealed class BridgeOutboxService(
     private static MediaRef ResolveMedia(MediaRequestEntity request) =>
         !string.IsNullOrWhiteSpace(request.ExternalId)
             ? MediaRef.FromExternal(request.ExternalSource ?? "external", request.ExternalId,
-                request.MediaType, KindFromScope(request.RequestScopeKind, request.MediaType))
+                request.MediaType, request.RequestScopeKind.ToMediaKind(request.MediaType))
             : LegacyMedia(request.Id, request.MediaId, request.MediaType, request.RequestScopeKind);
 
     private static MediaRef ResolveMedia(BridgeOutboxEntity row) =>
@@ -280,15 +280,7 @@ public sealed class BridgeOutboxService(
         RequestScopeKind scope) => mediaId > 0 && mediaType != MediaType.Music
         ? MediaRef.FromTmdb(mediaId, mediaType)
         : MediaRef.FromExternal("legacy-request", requestId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            mediaType, KindFromScope(scope, mediaType));
-
-    private static MediaKind KindFromScope(RequestScopeKind scope, MediaType mediaType) => scope switch
-    {
-        RequestScopeKind.ArtistCatalog => MediaKind.Artist,
-        RequestScopeKind.Track => MediaKind.Track,
-        RequestScopeKind.Album => MediaKind.Album,
-        _ => mediaType.DefaultKind()
-    };
+            mediaType, scope.ToMediaKind(mediaType));
 
     private static string BuildDeduplicationKey(int requestId, BridgeEventType type, string? detail)
     {
