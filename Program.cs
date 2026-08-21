@@ -193,6 +193,7 @@ builder.Services.AddHttpClient<PlexRequestsHosted.Services.Implementations.IPlex
 builder.Services.AddScoped<IMediaRequestService, MediaRequestService>();
 builder.Services.AddScoped<IMediaIdentityService, MediaIdentityService>();
 builder.Services.AddScoped<IMusicSettingsService, MusicSettingsService>();
+builder.Services.AddScoped<IMusicDirectAcquisitionResolver, YouTubeMusicDirectAcquisitionResolver>();
 builder.Services.AddSingleton<IMediaModule, MovieMediaModule>();
 builder.Services.AddSingleton<IMediaModule, TelevisionMediaModule>();
 builder.Services.AddSingleton<IMediaModule, AnimeMediaModule>();

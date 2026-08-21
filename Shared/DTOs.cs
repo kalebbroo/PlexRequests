@@ -179,6 +179,9 @@ public sealed class MusicAcquisitionContextDto
     /// <summary>Artist-catalog completion contract. Plex must contain every album MusicBrainz reported
     /// when the durable job was created; merely finding a pre-existing partial artist is not success.</summary>
     public List<string> ExpectedAlbums { get; set; } = new();
+    /// <summary>Optional provider-specific stream identities resolved by the web app before the job crosses
+    /// the VPN boundary. The canonical request identity and Plex completion contract remain unchanged.</summary>
+    public DirectAudioAcquisitionContextDto? DirectAudio { get; set; }
 
     public string BuildSearchText(string fallbackTitle) => Kind switch
     {
@@ -189,6 +192,16 @@ public sealed class MusicAcquisitionContextDto
 
     private static string Join(params string?[] values) => string.Join(' ', values
         .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!.Trim()));
+}
+
+/// <summary>A complete, immutable direct-audio manifest. Keeping this separate from the canonical music
+/// metadata lets any supported catalog use an optional acquisition provider without pretending the two
+/// providers share identifiers.</summary>
+public sealed class DirectAudioAcquisitionContextDto
+{
+    public string Provider { get; set; } = string.Empty;
+    public string ExternalId { get; set; } = string.Empty;
+    public List<MusicTrackMetadataDto> Tracks { get; set; } = new();
 }
 
 public sealed class MusicTrackMetadataDto

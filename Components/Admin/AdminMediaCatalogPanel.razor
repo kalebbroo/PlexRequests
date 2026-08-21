@@ -63,14 +63,17 @@ else
         <MudSwitch T="bool" @bind-Value="_settings.DirectDownloadsEnabled" Color="Color.Primary"
                    Label="Allow direct audio from YouTube Music" />
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="d-block mt-1 mb-3">
-            Uses YouTube Music only for YouTube-backed tracks and albums, preserving native AAC while embedding
-            Plex-ready artist, album, track, year, and cover metadata. Torrent indexers remain available as a fallback.
+            Preserves native AAC and embeds Plex-ready artist, album, track, year, and cover metadata. YouTube
+            catalog items use their exact stream IDs; MusicBrainz items use direct audio only after a strict
+            artist, title, and complete-tracklist match. Configured indexers remain an independent fallback.
         </MudText>
         <MudSwitch T="bool" @bind-Value="_settings.RequestsEnabled" Color="Color.Primary"
                    Label="Enable music requests and automatic fulfillment" Disabled="_settings.ReadinessIssues.Count > 0" />
         <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-3">
             Before enabling requests, set a writable Music library path under Library → Organization and
-            enable Music on an indexer or enable direct YouTube Music acquisition. A request is not marked Available until Plex confirms it.
+            enable Music on an indexer. When YouTube Music is the selected catalog, direct acquisition can
+            serve as the sole source; MusicBrainz keeps an indexer fallback for titles that cannot be mapped safely.
+            A request is not marked Available until Plex confirms it.
         </MudAlert>
         @foreach (var issue in _settings.ReadinessIssues)
         {
@@ -98,7 +101,7 @@ else
     private string TestLabel => $"Test {ProviderName}";
     private string ProviderDescription => _settings?.MetadataProvider == "youtube"
         ? "YouTube Music gives users its familiar catalog and artwork. Direct audio is optional; configured music indexers remain an independent fallback."
-        : "MusicBrainz is the open, standards-based catalog and uses Cover Art Archive artwork.";
+        : "MusicBrainz is the open, standards-based catalog and uses Cover Art Archive artwork. Exact matches can also use optional YouTube direct audio.";
 
     protected override async Task OnInitializedAsync()
     {

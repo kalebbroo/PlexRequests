@@ -17,10 +17,14 @@ namespace PlexRequestsHosted.Services.Implementations;
 /// Database-backed <see cref="IFulfillmentQueue"/>. SQLite is single-writer, so claims are safe
 /// without extra locking at our scale; swap for Redis/RabbitMQ later without touching callers.
 /// </summary>
-public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, IQualityProfileService profiles, ICustomFormatService formats, ISeasonAvailabilityEvaluator seasonEvaluator, ILogger<FulfillmentQueue> logger) : IFulfillmentQueue
+public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
+    IMusicDirectAcquisitionResolver directMusic, IQualityProfileService profiles,
+    ICustomFormatService formats, ISeasonAvailabilityEvaluator seasonEvaluator,
+    ILogger<FulfillmentQueue> logger) : IFulfillmentQueue
 {
     private readonly AppDbContext _db = db;
     private readonly IMediaMetadataProvider _metadata = metadata;
+    private readonly IMusicDirectAcquisitionResolver _directMusic = directMusic;
     private readonly IQualityProfileService _profiles = profiles;
     private readonly ICustomFormatService _formats = formats;
     private readonly ISeasonAvailabilityEvaluator _seasonEvaluator = seasonEvaluator;
@@ -136,7 +140,11 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             year = detail?.Year;
             isAnime = AnimeClassifier.IsAnime(detail?.Genres, detail?.Languages, detail?.Countries);
             if (request.MediaType == MediaType.Music)
+            {
                 music = BuildMusicContext(mediaRef.Kind, request.Title, detail);
+                if (detail is not null && await DirectMusicEnabledAsync())
+                    music.DirectAudio = await _directMusic.ResolveAsync(mediaRef, detail);
+            }
             else if (string.IsNullOrEmpty(imdbId))
                 imdbId = await _metadata.GetImdbIdAsync(request.MediaId, request.MediaType);
         }
@@ -303,23 +311,32 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
     private async Task RefreshMusicContextAsync(FulfillmentJobEntity job)
     {
         if (string.IsNullOrWhiteSpace(job.ExternalId)) return;
+        MusicAcquisitionContextDto? current = null;
         try
         {
-            var current = string.IsNullOrWhiteSpace(job.AcquisitionContextJson)
+            current = string.IsNullOrWhiteSpace(job.AcquisitionContextJson)
                 ? null : JsonSerializer.Deserialize<MusicAcquisitionContextDto>(job.AcquisitionContextJson);
-            if (current?.Kind == MediaKind.Artist
-                || (current?.SchemaVersion >= 2 && !string.IsNullOrWhiteSpace(current.Artist))) return;
         }
         catch (JsonException) { /* replace malformed transitional context from authoritative metadata */ }
+
+        var kind = job.MediaKind.BelongsTo(MediaType.Music)
+            ? job.MediaKind : KindForScope(MediaType.Music, job.RequestScopeKind);
+        var canonicalComplete = current?.Kind == MediaKind.Artist
+            || current?.SchemaVersion >= 2 && !string.IsNullOrWhiteSpace(current.Artist);
+        var needsDirect = kind is MediaKind.Album or MediaKind.Track
+            && current?.DirectAudio is null && await DirectMusicEnabledAsync();
+        if (canonicalComplete && !needsDirect) return;
+
         try
         {
-            var kind = job.MediaKind.BelongsTo(MediaType.Music)
-                ? job.MediaKind : KindForScope(MediaType.Music, job.RequestScopeKind);
             var mediaRef = MediaRef.FromExternal(
                 job.ExternalSource ?? "external", job.ExternalId, MediaType.Music, kind);
             var detail = await _metadata.GetDetailsAsync(mediaRef);
             if (detail is null) return;
-            job.AcquisitionContextJson = JsonSerializer.Serialize(BuildMusicContext(kind, job.Title, detail));
+            var refreshed = canonicalComplete ? current! : BuildMusicContext(kind, job.Title, detail);
+            if (needsDirect)
+                refreshed.DirectAudio = await _directMusic.ResolveAsync(mediaRef, detail);
+            job.AcquisitionContextJson = JsonSerializer.Serialize(refreshed);
             job.Year = detail.Year;
             job.LastUpdatedAt = DateTime.UtcNow;
         }
@@ -328,6 +345,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata, 
             _logger.LogDebug(ex, "Music metadata refresh deferred for fulfillment job {JobId}", job.Id);
         }
     }
+
+    private Task<bool> DirectMusicEnabledAsync() => _db.MusicSettings.AsNoTracking()
+        .Where(x => x.IsSingleton).Select(x => x.DirectDownloadsEnabled).FirstOrDefaultAsync();
 
     /// <summary>
     /// Attach the quality profile and tier catalog to each claimed job. Embedded in the payload rather than

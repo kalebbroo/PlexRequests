@@ -7,15 +7,16 @@ using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Indexers;
 
-/// <summary>Turns YouTube-backed metadata into one direct-audio candidate. It performs no scraping and no
-/// network request: the track ids were already resolved by the catalog and frozen into the durable job.</summary>
+/// <summary>Turns a pre-resolved YouTube manifest into one direct-audio candidate. It performs no catalog
+/// request: the web app already matched and froze the track ids before the job crossed the VPN boundary.</summary>
 public sealed class YouTubeMusicDirectSource(IOptions<DirectAudioOptions> options) : IAcquisitionCandidateSource
 {
     public string Name => "YouTube Music direct";
 
     public bool AppliesTo(FulfillmentJobDto job) => options.Value.Enabled
         && job.MediaType == MediaType.Music
-        && job.Media?.Provider.Equals("youtube", StringComparison.OrdinalIgnoreCase) == true
+        && (job.Music?.DirectAudio?.Provider.Equals("youtube", StringComparison.OrdinalIgnoreCase) == true
+            || job.Media?.Provider.Equals("youtube", StringComparison.OrdinalIgnoreCase) == true)
         && job.AllowedAcquisitionProtocols.Contains(AcquisitionProtocol.DirectAudio)
         && job.Music?.Kind is MediaKind.Track or MediaKind.Album;
 
@@ -25,7 +26,10 @@ public sealed class YouTubeMusicDirectSource(IOptions<DirectAudioOptions> option
         if (!AppliesTo(job) || job.Music is null || job.Media is null)
             return Task.FromResult<IReadOnlyList<ReleaseCandidate>>(Array.Empty<ReleaseCandidate>());
 
-        var tracks = job.Music.Tracks
+        var direct = job.Music.DirectAudio;
+        var manifest = direct?.Provider.Equals("youtube", StringComparison.OrdinalIgnoreCase) == true
+            ? direct.Tracks : job.Music.Tracks;
+        var tracks = manifest
             .Where(x => YouTubeMusicLocator.IsVideoId(x.RecordingId))
             .OrderBy(x => Math.Max(1, x.DiscNumber)).ThenBy(x => Math.Max(1, x.TrackNumber))
             .Select((x, index) => new YouTubeMusicTrack(x.RecordingId, x.Title,
@@ -40,7 +44,9 @@ public sealed class YouTubeMusicDirectSource(IOptions<DirectAudioOptions> option
         var discCount = tracks.Max(x => x.DiscNumber);
         tracks = tracks.Select(x => x with { TrackCount = tracks.Count, DiscCount = discCount }).ToList();
 
-        var sourceId = $"youtube:{job.Music.Kind.ToString().ToLowerInvariant()}:{job.Media.Id}";
+        var directId = direct?.Provider.Equals("youtube", StringComparison.OrdinalIgnoreCase) == true
+            ? direct.ExternalId : job.Media.Id;
+        var sourceId = $"youtube:{job.Music.Kind.ToString().ToLowerInvariant()}:{directId}";
         var display = string.Join(" - ", new[] { job.Music.Artist, job.Music.Album ?? job.Music.Track ?? job.Title }
             .Where(x => !string.IsNullOrWhiteSpace(x))) + " [YouTube Direct AAC]";
         IReadOnlyList<ReleaseCandidate> result =
