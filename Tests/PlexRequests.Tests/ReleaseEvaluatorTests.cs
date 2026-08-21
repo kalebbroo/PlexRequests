@@ -341,6 +341,29 @@ public class ReleaseEvaluatorTests
     }
 
     [Fact]
+    public void Artist_search_waits_for_its_durable_album_inventory()
+    {
+        var job = MusicJob(RequestScopeKind.ArtistCatalog, "Daft Punk", "Daft Punk", MediaKind.Artist);
+        job.Music!.ExpectedAlbums.Clear();
+
+        var result = _eval.Evaluate(TestData.Release("Daft.Punk-Complete.Discography-FLAC", sizeGb: 12),
+            job, TestData.Context());
+
+        Assert.True(Rejected(result, RejectionReason.MetadataIncomplete));
+    }
+
+    [Fact]
+    public void Music_search_rejects_a_complete_contract_for_the_wrong_request_scope()
+    {
+        var job = MusicJob(RequestScopeKind.Album, "Discovery", "Daft Punk", MediaKind.Artist);
+
+        var result = _eval.Evaluate(TestData.Release("Daft.Punk-Discovery-FLAC", sizeGb: 1),
+            job, TestData.Context());
+
+        Assert.True(Rejected(result, RejectionReason.MetadataIncomplete));
+    }
+
+    [Fact]
     public void Lossless_music_outranks_lossy_even_with_fewer_seeders()
     {
         var job = MusicJob(RequestScopeKind.Album, "Discovery", "Daft Punk");
@@ -364,7 +387,12 @@ public class ReleaseEvaluatorTests
                 Kind = kind,
                 Artist = artist,
                 Album = kind == MediaKind.Album ? title : null,
-                Track = kind == MediaKind.Track ? title : null
+                Track = kind == MediaKind.Track ? title : null,
+                TrackCount = kind is MediaKind.Album or MediaKind.Track ? 1 : 0,
+                Tracks = kind is MediaKind.Album or MediaKind.Track
+                    ? [new MusicTrackMetadataDto { RecordingId = "track", Title = title, TrackNumber = 1, DiscNumber = 1 }]
+                    : [],
+                ExpectedAlbums = kind == MediaKind.Artist ? ["Discovery"] : []
             }
         };
 }

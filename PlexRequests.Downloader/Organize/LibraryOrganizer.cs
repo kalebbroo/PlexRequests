@@ -170,29 +170,60 @@ public class LibraryOrganizer(
         }
 
         var albumTitle = CleanLabel(music.Album ?? job.Title, job.Title);
-        var expected = music.Tracks.OrderBy(t => t.DiscNumber).ThenBy(t => t.TrackNumber).ToList();
+        var expected = (music.Tracks ?? []).OrderBy(t => t.DiscNumber).ThenBy(t => t.TrackNumber).ToList();
         var expectedCount = Math.Max(music.TrackCount, expected.Count);
+        if (expected.Count == 0)
+            throw new InvalidOperationException("Album metadata has no track completion contract; metadata will be refreshed before retry");
         if (expectedCount > 0 && audioFiles.Count < expectedCount)
             throw new InvalidOperationException($"Album payload is incomplete: metadata expects {expectedCount} tracks but the release contains {audioFiles.Count} audio files");
 
+        // Resolve the entire expected tracklist before writing anything. The old final fallback assigned
+        // an arbitrary remaining title to an unidentifiable file, which could rename wrong audio into the
+        // expected contract and then fool Plex verification. Title matches are strongest; disc/track
+        // numbers are the safe fallback. Unmatched files are allowed only as extras after every expected
+        // track has an unambiguous source.
+        var orderedFiles = audioFiles.OrderBy(NaturalTrackKey, StringComparer.OrdinalIgnoreCase).ToList();
         var unused = new HashSet<MusicTrackMetadataDto>(expected);
+        var assignments = new Dictionary<string, MusicTrackMetadataDto>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in orderedFiles)
+        {
+            var stem = Path.GetFileNameWithoutExtension(file);
+            var matches = unused.Where(t => ContainsNormalized(stem, t.Title)).ToList();
+            if (matches.Count != 1) continue;
+            assignments[file] = matches[0];
+            unused.Remove(matches[0]);
+        }
+        foreach (var file in orderedFiles.Where(x => !assignments.ContainsKey(x)))
+        {
+            var parsed = ParseTrackNumbers(file);
+            if (parsed.Track is null) continue;
+            var matches = unused.Where(t => t.TrackNumber == parsed.Track
+                && (parsed.Disc is null || Math.Max(1, t.DiscNumber) == parsed.Disc)).ToList();
+            if (matches.Count != 1) continue;
+            assignments[file] = matches[0];
+            unused.Remove(matches[0]);
+        }
+        if (unused.Count > 0)
+        {
+            var sample = string.Join(", ", unused.OrderBy(x => x.DiscNumber).ThenBy(x => x.TrackNumber)
+                .Take(3).Select(x => x.Title));
+            throw new InvalidOperationException(
+                $"Album payload is ambiguous: could not map {unused.Count} expected track(s){(sample.Length > 0 ? $" ({sample})" : string.Empty)}");
+        }
+
         var nextExtra = expected.Select(t => t.TrackNumber).DefaultIfEmpty(0).Max() + 1;
-        foreach (var file in audioFiles.OrderBy(NaturalTrackKey, StringComparer.OrdinalIgnoreCase))
+        foreach (var file in orderedFiles)
         {
             var stem = Path.GetFileNameWithoutExtension(file);
             var parsed = ParseTrackNumbers(file);
-            var track = unused.FirstOrDefault(t => ContainsNormalized(stem, t.Title))
-                        ?? unused.FirstOrDefault(t => t.TrackNumber == parsed.Track &&
-                            (parsed.Disc is null || Math.Max(1, t.DiscNumber) == parsed.Disc));
-            track ??= unused.OrderBy(t => t.DiscNumber).ThenBy(t => t.TrackNumber).FirstOrDefault();
+            assignments.TryGetValue(file, out var track);
 
             var disc = Math.Max(1, track?.DiscNumber ?? parsed.Disc ?? 1);
-            var number = Math.Max(1, track?.TrackNumber ?? parsed.Track ?? nextExtra++);
+            var number = Math.Max(1, track?.TrackNumber ?? nextExtra++);
             var title = CleanLabel(track?.Title, StripTrackPrefix(stem));
             var trackArtist = CleanLabel(track?.ArtistCredit, artist);
             var dest = naming.BuildMusicTrackPath(prefs, job, trackArtist, albumTitle, disc, number, title, Path.GetExtension(file));
             TransferOne(file, dest, null, null, "audio", records, prefs);
-            if (track is not null) unused.Remove(track);
         }
 
         // Plex recognizes cover.jpg/folder.jpg beside the tracks. Keep one small artwork file without

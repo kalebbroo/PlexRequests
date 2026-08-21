@@ -58,6 +58,60 @@ public sealed class MusicImportTests
     }
 
     [Fact]
+    public async Task Album_with_enough_but_unidentifiable_files_is_rejected_before_any_library_write()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Directory.CreateDirectory(Path.Combine(root, "download")).FullName;
+            var library = Directory.CreateDirectory(Path.Combine(root, "music")).FullName;
+            await File.WriteAllTextAsync(Path.Combine(source, "opaque-a.flac"), "wrong-a");
+            await File.WriteAllTextAsync(Path.Combine(source, "opaque-b.flac"), "wrong-b");
+
+            var result = await CreateOrganizer().OrganizeAsync(AlbumJob(),
+                new TransferItem("torrent", null, null, true), source, Preferences(library), CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Contains("payload is ambiguous", result.FailReason);
+            Assert.Empty(Directory.EnumerateFiles(library, "*", SearchOption.AllDirectories));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Music_completion_contract_requires_the_scope_specific_inventory()
+    {
+        var album = AlbumJob().Music!;
+        Assert.True(album.HasCompletionContract);
+        album.Tracks[0].Title = string.Empty;
+        Assert.False(album.HasCompletionContract);
+        album.Tracks.Clear();
+        Assert.False(album.HasCompletionContract);
+
+        var track = TrackJob().Music!;
+        Assert.True(track.HasCompletionContract);
+        track.Tracks[0].Title = string.Empty;
+        Assert.False(track.HasCompletionContract);
+        track.Tracks.Clear();
+        Assert.False(track.HasCompletionContract);
+
+        var artist = new MusicAcquisitionContextDto { Kind = MediaKind.Artist, Artist = "Artist" };
+        Assert.False(artist.HasCompletionContract);
+        artist.ExpectedAlbums.Add("Album");
+        Assert.True(artist.HasCompletionContract);
+
+        artist.ExpectedAlbums[0] = " ";
+        Assert.False(artist.HasCompletionContract);
+
+        // Legacy or manually edited durable JSON may contain explicit null collections despite the
+        // non-nullable DTO shape. Evaluating that payload must request enrichment rather than crash.
+        album.Tracks = null!;
+        artist.ExpectedAlbums = null!;
+        Assert.False(album.HasCompletionContract);
+        Assert.False(artist.HasCompletionContract);
+    }
+
+    [Fact]
     public async Task Direct_album_keeps_short_valid_tracks_below_the_general_torrent_size_floor()
     {
         var root = NewRoot();

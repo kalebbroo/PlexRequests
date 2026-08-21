@@ -319,10 +319,11 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         }
         catch (JsonException) { /* replace malformed transitional context from authoritative metadata */ }
 
-        var kind = job.MediaKind.BelongsTo(MediaType.Music)
-            ? job.MediaKind : KindForScope(MediaType.Music, job.RequestScopeKind);
-        var canonicalComplete = current?.Kind == MediaKind.Artist
-            || current?.SchemaVersion >= 2 && !string.IsNullOrWhiteSpace(current.Artist);
+        // Request scope is the durable fulfillment intent. Repair stale transitional MediaKind/context
+        // combinations from it instead of allowing a complete contract for the wrong scope to survive.
+        var kind = KindForScope(MediaType.Music, job.RequestScopeKind);
+        var canonicalComplete = current?.SchemaVersion >= 2
+            && current.Kind == kind && current.HasCompletionContract;
         var needsDirect = kind is MediaKind.Album or MediaKind.Track
             && current?.DirectAudio is null && await DirectMusicEnabledAsync();
         if (canonicalComplete && !needsDirect) return;

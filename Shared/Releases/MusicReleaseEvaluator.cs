@@ -22,11 +22,16 @@ internal static class MusicReleaseEvaluator
         var rejections = new List<Rejection>();
         var music = job.Music;
         var authoritativeDirect = candidate.Acquisition.Protocol == AcquisitionProtocol.DirectAudio;
+        var expectedKind = job.RequestScope switch
+        {
+            RequestScopeKind.ArtistCatalog => MediaKind.Artist,
+            RequestScopeKind.Track => MediaKind.Track,
+            _ => MediaKind.Album
+        };
 
-        if (job.RequestScope is RequestScopeKind.Album or RequestScopeKind.Track
-            && string.IsNullOrWhiteSpace(music?.Artist))
+        if (music?.Kind != expectedKind || music.HasCompletionContract != true)
             rejections.Add(new(RejectionReason.MetadataIncomplete,
-                "artist metadata is not available yet; the job will retry after its metadata refresh"));
+                "the durable music completion contract is incomplete; the job will retry after its metadata refresh"));
 
         var minSeeders = context.Profile?.MinSeeders ?? context.Preferences.MinSeeders;
         if (candidate.SeedersKnown && candidate.Seeders < minSeeders)

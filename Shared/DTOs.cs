@@ -183,6 +183,25 @@ public sealed class MusicAcquisitionContextDto
     /// the VPN boundary. The canonical request identity and Plex completion contract remain unchanged.</summary>
     public DirectAudioAcquisitionContextDto? DirectAudio { get; set; }
 
+    /// <summary>True only when the durable job contains enough immutable metadata to prove completion after
+    /// import. Acquisition must wait when this is false; otherwise a partial provider response can create a
+    /// download that can never be verified and will be retried forever.</summary>
+    [JsonIgnore]
+    public bool HasCompletionContract => Kind switch
+    {
+        MediaKind.Artist => !string.IsNullOrWhiteSpace(Artist)
+            && ExpectedAlbums is { Count: > 0 } albums
+            && albums.All(x => !string.IsNullOrWhiteSpace(x)),
+        MediaKind.Album => !string.IsNullOrWhiteSpace(Artist) && !string.IsNullOrWhiteSpace(Album)
+            && Tracks is { Count: > 0 } albumTracks
+            && (TrackCount <= 0 || albumTracks.Count >= TrackCount)
+            && albumTracks.All(x => !string.IsNullOrWhiteSpace(x.Title)),
+        MediaKind.Track => !string.IsNullOrWhiteSpace(Artist) && !string.IsNullOrWhiteSpace(Track)
+            && Tracks is { Count: > 0 } trackMetadata
+            && trackMetadata.All(x => !string.IsNullOrWhiteSpace(x.Title)),
+        _ => false
+    };
+
     public string BuildSearchText(string fallbackTitle) => Kind switch
     {
         MediaKind.Artist => Join(Artist ?? fallbackTitle, "discography"),
