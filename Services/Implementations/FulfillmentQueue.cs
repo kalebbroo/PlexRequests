@@ -37,7 +37,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             ? suppliedRef
             : !string.IsNullOrWhiteSpace(request.ExternalId)
                 ? MediaRef.FromExternal(request.ExternalSource ?? "external", request.ExternalId,
-                    request.MediaType, KindForScope(request.MediaType, request.RequestScopeKind))
+                    request.MediaType, request.RequestScopeKind.ToMediaKind(request.MediaType))
                 : MediaRef.FromTmdb(request.MediaId, request.MediaType);
 
         var active = await _db.FulfillmentJobs.AnyAsync(j =>
@@ -321,7 +321,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
 
         // Request scope is the durable fulfillment intent. Repair stale transitional MediaKind/context
         // combinations from it instead of allowing a complete contract for the wrong scope to survive.
-        var kind = KindForScope(MediaType.Music, job.RequestScopeKind);
+        var kind = job.RequestScopeKind.ToMediaKind(MediaType.Music);
         var canonicalComplete = current?.SchemaVersion >= 2
             && current.Kind == kind && current.HasCompletionContract;
         var needsDirect = kind is MediaKind.Album or MediaKind.Track
@@ -538,7 +538,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             MediaIdentityId = origin?.MediaIdentityId,
             MediaId = request.MediaId,
             MediaType = request.MediaType,
-            MediaKind = origin?.MediaKind ?? KindForScope(request.MediaType, request.RequestScopeKind),
+            MediaKind = origin?.MediaKind ?? request.RequestScopeKind.ToMediaKind(request.MediaType),
             RequestScopeKind = origin?.RequestScopeKind ?? request.RequestScopeKind,
             AcquisitionContextJson = origin?.AcquisitionContextJson,
             Title = request.Title,
@@ -805,7 +805,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         MediaType = j.MediaType,
         Media = !string.IsNullOrWhiteSpace(j.ExternalId)
             ? MediaRef.FromExternal(j.ExternalSource ?? "external", j.ExternalId, j.MediaType,
-                j.MediaKind.BelongsTo(j.MediaType) ? j.MediaKind : KindForScope(j.MediaType, j.RequestScopeKind))
+                j.MediaKind.BelongsTo(j.MediaType) ? j.MediaKind : j.RequestScopeKind.ToMediaKind(j.MediaType))
             : MediaRef.FromTmdb(j.MediaId, j.MediaType),
         RequestScope = Enum.IsDefined(j.RequestScopeKind) &&
                        (j.RequestScopeKind != RequestScopeKind.Title || j.MediaType == MediaType.Movie)
@@ -849,14 +849,6 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         ReplacePaths = string.IsNullOrWhiteSpace(j.ReplacePathsJson)
             ? new List<string>()
             : (JsonSerializer.Deserialize<List<string>>(j.ReplacePathsJson) ?? new List<string>())
-    };
-
-    private static MediaKind KindForScope(MediaType mediaType, RequestScopeKind scope) => scope switch
-    {
-        RequestScopeKind.ArtistCatalog => MediaKind.Artist,
-        RequestScopeKind.Track => MediaKind.Track,
-        RequestScopeKind.Album => MediaKind.Album,
-        _ => mediaType.DefaultKind()
     };
 
     private static MusicAcquisitionContextDto BuildMusicContext(MediaKind kind, string title, MediaDetailDto? detail)

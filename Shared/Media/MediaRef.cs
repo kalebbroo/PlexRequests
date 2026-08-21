@@ -98,6 +98,19 @@ public static class MediaIdentityExtensions
         MediaKind.Track => RequestScopeKind.Track,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
+
+    /// <summary>Resolve durable request intent back to its media shape. Keeping this inverse mapping beside
+    /// <see cref="DefaultScope"/> prevents queueing, ranking, bridge events, and reconciliation from each
+    /// inventing subtly different wrong-scope fallbacks.</summary>
+    public static MediaKind ToMediaKind(this RequestScopeKind scope, MediaType mediaType) => scope switch
+    {
+        RequestScopeKind.ArtistCatalog when mediaType == MediaType.Music => MediaKind.Artist,
+        RequestScopeKind.Track when mediaType == MediaType.Music => MediaKind.Track,
+        RequestScopeKind.Album when mediaType == MediaType.Music => MediaKind.Album,
+        RequestScopeKind.Series or RequestScopeKind.Seasons or RequestScopeKind.Episodes
+            when mediaType is MediaType.TvShow or MediaType.Anime => MediaKind.Series,
+        _ => mediaType.DefaultKind()
+    };
 }
 
 /// <summary>

@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequestsHosted.Shared.Releases;
 
@@ -22,12 +23,7 @@ internal static class MusicReleaseEvaluator
         var rejections = new List<Rejection>();
         var music = job.Music;
         var authoritativeDirect = candidate.Acquisition.Protocol == AcquisitionProtocol.DirectAudio;
-        var expectedKind = job.RequestScope switch
-        {
-            RequestScopeKind.ArtistCatalog => MediaKind.Artist,
-            RequestScopeKind.Track => MediaKind.Track,
-            _ => MediaKind.Album
-        };
+        var expectedKind = job.RequestScope.ToMediaKind(MediaType.Music);
 
         if (music?.Kind != expectedKind || music.HasCompletionContract != true)
             rejections.Add(new(RejectionReason.MetadataIncomplete,
