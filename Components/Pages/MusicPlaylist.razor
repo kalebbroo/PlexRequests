@@ -2,11 +2,13 @@
 @inject IMusicDiscoveryService Discovery
 @inject IMediaRequestService MediaRequestService
 @inject IToastService ToastService
+@inject NavigationManager Navigation
+@using PlexRequestsHosted.Shared.Navigation
 
 <PageTitle>@(_playlist?.Title ?? "Music playlist") - Plex Requests</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="playlist-page">
-    <a class="back-link" href="/music"><MudIcon Icon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" /> Music</a>
+    <a class="back-link" href="@BackUrl"><MudIcon Icon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" /> @BackLabel</a>
     @if (_loading)
     {
         <PosterGridSkeleton Count="18" />
@@ -35,7 +37,7 @@
             <div class="track-grid">
                 @foreach (var track in _playlist.Tracks)
                 {
-                    <MediaCard Media="track" OnRequest="Request" />
+                    <MediaCard Media="track" OnRequest="Request" ReturnUrl="@CurrentPlaylistUrl" ReturnLabel="@_playlist.Title" />
                 }
             </div>
         </section>
@@ -44,10 +46,15 @@
 
 @code {
     [SupplyParameterFromQuery(Name = "id")] public string? Id { get; set; }
+    [SupplyParameterFromQuery(Name = "returnUrl")] public string? ReturnUrl { get; set; }
+    [SupplyParameterFromQuery(Name = "returnLabel")] public string? ReturnLabel { get; set; }
     private MusicPlaylistDto? _playlist;
     private bool _loading = true;
     private bool _hasLoaded;
     private string? _loadedId;
+    private string BackUrl => MusicNavigationContext.ValidateReturnUrl(ReturnUrl);
+    private string BackLabel => MusicNavigationContext.ResolveReturnLabel(ReturnUrl, ReturnLabel);
+    private string CurrentPlaylistUrl => $"/{Navigation.ToBaseRelativePath(Navigation.Uri)}";
 
     protected override async Task OnParametersSetAsync()
     {

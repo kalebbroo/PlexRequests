@@ -1,6 +1,7 @@
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
 @using PlexRequestsHosted.Shared.Media
+@using PlexRequestsHosted.Shared.Navigation
 @inject PlexRequestsHosted.Services.Abstractions.IMediaModuleRegistry MediaModules
 @inject PlexRequestsHosted.Services.Abstractions.IMusicSettingsService MusicSettings
 
@@ -96,6 +97,8 @@
     [Parameter] public EventCallback<MediaCardDto> OnRequest { get; set; }
     [Parameter] public EventCallback<MediaCardDto> OnPlay { get; set; }
     [Parameter] public EventCallback<MediaCardDto> OnRemove { get; set; }
+    [Parameter] public string? ReturnUrl { get; set; }
+    [Parameter] public string? ReturnLabel { get; set; }
 
     private bool _musicRequestsEnabled;
 
@@ -122,9 +125,10 @@
         get
         {
             var mediaRef = Media.ResolveMediaRef();
-            return mediaRef.TryGetTmdbId(out var tmdbId)
+            var href = mediaRef.TryGetTmdbId(out var tmdbId)
                 ? $"/media/{Media.MediaType.ToString().ToLowerInvariant()}/{tmdbId}"
                 : $"/media/{Media.MediaType.ToString().ToLowerInvariant()}/{mediaRef.Kind.ToString().ToLowerInvariant()}/{Uri.EscapeDataString(mediaRef.Provider)}/{Uri.EscapeDataString(mediaRef.Id)}";
+            return MusicNavigationContext.AddReturnContext(href, ReturnUrl, ReturnLabel);
         }
     }
 

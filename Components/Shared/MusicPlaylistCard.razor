@@ -22,5 +22,16 @@
 
 @code {
     [Parameter, EditorRequired] public MusicPlaylistSummaryDto Playlist { get; set; } = default!;
-    private string Href => $"/music/playlist?id={Uri.EscapeDataString(Playlist.Id)}";
+    [Parameter] public string? ReturnUrl { get; set; }
+    [Parameter] public string? ReturnLabel { get; set; }
+
+    private string Href
+    {
+        get
+        {
+            var href = $"/music/playlist?id={Uri.EscapeDataString(Playlist.Id)}";
+            return PlexRequestsHosted.Shared.Navigation.MusicNavigationContext.AddReturnContext(
+                href, ReturnUrl, ReturnLabel);
+        }
+    }
 }

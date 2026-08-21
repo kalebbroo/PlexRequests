@@ -58,6 +58,17 @@
     z-index: 1;
 }
 
+.details-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: var(--spacing-xl);
+    color: var(--text-secondary);
+    text-decoration: none;
+}
+
+.details-back:hover { color: var(--plex-orange); }
+
 .hero-grid {
     display: grid;
     grid-template-columns: 300px 1fr;
