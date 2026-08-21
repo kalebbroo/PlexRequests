@@ -11,6 +11,7 @@ deluge_service=${DELUGE_SERVICE:-deluged.service}
 web_service=${DELUGE_WEB_SERVICE:-deluge-web.service}
 state_dir=${STATE_DIR:-/run/plexrequests}
 sys_class_net_root=${SYS_CLASS_NET_ROOT:-/sys/class/net}
+boot_id_file=${BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
 systemctl_bin=${SYSTEMCTL_BIN:-systemctl}
 ip_bin=${IP_BIN:-ip}
 logger_bin=${LOGGER_BIN:-logger}
@@ -77,24 +78,32 @@ if ! current_ifindex=$(tr -d '[:space:]' < "$interface_path/ifindex") \
     stop_deluge "VPN interface identity could not be read"
     exit 0
 fi
-
-mkdir -p "$state_dir"
-state_file=$state_dir/deluge-vpn-ifindex
-previous_ifindex=
-if [ -r "$state_file" ]; then
-    previous_ifindex=$(tr -d '[:space:]' < "$state_file")
+if ! current_boot_id=$(tr -d '[:space:]' < "$boot_id_file" 2>/dev/null) \
+    || [ -z "$current_boot_id" ]; then
+    stop_deluge "host boot identity could not be read"
+    exit 0
 fi
 
-if [ "$current_ifindex" = "$previous_ifindex" ] \
+mkdir -p "$state_dir"
+state_file=$state_dir/deluge-vpn-identity
+current_identity=$current_boot_id:$current_ifindex
+previous_identity=
+if [ -r "$state_file" ]; then
+    previous_identity=$(tr -d '[:space:]' < "$state_file")
+fi
+
+if [ "$current_identity" = "$previous_identity" ] \
     && "$systemctl_bin" is-active --quiet "$deluge_service"; then
     exit 0
 fi
 
 reason="VPN interface is ready"
-if [ -n "$previous_ifindex" ] && [ "$current_ifindex" != "$previous_ifindex" ]; then
-    reason="VPN interface changed from ifindex $previous_ifindex to $current_ifindex"
-elif [ -z "$previous_ifindex" ]; then
+if [ -z "$previous_identity" ]; then
     reason="VPN interface identity was not previously recorded"
+elif [ "${previous_identity%%:*}" != "$current_boot_id" ]; then
+    reason="host boot identity changed"
+elif [ "${previous_identity##*:}" != "$current_ifindex" ]; then
+    reason="VPN interface changed from ifindex ${previous_identity##*:} to $current_ifindex"
 else
     reason="$deluge_service was inactive"
 fi
@@ -109,6 +118,6 @@ fi
 
 temporary_state=$state_file.$$
 umask 077
-printf '%s\n' "$current_ifindex" > "$temporary_state"
+printf '%s\n' "$current_identity" > "$temporary_state"
 mv -f "$temporary_state" "$state_file"
 log_message "Rebound $deluge_service to $vpn_interface ($reason)"

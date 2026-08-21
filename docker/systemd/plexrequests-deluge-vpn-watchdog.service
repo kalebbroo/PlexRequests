@@ -5,10 +5,11 @@ After=network.target
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/plexrequests-deluge-vpn-watchdog
+Environment=STATE_DIR=/var/lib/plexrequests-deluge-vpn
 ExecStart=/bin/sh /usr/local/sbin/plexrequests-deluge-vpn-watchdog
 TimeoutStartSec=30
 NoNewPrivileges=true
 ProtectHome=true
 ProtectSystem=strict
-RuntimeDirectory=plexrequests
-RuntimeDirectoryMode=0700
+StateDirectory=plexrequests-deluge-vpn
+StateDirectoryMode=0700
