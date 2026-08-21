@@ -4,6 +4,8 @@ using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Configuration;
 using PlexRequests.Downloader.Download;
 using PlexRequests.Downloader.Indexers;
+using PlexRequestsHosted.Services.Abstractions;
+using PlexRequestsHosted.Services.Implementations;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Media;
@@ -81,6 +83,63 @@ public sealed class DirectAudioAcquisitionTests
 
         Assert.False(ranked.Accepted);
         Assert.Contains(ranked.Rejections, x => x.Reason == RejectionReason.Blocklisted);
+    }
+
+    [Fact]
+    public async Task MusicBrainz_album_can_use_a_strictly_equivalent_YouTube_manifest()
+    {
+        var canonical = AlbumDetail("musicbrainz", "release-group", "mb-one", "mb-two");
+        var youtube = AlbumDetail("youtube", "MPRE-equivalent", "abcdefghijk", "ZYXWVUT9876");
+        var metadata = new MappingMetadataProvider(youtube);
+        var resolver = new YouTubeMusicDirectAcquisitionResolver(metadata,
+            NullLogger<YouTubeMusicDirectAcquisitionResolver>.Instance);
+
+        var direct = await resolver.ResolveAsync(canonical.ResolveMediaRef(), canonical);
+
+        Assert.NotNull(direct);
+        Assert.Equal("youtube", direct.Provider);
+        Assert.Equal("MPRE-equivalent", direct.ExternalId);
+        Assert.Equal(new[] { "abcdefghijk", "ZYXWVUT9876" }, direct.Tracks.Select(x => x.RecordingId));
+        Assert.Equal(1, metadata.Searches);
+        Assert.Equal(1, metadata.DetailReads);
+
+        var job = AlbumJob();
+        job.Media = canonical.ResolveMediaRef();
+        job.Music!.DirectAudio = direct;
+        var source = new YouTubeMusicDirectSource(Options.Create(new DirectAudioOptions { Enabled = true }));
+        var candidate = Assert.Single(await source.SearchAsync(job, CancellationToken.None));
+        Assert.Equal("youtube:album:MPRE-equivalent", candidate.Acquisition.SourceId);
+        Assert.True(YouTubeMusicLocator.TryDecode(candidate.Acquisition.Locator, out var locator));
+        Assert.Equal(direct.Tracks.Select(x => x.RecordingId), locator.Tracks.Select(x => x.VideoId));
+    }
+
+    [Fact]
+    public async Task Cross_catalog_mapping_rejects_an_incomplete_or_different_album()
+    {
+        var canonical = AlbumDetail("musicbrainz", "release-group", "mb-one", "mb-two");
+        var different = AlbumDetail("youtube", "MPRE-wrong", "abcdefghijk", "ZYXWVUT9876");
+        different.Music!.Tracks[1].Title = "Live Bonus";
+        var metadata = new MappingMetadataProvider(different);
+        var resolver = new YouTubeMusicDirectAcquisitionResolver(metadata,
+            NullLogger<YouTubeMusicDirectAcquisitionResolver>.Instance);
+
+        var direct = await resolver.ResolveAsync(canonical.ResolveMediaRef(), canonical);
+
+        Assert.Null(direct);
+    }
+
+    [Fact]
+    public async Task Cross_catalog_track_mapping_rejects_a_different_album_or_recording_length()
+    {
+        var canonical = TrackDetail("musicbrainz", "recording-id", "mb-track", "Studio Album", 180_000);
+        var live = TrackDetail("youtube", "abcdefghijk", "abcdefghijk", "Live Album", 240_000);
+        var metadata = new MappingMetadataProvider(live);
+        var resolver = new YouTubeMusicDirectAcquisitionResolver(metadata,
+            NullLogger<YouTubeMusicDirectAcquisitionResolver>.Instance);
+
+        var direct = await resolver.ResolveAsync(canonical.ResolveMediaRef(), canonical);
+
+        Assert.Null(direct);
     }
 
     [Fact]
@@ -173,6 +232,95 @@ public sealed class DirectAudioAcquisitionTests
             ]
         }
     };
+
+    private static MediaDetailDto AlbumDetail(string provider, string id, string firstId, string secondId) => new()
+    {
+        Title = "Test Album",
+        MediaType = MediaType.Music,
+        ExternalSource = provider,
+        ExternalId = id,
+        MediaRef = MediaRef.FromExternal(provider, id, MediaType.Music, MediaKind.Album),
+        Music = new MusicMetadataDto
+        {
+            Kind = MediaKind.Album,
+            ArtistCredit = "Test Artist",
+            TrackCount = 2,
+            Tracks =
+            [
+                new MusicTrackMetadataDto
+                {
+                    RecordingId = firstId, Title = "First", ArtistCredit = "Test Artist",
+                    DiscNumber = 1, TrackNumber = 1, DurationMs = 180_000
+                },
+                new MusicTrackMetadataDto
+                {
+                    RecordingId = secondId, Title = "Second", ArtistCredit = "Test Artist",
+                    DiscNumber = 1, TrackNumber = 2, DurationMs = 200_000
+                }
+            ]
+        }
+    };
+
+    private static MediaDetailDto TrackDetail(string provider, string id, string recordingId,
+        string album, int durationMs) => new()
+    {
+        Title = "Test Track",
+        MediaType = MediaType.Music,
+        ExternalSource = provider,
+        ExternalId = id,
+        MediaRef = MediaRef.FromExternal(provider, id, MediaType.Music, MediaKind.Track),
+        Music = new MusicMetadataDto
+        {
+            Kind = MediaKind.Track,
+            ArtistCredit = "Test Artist",
+            AlbumTitle = album,
+            TrackCount = 1,
+            Tracks =
+            [
+                new MusicTrackMetadataDto
+                {
+                    RecordingId = recordingId, Title = "Test Track", ArtistCredit = "Test Artist",
+                    DiscNumber = 1, TrackNumber = 1, DurationMs = durationMs
+                }
+            ]
+        }
+    };
+
+    private sealed class MappingMetadataProvider(MediaDetailDto youtube) : IMediaMetadataProvider
+    {
+        public int Searches { get; private set; }
+        public int DetailReads { get; private set; }
+
+        public Task<List<MediaCardDto>> SearchAsync(MediaSearchQuery query)
+        {
+            Searches++;
+            return Task.FromResult(new List<MediaCardDto>
+            {
+                new()
+                {
+                    Title = youtube.Title,
+                    MediaType = MediaType.Music,
+                    ExternalSource = "youtube",
+                    ExternalId = youtube.ExternalId,
+                    MediaRef = youtube.ResolveMediaRef()
+                }
+            });
+        }
+
+        public Task<MediaDetailDto?> GetDetailsAsync(MediaRef mediaRef)
+        {
+            DetailReads++;
+            return Task.FromResult<MediaDetailDto?>(youtube);
+        }
+
+        public Task<List<MediaCardDto>> SearchAsync(string query, MediaType? mediaType = null,
+            int page = 1, int pageSize = 20) => Task.FromResult(new List<MediaCardDto>());
+        public Task<MediaDetailDto?> GetDetailsAsync(int mediaId, MediaType mediaType) => Task.FromResult<MediaDetailDto?>(null);
+        public Task<List<MediaCardDto>> GetRecentlyAddedAsync(int count = 10) => Task.FromResult(new List<MediaCardDto>());
+        public Task<List<MediaCardDto>> GetLibraryAsync(MediaType mediaType, int page = 1, int pageSize = 20) =>
+            Task.FromResult(new List<MediaCardDto>());
+        public Task<string?> GetImdbIdAsync(int mediaId, MediaType mediaType) => Task.FromResult<string?>(null);
+    }
 
     private sealed class TestLifetime : IHostApplicationLifetime
     {

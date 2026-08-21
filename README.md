@@ -253,8 +253,10 @@ and VPN details are in **[docs/fulfillment-pipeline.md](docs/fulfillment-pipelin
 
 Music catalogs are enabled under **Admin → Media → Optional catalogs**. MusicBrainz is the default open
 catalog; YouTube Music can be selected for user searches without an API key or Python sidecar. Its optional
-direct-audio source downloads YouTube's native M4A stream and writes Plex-ready tags and cover art; configured
-modular music indexers remain available independently. ListenBrainz/MusicBrainz supplies the Trending Music feed.
+direct-audio source downloads YouTube's native M4A stream and writes Plex-ready tags and cover art. MusicBrainz
+requests can use the same source after a strict title, artist, and complete-tracklist match; the canonical
+MusicBrainz identity remains unchanged. Configured modular music indexers remain available independently.
+ListenBrainz/MusicBrainz supplies the Trending Music feed.
 
 ---
 

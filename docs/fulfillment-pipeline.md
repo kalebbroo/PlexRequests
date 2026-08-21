@@ -125,7 +125,10 @@ Release candidates come from a pluggable set of `IIndexerProvider`s, merged by `
 - **Music acquisition** — general sources build artist-qualified free-text searches; 1337x and Pirate Bay
   use their audio categories, and Torznab uses `t=music` plus a generic-search fallback for implementations
   that expose category 3000 but reject the optional music search function. Per-indexer music support and
-  category ids remain ordinary data-driven capabilities in the admin panel.
+  category ids remain ordinary data-driven capabilities in the admin panel. When direct YouTube audio is
+  enabled, the web app can also resolve MusicBrainz albums/tracks to a complete YouTube manifest using strict
+  title, artist, album, duration, and tracklist checks. The VPN worker consumes the frozen manifest without
+  making catalog calls; a missing or ambiguous match leaves the ordinary indexer fallbacks untouched.
 
   ⚠️ **Cloudflare:** a challenged scraper is opened as a circuit and retried later; the downloader does not
   launch Chrome or attempt to automate a human challenge. A manually supplied reusable cookie/User-Agent is
@@ -145,7 +148,8 @@ Set `CATALOG_ENABLED=true` to enable shadow ingestion. Then stage `CATALOG_USE_F
 `CATALOG_USE_FOR_MONITORING=true`; the latter replaces the per-wanted-show upstream sweep with local catalog
 matching while retaining live fulfillment fallback.
 
-To add more trackers, drop in another `IIndexerProvider` (or front a **Prowlarr/Jackett** aggregator).
+To add more trackers, add another focused `IIndexerProvider`; discovery, parsing, health, and acquisition
+remain behind the same native modular boundaries.
 - Movies: one query for the film (title + year).
 - TV: per-season/episode driven by `requestedSeasons` (empty ⇒ all seasons).
 
