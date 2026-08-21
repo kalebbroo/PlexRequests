@@ -4,6 +4,7 @@
 @inject IMediaRequestService MediaRequestService
 @inject IToastService ToastService
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <PageTitle>Music - Plex Requests</PageTitle>
 
@@ -44,24 +45,25 @@
         else
         {
             <nav class="music-jump" aria-label="Music sections">
-                @if (_hub.TrendingTracks.Count > 0) { <a href="#trending">Trending</a> }
-                @if (_hub.NewReleases.Count > 0) { <a href="#new-releases">New releases</a> }
-                @if (_hub.PopularArtists.Count > 0) { <a href="#artists">Artists</a> }
-                @if (_hub.FeaturedPlaylists.Count > 0) { <a href="#playlists">Playlists</a> }
-                @if (_hub.Categories.Count > 0) { <a href="#genres">Genres &amp; moods</a> }
+                <a href="/search?type=music">Search</a>
+                @if (_hub.TrendingTracks.Count > 0) { <a href="/music#trending" @onclick="@(() => ScrollToSectionAsync("trending"))" @onclick:preventDefault>Trending</a> }
+                @if (_hub.NewReleases.Count > 0) { <a href="/music#new-releases" @onclick="@(() => ScrollToSectionAsync("new-releases"))" @onclick:preventDefault>New releases</a> }
+                @if (_hub.PopularArtists.Count > 0) { <a href="/music#artists" @onclick="@(() => ScrollToSectionAsync("artists"))" @onclick:preventDefault>Artists</a> }
+                @if (_hub.FeaturedPlaylists.Count > 0) { <a href="/music#playlists" @onclick="@(() => ScrollToSectionAsync("playlists"))" @onclick:preventDefault>Playlists</a> }
+                @if (_hub.Categories.Count > 0) { <a href="/music#genres" @onclick="@(() => ScrollToSectionAsync("genres"))" @onclick:preventDefault>Genres &amp; moods</a> }
             </nav>
 
             @if (_hub.TrendingTracks.Count > 0)
             {
-                <div id="trending"><MediaRow Title="Trending tracks" Items="_hub.TrendingTracks" OnRequest="Request" OnPlay="Play" /></div>
+                <div id="trending" class="music-scroll-target"><MediaRow Title="Trending tracks" Items="_hub.TrendingTracks" OnRequest="Request" OnPlay="Play" /></div>
             }
             @if (_hub.NewReleases.Count > 0)
             {
-                <div id="new-releases"><MediaRow Title="New albums & singles" Items="_hub.NewReleases" OnRequest="Request" OnPlay="Play" /></div>
+                <div id="new-releases" class="music-scroll-target"><MediaRow Title="New albums & singles" Items="_hub.NewReleases" OnRequest="Request" OnPlay="Play" /></div>
             }
             @if (_hub.PopularArtists.Count > 0)
             {
-                <div id="artists"><MediaRow Title="Popular artists" Items="_hub.PopularArtists" OnRequest="Request" OnPlay="Play" /></div>
+                <div id="artists" class="music-scroll-target"><MediaRow Title="Popular artists" Items="_hub.PopularArtists" OnRequest="Request" OnPlay="Play" /></div>
             }
             @if (_hub.FeaturedPlaylists.Count > 0)
             {
@@ -138,10 +140,12 @@
     }
 
     private void SearchKeyDown(KeyboardEventArgs e) { if (e.Key == "Enter") Search(); }
+    private ValueTask ScrollToSectionAsync(string id) => JS.InvokeVoidAsync("plexui.scrollToId", id);
+
     private void Search()
     {
         if (!string.IsNullOrWhiteSpace(_search))
-            Navigation.NavigateTo($"/search?type=music&source=youtube&q={Uri.EscapeDataString(_search.Trim())}");
+            Navigation.NavigateTo($"/search?type=music&q={Uri.EscapeDataString(_search.Trim())}");
     }
 
     private async Task Request(MediaCardDto media)

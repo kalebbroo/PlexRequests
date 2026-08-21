@@ -14,6 +14,7 @@
 .music-jump { position: sticky; top: var(--header-offset); z-index: var(--z-sticky); display: flex; gap: var(--spacing-sm); overflow-x: auto; padding: var(--spacing-sm); margin: 0 0 var(--spacing-xl); border: 1px solid var(--divider); border-radius: var(--radius-lg); background: rgba(20,20,20,.92); backdrop-filter: blur(10px); scrollbar-width: none; }
 .music-jump a { flex: 0 0 auto; padding: 7px 14px; border-radius: 999px; color: var(--text-secondary); text-decoration: none; font-size: var(--font-size-sm); font-weight: 700; }
 .music-jump a:hover { color: #111; background: var(--plex-orange); }
+.music-scroll-target { scroll-margin-top: calc(var(--header-offset) + 70px); }
 .music-section { margin: var(--spacing-3xl) 0; scroll-margin-top: calc(var(--header-offset) + 70px); }
 .music-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--spacing-md); margin-bottom: var(--spacing-lg); }
 .music-section-head h2 { margin: 0; font-size: var(--font-size-2xl); }
