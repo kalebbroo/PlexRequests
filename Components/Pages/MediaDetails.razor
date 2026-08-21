@@ -615,10 +615,12 @@ else
                     mediaRef.Provider,
                     mediaRef.Id,
                     mediaRef.Kind == MediaKind.Artist ? media.Title : media.Music?.ArtistCredit,
-                    mediaRef.Kind == MediaKind.Album ? media.Title : null,
+                    mediaRef.Kind == MediaKind.Album ? media.Title
+                        : mediaRef.Kind == MediaKind.Track ? media.Music?.AlbumTitle : null,
                     mediaRef.Kind == MediaKind.Track ? media.Title : null,
                     media.Music?.AlbumTitles,
-                    media.Music?.Tracks.Select(x => x.Title).ToList()));
+                    media.Music?.Tracks.Select(x => x.Title).ToList(),
+                    media.Music?.Tracks.FirstOrDefault()?.DurationMs));
                 media.IsAvailable = present.Available;
             }
 

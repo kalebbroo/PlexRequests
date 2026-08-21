@@ -80,6 +80,46 @@ public sealed class MusicImportTests
     }
 
     [Fact]
+    public async Task Track_import_rejects_an_ambiguous_multi_file_payload()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Directory.CreateDirectory(Path.Combine(root, "download")).FullName;
+            var library = Directory.CreateDirectory(Path.Combine(root, "music")).FullName;
+            await File.WriteAllTextAsync(Path.Combine(source, "01 - Intro.flac"), "intro");
+            await File.WriteAllTextAsync(Path.Combine(source, "02 - Other Song.flac"), "other");
+
+            var result = await CreateOrganizer().OrganizeAsync(TrackJob(),
+                new TransferItem("torrent", null, null, false), source, Preferences(library), CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Contains("payload is ambiguous", result.FailReason);
+            Assert.Empty(Directory.EnumerateFiles(library, "*", SearchOption.AllDirectories));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task Track_import_accepts_a_single_file_even_when_its_source_name_is_opaque()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Directory.CreateDirectory(Path.Combine(root, "download")).FullName;
+            var library = Directory.CreateDirectory(Path.Combine(root, "music")).FullName;
+            await File.WriteAllTextAsync(Path.Combine(source, "audio.flac"), "track");
+
+            var result = await CreateOrganizer().OrganizeAsync(TrackJob(),
+                new TransferItem("torrent", null, null, false), source, Preferences(library), CancellationToken.None);
+
+            Assert.True(result.Success, result.FailReason);
+            Assert.True(File.Exists(Path.Combine(library, "Artist", "Studio Album (2026)", "01-01 - Test Song.flac")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public async Task Plex_verification_matches_album_and_artist_after_normalization()
     {
         const string search = """
@@ -130,6 +170,52 @@ public sealed class MusicImportTests
         Assert.False(result.Available);
         Assert.Equal("77", result.RatingKey);
         Assert.Contains("missing 1 of 2", result.Detail);
+    }
+
+    [Fact]
+    public async Task Track_verification_skips_a_same_named_live_recording_and_matches_the_requested_album()
+    {
+        const string search = """
+            {"MediaContainer":{"Hub":[{"type":"track","Metadata":[
+              {"type":"track","ratingKey":"1","title":"Test Song","grandparentTitle":"Artist","parentTitle":"Live Album","duration":240000},
+              {"type":"track","ratingKey":"2","title":"Test Song","grandparentTitle":"Artist","parentTitle":"Studio Album","duration":183000}
+            ]}]}}
+            """;
+        var service = new PlexMusicService(new HttpClient(new JsonHandler(search)),
+            Options.Create(new PlexConfiguration { PrimaryServerUrl = "http://plex:32400", ServerToken = "token" }),
+            NullLogger<PlexMusicService>.Instance);
+
+        var result = await service.VerifyAsync(new PlexVerificationRequest(
+            MediaType.Music, MediaKind.Track, "youtube", "abcdefghijk",
+            "Artist", "Studio Album", "Test Song", ExpectedDurationMs: 180_000));
+
+        Assert.True(result.Available);
+        Assert.Equal("2", result.RatingKey);
+    }
+
+    [Fact]
+    public async Task Track_verification_fetches_full_metadata_when_the_search_hub_omits_contract_fields()
+    {
+        const string search = """
+            {"MediaContainer":{"Hub":[{"type":"track","Metadata":[
+              {"type":"track","ratingKey":"2","title":"Test Song"}
+            ]}]}}
+            """;
+        const string detail = """
+            {"MediaContainer":{"Metadata":[
+              {"type":"track","ratingKey":"2","title":"Test Song","grandparentTitle":"Artist","parentTitle":"Studio Album","duration":183000}
+            ]}}
+            """;
+        var service = new PlexMusicService(new HttpClient(new JsonHandler(search, detail)),
+            Options.Create(new PlexConfiguration { PrimaryServerUrl = "http://plex:32400", ServerToken = "token" }),
+            NullLogger<PlexMusicService>.Instance);
+
+        var result = await service.VerifyAsync(new PlexVerificationRequest(
+            MediaType.Music, MediaKind.Track, "youtube", "abcdefghijk",
+            "Artist", "Studio Album", "Test Song", ExpectedDurationMs: 180_000));
+
+        Assert.True(result.Available);
+        Assert.Equal("2", result.RatingKey);
     }
 
     [Fact]
@@ -185,6 +271,27 @@ public sealed class MusicImportTests
             [
                 new() { RecordingId = "1", Title = "First", DiscNumber = 1, TrackNumber = 1 },
                 new() { RecordingId = "2", Title = "Second", DiscNumber = 1, TrackNumber = 2 }
+            ]
+        }
+    };
+
+    private static FulfillmentJobDto TrackJob() => new()
+    {
+        Id = 2,
+        Title = "Test Song",
+        Year = 2026,
+        MediaType = MediaType.Music,
+        RequestScope = RequestScopeKind.Track,
+        Music = new MusicAcquisitionContextDto
+        {
+            Kind = MediaKind.Track,
+            Artist = "Artist",
+            Album = "Studio Album",
+            Track = "Test Song",
+            TrackCount = 1,
+            Tracks =
+            [
+                new() { RecordingId = "track", Title = "Test Song", DiscNumber = 1, TrackNumber = 1 }
             ]
         }
     };

@@ -130,7 +130,8 @@ public class AvailabilityReconciliationService(
         var result = await music.VerifyAsync(new PlexVerificationRequest(
             MediaType.Music, context.Kind, req.ExternalSource, req.ExternalId,
             context.Artist, context.Album, context.Track, context.ExpectedAlbums,
-            context.Tracks.Select(x => x.Title).ToList()), ct);
+            context.Tracks.Select(x => x.Title).ToList(),
+            context.Tracks.FirstOrDefault()?.DurationMs), ct);
         return result.Available;
     }
 
