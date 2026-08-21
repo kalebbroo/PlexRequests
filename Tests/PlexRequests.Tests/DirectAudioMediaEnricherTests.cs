@@ -77,13 +77,84 @@ public sealed class DirectAudioMediaEnricherTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public async Task Cover_art_archive_redirect_chain_is_validated_at_every_hop()
+    {
+        var root = NewRoot();
+        try
+        {
+            var handler = new CoverArtRedirectHandler();
+            var enricher = new DirectAudioMediaEnricher(new TestHttpClientFactory(handler),
+                NullLogger<DirectAudioMediaEnricher>.Instance);
+
+            var path = await enricher.FetchArtworkAsync(
+                "https://coverartarchive.org/release-group/release-id/front-500",
+                root, CancellationToken.None);
+
+            Assert.Equal(Path.Combine(root, "cover.jpg"), path);
+            Assert.Equal(2048, new FileInfo(path!).Length);
+            Assert.Equal(new[] { "coverartarchive.org", "archive.org", "dn.test.archive.org" },
+                handler.Requests.Select(x => x.Host));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Trusted_artwork_source_cannot_redirect_to_an_untrusted_host()
+    {
+        var root = NewRoot();
+        try
+        {
+            var handler = new SingleRedirectHandler("https://archive.org.evil.test/cover.jpg");
+            var enricher = new DirectAudioMediaEnricher(new TestHttpClientFactory(handler),
+                NullLogger<DirectAudioMediaEnricher>.Instance);
+
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() => enricher.FetchArtworkAsync(
+                "https://coverartarchive.org/release-group/release-id/front-500",
+                root, CancellationToken.None));
+
+            Assert.Contains("untrusted", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Single(handler.Requests);
+            Assert.Empty(Directory.EnumerateFiles(root));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Trusted_artwork_redirect_loop_is_bounded()
+    {
+        var root = NewRoot();
+        try
+        {
+            var handler = new SingleRedirectHandler("https://coverartarchive.org/loop");
+            var enricher = new DirectAudioMediaEnricher(new TestHttpClientFactory(handler),
+                NullLogger<DirectAudioMediaEnricher>.Instance);
+
+            var error = await Assert.ThrowsAsync<HttpRequestException>(() => enricher.FetchArtworkAsync(
+                "https://coverartarchive.org/loop", root, CancellationToken.None));
+
+            Assert.Contains("redirect safety limit", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(5, handler.Requests.Count);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Theory]
     [InlineData("http://lh3.googleusercontent.com/cover")]
     [InlineData("https://user@lh3.googleusercontent.com/cover")]
     [InlineData("https://127.0.0.1/cover")]
     [InlineData("https://i.ytimg.com.evil.test/cover")]
+    [InlineData("https://coverartarchive.org.evil.test/cover")]
+    [InlineData("https://archive.org.evil.test/cover")]
     public void Rejects_untrusted_artwork_urls(string value) =>
         Assert.False(DirectAudioMediaEnricher.TryValidateArtworkUrl(value, out _));
+
+    [Theory]
+    [InlineData("https://coverartarchive.org/release/abc/front-500")]
+    [InlineData("https://archive.org/download/mbid/file.jpg")]
+    [InlineData("https://dn.example.archive.org/file.jpg")]
+    public void Accepts_known_catalog_artwork_hosts(string value) =>
+        Assert.True(DirectAudioMediaEnricher.TryValidateArtworkUrl(value, out _));
 
     private static string NewRoot()
     {
@@ -112,5 +183,44 @@ public sealed class DirectAudioMediaEnricherTests
             content.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
         }
+    }
+
+    private sealed class CoverArtRedirectHandler : HttpMessageHandler
+    {
+        public List<Uri> Requests { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var uri = request.RequestUri!;
+            Requests.Add(uri);
+            if (uri.Host == "coverartarchive.org")
+                return Task.FromResult(Redirect(HttpStatusCode.TemporaryRedirect,
+                    "https://archive.org/download/mbid/file.jpg"));
+            if (uri.Host == "archive.org")
+                return Task.FromResult(Redirect(HttpStatusCode.Found,
+                    "https://dn.test.archive.org/items/mbid/file.jpg"));
+
+            var content = new ByteArrayContent(Enumerable.Repeat((byte)0x42, 2048).ToArray());
+            content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        }
+    }
+
+    private sealed class SingleRedirectHandler(string location) : HttpMessageHandler
+    {
+        public List<Uri> Requests { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Requests.Add(request.RequestUri!);
+            return Task.FromResult(Redirect(HttpStatusCode.TemporaryRedirect, location));
+        }
+    }
+
+    private static HttpResponseMessage Redirect(HttpStatusCode status, string location)
+    {
+        var response = new HttpResponseMessage(status);
+        response.Headers.Location = new Uri(location);
+        return response;
     }
 }
