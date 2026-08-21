@@ -60,13 +60,16 @@ else
         </MudGrid>
 
         <MudDivider Class="my-4" />
-        <MudSwitch T="bool" @bind-Value="_settings.DirectDownloadsEnabled" Color="Color.Primary"
-                   Label="Allow direct audio from YouTube Music" />
-        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="d-block mt-1 mb-3">
-            Preserves native AAC and embeds Plex-ready artist, album, track, year, and cover metadata. YouTube
-            catalog items use their exact stream IDs; MusicBrainz items use direct audio only after a strict
-            artist, title, and complete-tracklist match. Configured indexers remain an independent fallback.
-        </MudText>
+        <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
+            <div>
+                <MudText Typo="Typo.subtitle2">YouTube Music direct acquisition</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                    @(_settings.DirectDownloadsEnabled ? "Enabled as a built-in direct audio source." : "Disabled; configured release indexers remain available.")
+                </MudText>
+            </div>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.TravelExplore"
+                       Href="/admin?tab=downloads&sub=indexers">Manage sources</MudButton>
+        </div>
         <MudSwitch T="bool" @bind-Value="_settings.RequestsEnabled" Color="Color.Primary"
                    Label="Enable music requests and automatic fulfillment" Disabled="_settings.ReadinessIssues.Count > 0" />
         <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-3">

@@ -13,12 +13,13 @@
     </div>
 </div>
 <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-4">
-    The native sources Plex Requests searches and ingests. A standards-compatible Torznab endpoint remains
-    available as an optional bridge, but each built-in source owns its parsing, health, and recovery here.
-    Toggle a source off to skip it; priority (1 = highest) gives its releases a small ranking edge when
-    candidates are otherwise comparable. Coverage combines live results and durable catalog ingestion so
-    browser-backed sources are not reported as empty just because their direct scraper is unavailable.
+    Every source Plex Requests can use to acquire media. Direct providers deliver media themselves; release
+    indexers return torrent or Usenet candidates for the downloader. Toggle a source off to skip it. For release
+    indexers, priority (1 = highest) gives otherwise comparable candidates a small ranking edge, while coverage
+    combines live results and durable catalog ingestion.
 </MudText>
+
+<AdminDirectAcquisitionSourcesPanel />
 
 @if (_catalog is { Enabled: true })
 {
@@ -68,6 +69,7 @@ else if (!_loading)
 }
 else
 {
+    <MudText Typo="Typo.subtitle1" Class="mb-2">Release indexers</MudText>
     <MudPaper Class="pa-2" Elevation="1">
         <MudTable T="IndexerSettingDto" Items="_items" dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
             <HeaderContent>
