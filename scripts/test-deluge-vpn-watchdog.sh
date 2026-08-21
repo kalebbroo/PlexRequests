@@ -14,9 +14,11 @@ sys_net=$test_root/sys/class/net
 state_dir=$test_root/run
 calls=$test_root/systemctl.calls
 active=$test_root/deluge.active
+boot_id_file=$test_root/boot_id
 mkdir -p "$sys_net" "$state_dir"
 : > "$calls"
 printf 'active\n' > "$active"
+printf 'boot-a\n' > "$boot_id_file"
 
 fake_systemctl=$test_root/systemctl
 cat > "$fake_systemctl" <<'EOF'
@@ -57,6 +59,7 @@ run_watchdog() {
     DELUGE_WEB_SERVICE=deluge-web.service \
     STATE_DIR=$state_dir \
     SYS_CLASS_NET_ROOT=$sys_net \
+    BOOT_ID_FILE=$boot_id_file \
     SYSTEMCTL_BIN=$fake_systemctl \
     IP_BIN=$fake_ip \
     LOGGER_BIN=$fake_logger \
@@ -95,7 +98,7 @@ default via 192.168.1.1 dev eth0'
 run_watchdog
 assert_call 'restart deluged.service'
 assert_call 'try-restart deluge-web.service'
-[ "$(cat "$state_dir/deluge-vpn-ifindex")" = 41 ]
+[ "$(cat "$state_dir/deluge-vpn-identity")" = boot-a:41 ]
 
 # Stable interface + active daemon is a no-op.
 : > "$calls"
@@ -108,7 +111,14 @@ printf '42\n' > "$sys_net/tun0/ifindex"
 : > "$calls"
 run_watchdog
 assert_call 'restart deluged.service'
-[ "$(cat "$state_dir/deluge-vpn-ifindex")" = 42 ]
+[ "$(cat "$state_dir/deluge-vpn-identity")" = boot-a:42 ]
+
+# A reboot can reuse an ifindex, so boot identity is part of the checkpoint and forces one clean bind.
+printf 'boot-b\n' > "$boot_id_file"
+: > "$calls"
+run_watchdog
+assert_call 'restart deluged.service'
+[ "$(cat "$state_dir/deluge-vpn-identity")" = boot-b:42 ]
 
 # A full default route through the VPN is also accepted, and an inactive daemon self-heals.
 printf 'inactive\n' > "$active"
