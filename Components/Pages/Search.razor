@@ -219,7 +219,9 @@
     protected override async Task OnParametersSetAsync()
     {
         var mode = $"{QueryType}:{QueryKind}:{QuerySource}";
-        var modeChanged = mode != _lastMode;
+        var modeChanged = !string.Equals(mode, _lastMode, StringComparison.Ordinal);
+        var incomingQuery = Q?.Trim() ?? string.Empty;
+        var queryChanged = !string.Equals(incomingQuery, _lastQ, StringComparison.Ordinal);
         if (modeChanged)
         {
             _lastMode = mode;
@@ -229,6 +231,8 @@
                 if (Enum.TryParse<MediaKind>(QueryKind, true, out var kind)
                     && kind is MediaKind.Album or MediaKind.Artist or MediaKind.Track)
                     _musicKind = kind;
+                else
+                    _musicKind = MediaKind.Album;
                 _showFilters = true;
             }
             else
@@ -236,13 +240,20 @@
                 _filterType = null;
             }
         }
-        // Accept a query handed off from the header search box (/search?q=...).
-        if (!string.IsNullOrWhiteSpace(Q) && (Q != _lastQ || modeChanged))
+
+        // Query-string navigation can reuse this component instance. Reset stale results whenever
+        // either the query or mode changes so generic movie/TV cards can never remain in music mode.
+        if (queryChanged || modeChanged)
         {
-            _lastQ = Q;
-            _searchQuery = Q!;
-            _showFilters = true;
-            await PerformSearch();
+            _debounceTimer?.Stop();
+            Interlocked.Increment(ref _searchVersion);
+            _lastQ = incomingQuery;
+            _searchQuery = incomingQuery;
+            _searchResults = null;
+            _isSearching = false;
+            _showFilters = MusicOnlyMode || !string.IsNullOrEmpty(_searchQuery);
+            if (!string.IsNullOrEmpty(_searchQuery))
+                await PerformSearch();
         }
     }
 
@@ -297,10 +308,15 @@
             });
             if (version != _searchVersion) return;
 
-            // Apply additional filtering if needed
+            // Treat provider output as untrusted. The route is strict even if a provider returns
+            // malformed or mixed cards, and a selected music kind cannot leak another music kind.
             if (type.HasValue)
             {
                 results = results.Where(r => r.MediaType == type.Value).ToList();
+            }
+            if (type == PlexRequestsHosted.Shared.Enums.MediaType.Music)
+            {
+                results = results.Where(r => r.ResolveMediaRef().Kind == _musicKind).ToList();
             }
 
             // Mark availability and overlay my request statuses

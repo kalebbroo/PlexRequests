@@ -6,6 +6,18 @@ window.plexui = {
         el.scrollBy({ left: dir * el.clientWidth * 0.9, behavior: 'smooth' });
     },
 
+    // Keep same-page discovery links inside the current Blazor component so async content is not
+    // torn down and rebuilt before the browser can resolve its fragment target.
+    scrollToId: function (id) {
+        const target = id ? document.getElementById(id) : null;
+        if (!target) return;
+        const hash = `#${encodeURIComponent(id)}`;
+        const url = `${window.location.pathname}${window.location.search}${hash}`;
+        if (window.location.hash === hash) window.history.replaceState(window.history.state, "", url);
+        else window.history.pushState(window.history.state, "", url);
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+    },
+
     _setHeaderOffset: function (selector) {
         const header = selector ? document.querySelector(selector) : null;
         const fallbackHeight = 68;
