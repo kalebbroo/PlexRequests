@@ -182,6 +182,20 @@ The torrent client must only ever talk through the VPN. Enforce **in depth**:
   up and the public IP is the VPN's. On failure: pause all torrents, stop claiming, alert. Never
   fall back to the default route.
 
+For a native Deluge daemon bound to a host VPN interface, the interface name alone is not a complete
+health signal. Some VPN clients delete and recreate `tun0` when reconnecting; libtorrent can retain the
+removed interface identity and return `No such device` or unreachable tracker errors until it restarts.
+Install the optional host watchdog to make this fail closed and self-healing:
+
+```bash
+sudo ./scripts/install-deluge-vpn-watchdog.sh --interface tun0
+```
+
+The systemd timer checks the live interface identity and VPN routes every 15 seconds. It stops Deluge
+while either is absent, then restarts the daemon exactly once when a ready interface is new or Deluge is
+inactive. This is only for a bring-your-own host VPN plus native Deluge; the managed gluetun stack already
+owns its network namespace and restart lifecycle.
+
 ### Stage 6 — Completion → library → callback
 On client "completed" (webhook or poll):
 1. Move/hardlink files into the Plex library path for that category (hardlink to keep seeding).
