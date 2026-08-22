@@ -184,6 +184,98 @@ public sealed class UserAccessControlTests
     }
 
     [Fact]
+    public async Task User_access_audit_records_semantic_changes_once_with_the_real_actor()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var admin = fixture.AddUser("admin", UserPermission.All, "User,Admin");
+        var member = fixture.AddUser("member", UserPermission.AllRequests, "User");
+        await fixture.Db.SaveChangesAsync();
+        var configuration = new ConfigurationBuilder().Build();
+        var access = new UserAccessService(fixture.Db, new FixedAuth(admin.UserId, "admin", adminClaim: true), configuration);
+        var users = new UserAdministrationService(fixture.Db, access, new UserQuotaService(fixture.Db), configuration);
+        var until = DateTime.UtcNow.AddDays(7);
+        var edit = Edit(member, UserAccountStatus.Suspended, until, "Repeated abuse");
+
+        var first = await users.UpdateUserAccessAsync(edit);
+        var unchanged = await users.UpdateUserAccessAsync(edit);
+        var audit = await users.GetAuditAsync();
+
+        Assert.True(first.Success, first.Message);
+        Assert.True(unchanged.Success, unchanged.Message);
+        Assert.Contains("No access changes", unchanged.Message, StringComparison.OrdinalIgnoreCase);
+        var item = Assert.Single(audit.Items);
+        Assert.Equal(UserAccessAuditTarget.User, item.TargetType);
+        Assert.Equal(member.UserId, item.TargetId);
+        Assert.Equal("member", item.TargetName);
+        Assert.Equal("admin", item.ActorUsername);
+        Assert.Equal(UserAccessAuditAction.Updated, item.Action);
+        Assert.Contains("Account status: Active → Suspended", item.Summary);
+        Assert.Contains("Restriction reason: None → Repeated abuse", item.Summary);
+    }
+
+    [Fact]
+    public async Task Group_audit_survives_rename_and_delete_and_supports_search_and_paging()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var admin = fixture.AddUser("admin", UserPermission.All, "User,Admin");
+        await fixture.Db.SaveChangesAsync();
+        var configuration = new ConfigurationBuilder().Build();
+        var access = new UserAccessService(fixture.Db, new FixedAuth(admin.UserId, "admin", adminClaim: true), configuration);
+        var users = new UserAdministrationService(fixture.Db, access, new UserQuotaService(fixture.Db), configuration);
+        var dto = new UserGroupDto
+        {
+            Name = "Reviewers", Description = "Manual approval group", Permissions = UserPermission.AllRequests,
+            MovieRequestLimit = 4, MovieRequestLimitDays = 7,
+            TvRequestLimit = 2, TvRequestLimitDays = 7,
+            MusicRequestLimit = 8, MusicRequestLimitDays = 14
+        };
+
+        Assert.True((await users.SaveGroupAsync(dto)).Success);
+        var group = await fixture.Db.UserGroups.SingleAsync(x => x.Name == "Reviewers");
+        dto.Id = group.Id;
+        dto.Name = "Trusted reviewers";
+        dto.Permissions |= UserPermission.AutoApprove;
+        Assert.True((await users.SaveGroupAsync(dto)).Success);
+        Assert.True((await users.DeleteGroupAsync(group.Id)).Success);
+
+        var newest = await users.GetAuditAsync(2);
+        Assert.Equal(2, newest.Items.Count);
+        Assert.True(newest.HasMore);
+        Assert.NotNull(newest.NextCursor);
+        Assert.Equal(UserAccessAuditAction.Deleted, newest.Items[0].Action);
+        Assert.Equal("Trusted reviewers", newest.Items[0].TargetName);
+        var older = await users.GetAuditAsync(2, newest.NextCursor);
+        Assert.Single(older.Items);
+        Assert.Equal(UserAccessAuditAction.Created, older.Items[0].Action);
+        Assert.Equal("Reviewers", older.Items[0].TargetName);
+        var searched = await users.GetAuditAsync(search: "auto-APPROVE");
+        var update = Assert.Single(searched.Items);
+        Assert.Equal(UserAccessAuditAction.Updated, update.Action);
+        Assert.Contains("Name: Reviewers → Trusted reviewers", update.Summary);
+    }
+
+    [Fact]
+    public async Task Non_administrators_cannot_read_the_access_audit()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var member = fixture.AddUser("member", UserPermission.AllRequests, "User");
+        fixture.Db.UserAccessAudits.Add(new UserAccessAuditEntity
+        {
+            TargetType = UserAccessAuditTarget.User, TargetId = member.UserId, TargetName = "member",
+            Action = UserAccessAuditAction.Updated, ActorUsername = "admin", Summary = "Permissions changed"
+        });
+        await fixture.Db.SaveChangesAsync();
+        var configuration = new ConfigurationBuilder().Build();
+        var access = new UserAccessService(fixture.Db, new FixedAuth(member.UserId, "member"), configuration);
+        var users = new UserAdministrationService(fixture.Db, access, new UserQuotaService(fixture.Db), configuration);
+
+        var audit = await users.GetAuditAsync();
+
+        Assert.Empty(audit.Items);
+        Assert.False(audit.HasMore);
+    }
+
+    [Fact]
     public async Task Profile_reads_the_authenticated_user_not_the_last_login()
     {
         await using var fixture = await Fixture.CreateAsync();

@@ -96,12 +96,52 @@ public sealed class UserAdministrationService(
         }).ToListAsync();
     }
 
+    public async Task<UserAccessAuditPageDto> GetAuditAsync(int take = 50, long? beforeId = null, string? search = null)
+    {
+        if (!await CallerIsAdminAsync()) return new();
+        take = Math.Clamp(take, 1, 100);
+        var term = search?.Trim();
+        if (term?.Length > 128) term = term[..128];
+
+        var query = db.UserAccessAudits.AsNoTracking();
+        if (beforeId is > 0) query = query.Where(x => x.Id < beforeId.Value);
+        if (!string.IsNullOrWhiteSpace(term))
+        {
+            var normalized = term.ToLowerInvariant();
+            query = query.Where(x => x.TargetName.ToLower().Contains(normalized)
+                                     || x.ActorUsername.ToLower().Contains(normalized)
+                                     || x.Summary.ToLower().Contains(normalized));
+        }
+
+        var rows = await query.OrderByDescending(x => x.Id).Take(take + 1).ToListAsync();
+        var hasMore = rows.Count > take;
+        if (hasMore) rows.RemoveAt(rows.Count - 1);
+        return new UserAccessAuditPageDto
+        {
+            Items = rows.Select(x => new UserAccessAuditDto
+            {
+                Id = x.Id,
+                TargetType = x.TargetType,
+                TargetId = x.TargetId,
+                TargetName = x.TargetName,
+                Action = x.Action,
+                ActorUserId = x.ActorUserId,
+                ActorUsername = x.ActorUsername,
+                Summary = x.Summary,
+                CreatedAt = x.CreatedAt
+            }).ToList(),
+            HasMore = hasMore,
+            NextCursor = hasMore && rows.Count > 0 ? rows[^1].Id : null
+        };
+    }
+
     public async Task<UserAdminResult> UpdateUserAccessAsync(UserAccessEditDto edit)
     {
         if (!await CallerIsAdminAsync()) return UserAdminResult.Fail("Administrator access is required.");
         var profile = await db.UserProfiles.Include(x => x.UserGroup).Include(x => x.User)
             .FirstOrDefaultAsync(x => x.UserId == edit.UserId);
         if (profile is null) return UserAdminResult.Fail("User not found.");
+        var before = Capture(profile);
         if (!ValidQuota(edit.MovieRequestLimit, edit.MovieRequestLimitDays)
             || !ValidQuota(edit.TvRequestLimit, edit.TvRequestLimitDays)
             || !ValidQuota(edit.MusicRequestLimit, edit.MusicRequestLimitDays))
@@ -169,13 +209,20 @@ public sealed class UserAdministrationService(
         if (statusChanged)
         {
             profile.AccountStatusChangedAt = DateTime.UtcNow;
-            var callerId = await access.GetCurrentUserIdAsync();
-            profile.AccountStatusChangedBy = callerId is int id
-                ? await db.Users.Where(x => x.Id == id).Select(x => x.Username).FirstOrDefaultAsync()
-                : null;
+        }
+
+        var changes = DescribeUserChanges(before, Capture(profile, group));
+        if (changes.Count > 0)
+        {
+            var actor = await CurrentActorAsync();
+            if (statusChanged) profile.AccountStatusChangedBy = actor.Username;
+            AddAudit(UserAccessAuditTarget.User, profile.UserId, profile.User?.Username ?? $"User {profile.UserId}",
+                UserAccessAuditAction.Updated, actor, changes);
         }
         await db.SaveChangesAsync();
-        return UserAdminResult.Ok($"Access and account status updated for {profile.User?.Username ?? "user"}.");
+        return UserAdminResult.Ok(changes.Count == 0
+            ? $"No access changes were needed for {profile.User?.Username ?? "user"}."
+            : $"Access and account status updated for {profile.User?.Username ?? "user"}.");
     }
 
     public async Task<UserAdminResult> SaveGroupAsync(UserGroupDto dto)
@@ -194,6 +241,7 @@ public sealed class UserAdministrationService(
         var entity = dto.Id == 0 ? new UserGroupEntity { CreatedAt = DateTime.UtcNow } :
             await db.UserGroups.FirstOrDefaultAsync(x => x.Id == dto.Id);
         if (entity is null) return UserAdminResult.Fail("Group not found.");
+        var before = dto.Id == 0 ? null : Capture(entity);
         if (entity.IsSystem && !entity.Name.Equals(name, StringComparison.Ordinal))
             return UserAdminResult.Fail("Built-in group names cannot be changed.");
         var oldPermissions = UserAccessService.Normalize((UserPermission)entity.Permissions);
@@ -218,17 +266,30 @@ public sealed class UserAdministrationService(
         entity.MusicRequestLimitDays = dto.MusicRequestLimitDays;
         entity.AllowedQualityProfileIdsCsv = ToCsv(dto.AllowedQualityProfileIds);
         entity.UpdatedAt = DateTime.UtcNow;
+        var actor = await CurrentActorAsync();
+        await using var transaction = await db.Database.BeginTransactionAsync();
         if (dto.Id == 0) db.UserGroups.Add(entity);
         await db.SaveChangesAsync();
+        var memberCount = 0;
         if (entity.Id > 0)
         {
             var groupIsAdmin = permissions.HasFlag(UserPermission.Administrator);
             var members = await db.UserProfiles.Include(x => x.User).Where(x => x.UserGroupId == entity.Id).ToListAsync();
+            memberCount = members.Count;
             foreach (var member in members)
                 member.Roles = SetAdminRole(member.Roles, groupIsAdmin || IsConfiguredAdmin(member.User?.Username));
-            await db.SaveChangesAsync();
         }
-        return UserAdminResult.Ok($"Group {entity.Name} saved.");
+
+        var changes = before is null ? DescribeCreatedGroup(Capture(entity)) : DescribeGroupChanges(before, Capture(entity));
+        if (changes.Count > 0)
+        {
+            if (before is not null) changes.Add($"Affected members: {memberCount}");
+            AddAudit(UserAccessAuditTarget.Group, entity.Id, entity.Name,
+                before is null ? UserAccessAuditAction.Created : UserAccessAuditAction.Updated, actor, changes);
+        }
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+        return UserAdminResult.Ok(changes.Count == 0 ? $"No changes were needed for {entity.Name}." : $"Group {entity.Name} saved.");
     }
 
     public async Task<UserAdminResult> DeleteGroupAsync(int groupId)
@@ -238,6 +299,9 @@ public sealed class UserAdministrationService(
         if (group is null) return UserAdminResult.Fail("Group not found.");
         if (group.IsSystem) return UserAdminResult.Fail("Built-in groups cannot be deleted.");
         if (group.Members.Count != 0) return UserAdminResult.Fail("Move this group's users before deleting it.");
+        var actor = await CurrentActorAsync();
+        AddAudit(UserAccessAuditTarget.Group, group.Id, group.Name, UserAccessAuditAction.Deleted, actor,
+            ["Deleted the access group."]);
         db.UserGroups.Remove(group);
         await db.SaveChangesAsync();
         return UserAdminResult.Ok($"Group {group.Name} deleted.");
@@ -249,6 +313,33 @@ public sealed class UserAdministrationService(
         return id is int userId && await access.IsAdminAsync(userId);
     }
 
+    private async Task<AuditActor> CurrentActorAsync()
+    {
+        var id = await access.GetCurrentUserIdAsync();
+        var username = id is int userId
+            ? await db.Users.Where(x => x.Id == userId).Select(x => x.Username).FirstOrDefaultAsync()
+            : null;
+        return new AuditActor(id, username ?? "Unknown administrator");
+    }
+
+    private void AddAudit(UserAccessAuditTarget targetType, int targetId, string targetName,
+        UserAccessAuditAction action, AuditActor actor, IEnumerable<string> changes)
+    {
+        var summary = string.Join(" · ", changes.Where(x => !string.IsNullOrWhiteSpace(x)));
+        if (summary.Length > 2048) summary = summary[..2045] + "...";
+        db.UserAccessAudits.Add(new UserAccessAuditEntity
+        {
+            TargetType = targetType,
+            TargetId = targetId,
+            TargetName = Clip(targetName, 128),
+            Action = action,
+            ActorUserId = actor.Id,
+            ActorUsername = Clip(actor.Username, 128),
+            Summary = summary,
+            CreatedAt = DateTime.UtcNow
+        });
+    }
+
     private async Task<bool> HasAnotherAdminAsync(int excludedUserId, int? groupBeingDemoted = null)
     {
         var profiles = await db.UserProfiles.AsNoTracking().Include(x => x.User).Include(x => x.UserGroup)
@@ -258,6 +349,86 @@ public sealed class UserAdministrationService(
 
     private UserAccessSnapshot Effective(UserProfileEntity profile)
         => UserAccessService.FromProfile(profile, IsConfiguredAdmin(profile.User?.Username));
+
+    private static UserAuditState Capture(UserProfileEntity profile) => Capture(profile, profile.UserGroup);
+
+    private static UserAuditState Capture(UserProfileEntity profile, UserGroupEntity? assignedGroup) => new(
+        assignedGroup?.Name,
+        UserAccessService.Normalize((UserPermission)profile.Permissions),
+        profile.MovieRequestLimit, UserAccessService.NormalizeDays(profile.MovieRequestLimitDays),
+        profile.TvRequestLimit, UserAccessService.NormalizeDays(profile.TvRequestLimitDays),
+        profile.MusicRequestLimit, UserAccessService.NormalizeDays(profile.MusicRequestLimitDays),
+        NormalizeIds(profile.AllowedQualityProfileIdsCsv),
+        profile.AccountStatus, profile.SuspendedUntil, profile.AccountStatusReason?.Trim());
+
+    private static GroupAuditState Capture(UserGroupEntity group) => new(
+        group.Name, group.Description?.Trim(), UserAccessService.Normalize((UserPermission)group.Permissions),
+        group.MovieRequestLimit, UserAccessService.NormalizeDays(group.MovieRequestLimitDays),
+        group.TvRequestLimit, UserAccessService.NormalizeDays(group.TvRequestLimitDays),
+        group.MusicRequestLimit, UserAccessService.NormalizeDays(group.MusicRequestLimitDays),
+        NormalizeIds(group.AllowedQualityProfileIdsCsv));
+
+    private static List<string> DescribeUserChanges(UserAuditState before, UserAuditState after)
+    {
+        var changes = new List<string>();
+        AddChange(changes, "Access group", before.GroupName ?? "Custom access", after.GroupName ?? "Custom access");
+        AddChange(changes, "Custom permissions", PermissionLabel(before.Permissions), PermissionLabel(after.Permissions));
+        AddChange(changes, "Movie quota", QuotaLabel(before.MovieLimit, before.MovieDays), QuotaLabel(after.MovieLimit, after.MovieDays));
+        AddChange(changes, "TV quota", QuotaLabel(before.TvLimit, before.TvDays), QuotaLabel(after.TvLimit, after.TvDays));
+        AddChange(changes, "Music quota", QuotaLabel(before.MusicLimit, before.MusicDays), QuotaLabel(after.MusicLimit, after.MusicDays));
+        AddChange(changes, "Allowed qualities", QualityLabel(before.QualityIds), QualityLabel(after.QualityIds));
+        AddChange(changes, "Account status", before.AccountStatus.ToString(), after.AccountStatus.ToString());
+        AddChange(changes, "Suspension ends", DateLabel(before.SuspendedUntil), DateLabel(after.SuspendedUntil));
+        AddChange(changes, "Restriction reason", before.Reason ?? "None", after.Reason ?? "None");
+        return changes;
+    }
+
+    private static List<string> DescribeCreatedGroup(GroupAuditState group) =>
+    [
+        $"Created with permissions: {PermissionLabel(group.Permissions)}",
+        $"Movie quota: {QuotaLabel(group.MovieLimit, group.MovieDays)}",
+        $"TV quota: {QuotaLabel(group.TvLimit, group.TvDays)}",
+        $"Music quota: {QuotaLabel(group.MusicLimit, group.MusicDays)}",
+        $"Allowed qualities: {QualityLabel(group.QualityIds)}"
+    ];
+
+    private static List<string> DescribeGroupChanges(GroupAuditState before, GroupAuditState after)
+    {
+        var changes = new List<string>();
+        AddChange(changes, "Name", before.Name, after.Name);
+        AddChange(changes, "Description", before.Description ?? "None", after.Description ?? "None");
+        AddChange(changes, "Permissions", PermissionLabel(before.Permissions), PermissionLabel(after.Permissions));
+        AddChange(changes, "Movie quota", QuotaLabel(before.MovieLimit, before.MovieDays), QuotaLabel(after.MovieLimit, after.MovieDays));
+        AddChange(changes, "TV quota", QuotaLabel(before.TvLimit, before.TvDays), QuotaLabel(after.TvLimit, after.TvDays));
+        AddChange(changes, "Music quota", QuotaLabel(before.MusicLimit, before.MusicDays), QuotaLabel(after.MusicLimit, after.MusicDays));
+        AddChange(changes, "Allowed qualities", QualityLabel(before.QualityIds), QualityLabel(after.QualityIds));
+        return changes;
+    }
+
+    private static void AddChange(ICollection<string> changes, string field, string before, string after)
+    {
+        if (!string.Equals(before, after, StringComparison.Ordinal)) changes.Add($"{field}: {before} → {after}");
+    }
+
+    private static string PermissionLabel(UserPermission permissions)
+    {
+        var values = new[]
+        {
+            permissions.HasFlag(UserPermission.Administrator) ? "Administrator" : null,
+            permissions.HasFlag(UserPermission.AutoApprove) ? "Auto-approve" : null,
+            permissions.HasFlag(UserPermission.RequestMovies) ? "Movies" : null,
+            permissions.HasFlag(UserPermission.RequestTv) ? "TV" : null,
+            permissions.HasFlag(UserPermission.RequestMusic) ? "Music" : null
+        }.Where(x => x is not null);
+        var label = string.Join(", ", values);
+        return string.IsNullOrEmpty(label) ? "Browse only" : label;
+    }
+
+    private static string QuotaLabel(int? limit, int days) => limit is null ? "Unlimited" : $"{limit} every {days} days";
+    private static string QualityLabel(string? ids) => string.IsNullOrWhiteSpace(ids) ? "All selectable" : $"Profile ids {ids}";
+    private static string DateLabel(DateTime? value) => value is null ? "None" : value.Value.ToUniversalTime().ToString("u");
+    private static string? NormalizeIds(string? csv) => ToCsv(ParseIds(csv));
+    private static string Clip(string value, int maxLength) => value.Length <= maxLength ? value : value[..maxLength];
 
     private static UserPermission CustomPermissions(UserProfileEntity profile)
     {
@@ -295,4 +466,24 @@ public sealed class UserAdministrationService(
         var values = (ids ?? []).Where(x => x > 0).Distinct().Order().ToList();
         return values.Count == 0 ? null : string.Join(',', values);
     }
+
+    private sealed record AuditActor(int? Id, string Username);
+    private sealed record UserAuditState(
+        string? GroupName,
+        UserPermission Permissions,
+        int? MovieLimit, int MovieDays,
+        int? TvLimit, int TvDays,
+        int? MusicLimit, int MusicDays,
+        string? QualityIds,
+        UserAccountStatus AccountStatus,
+        DateTime? SuspendedUntil,
+        string? Reason);
+    private sealed record GroupAuditState(
+        string Name,
+        string? Description,
+        UserPermission Permissions,
+        int? MovieLimit, int MovieDays,
+        int? TvLimit, int TvDays,
+        int? MusicLimit, int MusicDays,
+        string? QualityIds);
 }

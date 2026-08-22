@@ -3,7 +3,8 @@
 @inject IToastService Toast
 @inject IDialogService Dialogs
 
-<MudTabs Rounded="true" Elevation="0" PanelClass="access-tab-panel">
+<MudTabs Rounded="true" Elevation="0" MinimumTabWidth="100px" PanelClass="access-tab-panel"
+         ActivePanelIndex="_activeTab" ActivePanelIndexChanged="ActiveTabChanged">
     <MudTabPanel Text="Users" Icon="@Icons.Material.Filled.People">
         <div class="access-toolbar">
             <MudTextField T="string" Value="_search" ValueChanged="SearchChanged" Label="Find a user"
@@ -122,6 +123,10 @@
             }
         </div>
     </MudTabPanel>
+
+    <MudTabPanel Text="Audit" Icon="@Icons.Material.Filled.History">
+        <AdminUserAccessAuditPanel @ref="_auditPanel" />
+    </MudTabPanel>
 </MudTabs>
 
 @code {
@@ -129,6 +134,8 @@
     private string _search = string.Empty;
     private UserSort _sort;
     private UserStatusFilter _statusFilter;
+    private int _activeTab;
+    private AdminUserAccessAuditPanel? _auditPanel;
     private List<AdminUserDto> _users = [];
     private List<UserGroupDto> _groups = [];
 
@@ -176,6 +183,12 @@
     }
 
     private void SearchChanged(string value) => _search = value ?? string.Empty;
+
+    private async Task ActiveTabChanged(int index)
+    {
+        _activeTab = index;
+        if (index == 2 && _auditPanel is not null) await _auditPanel.RefreshAsync();
+    }
 
     private async Task EditUser(AdminUserDto user)
     {

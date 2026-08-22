@@ -30,6 +30,7 @@ public class DatabaseAdminService(AppDbContext db, IPlexApiService plex, ILogger
             new("Users", await db.Users.CountAsync()),
             new("User profiles", await db.UserProfiles.CountAsync()),
             new("User access groups", await db.UserGroups.CountAsync()),
+            new("User access audit", await db.UserAccessAudits.CountAsync()),
             new("Notifications", await db.Notifications.CountAsync()),
             new("Plex mappings (availability)", await db.PlexMappings.CountAsync()),
             new("Plex season availability", await db.PlexSeasonAvailability.CountAsync()),
