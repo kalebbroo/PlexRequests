@@ -7,6 +7,7 @@
 @inject PlexRequestsHosted.Services.Implementations.IPlexMusicService PlexMusic
 @inject NavigationManager Navigation
 @using PlexRequestsHosted.Shared.Media
+@using PlexRequestsHosted.Shared.Navigation
 @implements IDisposable
 
 <PageTitle>@(MusicOnlyMode ? "Music Search" : "Search") - Plex Requests</PageTitle>
@@ -212,28 +213,34 @@
     private string? _lastQ;
     private string? _lastMode;
 
-    private bool MusicOnlyMode => QueryType?.Equals("music", StringComparison.OrdinalIgnoreCase) == true;
+    private PlexRequestsHosted.Shared.Enums.MediaType? RouteMediaType
+        => SearchNavigationContext.ParseMediaType(QueryType);
+    private bool MusicOnlyMode => RouteMediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music;
     private IEnumerable<string> ActiveSuggestions => MusicOnlyMode ? MusicSuggestions : _popularSearches;
     private IEnumerable<string> ActiveGenres => MusicOnlyMode ? MusicGenres : _genres;
     private IEnumerable<string> ActiveAlternatives => MusicOnlyMode ? MusicSuggestions.Take(4) : _alternativeSuggestions;
 
     protected override async Task OnParametersSetAsync()
     {
-        var mode = $"{QueryType}:{QueryKind}:{QuerySource}";
+        var routeMediaType = RouteMediaType;
+        var mode = $"{routeMediaType}:{QueryKind}:{QuerySource}";
         var modeChanged = !string.Equals(mode, _lastMode, StringComparison.Ordinal);
         var incomingQuery = Q?.Trim() ?? string.Empty;
         var queryChanged = !string.Equals(incomingQuery, _lastQ, StringComparison.Ordinal);
         if (modeChanged)
         {
             _lastMode = mode;
-            if (MusicOnlyMode)
+            if (routeMediaType.HasValue)
             {
-                _filterType = PlexRequestsHosted.Shared.Enums.MediaType.Music;
-                if (Enum.TryParse<MediaKind>(QueryKind, true, out var kind)
-                    && kind is MediaKind.Album or MediaKind.Artist or MediaKind.Track)
-                    _musicKind = kind;
-                else
-                    _musicKind = MediaKind.Album;
+                _filterType = routeMediaType.Value;
+                if (routeMediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music)
+                {
+                    if (Enum.TryParse<MediaKind>(QueryKind, true, out var kind)
+                        && kind is MediaKind.Album or MediaKind.Artist or MediaKind.Track)
+                        _musicKind = kind;
+                    else
+                        _musicKind = MediaKind.Album;
+                }
                 _showFilters = true;
             }
             else
@@ -243,7 +250,7 @@
         }
 
         // Query-string navigation can reuse this component instance. Reset stale results whenever
-        // either the query or mode changes so generic movie/TV cards can never remain in music mode.
+        // either the query or route type changes so cards from the previous media mode cannot leak in.
         if (queryChanged || modeChanged)
         {
             _debounceTimer?.Stop();
@@ -252,7 +259,7 @@
             _searchQuery = incomingQuery;
             _searchResults = null;
             _isSearching = false;
-            _showFilters = MusicOnlyMode || !string.IsNullOrEmpty(_searchQuery);
+            _showFilters = RouteMediaType.HasValue || !string.IsNullOrEmpty(_searchQuery);
             if (!string.IsNullOrEmpty(_searchQuery))
                 await PerformSearch();
         }
@@ -276,7 +283,7 @@
     {
         _debounceTimer?.Stop();
         _debounceTimer?.Start();
-        _showFilters = MusicOnlyMode || !string.IsNullOrEmpty(_searchQuery);
+        _showFilters = RouteMediaType.HasValue || !string.IsNullOrEmpty(_searchQuery);
     }
 
     private async Task PerformSearch()
@@ -292,7 +299,7 @@
 
         var version = Interlocked.Increment(ref _searchVersion);
         var query = _searchQuery.Trim();
-        var type = MusicOnlyMode ? PlexRequestsHosted.Shared.Enums.MediaType.Music : _filterType;
+        var type = _filterType;
         var kind = type == PlexRequestsHosted.Shared.Enums.MediaType.Music ? _musicKind : (MediaKind?)null;
         _isSearching = true;
         StateHasChanged();
@@ -389,7 +396,7 @@
         _searchQuery = "";
         _searchResults = null;
         _isSearching = false;
-        _showFilters = MusicOnlyMode;
+        _showFilters = RouteMediaType.HasValue;
     }
 
     private void SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType? type)
