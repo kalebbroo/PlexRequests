@@ -5,10 +5,12 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.Implementations;
+using PlexRequestsHosted.Services.Auth;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using Xunit;
@@ -64,11 +66,47 @@ public sealed class UserAccessControlTests
         var auth = new FixedAuth(profile.UserId, "member");
         var access = new UserAccessService(fixture.Db, auth, new ConfigurationBuilder().Build());
         var service = RequestService(fixture.Db, auth, access);
+        var quotas = new UserQuotaService(fixture.Db);
         Assert.True(await service.CheckRequestLimitsAsync(MediaType.Movie));
 
         fixture.Db.MediaRequests.Add(Request(profile.UserId, RequestStatus.Available, DateTime.UtcNow));
         await fixture.Db.SaveChangesAsync();
         Assert.False(await service.CheckRequestLimitsAsync(MediaType.Movie));
+        var usage = await quotas.GetUsageAsync(profile.UserId, await access.GetAccessAsync(profile.UserId));
+        Assert.Equal(1, usage.Movie.Used);
+        Assert.Equal(0, usage.Movie.Remaining);
+    }
+
+    [Fact]
+    public async Task Http_claims_are_rebuilt_from_current_database_access()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var profile = fixture.AddUser("live-access", UserPermission.AllRequests, "User");
+        await fixture.Db.SaveChangesAsync();
+        var auth = new FixedAuth(profile.UserId, "live-access", adminClaim: true);
+        var access = new UserAccessService(fixture.Db, auth, new ConfigurationBuilder().Build());
+        var services = new ServiceCollection().AddSingleton<IUserAccessService>(access).BuildServiceProvider();
+        var transformer = new UserAccessClaimsTransformation(
+            services.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<UserAccessClaimsTransformation>.Instance);
+        ClaimsPrincipal Cookie(bool admin) => new(new ClaimsIdentity([
+            new Claim(ClaimTypes.Name, "live-access"),
+            new Claim("user_id", profile.UserId.ToString()),
+            new Claim(ClaimTypes.Role, "User"),
+            .. admin ? [new Claim(ClaimTypes.Role, "Admin")] : Array.Empty<Claim>()
+        ], "test"));
+
+        var staleCookie = Cookie(admin: true);
+        staleCookie.AddIdentity(new ClaimsIdentity([new Claim(ClaimTypes.Role, "Admin")]));
+        var demoted = await transformer.TransformAsync(staleCookie);
+        Assert.False(demoted.IsInRole("Admin"));
+        Assert.True(demoted.IsInRole("User"));
+
+        profile.Permissions = (int)UserPermission.All;
+        profile.Roles = "User,Admin";
+        await fixture.Db.SaveChangesAsync();
+        var promoted = await transformer.TransformAsync(Cookie(admin: false));
+        Assert.True(promoted.IsInRole("Admin"));
     }
 
     [Fact]
@@ -97,7 +135,7 @@ public sealed class UserAccessControlTests
         var auth = new FixedAuth(admin.UserId, "admin", adminClaim: true);
         var configuration = new ConfigurationBuilder().Build();
         var access = new UserAccessService(fixture.Db, auth, configuration);
-        var users = new UserAdministrationService(fixture.Db, access, configuration);
+        var users = new UserAdministrationService(fixture.Db, access, new UserQuotaService(fixture.Db), configuration);
 
         var result = await users.UpdateUserAccessAsync(new UserAccessEditDto
         {
@@ -162,7 +200,7 @@ public sealed class UserAccessControlTests
 
     private static MediaRequestService RequestService(AppDbContext db, AuthenticationStateProvider auth, IUserAccessService access) =>
         new(db, auth, null!, null!, null!, new ConfigurationBuilder().Build(), null!, null!, null!,
-            null!, null!, null!, null!, access);
+            null!, null!, null!, null!, access, new UserQuotaService(db));
 
     private static MediaRequestEntity Request(int userId, RequestStatus status, DateTime requestedAt) => new()
     {

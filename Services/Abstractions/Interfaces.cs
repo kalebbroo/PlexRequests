@@ -197,6 +197,17 @@ public interface IUserAccessService
     Task<bool> IsAdminAsync(int userId);
 }
 
+/// <summary>
+/// Computes rolling request usage for every caller that displays or enforces a quota. Keeping this in one
+/// service prevents the request form, profile, and administrator view from disagreeing about what counts.
+/// </summary>
+public interface IUserQuotaService
+{
+    Task<UserQuotaOverviewDto> GetUsageAsync(int userId, UserAccessSnapshot access);
+    Task<IReadOnlyDictionary<int, UserQuotaOverviewDto>> GetUsageAsync(IReadOnlyCollection<UserAccessSnapshot> users);
+    Task<bool> HasCapacityAsync(int userId, MediaType mediaType, UserAccessSnapshot access);
+}
+
 public sealed record UserAccessSnapshot(
     int UserId,
     UserPermission Permissions,

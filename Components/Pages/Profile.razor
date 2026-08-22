@@ -3,6 +3,8 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @inject IUserProfileService UserProfileService
+@inject IUserAccessService UserAccess
+@inject IUserQuotaService UserQuotas
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IDiscordLinkService DiscordLink
 @inject PlexRequestsHosted.Infrastructure.Data.AppDbContext Db
@@ -22,6 +24,44 @@
                     <MudDivider Class="my-2" />
                     <MudText Typo="Typo.caption">Plex: @_profile?.PlexUsername</MudText>
                 </MudStack>
+            </MudPaper>
+
+            <MudPaper Class="pa-4 mt-4 access-card" Elevation="2">
+                <div class="access-heading">
+                    <div>
+                        <MudText Typo="Typo.h6">My access</MudText>
+                        <MudText Typo="Typo.caption" Class="text-secondary">
+                            @(_access?.GroupName is { Length: > 0 } group ? $"Inherited from {group}" : "Custom account settings")
+                        </MudText>
+                    </div>
+                    @if (_access?.IsAdmin == true)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined"
+                                 Icon="@Icons.Material.Filled.AdminPanelSettings">Administrator</MudChip>
+                    }
+                </div>
+
+                @if (_access is null || _quota is null)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-4" />
+                }
+                else
+                {
+                    <div class="permission-summary">
+                        <MudIcon Icon="@(_access.AutoApprove ? Icons.Material.Filled.Bolt : Icons.Material.Filled.Schedule)" Size="Size.Small" />
+                        <MudText Typo="Typo.body2">
+                            @(_access.AutoApprove ? "Requests are approved automatically." : "Requests wait for administrator approval.")
+                        </MudText>
+                    </div>
+                    <div class="profile-quota-grid">
+                        @QuotaCard("Movies", Icons.Material.Filled.Movie, UserPermission.RequestMovies, _quota.Movie)
+                        @QuotaCard("TV & anime", Icons.Material.Filled.Tv, UserPermission.RequestTv, _quota.Tv)
+                        @QuotaCard("Music", Icons.Material.Filled.LibraryMusic, UserPermission.RequestMusic, _quota.Music)
+                    </div>
+                    <MudText Typo="Typo.caption" Class="text-secondary access-note">
+                        Rolling usage updates automatically as older requests leave each time window.
+                    </MudText>
+                }
             </MudPaper>
         </MudItem>
         <MudItem xs="12" md="8">
@@ -101,6 +141,8 @@
     private UserDto? _profile;
     private List<PlexRequestsHosted.Infrastructure.Entities.MediaRequestEntity>? _myRequests;
     private UserStatsDto _stats = new();
+    private UserAccessSnapshot? _access;
+    private UserQuotaOverviewDto? _quota;
 
     private int _userId;
     private bool _discordLinked;
@@ -115,12 +157,49 @@
         var auth = await AuthStateProvider.GetAuthenticationStateAsync();
         int.TryParse(auth.User.FindFirst("user_id")?.Value, out _userId);
         _profile = await UserProfileService.GetProfileAsync();
+        if (_userId > 0)
+        {
+            _access = await UserAccess.GetAccessAsync(_userId);
+            _quota = await UserQuotas.GetUsageAsync(_userId, _access);
+        }
         await InvokeAsync(StateHasChanged);
         // Sequential: these share the circuit's single AppDbContext (EF forbids concurrent ops).
         await LoadRequestsAndStats();
         await LoadDiscordStatus();
         await InvokeAsync(StateHasChanged);
     }
+
+    private RenderFragment QuotaCard(string title, string icon, UserPermission permission, RequestQuotaDto quota) => @<div class="profile-quota-card">
+        <div class="quota-title-row">
+            <span class="quota-icon"><MudIcon Icon="@icon" Size="Size.Small" /></span>
+            <MudText Typo="Typo.subtitle2">@title</MudText>
+        </div>
+        @if (!_access!.Permissions.HasFlag(permission) && !_access.IsAdmin)
+        {
+            <MudText Typo="Typo.body2" Class="quota-blocked">Not enabled</MudText>
+            <MudText Typo="Typo.caption" Class="text-secondary">Ask an administrator for access.</MudText>
+        }
+        else if (quota.Limit is null)
+        {
+            <MudText Typo="Typo.body2" Class="quota-unlimited">Unlimited</MudText>
+            <MudText Typo="Typo.caption" Class="text-secondary">No request cap</MudText>
+        }
+        else
+        {
+            <div class="quota-numbers">
+                <strong>@quota.Remaining</strong>
+                <span>remaining</span>
+            </div>
+            <div class="quota-meter" role="progressbar" aria-valuemin="0" aria-valuemax="@quota.Limit" aria-valuenow="@Math.Min(quota.Used, quota.Limit.Value)">
+                <span style="width:@QuotaPercent(quota)%"></span>
+            </div>
+            <MudText Typo="Typo.caption" Class="text-secondary">@quota.Used of @quota.Limit used in @quota.WindowDays days</MudText>
+        }
+    </div>;
+
+    private static int QuotaPercent(RequestQuotaDto quota) => quota.Limit is > 0
+        ? Math.Clamp((int)Math.Round(quota.Used * 100d / quota.Limit.Value), 0, 100)
+        : 0;
 
     private async Task LoadDiscordStatus()
     {

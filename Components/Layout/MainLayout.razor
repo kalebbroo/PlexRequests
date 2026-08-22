@@ -221,12 +221,11 @@
     {
         DetermineRouteContext();
         Navigation.LocationChanged += HandleLocationChanged;
+        AuthStateProvider.AuthenticationStateChanged += HandleAuthenticationStateChanged;
 
         // Get authentication state
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        _isAuthenticated = authState.User.Identity?.IsAuthenticated ?? false;
-        _currentUsername = authState.User.Identity?.Name;
-        _isAdmin = authState.User.IsInRole("Admin");
+        ApplyAuthenticationState(authState);
 
         if (_isAuthenticated)
         {
@@ -239,6 +238,31 @@
             // Subscribe early so live events aren't missed; the actual notification fetch is deferred
             // to OnAfterRender so it never blocks the first paint of the page.
             if (_userId > 0) Broker.Notified += OnNotified;
+        }
+    }
+
+    private void ApplyAuthenticationState(AuthenticationState authState)
+    {
+        _isAuthenticated = authState.User.Identity?.IsAuthenticated ?? false;
+        _currentUsername = authState.User.Identity?.Name;
+        _isAdmin = authState.User.IsInRole("Admin");
+        _userAvatar = authState.User.FindFirst("avatar_url")?.Value;
+        int.TryParse(authState.User.FindFirst("user_id")?.Value, out _userId);
+    }
+
+    private async void HandleAuthenticationStateChanged(Task<AuthenticationState> stateTask)
+    {
+        try
+        {
+            var wasAdmin = _isAdmin;
+            ApplyAuthenticationState(await stateTask);
+            await InvokeAsync(StateHasChanged);
+            if (wasAdmin && !_isAdmin && Navigation.ToBaseRelativePath(Navigation.Uri).StartsWith("admin", StringComparison.OrdinalIgnoreCase))
+                Navigation.NavigateTo("/browse");
+        }
+        catch
+        {
+            // The circuit may be disposing while the authentication notification is in flight.
         }
     }
 
@@ -354,6 +378,7 @@
     public void Dispose()
     {
         Navigation.LocationChanged -= HandleLocationChanged;
+        AuthStateProvider.AuthenticationStateChanged -= HandleAuthenticationStateChanged;
         Broker.Notified -= OnNotified;
     }
 

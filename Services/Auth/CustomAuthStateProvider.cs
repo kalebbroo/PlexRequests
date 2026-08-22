@@ -20,8 +20,10 @@ public class CustomAuthStateProvider(
     IPlexAuthService plexAuth,
     AppDbContext dbContext,
     IHttpContextAccessor httpContextAccessor,
-    IConfiguration configuration)
-    : AuthenticationStateProvider
+    IConfiguration configuration,
+    IServiceScopeFactory scopeFactory,
+    ILogger<CustomAuthStateProvider> logger)
+    : AuthenticationStateProvider, IDisposable
 {
     private readonly ISessionStorageService _sessionStorage = sessionStorage;
     private readonly HttpClient _httpClient = httpClient;
@@ -29,6 +31,8 @@ public class CustomAuthStateProvider(
     private readonly AppDbContext _db = dbContext;
     private readonly IHttpContextAccessor _http = httpContextAccessor;
     private readonly IConfiguration _config = configuration;
+    private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
+    private readonly ILogger<CustomAuthStateProvider> _logger = logger;
 
     /// <summary>
     /// True when the given Plex username is listed in the ADMIN_USERNAMES / Admin:Usernames
@@ -60,6 +64,10 @@ public class CustomAuthStateProvider(
     private AuthenticationState? _cachedAuthState;
     private DateTime _cacheExpiry = DateTime.MinValue;
     private readonly TimeSpan _cacheTimeout = TimeSpan.FromSeconds(5);
+    private readonly CancellationTokenSource _revalidationCancellation = new();
+    private readonly SemaphoreSlim _revalidationLock = new(1, 1);
+    private Task? _revalidationTask;
+    private int _disposed;
 
     public override async Task<AuthenticationState> GetAuthenticationStateAsync()
     {
@@ -94,9 +102,11 @@ public class CustomAuthStateProvider(
                     // JS interop not available during prerendering - that's fine
                 }
                 
-                var cookieState = new AuthenticationState(cookieUser);
+                var refreshedUser = await RefreshAccessAsync(cookieUser, CancellationToken.None);
+                var cookieState = new AuthenticationState(refreshedUser);
                 _cachedAuthState = cookieState;
                 _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
+                StartRevalidationLoop();
                 return cookieState;
             }
 
@@ -113,6 +123,79 @@ public class CustomAuthStateProvider(
             _cachedAuthState = errorState;
             _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
             return errorState;
+        }
+    }
+
+    private void StartRevalidationLoop()
+    {
+        _revalidationTask ??= RevalidatePeriodicallyAsync(_revalidationCancellation.Token);
+    }
+
+    private async Task RevalidatePeriodicallyAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(20));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                var previous = _cachedAuthState;
+                if (previous?.User.Identity?.IsAuthenticated != true) continue;
+
+                var refreshed = await RefreshAccessAsync(previous.User, cancellationToken);
+                var roleChanged = previous.User.IsInRole("Admin") != refreshed.IsInRole("Admin");
+                _cachedAuthState = new AuthenticationState(refreshed);
+                _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
+                if (roleChanged)
+                {
+                    _logger.LogInformation("Live access changed for user {Username}; refreshing the active session",
+                        refreshed.Identity?.Name);
+                    NotifyAuthenticationStateChanged(Task.FromResult(_cachedAuthState));
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            // The loop is a live-update enhancement; request-time transformation and service guards remain
+            // authoritative. Log the failure without taking down the user's Blazor circuit.
+            _logger.LogWarning(ex, "The live access revalidation loop stopped unexpectedly");
+        }
+    }
+
+    private async Task<ClaimsPrincipal> RefreshAccessAsync(ClaimsPrincipal principal, CancellationToken cancellationToken)
+    {
+        if (!int.TryParse(principal.FindFirst("user_id")?.Value, out var userId) || userId <= 0)
+            return principal;
+
+        await _revalidationLock.WaitAsync(cancellationToken);
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var access = scope.ServiceProvider.GetRequiredService<IUserAccessService>();
+            var snapshot = await access.GetAccessAsync(userId);
+            return UserAccessClaimsTransformation.RefreshRoles(principal, snapshot.IsAdmin);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (ObjectDisposedException)
+        {
+            // The host can dispose its root scope just before a circuit provider receives its disposal
+            // callback. That is a normal shutdown race, not an authorization failure worth logging.
+            return principal;
+        }
+        catch (Exception ex)
+        {
+            // Retain the last known principal through a transient DB outage and retry on the next pass.
+            _logger.LogWarning(ex, "Could not revalidate the active session for user {UserId}", userId);
+            return principal;
+        }
+        finally
+        {
+            _revalidationLock.Release();
         }
     }
 
@@ -409,7 +492,20 @@ public class CustomAuthStateProvider(
         }
         finally
         {
+            _revalidationCancellation.Cancel();
+            _cachedAuthState = null;
             NotifyAuthenticationStateChanged(Task.FromResult(new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()))));
         }
+    }
+
+    public void Dispose()
+    {
+        // The same scoped instance is exposed through both CustomAuthStateProvider and
+        // AuthenticationStateProvider registrations, so DI may ask it to dispose more than once.
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        try { _revalidationCancellation.Cancel(); }
+        catch (ObjectDisposedException) { }
+        // Do not synchronously block waiting for the timer task: Dispose is also used by background-job
+        // scopes. Cancellation stops it promptly and the task owns no unmanaged resources.
     }
 }

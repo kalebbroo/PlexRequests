@@ -486,6 +486,13 @@ public class RequestQuotaDto
     public int? Remaining => Limit is null ? null : Math.Max(0, Limit.Value - Used);
 }
 
+public class UserQuotaOverviewDto
+{
+    public RequestQuotaDto Movie { get; set; } = new();
+    public RequestQuotaDto Tv { get; set; } = new();
+    public RequestQuotaDto Music { get; set; } = new();
+}
+
 public class UserGroupDto : BaseDto
 {
     public string Name { get; set; } = string.Empty;
