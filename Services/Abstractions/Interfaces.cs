@@ -187,21 +187,52 @@ public interface IUserProfileService
     Task<bool> UpdatePreferencesAsync(UserPreferencesDto preferences);
     Task<bool> UpdateAvatarAsync(string avatarUrl);
 
-    // Admin user management
-    Task<List<UserDto>> GetAllUsersAsync();
-    Task<bool> SetAdminAsync(int userId, bool isAdmin);
-    Task<bool> SetAutoApproveAsync(int userId, bool autoApprove);
+}
+
+public interface IUserAccessService
+{
+    Task<int?> GetCurrentUserIdAsync();
+    Task<UserAccessSnapshot> GetAccessAsync(int userId);
+    Task<bool> CanRequestAsync(int userId, MediaType mediaType);
+    Task<bool> IsAdminAsync(int userId);
+}
+
+public sealed record UserAccessSnapshot(
+    int UserId,
+    UserPermission Permissions,
+    int? GroupId,
+    string? GroupName,
+    int? MovieRequestLimit,
+    int MovieRequestLimitDays,
+    int? TvRequestLimit,
+    int TvRequestLimitDays,
+    int? MusicRequestLimit,
+    int MusicRequestLimitDays,
+    string? AllowedQualityProfileIdsCsv)
+{
+    public bool IsAdmin => Permissions.HasFlag(UserPermission.Administrator);
+    public bool AutoApprove => IsAdmin || Permissions.HasFlag(UserPermission.AutoApprove);
+}
+
+public interface IUserAdministrationService
+{
+    Task<List<AdminUserDto>> GetUsersAsync();
+    Task<List<UserGroupDto>> GetGroupsAsync();
+    Task<UserAdminResult> UpdateUserAccessAsync(UserAccessEditDto edit);
+    Task<UserAdminResult> SaveGroupAsync(UserGroupDto group);
+    Task<UserAdminResult> DeleteGroupAsync(int groupId);
 }
 
 public interface IDiscordLinkService
 {
     /// <summary>Mint a one-time code (shown on the Profile page) that the bot's /request link consumes.</summary>
-    string GenerateLinkCode(int userId);
+    Task<string?> GenerateLinkCodeAsync();
     Task<BridgeLinkResultDto> CompleteLinkAsync(string code, string discordUserId, string? discordUsername);
     Task<BridgeLinkStatusDto> GetStatusByDiscordIdAsync(string discordUserId);
     Task<int?> ResolveUserIdAsync(string discordUserId);
     Task<bool> IsAdminAsync(string discordUserId);
     Task<bool> SetDmOptInAsync(int userId, bool optIn);
+    Task<bool> UnlinkCurrentUserAsync();
 }
 
 public interface IToastService

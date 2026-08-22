@@ -133,7 +133,7 @@
         _dmOptIn = p?.DiscordDmOptIn ?? false;
     }
 
-    private void GenerateCode() => _linkCode = DiscordLink.GenerateLinkCode(_userId);
+    private async Task GenerateCode() => _linkCode = await DiscordLink.GenerateLinkCodeAsync();
 
     private async Task ToggleDm(bool v)
     {
@@ -143,14 +143,7 @@
 
     private async Task Unlink()
     {
-        var p = await Db.UserProfiles.FirstOrDefaultAsync(x => x.UserId == _userId);
-        if (p is not null)
-        {
-            p.DiscordUserId = null;
-            p.DiscordUsername = null;
-            p.DiscordDmOptIn = false;
-            await Db.SaveChangesAsync();
-        }
+        await DiscordLink.UnlinkCurrentUserAsync();
         _linkCode = null;
         await LoadDiscordStatus();
     }

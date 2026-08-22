@@ -14,17 +14,20 @@ namespace PlexRequestsHosted.Services.Implementations;
 public class DiscordLinkService(
     AppDbContext db,
     IMemoryCache cache,
-    ILogger<DiscordLinkService> logger) : IDiscordLinkService
+    ILogger<DiscordLinkService> logger,
+    IUserAccessService userAccess) : IDiscordLinkService
 {
     private const string CachePrefix = "discordlink:";
     private static readonly TimeSpan CodeTtl = TimeSpan.FromMinutes(10);
     // Unambiguous alphabet (no 0/O/1/I) for readable codes.
     private const string Alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
-    public string GenerateLinkCode(int userId)
+    public async Task<string?> GenerateLinkCodeAsync()
     {
+        var userId = await userAccess.GetCurrentUserIdAsync();
+        if (userId is null) return null;
         var code = NewCode(6);
-        cache.Set(CachePrefix + code, new LinkTicket(userId), CodeTtl);
+        cache.Set(CachePrefix + code, new LinkTicket(userId.Value), CodeTtl);
         return code;
     }
 
@@ -107,17 +110,31 @@ public class DiscordLinkService(
     {
         var normalized = discordUserId?.Trim() ?? string.Empty;
         if (!IsValidDiscordUserId(normalized)) return false;
-        var roles = await db.UserProfiles.Where(p => p.DiscordUserId == normalized).Select(p => p.Roles).FirstOrDefaultAsync();
-        return (roles ?? string.Empty)
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Contains("Admin", StringComparer.OrdinalIgnoreCase);
+        var userId = await db.UserProfiles.Where(p => p.DiscordUserId == normalized)
+            .Select(p => (int?)p.UserId).FirstOrDefaultAsync();
+        return userId is int id && await userAccess.IsAdminAsync(id);
     }
 
     public async Task<bool> SetDmOptInAsync(int userId, bool optIn)
     {
+        var callerId = await userAccess.GetCurrentUserIdAsync();
+        if (callerId != userId && !(callerId is int id && await userAccess.IsAdminAsync(id))) return false;
         var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
         if (profile is null) return false;
         profile.DiscordDmOptIn = optIn;
+        await db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<bool> UnlinkCurrentUserAsync()
+    {
+        var userId = await userAccess.GetCurrentUserIdAsync();
+        if (userId is null) return false;
+        var profile = await db.UserProfiles.FirstOrDefaultAsync(x => x.UserId == userId.Value);
+        if (profile is null) return false;
+        profile.DiscordUserId = null;
+        profile.DiscordUsername = null;
+        profile.DiscordDmOptIn = false;
         await db.SaveChangesAsync();
         return true;
     }

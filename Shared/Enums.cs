@@ -53,17 +53,22 @@ public enum RequestScopeKind
     Track = 6
 }
 
+/// <summary>
+/// Capabilities granted directly to a custom user or inherited from an access group.  This is deliberately
+/// separate from ASP.NET role names: roles decide which administration pages can be opened, while these flags
+/// are checked again by the request services at the point where state is changed.
+/// </summary>
 [Flags]
-public enum UserRole
+public enum UserPermission
 {
-    User = 1,
-    PowerUser = 2,
-    Admin = 4,
+    None = 0,
+    RequestMovies = 1,
+    RequestTv = 2,
+    RequestMusic = 4,
     AutoApprove = 8,
-    RequestMovie = 16,
-    RequestTV = 32,
-    RequestMusic = 64,
-    Guest = 128
+    Administrator = 16,
+    AllRequests = RequestMovies | RequestTv | RequestMusic,
+    All = AllRequests | AutoApprove | Administrator
 }
 
 public enum NotificationType

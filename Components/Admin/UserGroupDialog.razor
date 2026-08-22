@@ -1,0 +1,107 @@
+@using PlexRequestsHosted.Services.Implementations
+@inject IUserAdministrationService Users
+@inject IQualityProfileService QualityProfiles
+@inject IToastService Toast
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudTextField T="string" @bind-Value="_model.Name" Label="Group name" Required="true"
+                          Disabled="@(_model.IsSystem && _model.Id > 0)" Variant="Variant.Outlined" />
+            <MudTextField T="string" @bind-Value="_model.Description" Label="Description" Lines="2" Variant="Variant.Outlined"
+                          HelperText="Explain who belongs here so another admin can assign it confidently." />
+            <MudText Typo="Typo.subtitle1">Permissions</MudText>
+            <div class="permission-grid">
+                @PermissionToggle(UserPermission.RequestMovies, "Request movies")
+                @PermissionToggle(UserPermission.RequestTv, "Request TV and anime")
+                @PermissionToggle(UserPermission.RequestMusic, "Request music")
+                @PermissionToggle(UserPermission.AutoApprove, "Auto-approve requests")
+                @PermissionToggle(UserPermission.Administrator, "Full administrator")
+            </div>
+            <MudText Typo="Typo.subtitle1">Rolling quotas</MudText>
+            <div class="quota-edit-grid">
+                @QuotaEditor("Movies", _movieUnlimited, v => _movieUnlimited = v, _model.MovieRequestLimit ?? 5, v => _model.MovieRequestLimit = v, _model.MovieRequestLimitDays, v => _model.MovieRequestLimitDays = v)
+                @QuotaEditor("TV", _tvUnlimited, v => _tvUnlimited = v, _model.TvRequestLimit ?? 3, v => _model.TvRequestLimit = v, _model.TvRequestLimitDays, v => _model.TvRequestLimitDays = v)
+                @QuotaEditor("Music", _musicUnlimited, v => _musicUnlimited = v, _model.MusicRequestLimit ?? 10, v => _model.MusicRequestLimit = v, _model.MusicRequestLimitDays, v => _model.MusicRequestLimitDays = v)
+            </div>
+            @if (_qualityProfiles.Count > 0)
+            {
+                <MudSelect T="int" Label="Allowed quality profiles" MultiSelection="true" SelectedValues="_qualityIds"
+                           SelectedValuesChanged="QualityChanged" Variant="Variant.Outlined" Clearable="true"
+                           HelperText="Blank allows every user-selectable quality profile.">
+                    @foreach (var profile in _qualityProfiles)
+                    {
+                        <MudSelectItem T="int" Value="profile.Id">@profile.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving" OnClick="Save">Save group</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public UserGroupDto? Existing { get; set; }
+    private UserGroupDto _model = new();
+    private bool _movieUnlimited, _tvUnlimited, _musicUnlimited, _saving;
+    private HashSet<int> _qualityIds = [];
+    private List<QualityProfileSummaryDto> _qualityProfiles = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Existing is not null) _model = new UserGroupDto {
+            Id = Existing.Id, Name = Existing.Name, Description = Existing.Description, Permissions = Existing.Permissions,
+            MovieRequestLimit = Existing.MovieRequestLimit, MovieRequestLimitDays = Existing.MovieRequestLimitDays,
+            TvRequestLimit = Existing.TvRequestLimit, TvRequestLimitDays = Existing.TvRequestLimitDays,
+            MusicRequestLimit = Existing.MusicRequestLimit, MusicRequestLimitDays = Existing.MusicRequestLimitDays,
+            AllowedQualityProfileIds = [.. Existing.AllowedQualityProfileIds], IsSystem = Existing.IsSystem
+        };
+        _movieUnlimited = _model.MovieRequestLimit is null;
+        _tvUnlimited = _model.TvRequestLimit is null;
+        _musicUnlimited = _model.MusicRequestLimit is null;
+        _qualityIds = _model.AllowedQualityProfileIds.ToHashSet();
+        _qualityProfiles = (await QualityProfiles.GetProfilesAsync()).Where(x => x.IsUserSelectable)
+            .Select(x => new QualityProfileSummaryDto { Id = x.Id, Name = x.Name, IsDefault = x.IsDefault }).ToList();
+    }
+
+    private RenderFragment PermissionToggle(UserPermission flag, string label) => @<MudCheckBox T="bool"
+        Value="@_model.Permissions.HasFlag(flag)" ValueChanged="v => Set(flag, v)" Label="@label" Color="Color.Primary" />;
+    private RenderFragment QuotaEditor(string label, bool unlimited, Action<bool> setUnlimited, int limit, Action<int> setLimit, int days, Action<int> setDays) => @<MudPaper Class="quota-editor" Elevation="0">
+        <MudText Typo="Typo.subtitle2">@label</MudText>
+        <MudSwitch T="bool" Value="unlimited" ValueChanged="setUnlimited" Label="Unlimited" Color="Color.Primary" />
+        <MudNumericField T="int" Value="limit" ValueChanged="setLimit" Label="Requests" Min="1" Max="10000" Disabled="unlimited" Variant="Variant.Outlined" />
+        <MudNumericField T="int" Value="days" ValueChanged="setDays" Label="Every days" Min="1" Max="365" Disabled="unlimited" Variant="Variant.Outlined" />
+    </MudPaper>;
+
+    private async Task Save()
+    {
+        _saving = true;
+        if (_movieUnlimited) _model.MovieRequestLimit = null;
+        else _model.MovieRequestLimit ??= 5;
+        if (_tvUnlimited) _model.TvRequestLimit = null;
+        else _model.TvRequestLimit ??= 3;
+        if (_musicUnlimited) _model.MusicRequestLimit = null;
+        else _model.MusicRequestLimit ??= 10;
+        _model.AllowedQualityProfileIds = _qualityIds.Order().ToList();
+        var result = await Users.SaveGroupAsync(_model);
+        _saving = false;
+        if (!result.Success) { await Toast.ShowErrorAsync(result.Message); return; }
+        await Toast.ShowSuccessAsync(result.Message);
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    private void Set(UserPermission flag, bool enabled) { if (enabled) _model.Permissions |= flag; else _model.Permissions &= ~flag; }
+    private void QualityChanged(IEnumerable<int> values) => _qualityIds = values.ToHashSet();
+    private void Cancel() => MudDialog.Cancel();
+}
+
+<style>
+    .permission-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.25rem 1rem; }
+    .quota-edit-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.65rem; }
+    .quota-editor { padding:.75rem; border:1px solid rgba(255,255,255,.08); }
+    @@media (max-width:600px) { .permission-grid,.quota-edit-grid { grid-template-columns:1fr; } }
+</style>

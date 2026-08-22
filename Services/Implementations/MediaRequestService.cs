@@ -22,7 +22,8 @@ public class MediaRequestService(
     IMediaIdentityService mediaIdentities,
     IMediaModuleRegistry mediaModules,
     IMusicSettingsService musicSettings,
-    IPlexMusicService plexMusic) : IMediaRequestService
+    IPlexMusicService plexMusic,
+    IUserAccessService userAccess) : IMediaRequestService
 {
     private readonly AppDbContext _db = db;
     private readonly AuthenticationStateProvider _auth = authStateProvider;
@@ -37,6 +38,7 @@ public class MediaRequestService(
     private readonly IMediaModuleRegistry _mediaModules = mediaModules;
     private readonly IMusicSettingsService _musicSettings = musicSettings;
     private readonly IPlexMusicService _plexMusic = plexMusic;
+    private readonly IUserAccessService _userAccess = userAccess;
 
     // Statuses that still legitimately block a duplicate request/re-request; Failed/Cancelled/Rejected
     // don't (a failed download should be retryable), and Available is checked separately/live so its
@@ -50,7 +52,9 @@ public class MediaRequestService(
         var state = await _auth.GetAuthenticationStateAsync();
         var user = state.User;
         var name = user.Identity?.Name ?? "";
-        var isAdmin = user.IsInRole("Admin");
+        var userId = int.TryParse(user.FindFirst("user_id")?.Value, out var id) ? id :
+            await _db.Users.Where(x => x.Username == name).Select(x => x.Id).FirstOrDefaultAsync();
+        var isAdmin = userId > 0 && await _userAccess.IsAdminAsync(userId);
         return (name, isAdmin);
     }
 
@@ -521,10 +525,7 @@ public class MediaRequestService(
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
-        var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
-        var isAdmin = (profile?.Roles ?? string.Empty)
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Contains("Admin", StringComparer.OrdinalIgnoreCase);
+        var isAdmin = await _userAccess.IsAdminAsync(userId);
         var monitor = mediaType == MediaType.TvShow
                       && (await _downloadPreferences.GetAsync()).AutoMonitorEntireSeriesRequests;
         return await CreateRequestCoreAsync(userId, user.Username, isAdmin, mediaId, mediaType,
@@ -549,10 +550,7 @@ public class MediaRequestService(
             return new MediaRequestResult { Success = false, ErrorMessage = "No episodes selected" };
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
-        var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
-        var isAdmin = (profile?.Roles ?? string.Empty)
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Contains("Admin", StringComparer.OrdinalIgnoreCase);
+        var isAdmin = await _userAccess.IsAdminAsync(userId);
         if (!mediaRef.TryGetTmdbId(out var tmdbId))
             return await CreateProviderRequestCoreAsync(userId, user.Username, isAdmin, mediaRef,
                 requestScope, qualityProfileId);
@@ -587,6 +585,8 @@ public class MediaRequestService(
         if (duplicate)
             return new MediaRequestResult { Success = false, ErrorMessage = "This item is already requested or available." };
 
+        if (!await _userAccess.CanRequestAsync(userId, mediaRef.MediaType))
+            return new MediaRequestResult { Success = false, ErrorMessage = "Your account is not allowed to request this media type." };
         if (!isAdmin && !await CheckLimitsCoreAsync(userId, mediaRef.MediaType))
             return new MediaRequestResult
                 { Success = false, ErrorMessage = "You've reached your request limit for this media type." };
@@ -610,8 +610,7 @@ public class MediaRequestService(
                 return new MediaRequestResult { Success = false, ErrorMessage = "This music is already available on Plex." };
         }
 
-        var autoApprove = isAdmin || await _db.UserProfiles
-            .Where(p => p.UserId == userId).Select(p => p.AutoApprove).FirstOrDefaultAsync();
+        var autoApprove = (await _userAccess.GetAccessAsync(userId)).AutoApprove;
         var entity = new MediaRequestEntity
         {
             MediaIdentityId = identity.Id,
@@ -691,12 +690,13 @@ public class MediaRequestService(
             if (blocked) return new MediaRequestResult { Success = false, ErrorMessage = blockMessage };
         }
 
+        if (!await _userAccess.CanRequestAsync(userId, mediaType))
+            return new MediaRequestResult { Success = false, ErrorMessage = "Your account is not allowed to request this media type." };
         if (!isAdmin && !await CheckLimitsCoreAsync(userId, mediaType))
             return new MediaRequestResult { Success = false, ErrorMessage = "You've reached your request limit for this media type." };
 
         // Admins, and users flagged AutoApprove, skip the pending queue.
-        var autoApprove = isAdmin || await _db.UserProfiles
-            .Where(p => p.UserId == userId).Select(p => p.AutoApprove).FirstOrDefaultAsync();
+        var autoApprove = (await _userAccess.GetAccessAsync(userId)).AutoApprove;
 
         // Enrich with metadata for nice UI
         string title = $"Item #{mediaId}";
@@ -970,26 +970,31 @@ public class MediaRequestService(
     public async Task<bool> CheckRequestLimitsAsync(MediaType mediaType)
     {
         var (username, isAdmin) = await GetUserAsync();
-        if (isAdmin) return true;
         var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
         if (userId is null) return false;
+        if (!await _userAccess.CanRequestAsync(userId.Value, mediaType)) return false;
+        if (isAdmin) return true;
         return await CheckLimitsCoreAsync(userId.Value, mediaType);
     }
 
     private async Task<bool> CheckLimitsCoreAsync(int userId, MediaType mediaType)
     {
-        var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
-        int? limit = mediaType switch
+        var userAccess = await _userAccess.GetAccessAsync(userId);
+        var (limit, windowDays) = mediaType switch
         {
-            MediaType.Movie => profile?.MovieRequestLimit,
-            MediaType.TvShow => profile?.TvRequestLimit,
-            MediaType.Music => profile?.MusicRequestLimit,
-            _ => null
+            MediaType.Movie => (userAccess.MovieRequestLimit, userAccess.MovieRequestLimitDays),
+            MediaType.TvShow or MediaType.Anime => (userAccess.TvRequestLimit, userAccess.TvRequestLimitDays),
+            MediaType.Music => (userAccess.MusicRequestLimit, userAccess.MusicRequestLimitDays),
+            _ => ((int?)0, 1)
         };
         if (limit is null) return true; // null => unlimited
 
+        var since = DateTime.UtcNow.AddDays(-windowDays);
         var active = await _db.MediaRequests.CountAsync(r =>
-            r.RequestedByUserId == userId && r.MediaType == mediaType &&
+            r.RequestedByUserId == userId
+            && (r.MediaType == mediaType || (mediaType == MediaType.TvShow || mediaType == MediaType.Anime)
+                && (r.MediaType == MediaType.TvShow || r.MediaType == MediaType.Anime))
+            && r.RequestedAt >= since &&
             r.Status != RequestStatus.Cancelled && r.Status != RequestStatus.Rejected);
         return active < limit.Value;
     }

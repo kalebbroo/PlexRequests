@@ -8,6 +8,7 @@ using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Utils;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
+using PlexRequestsHosted.Shared.Enums;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 
@@ -131,7 +132,8 @@ public class CustomAuthStateProvider(
             profileRoles: roles,
             token: token,
             plexUserId: "development",
-            overwriteProfileRoles: true);
+            overwriteProfileRoles: true,
+            forceAdmin: ProfileRolesContainAdmin(roles));
     }
 
     public async Task<AuthenticationResult> AuthenticateWithPlexAsync(string plexToken, string plexUsername)
@@ -164,13 +166,14 @@ public class CustomAuthStateProvider(
 
             // Upsert profile row
             var isConfiguredAdmin = IsConfiguredAdmin(plexUser.Username);
-            var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == existing.Id);
+            var profile = await _db.UserProfiles.Include(p => p.UserGroup).FirstOrDefaultAsync(p => p.UserId == existing.Id);
             var configuredRoles = isConfiguredAdmin ? EnsureRole("User", "Admin") : "User";
             if (profile is not null)
             {
                 configuredRoles = isConfiguredAdmin
                     ? EnsureRole(profile.Roles, "Admin")
                     : profile.Roles;
+                if (isConfiguredAdmin) profile.Roles = configuredRoles;
             }
             await _db.SaveChangesAsync();
 
@@ -182,7 +185,8 @@ public class CustomAuthStateProvider(
                 configuredRoles,
                 plexToken,
                 plexUser.Id,
-                overwriteProfileRoles: false);
+                overwriteProfileRoles: false,
+                forceAdmin: isConfiguredAdmin);
         }
         catch (Exception ex)
         {
@@ -199,7 +203,8 @@ public class CustomAuthStateProvider(
         string profileRoles,
         string token,
         string? plexUserId,
-        bool overwriteProfileRoles)
+        bool overwriteProfileRoles,
+        bool forceAdmin = false)
     {
         try
         {
@@ -238,7 +243,7 @@ public class CustomAuthStateProvider(
             await _db.SaveChangesAsync();
 
             // Upsert profile row
-            var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == existing.Id);
+            var profile = await _db.UserProfiles.Include(p => p.UserGroup).FirstOrDefaultAsync(p => p.UserId == existing.Id);
             if (profile is null)
             {
                 profile = new UserProfileEntity
@@ -274,7 +279,7 @@ public class CustomAuthStateProvider(
                 Logs.Warning($"SessionStorage write skipped (not fatal): {ex.Message}");
             }
 
-            var roles = (profile.Roles ?? "User").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            var roles = EffectiveRoles(profile, forceAdmin);
             var userDto = new UserDto
             {
                 Id = existing.Id,
@@ -359,6 +364,25 @@ public class CustomAuthStateProvider(
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         set.Add("User");
         return string.Join(",", set);
+    }
+
+    private static bool ProfileRolesContainAdmin(string? roles) => (roles ?? string.Empty)
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Contains("Admin", StringComparer.OrdinalIgnoreCase);
+
+    private static List<string> EffectiveRoles(UserProfileEntity profile, bool forceAdmin)
+    {
+        var roles = (profile.Roles ?? "User")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        roles.Add("User");
+        if (profile.UserGroup is { } group)
+        {
+            if (((UserPermission)group.Permissions).HasFlag(UserPermission.Administrator)) roles.Add("Admin");
+            else if (!forceAdmin) roles.Remove("Admin");
+        }
+        if (forceAdmin) roles.Add("Admin");
+        return roles.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     public async Task SignOutAsync()

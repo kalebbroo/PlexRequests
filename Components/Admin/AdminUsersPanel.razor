@@ -1,96 +1,207 @@
-@using PlexRequestsHosted.Services.Abstractions
-@inject IUserProfileService UserProfiles
+@using PlexRequestsHosted.Services.Implementations
+@inject IUserAdministrationService Users
 @inject IToastService Toast
+@inject IDialogService Dialogs
 
-@if (_loading)
-{
-    <MudProgressCircular Indeterminate="true" />
-}
-else if (_users.Count == 0)
-{
-    <MudText>No users have signed in yet.</MudText>
-}
-else
-{
-    <MudTable Items="_users" dense="true">
-        <HeaderContent>
-            <MudTh>User</MudTh>
-            <MudTh>Plex Username</MudTh>
-            <MudTh>Roles</MudTh>
-            <MudTh>Admin</MudTh>
-            <MudTh>Auto-approve</MudTh>
-        </HeaderContent>
-        <RowTemplate>
-            <MudTd DataLabel="User">@(string.IsNullOrWhiteSpace(context.DisplayName) ? context.Username : context.DisplayName)</MudTd>
-            <MudTd DataLabel="Plex Username">@context.PlexUsername</MudTd>
-            <MudTd DataLabel="Roles">@string.Join(", ", context.Roles)</MudTd>
-            <MudTd DataLabel="Admin">
-                <MudSwitch T="bool" Value="@context.Roles.Contains("Admin")" Color="Color.Primary"
-                           ValueChanged="@(v => ToggleAdmin(context, v))" />
-            </MudTd>
-            <MudTd DataLabel="Auto-approve">
-                <MudTooltip Text="@(context.Roles.Contains("Admin") ? "Admins are always auto-approved" : "Approve this user's requests automatically")">
-                    <MudSwitch T="bool" Value="@(context.AutoApprove || context.Roles.Contains("Admin"))" Color="Color.Success"
-                               Disabled="@context.Roles.Contains("Admin")"
-                               ValueChanged="@(v => ToggleAutoApprove(context, v))" />
-                </MudTooltip>
-            </MudTd>
-        </RowTemplate>
-    </MudTable>
-    <MudText Typo="Typo.caption" Class="mt-2 d-block text-secondary">
-        Role changes take effect the next time that user signs in. Auto-approve applies to new requests immediately. Admins are always auto-approved.
-    </MudText>
-}
+<MudTabs Rounded="true" Elevation="0" PanelClass="access-tab-panel">
+    <MudTabPanel Text="Users" Icon="@Icons.Material.Filled.People">
+        <div class="access-toolbar">
+            <MudTextField T="string" Value="_search" ValueChanged="SearchChanged" Label="Find a user"
+                          Placeholder="Name, Plex username, email, or group" Variant="Variant.Outlined"
+                          Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                          Immediate="true" Clearable="true" />
+            <MudSelect T="UserSort" @bind-Value="_sort" Label="Sort" Variant="Variant.Outlined">
+                <MudSelectItem Value="UserSort.Name">Name</MudSelectItem>
+                <MudSelectItem Value="UserSort.Recent">Recently active</MudSelectItem>
+                <MudSelectItem Value="UserSort.Group">Group</MudSelectItem>
+                <MudSelectItem Value="UserSort.Quota">Closest to a limit</MudSelectItem>
+            </MudSelect>
+        </div>
+
+        @if (_loading)
+        {
+            <div class="access-loading"><MudProgressCircular Indeterminate="true" /></div>
+        }
+        else if (VisibleUsers.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info">No users match this filter.</MudAlert>
+        }
+        else
+        {
+            <div class="user-list">
+                @foreach (var user in VisibleUsers)
+                {
+                    <article class="user-card">
+                        <div class="user-identity">
+                            <MudAvatar Size="Size.Medium">
+                                <MudImage Src="@(user.AvatarUrl ?? "/default-avatar.svg")" />
+                            </MudAvatar>
+                            <div class="user-copy">
+                                <div class="user-name">@(string.IsNullOrWhiteSpace(user.DisplayName) ? user.Username : user.DisplayName)</div>
+                                <div class="user-meta">@user.PlexUsername · @LastSeen(user.LastLoginAt)</div>
+                            </div>
+                        </div>
+                        <div class="access-chips">
+                            <MudChip T="string" Size="Size.Small" Color="@(user.GroupId is null ? Color.Default : Color.Primary)"
+                                     Variant="Variant.Outlined" Icon="@Icons.Material.Filled.GroupWork">
+                                @(user.GroupName ?? "Custom access")
+                            </MudChip>
+                            @if (Has(user, UserPermission.Administrator))
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined">Admin</MudChip>
+                            }
+                            else if (Has(user, UserPermission.AutoApprove))
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">Auto-approve</MudChip>
+                            }
+                        </div>
+                        <div class="quota-grid" aria-label="Rolling request quota usage">
+                            @Quota("Movies", user.MovieQuota, Has(user, UserPermission.RequestMovies))
+                            @Quota("TV", user.TvQuota, Has(user, UserPermission.RequestTv))
+                            @Quota("Music", user.MusicQuota, Has(user, UserPermission.RequestMusic))
+                        </div>
+                        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.ManageAccounts"
+                                   OnClick="() => EditUser(user)">Edit access</MudButton>
+                    </article>
+                }
+            </div>
+        }
+        <MudText Typo="Typo.caption" Class="text-secondary mt-3 d-block">
+            Quotas are rolling windows. Cancelled and rejected requests do not count; completed requests age out automatically.
+            Request permissions, approval, and quotas apply immediately. Administrator navigation updates on the user's next sign-in.
+        </MudText>
+    </MudTabPanel>
+
+    <MudTabPanel Text="Groups" Icon="@Icons.Material.Filled.GroupWork">
+        <div class="group-heading">
+            <div>
+                <MudText Typo="Typo.h6">Reusable access groups</MudText>
+                <MudText Typo="Typo.body2" Class="text-secondary">One assignment controls permissions, approval, quality choices, and rolling quotas.</MudText>
+            </div>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="() => EditGroup(null)">New group</MudButton>
+        </div>
+        <div class="group-grid">
+            @foreach (var group in _groups)
+            {
+                <MudPaper Class="group-card" Elevation="0">
+                    <div class="group-title-row">
+                        <div>
+                            <MudText Typo="Typo.h6">@group.Name</MudText>
+                            <MudText Typo="Typo.caption" Class="text-secondary">@group.MemberCount member@(group.MemberCount == 1 ? "" : "s")</MudText>
+                        </div>
+                        @if (group.IsSystem)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Built in</MudChip>
+                        }
+                    </div>
+                    <MudText Typo="Typo.body2" Class="group-description">@(group.Description ?? "No description")</MudText>
+                    <div class="access-chips">@PermissionChips(group.Permissions)</div>
+                    <div class="group-actions">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => EditGroup(group)">Edit</MudButton>
+                        @if (!group.IsSystem)
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                                       Disabled="@(group.MemberCount > 0)" OnClick="() => DeleteGroup(group)">Delete</MudButton>
+                        }
+                    </div>
+                </MudPaper>
+            }
+        </div>
+    </MudTabPanel>
+</MudTabs>
 
 @code {
     private bool _loading = true;
-    private List<UserDto> _users = new();
+    private string _search = string.Empty;
+    private UserSort _sort;
+    private List<AdminUserDto> _users = [];
+    private List<UserGroupDto> _groups = [];
 
-    protected override async Task OnInitializedAsync()
+    private List<AdminUserDto> VisibleUsers
     {
-        await Load();
+        get
+        {
+            IEnumerable<AdminUserDto> users = _users;
+            if (!string.IsNullOrWhiteSpace(_search))
+            {
+                var term = _search.Trim();
+                users = users.Where(x => new[] { x.Username, x.DisplayName, x.Email, x.PlexUsername, x.GroupName }
+                    .Any(value => value?.Contains(term, StringComparison.OrdinalIgnoreCase) == true));
+            }
+            users = _sort switch
+            {
+                UserSort.Recent => users.OrderByDescending(x => x.LastLoginAt ?? DateTime.MinValue),
+                UserSort.Group => users.OrderBy(x => x.GroupName ?? "Custom").ThenBy(x => x.Username),
+                UserSort.Quota => users.OrderByDescending(x => QuotaRatio(x)),
+                _ => users.OrderBy(x => x.DisplayName ?? x.Username)
+            };
+            return users.ToList();
+        }
     }
+
+    protected override Task OnInitializedAsync() => Load();
 
     private async Task Load()
     {
         _loading = true;
-        StateHasChanged();
         try
         {
-            _users = await UserProfiles.GetAllUsersAsync();
+            _groups = await Users.GetGroupsAsync();
+            _users = await Users.GetUsersAsync();
         }
-        finally
-        {
-            _loading = false;
-            StateHasChanged();
-        }
+        finally { _loading = false; }
     }
 
-    private async Task ToggleAdmin(UserDto user, bool isAdmin)
+    private void SearchChanged(string value) => _search = value ?? string.Empty;
+
+    private async Task EditUser(AdminUserDto user)
     {
-        var ok = await UserProfiles.SetAdminAsync(user.Id, isAdmin);
-        if (ok)
+        var parameters = new DialogParameters<UserAccessDialog>
         {
-            await Toast.ShowSuccessAsync($"{(isAdmin ? "Granted" : "Revoked")} admin for {user.Username}");
-            await Load();
-        }
-        else
-        {
-            await Toast.ShowErrorAsync("Failed to update roles");
-        }
+            { x => x.User, user }, { x => x.Groups, _groups }
+        };
+        var dialog = await Dialogs.ShowAsync<UserAccessDialog>($"Access · {user.DisplayName ?? user.Username}", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true });
+        if (await dialog.Result is { Canceled: false }) await Load();
     }
 
-    private async Task ToggleAutoApprove(UserDto user, bool autoApprove)
+    private async Task EditGroup(UserGroupDto? group)
     {
-        var ok = await UserProfiles.SetAutoApproveAsync(user.Id, autoApprove);
-        if (ok)
-        {
-            await Toast.ShowSuccessAsync($"{(autoApprove ? "Enabled" : "Disabled")} auto-approve for {user.Username}");
-            await Load();
-        }
-        else
-        {
-            await Toast.ShowErrorAsync("Failed to update auto-approve");
-        }
+        var parameters = new DialogParameters<UserGroupDialog> { { x => x.Existing, group } };
+        var dialog = await Dialogs.ShowAsync<UserGroupDialog>(group is null ? "New access group" : $"Edit {group.Name}", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true });
+        if (await dialog.Result is { Canceled: false }) await Load();
     }
+
+    private async Task DeleteGroup(UserGroupDto group)
+    {
+        var result = await Users.DeleteGroupAsync(group.Id);
+        if (result.Success) { await Toast.ShowSuccessAsync(result.Message); await Load(); }
+        else await Toast.ShowErrorAsync(result.Message);
+    }
+
+    private static bool Has(AdminUserDto user, UserPermission permission) => user.EffectivePermissions.HasFlag(permission);
+    private static double QuotaRatio(AdminUserDto user) => new[] { Ratio(user.MovieQuota), Ratio(user.TvQuota), Ratio(user.MusicQuota) }.Max();
+    private static double Ratio(RequestQuotaDto quota) => quota.Limit is null or 0 ? 0 : (double)quota.Used / quota.Limit.Value;
+    private static string LastSeen(DateTime? value) => value is null ? "Never signed in" : $"Last seen {value.Value.ToLocalTime():g}";
+
+    private RenderFragment Quota(string label, RequestQuotaDto quota, bool allowed)
+    {
+        var text = !allowed ? "Blocked" : quota.Limit is null ? $"{quota.Used} · unlimited" : $"{quota.Used} / {quota.Limit} · {quota.WindowDays}d";
+        return @<div class="quota-item">
+            <span>@label</span>
+            <strong>@text</strong>
+        </div>;
+    }
+
+    private RenderFragment PermissionChips(UserPermission permissions) => @<text>
+        @if (permissions.HasFlag(UserPermission.Administrator)) { <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined">Admin</MudChip> }
+        @if (permissions.HasFlag(UserPermission.AutoApprove)) { <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">Auto-approve</MudChip> }
+        @if (permissions.HasFlag(UserPermission.RequestMovies)) { <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Movies</MudChip> }
+        @if (permissions.HasFlag(UserPermission.RequestTv)) { <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">TV</MudChip> }
+        @if (permissions.HasFlag(UserPermission.RequestMusic)) { <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Music</MudChip> }
+    </text>;
+
+    private enum UserSort { Name, Recent, Group, Quota }
 }

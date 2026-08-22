@@ -478,6 +478,68 @@ public class UserDto : BaseDto
     public int? MusicRequestLimit { get; set; }
 }
 
+public class RequestQuotaDto
+{
+    public int? Limit { get; set; }
+    public int WindowDays { get; set; } = 7;
+    public int Used { get; set; }
+    public int? Remaining => Limit is null ? null : Math.Max(0, Limit.Value - Used);
+}
+
+public class UserGroupDto : BaseDto
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public UserPermission Permissions { get; set; } = UserPermission.AllRequests;
+    public int? MovieRequestLimit { get; set; } = 5;
+    public int MovieRequestLimitDays { get; set; } = 7;
+    public int? TvRequestLimit { get; set; } = 3;
+    public int TvRequestLimitDays { get; set; } = 7;
+    public int? MusicRequestLimit { get; set; } = 10;
+    public int MusicRequestLimitDays { get; set; } = 7;
+    public List<int> AllowedQualityProfileIds { get; set; } = new();
+    public bool IsSystem { get; set; }
+    public int MemberCount { get; set; }
+}
+
+public class AdminUserDto : UserDto
+{
+    public int? GroupId { get; set; }
+    public string? GroupName { get; set; }
+    public UserPermission CustomPermissions { get; set; }
+    public UserPermission EffectivePermissions { get; set; }
+    public List<int> CustomAllowedQualityProfileIds { get; set; } = new();
+    public List<int> EffectiveAllowedQualityProfileIds { get; set; } = new();
+    public int CustomMovieRequestLimitDays { get; set; } = 7;
+    public int CustomTvRequestLimitDays { get; set; } = 7;
+    public int CustomMusicRequestLimitDays { get; set; } = 7;
+    public DateTime? LastLoginAt { get; set; }
+    public DateTime ProfileCreatedAt { get; set; }
+    public RequestQuotaDto MovieQuota { get; set; } = new();
+    public RequestQuotaDto TvQuota { get; set; } = new();
+    public RequestQuotaDto MusicQuota { get; set; } = new();
+}
+
+public class UserAccessEditDto
+{
+    public int UserId { get; set; }
+    public int? GroupId { get; set; }
+    public UserPermission CustomPermissions { get; set; } = UserPermission.AllRequests;
+    public int? MovieRequestLimit { get; set; } = 5;
+    public int MovieRequestLimitDays { get; set; } = 7;
+    public int? TvRequestLimit { get; set; } = 3;
+    public int TvRequestLimitDays { get; set; } = 7;
+    public int? MusicRequestLimit { get; set; } = 10;
+    public int MusicRequestLimitDays { get; set; } = 7;
+    public List<int> CustomAllowedQualityProfileIds { get; set; } = new();
+}
+
+public record UserAdminResult(bool Success, string Message)
+{
+    public static UserAdminResult Ok(string message) => new(true, message);
+    public static UserAdminResult Fail(string message) => new(false, message);
+}
+
 // Wire types for the fulfillment worker API — shared by the web app (endpoints) and the downloader (client).
 public record ClaimRequest(string? WorkerId, int? Max);
 

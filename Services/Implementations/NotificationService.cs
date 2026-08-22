@@ -131,14 +131,11 @@ public class NotificationService(
         using (var scope = _scopeFactory.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var profiles = await db.UserProfiles.Select(p => new { p.UserId, p.Roles }).ToListAsync();
-            adminUserIds = profiles
-                .Where(p => (p.Roles ?? string.Empty)
-                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .Contains("Admin", StringComparer.OrdinalIgnoreCase))
-                .Select(p => p.UserId)
-                .Distinct()
-                .ToList();
+            var access = scope.ServiceProvider.GetRequiredService<IUserAccessService>();
+            var userIds = await db.UserProfiles.Select(p => p.UserId).ToListAsync();
+            adminUserIds = [];
+            foreach (var userId in userIds)
+                if (await access.IsAdminAsync(userId)) adminUserIds.Add(userId);
         }
 
         foreach (var uid in adminUserIds)

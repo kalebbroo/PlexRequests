@@ -1,0 +1,146 @@
+@using PlexRequestsHosted.Services.Implementations
+@inject IUserAdministrationService Users
+@inject IQualityProfileService QualityProfiles
+@inject IToastService Toast
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" dense="true">
+                Choose a group for shared live settings, or Custom access for one-off permissions and quotas.
+            </MudAlert>
+            <MudSelect T="int" @bind-Value="_groupId" Label="Access group" Variant="Variant.Outlined">
+                <MudSelectItem T="int" Value="0">Custom access</MudSelectItem>
+                @foreach (var group in Groups)
+                {
+                    <MudSelectItem T="int" Value="group.Id">@group.Name</MudSelectItem>
+                }
+            </MudSelect>
+
+            @if (_groupId > 0)
+            {
+                var selected = Groups.First(x => x.Id == _groupId);
+                <MudPaper Class="pa-3" Elevation="0">
+                    <MudText Typo="Typo.subtitle2">Inherited from @selected.Name</MudText>
+                    <MudText Typo="Typo.body2" Class="text-secondary mb-2">@selected.Description</MudText>
+                    <MudText Typo="Typo.caption">@PermissionSummary(selected.Permissions)</MudText>
+                    <MudText Typo="Typo.caption" Class="d-block mt-1">@QuotaSummary(selected)</MudText>
+                </MudPaper>
+            }
+            else
+            {
+                <MudText Typo="Typo.subtitle1">Permissions</MudText>
+                <div class="permission-grid">
+                    @PermissionToggle(UserPermission.RequestMovies, "Request movies", Icons.Material.Filled.Movie)
+                    @PermissionToggle(UserPermission.RequestTv, "Request TV and anime", Icons.Material.Filled.Tv)
+                    @PermissionToggle(UserPermission.RequestMusic, "Request music", Icons.Material.Filled.Album)
+                    @PermissionToggle(UserPermission.AutoApprove, "Auto-approve requests", Icons.Material.Filled.Bolt)
+                    @PermissionToggle(UserPermission.Administrator, "Full administrator", Icons.Material.Filled.AdminPanelSettings)
+                </div>
+
+                <MudText Typo="Typo.subtitle1">Rolling quotas</MudText>
+                <MudText Typo="Typo.caption" Class="text-secondary">Completed requests age out after the chosen number of days. Unlimited removes only the quota, not the media permission.</MudText>
+                <div class="quota-edit-grid">
+                    @QuotaEditor("Movies", _movieUnlimited, v => _movieUnlimited = v, _movieLimit, v => _movieLimit = v, _movieDays, v => _movieDays = v)
+                    @QuotaEditor("TV", _tvUnlimited, v => _tvUnlimited = v, _tvLimit, v => _tvLimit = v, _tvDays, v => _tvDays = v)
+                    @QuotaEditor("Music", _musicUnlimited, v => _musicUnlimited = v, _musicLimit, v => _musicLimit = v, _musicDays, v => _musicDays = v)
+                </div>
+
+                @if (_qualityProfiles.Count > 0)
+                {
+                    <MudSelect T="int" Label="Allowed quality profiles" MultiSelection="true"
+                               SelectedValues="_qualityIds" SelectedValuesChanged="QualityChanged"
+                               Variant="Variant.Outlined" Clearable="true"
+                               HelperText="Blank allows every user-selectable quality profile.">
+                        @foreach (var profile in _qualityProfiles)
+                        {
+                            <MudSelectItem T="int" Value="profile.Id">@profile.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                }
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving" OnClick="Save">Save access</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter, EditorRequired] public AdminUserDto User { get; set; } = default!;
+    [Parameter] public List<UserGroupDto> Groups { get; set; } = [];
+
+    private int _groupId;
+    private UserPermission _permissions;
+    private int _movieLimit = 5, _movieDays = 7, _tvLimit = 3, _tvDays = 7, _musicLimit = 10, _musicDays = 7;
+    private bool _movieUnlimited, _tvUnlimited, _musicUnlimited, _saving;
+    private HashSet<int> _qualityIds = [];
+    private List<QualityProfileSummaryDto> _qualityProfiles = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _groupId = User.GroupId ?? 0;
+        _permissions = User.CustomPermissions;
+        (_movieLimit, _movieUnlimited) = Value(User.MovieRequestLimit, 5);
+        (_tvLimit, _tvUnlimited) = Value(User.TvRequestLimit, 3);
+        (_musicLimit, _musicUnlimited) = Value(User.MusicRequestLimit, 10);
+        _movieDays = User.CustomMovieRequestLimitDays;
+        _tvDays = User.CustomTvRequestLimitDays;
+        _musicDays = User.CustomMusicRequestLimitDays;
+        _qualityIds = User.CustomAllowedQualityProfileIds.ToHashSet();
+        _qualityProfiles = (await QualityProfiles.GetProfilesAsync())
+            .Where(x => x.IsUserSelectable).Select(x => new QualityProfileSummaryDto { Id = x.Id, Name = x.Name, IsDefault = x.IsDefault }).ToList();
+    }
+
+    private RenderFragment PermissionToggle(UserPermission flag, string label, string icon) => @<div class="permission-row">
+        <MudIcon Icon="@icon" Size="Size.Small" />
+        <MudCheckBox T="bool" Value="@_permissions.HasFlag(flag)" ValueChanged="v => Set(flag, v)" Label="@label" Color="Color.Primary" />
+    </div>;
+
+    private RenderFragment QuotaEditor(string label, bool unlimited, Action<bool> setUnlimited, int limit, Action<int> setLimit, int days, Action<int> setDays) => @<MudPaper Class="quota-editor" Elevation="0">
+        <MudText Typo="Typo.subtitle2">@label</MudText>
+        <MudSwitch T="bool" Value="unlimited" ValueChanged="setUnlimited" Label="Unlimited" Color="Color.Primary" />
+        <MudNumericField T="int" Value="limit" ValueChanged="setLimit" Label="Requests" Min="1" Max="10000" Disabled="unlimited" Variant="Variant.Outlined" />
+        <MudNumericField T="int" Value="days" ValueChanged="setDays" Label="Every days" Min="1" Max="365" Disabled="unlimited" Variant="Variant.Outlined" />
+    </MudPaper>;
+
+    private async Task Save()
+    {
+        _saving = true;
+        var result = await Users.UpdateUserAccessAsync(new UserAccessEditDto
+        {
+            UserId = User.Id, GroupId = _groupId == 0 ? null : _groupId, CustomPermissions = _permissions,
+            MovieRequestLimit = _movieUnlimited ? null : _movieLimit, MovieRequestLimitDays = _movieDays,
+            TvRequestLimit = _tvUnlimited ? null : _tvLimit, TvRequestLimitDays = _tvDays,
+            MusicRequestLimit = _musicUnlimited ? null : _musicLimit, MusicRequestLimitDays = _musicDays,
+            CustomAllowedQualityProfileIds = _qualityIds.Order().ToList()
+        });
+        _saving = false;
+        if (!result.Success) { await Toast.ShowErrorAsync(result.Message); return; }
+        await Toast.ShowSuccessAsync(result.Message);
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    private void Set(UserPermission flag, bool enabled) { if (enabled) _permissions |= flag; else _permissions &= ~flag; }
+    private void QualityChanged(IEnumerable<int> values) => _qualityIds = values.ToHashSet();
+    private static (int value, bool unlimited) Value(int? value, int fallback) => (value ?? fallback, value is null);
+    private static string PermissionSummary(UserPermission p) => string.Join(" · ", new[] {
+        p.HasFlag(UserPermission.Administrator) ? "Administrator" : null,
+        p.HasFlag(UserPermission.AutoApprove) ? "Auto-approve" : "Approval required",
+        p.HasFlag(UserPermission.RequestMovies) ? "Movies" : null,
+        p.HasFlag(UserPermission.RequestTv) ? "TV" : null,
+        p.HasFlag(UserPermission.RequestMusic) ? "Music" : null }.Where(x => x is not null));
+    private static string QuotaSummary(UserGroupDto g) => $"Movies {Limit(g.MovieRequestLimit, g.MovieRequestLimitDays)} · TV {Limit(g.TvRequestLimit, g.TvRequestLimitDays)} · Music {Limit(g.MusicRequestLimit, g.MusicRequestLimitDays)}";
+    private static string Limit(int? value, int days) => value is null ? "unlimited" : $"{value}/{days}d";
+    private void Cancel() => MudDialog.Cancel();
+}
+
+<style>
+    .permission-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.5rem; }
+    .permission-row { display:flex; align-items:center; gap:.5rem; padding:.45rem .65rem; border:1px solid rgba(255,255,255,.08); border-radius:8px; }
+    .quota-edit-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.65rem; }
+    .quota-editor { padding:.75rem; border:1px solid rgba(255,255,255,.08); }
+    @@media (max-width:600px) { .permission-grid,.quota-edit-grid { grid-template-columns:1fr; } }
+</style>
