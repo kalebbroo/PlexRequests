@@ -232,6 +232,7 @@ public sealed record UserAccessSnapshot(
 public interface IUserAdministrationService
 {
     Task<List<AdminUserDto>> GetUsersAsync();
+    Task<AdminUserActivityDto?> GetUserActivityAsync(int userId);
     Task<List<UserGroupDto>> GetGroupsAsync();
     Task<UserAccessAuditPageDto> GetAuditAsync(int take = 50, long? beforeId = null, string? search = null);
     Task<UserAdminResult> UpdateUserAccessAsync(UserAccessEditDto edit);

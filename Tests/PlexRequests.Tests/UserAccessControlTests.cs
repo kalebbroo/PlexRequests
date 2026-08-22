@@ -276,6 +276,86 @@ public sealed class UserAccessControlTests
     }
 
     [Fact]
+    public async Task Admin_user_activity_explains_exact_quota_contributors_and_history()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var admin = fixture.AddUser("admin", UserPermission.All, "User,Admin");
+        var member = fixture.AddUser("member", UserPermission.AllRequests, "User");
+        member.MovieRequestLimit = 3;
+        member.MovieRequestLimitDays = 7;
+        member.TvRequestLimit = 2;
+        member.TvRequestLimitDays = 14;
+        member.MusicRequestLimit = 4;
+        member.MusicRequestLimitDays = 30;
+        member.DiscordUserId = "123456789012345678";
+        member.DiscordUsername = "member#1234";
+        member.DiscordDmOptIn = true;
+        await fixture.Db.SaveChangesAsync();
+
+        var movie = Request(member.UserId, RequestStatus.Pending, DateTime.UtcNow.AddHours(-1), MediaType.Movie, "New movie");
+        var failed = Request(member.UserId, RequestStatus.Failed, DateTime.UtcNow.AddDays(-2), MediaType.Movie, "Failed movie");
+        var cancelled = Request(member.UserId, RequestStatus.Cancelled, DateTime.UtcNow.AddHours(-2), MediaType.Movie, "Cancelled movie");
+        var expired = Request(member.UserId, RequestStatus.Available, DateTime.UtcNow.AddDays(-8), MediaType.Movie, "Old movie");
+        var anime = Request(member.UserId, RequestStatus.Searching, DateTime.UtcNow.AddDays(-3), MediaType.Anime, "Anime series");
+        anime.RequestScopeKind = RequestScopeKind.Series;
+        anime.MonitorMode = MonitorMode.AllEpisodes;
+        var music = Request(member.UserId, RequestStatus.Available, DateTime.UtcNow.AddDays(-20), MediaType.Music, "Album");
+        music.RequestScopeKind = RequestScopeKind.Album;
+        fixture.Db.MediaRequests.AddRange(movie, failed, cancelled, expired, anime, music);
+        fixture.Db.MediaIssues.AddRange(
+            new MediaIssueEntity
+            {
+                MediaId = 42, MediaType = MediaType.TvShow, Title = "Episode issue",
+                ReportedByUserId = member.UserId, Reason = "Wrong episode", SeasonNumber = 9,
+                EpisodeNumber = 4, Status = IssueStatus.Open
+            },
+            new MediaIssueEntity
+            {
+                MediaId = 43, MediaType = MediaType.Movie, Title = "Resolved issue",
+                ReportedByUserId = member.UserId, Reason = "Playback", Status = IssueStatus.Resolved,
+                ResolvedAt = DateTime.UtcNow
+            });
+        await fixture.Db.SaveChangesAsync();
+
+        var configuration = new ConfigurationBuilder().Build();
+        var access = new UserAccessService(fixture.Db,
+            new FixedAuth(admin.UserId, "admin", adminClaim: true), configuration);
+        var users = new UserAdministrationService(fixture.Db, access, new UserQuotaService(fixture.Db), configuration);
+
+        var activity = await users.GetUserActivityAsync(member.UserId);
+
+        Assert.NotNull(activity);
+        Assert.Equal(6, activity!.TotalRequests);
+        Assert.Equal(2, activity.Quotas.Movie.Used);
+        Assert.Equal(1, activity.Quotas.Tv.Used);
+        Assert.Equal(1, activity.Quotas.Music.Used);
+        Assert.Equal(new[] { movie.Id, failed.Id, anime.Id, music.Id }.Order(),
+            activity.QuotaContributors.Select(x => x.Id).Order());
+        Assert.Contains(activity.RecentRequests, x => x.Id == failed.Id && x.CountsTowardQuota);
+        Assert.Contains(activity.RecentRequests, x => x.Id == cancelled.Id && !x.CountsTowardQuota);
+        Assert.Contains(activity.RecentRequests, x => x.Id == expired.Id && !x.CountsTowardQuota);
+        Assert.Contains(activity.RecentRequests, x => x.Id == anime.Id && x.Monitored);
+        Assert.Equal(2, activity.TotalIssues);
+        Assert.Equal(1, activity.OpenIssues);
+        Assert.Equal(1, activity.ResolvedIssues);
+        Assert.True(activity.DiscordLinked);
+        Assert.True(activity.DiscordDmOptIn);
+    }
+
+    [Fact]
+    public async Task Non_administrators_cannot_read_user_activity()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var member = fixture.AddUser("member", UserPermission.AllRequests, "User");
+        await fixture.Db.SaveChangesAsync();
+        var configuration = new ConfigurationBuilder().Build();
+        var access = new UserAccessService(fixture.Db, new FixedAuth(member.UserId, "member"), configuration);
+        var users = new UserAdministrationService(fixture.Db, access, new UserQuotaService(fixture.Db), configuration);
+
+        Assert.Null(await users.GetUserActivityAsync(member.UserId));
+    }
+
+    [Fact]
     public async Task Profile_reads_the_authenticated_user_not_the_last_login()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -379,10 +459,11 @@ public sealed class UserAccessControlTests
         new(db, auth, null!, null!, null!, new ConfigurationBuilder().Build(), null!, null!, null!,
             null!, null!, null!, null!, access, new UserQuotaService(db));
 
-    private static MediaRequestEntity Request(int userId, RequestStatus status, DateTime requestedAt) => new()
+    private static MediaRequestEntity Request(int userId, RequestStatus status, DateTime requestedAt,
+        MediaType mediaType = MediaType.Movie, string title = "Quota test") => new()
     {
-        MediaId = Random.Shared.Next(1, int.MaxValue), MediaType = MediaType.Movie,
-        Title = "Quota test", RequestedBy = "member", RequestedByUserId = userId,
+        MediaId = Random.Shared.Next(1, int.MaxValue), MediaType = mediaType,
+        Title = title, RequestedBy = "member", RequestedByUserId = userId,
         Status = status, RequestedAt = requestedAt
     };
 
