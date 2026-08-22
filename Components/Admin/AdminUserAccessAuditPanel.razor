@@ -1,0 +1,145 @@
+@inject IUserAdministrationService Users
+
+<div class="audit-heading">
+    <div>
+        <MudText Typo="Typo.h6">Access change history</MudText>
+        <MudText Typo="Typo.body2" Class="text-secondary">
+            Immutable administrator actions for user access and reusable groups. Identical saves are not recorded.
+        </MudText>
+    </div>
+    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" Disabled="_loading"
+               OnClick="Reload">Refresh</MudButton>
+</div>
+
+<MudTextField T="string" Value="_search" ValueChanged="SearchChanged" Label="Search audit history"
+              Placeholder="User, group, administrator, or changed setting" Variant="Variant.Outlined"
+              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+              Immediate="true" DebounceInterval="350" Clearable="true" Class="audit-search" />
+
+@if (_loading && _items.Count == 0)
+{
+    <div class="audit-loading"><MudProgressCircular Indeterminate="true" /></div>
+}
+else if (_items.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">No access changes match this search.</MudAlert>
+}
+else
+{
+    <div class="audit-list" aria-label="User access audit history">
+        @foreach (var item in _items)
+        {
+            <article class="audit-card">
+                <span class="audit-icon @ActionClass(item.Action)">
+                    <MudIcon Icon="@ActionIcon(item.Action)" Size="Size.Small" />
+                </span>
+                <div class="audit-copy">
+                    <div class="audit-title">
+                        <strong>@item.TargetName</strong>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                            @(item.TargetType == UserAccessAuditTarget.User ? "User" : "Group")
+                        </MudChip>
+                        <span>@ActionLabel(item.Action)</span>
+                    </div>
+                    <p>@item.Summary</p>
+                    <div class="audit-meta">
+                        <span><MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" />@item.ActorUsername</span>
+                        <MudTooltip Text="@item.CreatedAt.ToLocalTime().ToString("F")">
+                            <span><MudIcon Icon="@Icons.Material.Filled.Schedule" Size="Size.Small" />@RelativeTime(item.CreatedAt)</span>
+                        </MudTooltip>
+                    </div>
+                </div>
+            </article>
+        }
+    </div>
+    @if (_hasMore)
+    {
+        <div class="audit-more">
+            <MudButton Variant="Variant.Outlined" Disabled="_loading" OnClick="LoadMore">
+                @(_loading ? "Loading…" : "Load older changes")
+            </MudButton>
+        </div>
+    }
+}
+
+@code {
+    private readonly List<UserAccessAuditDto> _items = [];
+    private string _search = string.Empty;
+    private bool _loading;
+    private bool _hasMore;
+    private long? _cursor;
+    private int _loadVersion;
+
+    protected override Task OnInitializedAsync() => Reload();
+
+    public Task RefreshAsync() => Reload();
+
+    private async Task SearchChanged(string? value)
+    {
+        _search = value ?? string.Empty;
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        var version = ++_loadVersion;
+        _loading = true;
+        _cursor = null;
+        try
+        {
+            var page = await Users.GetAuditAsync(50, search: _search);
+            if (version != _loadVersion) return;
+            _items.Clear();
+            _items.AddRange(page.Items);
+            _hasMore = page.HasMore;
+            _cursor = page.NextCursor;
+        }
+        finally
+        {
+            if (version == _loadVersion) _loading = false;
+        }
+    }
+
+    private async Task LoadMore()
+    {
+        if (_loading || !_hasMore || _cursor is null) return;
+        var version = _loadVersion;
+        _loading = true;
+        try
+        {
+            var page = await Users.GetAuditAsync(50, _cursor, _search);
+            if (version != _loadVersion) return;
+            _items.AddRange(page.Items);
+            _hasMore = page.HasMore;
+            _cursor = page.NextCursor;
+        }
+        finally { if (version == _loadVersion) _loading = false; }
+    }
+
+    private static string ActionLabel(UserAccessAuditAction action) => action switch
+    {
+        UserAccessAuditAction.Created => "created",
+        UserAccessAuditAction.Deleted => "deleted",
+        _ => "updated"
+    };
+
+    private static string ActionIcon(UserAccessAuditAction action) => action switch
+    {
+        UserAccessAuditAction.Created => Icons.Material.Filled.Add,
+        UserAccessAuditAction.Deleted => Icons.Material.Filled.DeleteOutline,
+        _ => Icons.Material.Filled.Edit
+    };
+
+    private static string ActionClass(UserAccessAuditAction action) => action.ToString().ToLowerInvariant();
+
+    private static string RelativeTime(DateTime value)
+    {
+        var elapsed = DateTime.UtcNow - value.ToUniversalTime();
+        if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
+        if (elapsed.TotalMinutes < 1) return "Just now";
+        if (elapsed.TotalHours < 1) return $"{(int)elapsed.TotalMinutes}m ago";
+        if (elapsed.TotalDays < 1) return $"{(int)elapsed.TotalHours}h ago";
+        if (elapsed.TotalDays < 7) return $"{(int)elapsed.TotalDays}d ago";
+        return value.ToLocalTime().ToString("d");
+    }
+}

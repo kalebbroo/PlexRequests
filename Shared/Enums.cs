@@ -79,6 +79,19 @@ public enum UserAccountStatus
     Disabled = 2
 }
 
+public enum UserAccessAuditTarget
+{
+    User = 0,
+    Group = 1
+}
+
+public enum UserAccessAuditAction
+{
+    Created = 0,
+    Updated = 1,
+    Deleted = 2
+}
+
 public enum NotificationType
 {
     Info = 0,
