@@ -19,15 +19,17 @@ public class MissingSearchJob(AppDbContext db, ILogger<MissingSearchJob> logger)
     {
         var now = DateTime.UtcNow;
 
-        // Deferred, non-upgrade jobs whose retry time has passed and whose request still wants content
-        // (not cancelled/rejected/already available). Upgrade jobs are terminal on empty — never re-queued here.
+        // Ordinary deferred jobs still require a non-terminal request. Issue replacements are deliberately
+        // attached to an Available request (the bad copy remains playable until the new one imports), so they
+        // are the one upgrade-shaped job that must pass this gate and keep searching. Routine quality upgrades
+        // remain terminal on an empty search and are reconsidered later by UpgradeScan instead.
         var due = await db.FulfillmentJobs
-            .Where(j => j.Status == FulfillmentStatus.Deferred && !j.IsUpgrade
+            .Where(j => j.Status == FulfillmentStatus.Deferred && (!j.IsUpgrade || j.IsReplacement)
                         && (j.NextRetryAt == null || j.NextRetryAt <= now)
                         && j.MediaRequest != null
                         && j.MediaRequest.Status != RequestStatus.Cancelled
                         && j.MediaRequest.Status != RequestStatus.Rejected
-                        && j.MediaRequest.Status != RequestStatus.Available)
+                        && (j.MediaRequest.Status != RequestStatus.Available || j.IsReplacement))
             .ToListAsync(ct);
 
         if (due.Count == 0) return JobResult.Skipped("No deferred requests are due for re-search");

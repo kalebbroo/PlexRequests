@@ -94,6 +94,13 @@ public class NotificationService(
         await WriteOutboxAsync(request, BridgeEventType.Upgraded, $"Upgraded to {newQuality.Label()}");
     }
 
+    public async Task RequestReplacedAsync(MediaRequestDto request, string target)
+    {
+        await NotifyUserAsync(request.RequestedByUserId, NotificationType.RequestReplaced,
+            "Reported file replaced", $"A new copy of \"{request.Title}\" {target} is ready.", request.Id);
+        await WriteOutboxAsync(request, BridgeEventType.Upgraded, $"Issue replacement completed for {target}");
+    }
+
     private async Task WriteOutboxAsync(MediaRequestDto request, BridgeEventType type, string? detail = null)
     {
         try

@@ -51,6 +51,11 @@ public interface IFulfillmentQueue
     /// (empty ⇒ movie/whole-title). No-op (returns false) if an upgrade job for the request is already active.</summary>
     Task<bool> EnqueueUpgradeAsync(MediaRequestDto request, Quality target, IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes);
 
+    /// <summary>Queue a durable issue replacement against an existing available request. Returns the new
+    /// job id, or null when another live job already owns that request.</summary>
+    Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor,
+        IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId);
+
     /// <summary>Recompute a request's <c>AchievedQuality</c>/<c>CutoffMet</c> from its imported files (min
     /// video resolution vs. the resolved target) and persist them. Called after a download or upgrade imports.</summary>
     Task<Quality> RecomputeAchievedQualityAsync(int mediaRequestId);

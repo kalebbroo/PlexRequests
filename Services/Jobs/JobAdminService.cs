@@ -94,7 +94,7 @@ public class JobAdminService(
 
     public async Task<List<WantedItemDto>> GetMissingAsync() =>
         await db.FulfillmentJobs
-            .Where(j => j.Status == FulfillmentStatus.Deferred && !j.IsUpgrade && j.MediaRequest != null)
+            .Where(j => j.Status == FulfillmentStatus.Deferred && (!j.IsUpgrade || j.IsReplacement) && j.MediaRequest != null)
             .OrderByDescending(j => j.Escalated).ThenBy(j => j.NextRetryAt)
             .Select(j => new WantedItemDto
             {

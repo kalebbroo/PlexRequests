@@ -9,6 +9,7 @@
 @inject PlexRequestsHosted.Services.Abstractions.IMediaModuleRegistry MediaModules
 @inject PlexRequestsHosted.Services.Abstractions.IMusicSettingsService MusicSettings
 @inject PlexRequestsHosted.Services.Implementations.IPlexMusicService PlexMusic
+@inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
 @inject IJSRuntime JSRuntime
 @using PlexRequestsHosted.Shared.Media
@@ -103,6 +104,15 @@ else
                                     <button class="action-btn secondary full" disabled>
                                         <MudIcon Icon="@Icons.Material.Filled.Schedule" />
                                         <span>@GetRequestStatusText()</span>
+                                    </button>
+                                }
+                                @if ((_media.IsAvailable || _availableSeasons.Count > 0 ||
+                                      _media.MediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime) &&
+                                     _media.MediaType != PlexRequestsHosted.Shared.Enums.MediaType.Music)
+                                {
+                                    <button class="action-btn secondary full" @onclick="OpenReport">
+                                        <MudIcon Icon="@Icons.Material.Filled.ReportProblem" />
+                                        <span>Report a Problem</span>
                                     </button>
                                 }
                             </div>
@@ -202,9 +212,11 @@ else
                                     </button>
                                 }
 
-                                @if (_media.IsAvailable && _media.MediaType != PlexRequestsHosted.Shared.Enums.MediaType.Music)
+                                @if ((_media.IsAvailable || _availableSeasons.Count > 0 ||
+                                      _media.MediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime) &&
+                                     _media.MediaType != PlexRequestsHosted.Shared.Enums.MediaType.Music)
                                 {
-                                    <button class="action-btn secondary" @onclick="() => _reportOpen = true">
+                                    <button class="action-btn secondary" @onclick="OpenReport">
                                         <MudIcon Icon="@Icons.Material.Filled.ReportProblem" />
                                         <span>Report a Problem</span>
                                     </button>
@@ -537,8 +549,9 @@ else
 <MudDialog @bind-Visible="_reportOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
     <TitleContent><MudText Typo="Typo.h6"><MudIcon Icon="@Icons.Material.Filled.ReportProblem" Class="mr-2" />Report a Problem</MudText></TitleContent>
     <DialogContent>
-        <MudText Typo="Typo.body2" Class="mb-3">Something wrong with "@(_media?.Title)" on Plex? Tell us and an admin can re-download or fix it.</MudText>
+        <MudText Typo="Typo.body2" Class="mb-3">Report the exact file that is wrong. The old copy stays in place until a verified replacement imports successfully.</MudText>
         <MudSelect T="string" @bind-Value="_reportReason" Label="What's wrong?" Variant="Variant.Outlined" dense="true" Class="mb-3">
+            <MudSelectItem Value="@("Wrong episode")">Wrong episode / mislabeled file</MudSelectItem>
             <MudSelectItem Value="@("Bad quality")">Bad quality / low resolution</MudSelectItem>
             <MudSelectItem Value="@("Playback broken")">Won't play / playback error</MudSelectItem>
             <MudSelectItem Value="@("Wrong version")">Wrong version / cut / language</MudSelectItem>
@@ -546,11 +559,45 @@ else
             <MudSelectItem Value="@("Corrupt / incomplete")">Corrupt or incomplete file</MudSelectItem>
             <MudSelectItem Value="@("Other")">Other</MudSelectItem>
         </MudSelect>
-        <MudTextField @bind-Value="_reportDetail" Label="Details (optional)" Variant="Variant.Outlined" Lines="3" />
+        @if (_media?.MediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime)
+        {
+            <div class="d-flex gap-3 mb-3" style="flex-wrap:wrap;">
+                <MudSelect T="int?" Value="_reportSeason" ValueChanged="ReportSeasonChanged" Label="Season"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:140px;flex:1;">
+                    @foreach (var season in _media.Seasons?.Where(s => s.SeasonNumber > 0) ?? Enumerable.Empty<PlexRequestsHosted.Shared.DTOs.SeasonDto>())
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)season.SeasonNumber)">Season @season.SeasonNumber</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudSelect T="int?" @bind-Value="_reportEpisode" Label="Episode" Disabled="@(_reportSeason is null || _reportEpisodesLoading)"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:180px;flex:1;">
+                    @foreach (var episode in _reportEpisodes)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)episode.EpisodeNumber)">
+                            E@(episode.EpisodeNumber)@(string.IsNullOrWhiteSpace(episode.Name) ? "" : $" · {episode.Name}")@(episode.IsAvailable ? " · On Plex" : "")
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+            </div>
+        }
+        <MudTextField @bind-Value="_reportDetail" Label="What did you see? (optional)" HelperText="Example: this plays episode 8 again instead of episode 9."
+                      Variant="Variant.Outlined" Lines="3" Class="mb-3" />
+        <MudCheckBox T="bool" @bind-Value="_reportReplacement" Color="Color.Primary"
+                     Label="Request a replacement download" />
+        <MudAlert Severity="@(_reporterIsAdmin ? Severity.Info : Severity.Normal)" dense="true" Class="mt-2">
+            @if (_reporterIsAdmin)
+            {
+                <text>As an admin, this replacement is approved and queued automatically.</text>
+            }
+            else
+            {
+                <text>An admin will review and approve the replacement. You can still submit a report without requesting one.</text>
+            }
+        </MudAlert>
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="() => _reportOpen = false">Cancel</MudButton>
-        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SubmitReport" Disabled="_reportSubmitting">Submit report</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SubmitReport" Disabled="@ReportSubmitDisabled">Submit report</MudButton>
     </DialogActions>
 </MudDialog>
 
@@ -789,6 +836,40 @@ else
     private bool _reportSubmitting;
     private string _reportReason = "Bad quality";
     private string _reportDetail = string.Empty;
+    private bool _reportReplacement = true;
+    private bool _reporterIsAdmin;
+    private int? _reportSeason;
+    private int? _reportEpisode;
+    private bool _reportEpisodesLoading;
+    private List<PlexRequestsHosted.Shared.DTOs.EpisodeDto> _reportEpisodes = new();
+
+    private bool ReportSubmitDisabled => _reportSubmitting ||
+        (_reportReplacement &&
+         (_media?.MediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime) &&
+         (_reportSeason is null || _reportEpisode is null));
+
+    private async Task OpenReport()
+    {
+        _reportReason = "Wrong episode";
+        _reportDetail = string.Empty;
+        _reportReplacement = true;
+        _reportSeason = null;
+        _reportEpisode = null;
+        _reportEpisodes.Clear();
+        _reporterIsAdmin = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User.IsInRole("Admin");
+        _reportOpen = true;
+    }
+
+    private async Task ReportSeasonChanged(int? season)
+    {
+        _reportSeason = season;
+        _reportEpisode = null;
+        _reportEpisodes.Clear();
+        if (_media is null || season is null) return;
+        _reportEpisodesLoading = true;
+        try { _reportEpisodes = await PlexApiService.GetSeasonEpisodesAsync(_media.Id, season.Value); }
+        finally { _reportEpisodesLoading = false; }
+    }
 
     private async Task SubmitReport()
     {
@@ -796,14 +877,32 @@ else
         _reportSubmitting = true;
         try
         {
-            var ok = await IssueService.ReportIssueAsync(_media.Id, _media.MediaType, _media.Title, _media.PosterUrl, _reportReason, _reportDetail);
-            if (ok)
+            var result = await IssueService.ReportIssueAsync(new PlexRequestsHosted.Shared.DTOs.MediaIssueReportDto
             {
-                await ToastService.ShowSuccessAsync("Thanks — your report was sent to the admins.");
+                MediaId = _media.Id,
+                MediaType = _media.MediaType,
+                Title = _media.Title,
+                PosterUrl = _media.PosterUrl,
+                Reason = _reportReason,
+                Detail = _reportDetail,
+                SeasonNumber = _reportSeason,
+                EpisodeNumber = _reportEpisode,
+                RequestReplacement = _reportReplacement
+            });
+            if (result.Success)
+            {
+                if (result.ReplacementQueued)
+                    await ToastService.ShowSuccessAsync("Replacement approved and queued. The current file will remain until the new copy is safely imported.");
+                else if (!string.IsNullOrWhiteSpace(result.ErrorMessage))
+                    await ToastService.ShowWarningAsync($"Your report was saved, but the replacement could not be queued: {result.ErrorMessage}");
+                else
+                    await ToastService.ShowSuccessAsync(_reportReplacement
+                        ? "Your report and replacement request were sent to the admins."
+                        : "Thanks — your report was sent to the admins.");
                 _reportOpen = false;
                 _reportDetail = string.Empty;
             }
-            else await ToastService.ShowErrorAsync("Couldn't submit the report.");
+            else await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Couldn't submit the report.");
         }
         finally { _reportSubmitting = false; }
     }

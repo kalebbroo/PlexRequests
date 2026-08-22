@@ -1,8 +1,10 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Abstractions;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Media;
@@ -11,150 +13,283 @@ namespace PlexRequestsHosted.Services.Implementations;
 
 public interface IMediaIssueService
 {
-    Task<bool> ReportIssueAsync(int mediaId, MediaType mediaType, string title, string? posterUrl, string reason, string? detail, int? season = null, int? episode = null);
+    Task<MediaIssueResultDto> ReportIssueAsync(MediaIssueReportDto report);
     Task<List<MediaIssueDto>> GetIssuesAsync(bool openOnly = true);
     Task<int> GetOpenCountAsync();
     Task<bool> ResolveIssueAsync(int issueId);
     Task<bool> DismissIssueAsync(int issueId);
-    /// <summary>Admin: force a re-download for the reported title (bypasses the on-Plex dedup) and resolves the issue.</summary>
-    Task<bool> RequestRedownloadAsync(int issueId);
+    Task<MediaIssueResultDto> RequestRedownloadAsync(int issueId);
 }
 
+/// <summary>
+/// Owns the complete issue lifecycle. Replacement approval deliberately attaches to the existing Available
+/// request: creating a second ordinary request allows Plex availability to "complete" it from the bad file
+/// before a new copy arrives. The replacement job keeps that old file until its new import succeeds.
+/// </summary>
 public class MediaIssueService(
     AppDbContext db,
     AuthenticationStateProvider authProvider,
     IFulfillmentQueue fulfillment,
     IQualityProfileService qualityProfiles,
-    IMediaIdentityService mediaIdentities,
-    IConfiguration config) : IMediaIssueService
+    IReleaseBlocklistService blocklist) : IMediaIssueService
 {
-    public async Task<bool> ReportIssueAsync(int mediaId, MediaType mediaType, string title, string? posterUrl, string reason, string? detail, int? season = null, int? episode = null)
+    private static readonly HashSet<string> Reasons = new(StringComparer.OrdinalIgnoreCase)
     {
-        var (userId, username) = await CurrentUserAsync();
-        db.MediaIssues.Add(new MediaIssueEntity
+        "Wrong episode", "Bad quality", "Playback broken", "Wrong version",
+        "Missing subtitles", "Corrupt / incomplete", "Other"
+    };
+
+    public async Task<MediaIssueResultDto> ReportIssueAsync(MediaIssueReportDto report)
+    {
+        var user = await CurrentUserAsync();
+        if (user.Identity?.IsAuthenticated != true)
+            return Failed("You must be signed in to report a problem.");
+        if (report.MediaId <= 0 || string.IsNullOrWhiteSpace(report.Title))
+            return Failed("The media item could not be identified.");
+
+        var isTv = report.MediaType is MediaType.TvShow or MediaType.Anime;
+        if (report.RequestReplacement && isTv && (report.SeasonNumber is null || report.EpisodeNumber is null))
+            return Failed("Choose the exact season and episode that needs replacing.");
+        if ((report.SeasonNumber is not null || report.EpisodeNumber is not null) &&
+            (report.SeasonNumber is null or < 0 || report.EpisodeNumber is null or < 1))
+            return Failed("Choose a valid season and episode.");
+
+        var userId = UserId(user);
+        var duplicate = await db.MediaIssues.AsNoTracking().AnyAsync(i =>
+            i.MediaId == report.MediaId && i.MediaType == report.MediaType &&
+            i.ReportedByUserId == userId && i.SeasonNumber == report.SeasonNumber &&
+            i.EpisodeNumber == report.EpisodeNumber &&
+            (i.Status == IssueStatus.Open || i.Status == IssueStatus.ReplacementQueued));
+        if (duplicate) return Failed("You already have an active report for this item.");
+
+        var submittedReason = report.Reason?.Trim() ?? string.Empty;
+        var reason = Reasons.Contains(submittedReason) ? submittedReason : "Other";
+        var issue = new MediaIssueEntity
         {
-            MediaId = mediaId,
-            MediaType = mediaType,
-            Title = title,
-            PosterUrl = posterUrl,
+            MediaId = report.MediaId,
+            MediaType = report.MediaType,
+            Title = Trim(report.Title, 512)!,
+            PosterUrl = report.PosterUrl,
             ReportedByUserId = userId,
-            ReportedBy = username,
-            Reason = string.IsNullOrWhiteSpace(reason) ? "Other" : reason,
-            Detail = detail,
-            SeasonNumber = season,
-            EpisodeNumber = episode,
+            ReportedBy = Trim(user.Identity.Name, 128),
+            Reason = reason,
+            Detail = Trim(report.Detail, 2048),
+            SeasonNumber = report.SeasonNumber,
+            EpisodeNumber = report.EpisodeNumber,
+            ReplacementRequested = report.RequestReplacement,
             Status = IssueStatus.Open,
             CreatedAt = DateTime.UtcNow
-        });
-        return await db.SaveChangesAsync() > 0;
+        };
+        db.MediaIssues.Add(issue);
+        await db.SaveChangesAsync();
+
+        if (report.RequestReplacement && user.IsInRole("Admin"))
+        {
+            var queued = await QueueReplacementCoreAsync(issue, user.Identity.Name ?? "Admin");
+            queued.IssueId = issue.Id;
+            // The report itself was persisted even when the safe replacement preflight found a problem.
+            queued.Success = true;
+            return queued;
+        }
+
+        return new MediaIssueResultDto { Success = true, IssueId = issue.Id };
     }
 
     public async Task<List<MediaIssueDto>> GetIssuesAsync(bool openOnly = true)
     {
-        var q = db.MediaIssues.AsNoTracking().AsQueryable();
-        if (openOnly) q = q.Where(i => i.Status == IssueStatus.Open);
-        return await q.OrderByDescending(i => i.CreatedAt).Select(i => ToDto(i)).ToListAsync();
+        if (!await IsAdminAsync()) return new();
+        var query = db.MediaIssues.AsNoTracking().AsQueryable();
+        if (openOnly)
+            query = query.Where(i => i.Status == IssueStatus.Open || i.Status == IssueStatus.ReplacementQueued);
+        var issues = await query.OrderByDescending(i => i.CreatedAt).ToListAsync();
+        var jobIds = issues.Where(i => i.ReplacementJobId.HasValue).Select(i => i.ReplacementJobId!.Value).ToList();
+        var jobs = await db.FulfillmentJobs.AsNoTracking().Where(j => jobIds.Contains(j.Id))
+            .ToDictionaryAsync(j => j.Id);
+        return issues.Select(i => ToDto(i,
+            i.ReplacementJobId is int id && jobs.TryGetValue(id, out var job) ? job : null)).ToList();
     }
 
-    public Task<int> GetOpenCountAsync() => db.MediaIssues.CountAsync(i => i.Status == IssueStatus.Open);
+    public async Task<int> GetOpenCountAsync()
+    {
+        if (!await IsAdminAsync()) return 0;
+        return await db.MediaIssues.CountAsync(i =>
+            i.Status == IssueStatus.Open || i.Status == IssueStatus.ReplacementQueued);
+    }
 
-    public async Task<bool> ResolveIssueAsync(int issueId) => await CloseAsync(issueId, IssueStatus.Resolved);
-    public async Task<bool> DismissIssueAsync(int issueId) => await CloseAsync(issueId, IssueStatus.Dismissed);
+    public Task<bool> ResolveIssueAsync(int issueId) => CloseAsync(issueId, IssueStatus.Resolved);
+    public Task<bool> DismissIssueAsync(int issueId) => CloseAsync(issueId, IssueStatus.Dismissed);
 
     private async Task<bool> CloseAsync(int issueId, IssueStatus status)
     {
+        var user = await CurrentUserAsync();
+        if (!user.IsInRole("Admin")) return false;
         var issue = await db.MediaIssues.FirstOrDefaultAsync(i => i.Id == issueId);
-        if (issue is null) return false;
-        var (_, username) = await CurrentUserAsync();
+        if (issue is null || issue.Status == IssueStatus.ReplacementQueued) return false;
         issue.Status = status;
         issue.ResolvedAt = DateTime.UtcNow;
-        issue.ResolvedBy = username;
+        issue.ResolvedBy = Trim(user.Identity?.Name, 128);
         return await db.SaveChangesAsync() > 0;
     }
 
-    public async Task<bool> RequestRedownloadAsync(int issueId)
+    public async Task<MediaIssueResultDto> RequestRedownloadAsync(int issueId)
     {
+        var user = await CurrentUserAsync();
+        if (!user.IsInRole("Admin")) return Failed("Administrator access is required.");
         var issue = await db.MediaIssues.FirstOrDefaultAsync(i => i.Id == issueId);
-        if (issue is null) return false;
+        if (issue is null) return Failed("Issue not found.");
+        if (issue.Status == IssueStatus.ReplacementQueued)
+            return Failed("A replacement is already queued for this issue.");
+        if (issue.Status != IssueStatus.Open) return Failed("Only open issues can be approved.");
+        return await QueueReplacementCoreAsync(issue, user.Identity?.Name ?? "Admin");
+    }
 
-        // Create an approved request scoped to what was reported, then force-enqueue it (re-fetch even
-        // though the content is on Plex). It flows through the normal pipeline -> Available on completion.
-        var episodesCsv = issue.SeasonNumber is int s && issue.EpisodeNumber is int e ? $"S{s}E{e}" : null;
-        var seasonsCsv = episodesCsv is null && issue.SeasonNumber is int so ? so.ToString() : null;
+    private async Task<MediaIssueResultDto> QueueReplacementCoreAsync(MediaIssueEntity issue, string approvedBy)
+    {
+        var isTv = issue.MediaType is MediaType.TvShow or MediaType.Anime;
+        if (isTv && (issue.SeasonNumber is null || issue.EpisodeNumber is null))
+            return Failed("Choose an exact episode before approving a TV replacement.");
 
-        // Reuse the profile the existing request for this title was bound to where there is one: a
-        // re-download of a reported-broken file should come back at the quality it was supposed to be, not
-        // at whatever today's default happens to be.
-        var existingProfileId = await db.MediaRequests
-            .Where(r => r.MediaId == issue.MediaId && r.MediaType == issue.MediaType && r.QualityProfileId != null)
-            .OrderByDescending(r => r.Id)
-            .Select(r => r.QualityProfileId)
-            .FirstOrDefaultAsync();
+        var candidates = await (from file in db.ImportedFiles.AsNoTracking()
+            join job in db.FulfillmentJobs.AsNoTracking() on file.FulfillmentJobId equals job.Id
+            join reqEntity in db.MediaRequests.AsNoTracking() on job.MediaRequestId equals reqEntity.Id
+            where reqEntity.MediaId == issue.MediaId && reqEntity.MediaType == issue.MediaType && file.FileType == "video"
+                  && (!isTv || (file.SeasonNumber == issue.SeasonNumber && file.EpisodeNumber == issue.EpisodeNumber))
+            orderby file.ImportedAt descending
+            select new { File = file, Job = job, Request = reqEntity }).ToListAsync();
 
-        var identity = await mediaIdentities.ResolveAsync(MediaRef.FromTmdb(issue.MediaId, issue.MediaType));
-        var req = new MediaRequestEntity
+        var current = candidates.FirstOrDefault();
+        if (current is null)
+            return Failed(isTv
+                ? "The existing episode has no import audit record, so Plex Requests cannot safely identify and replace its file."
+                : "The existing title has no import audit record, so Plex Requests cannot safely identify and replace its file.");
+
+        var active = await db.FulfillmentJobs.AsNoTracking().AnyAsync(j => j.MediaRequestId == current.Request.Id &&
+            (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
+             j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred));
+        if (active) return Failed("Another download or replacement for this request is already active.");
+
+        var requestJobIds = await db.FulfillmentJobs.AsNoTracking()
+            .Where(j => j.MediaRequestId == current.Request.Id).Select(j => j.Id).ToListAsync();
+        var oldFiles = await db.ImportedFiles.AsNoTracking()
+            .Where(f => requestJobIds.Contains(f.FulfillmentJobId) &&
+                (!isTv || (f.SeasonNumber == issue.SeasonNumber && f.EpisodeNumber == issue.EpisodeNumber)))
+            .ToListAsync();
+        var replacePaths = oldFiles.Select(f => f.DestinationPath).Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (!oldFiles.Any(f => f.FileType == "video") || replacePaths.Count == 0)
+            return Failed("The current library file path could not be verified, so no replacement was queued.");
+
+        // Exclude every known source behind the bad copy before the new job is created. Otherwise the ranker
+        // can select the exact same mislabeled/corrupt release on every self-healing retry.
+        foreach (var file in oldFiles.Where(f => f.FileType == "video"))
         {
-            MediaIdentityId = identity.Id,
-            MediaId = issue.MediaId,
-            MediaType = issue.MediaType,
-            RequestScopeKind = episodesCsv is not null ? RequestScopeKind.Episodes
-                : seasonsCsv is not null ? RequestScopeKind.Seasons
-                : issue.MediaType is MediaType.TvShow or MediaType.Anime ? RequestScopeKind.Series
-                : RequestScopeKind.Title,
-            Title = issue.Title,
-            PosterUrl = issue.PosterUrl,
-            Status = RequestStatus.Approved,
-            RequestedAt = DateTime.UtcNow,
-            ApprovedAt = DateTime.UtcNow,
-            RequestedBy = issue.ReportedBy,
-            RequestedByUserId = issue.ReportedByUserId,
-            RequestAllSeasons = seasonsCsv is null && episodesCsv is null,
-            RequestedSeasonsCsv = seasonsCsv,
-            RequestedEpisodesCsv = episodesCsv,
-            QualityProfileId = existingProfileId
-                ?? await qualityProfiles.ResolveProfileIdAsync(issue.MediaType, issue.MediaId, null,
-                    requesterChoiceId: null, userId: issue.ReportedByUserId)
-        };
-        db.MediaRequests.Add(req);
-        await db.SaveChangesAsync();
+            var sourceId = file.InfoHash ?? file.TransferId;
+            if (string.IsNullOrWhiteSpace(sourceId) && string.IsNullOrWhiteSpace(file.ReleaseName))
+                return Failed("The bad release has no source identity, so it cannot be safely excluded from the replacement search.");
+            await blocklist.BlockAsync(file.FulfillmentJobId, new BlocklistRequestDto
+            {
+                Protocol = file.Protocol,
+                SourceId = sourceId,
+                InfoHash = file.InfoHash ?? (file.Protocol == AcquisitionProtocol.Torrent ? file.TransferId : null),
+                ReleaseName = file.ReleaseName,
+                Reason = BlocklistReason.WrongContent,
+                Detail = $"Excluded by media issue #{issue.Id}: {issue.Reason}",
+                Season = issue.SeasonNumber,
+                Episode = issue.EpisodeNumber
+            });
+        }
 
-        if (config.GetValue<bool>("Fulfillment:Enabled"))
-            await fulfillment.EnqueueAsync(ToRequestDto(req), force: true);
+        var profileId = current.Request.QualityProfileId ?? await qualityProfiles.ResolveProfileIdAsync(
+            issue.MediaType, issue.MediaId, genres: null, requesterChoiceId: null,
+            userId: current.Request.RequestedByUserId);
+        var preferred = await qualityProfiles.GetCutoffQualityAsync(profileId);
+        var currentHeight = oldFiles.Where(f => f.FileType == "video").Select(f => f.ResolutionHeight).DefaultIfEmpty(0).Max();
+        var existing = QualityHelper.FromHeight(currentHeight);
+        var floor = (Quality)Math.Max((int)preferred, (int)existing);
+        if (floor == Quality.Any) floor = Quality.HD;
 
-        var (_, username) = await CurrentUserAsync();
-        issue.Status = IssueStatus.Resolved;
-        issue.ResolvedAt = DateTime.UtcNow;
-        issue.ResolvedBy = username;
+        var request = ToRequestDto(current.Request);
+        request.QualityProfileId = profileId;
+        var episodes = isTv
+            ? new List<(int season, int episode)> { (issue.SeasonNumber!.Value, issue.EpisodeNumber!.Value) }
+            : new List<(int season, int episode)>();
+        var jobId = await fulfillment.EnqueueReplacementAsync(request, floor, replacePaths, episodes, issue.Id);
+        if (jobId is null) return Failed("Another download or replacement started before this one could be queued.");
+
+        issue.ReplacementRequested = true;
+        issue.ReplacementJobId = jobId;
+        issue.ReplacementApprovedAt = DateTime.UtcNow;
+        issue.ReplacementApprovedBy = Trim(approvedBy, 128);
+        issue.Status = IssueStatus.ReplacementQueued;
+        issue.ResolvedAt = null;
+        issue.ResolvedBy = null;
         await db.SaveChangesAsync();
-        return true;
+        return new MediaIssueResultDto { Success = true, IssueId = issue.Id, ReplacementQueued = true };
     }
 
-    private async Task<(int? userId, string? username)> CurrentUserAsync()
-    {
-        var state = await authProvider.GetAuthenticationStateAsync();
-        var username = state.User.Identity?.Name;
-        int? userId = int.TryParse(state.User.FindFirst("user_id")?.Value, out var id) ? id : null;
-        return (userId, username);
-    }
+    private async Task<ClaimsPrincipal> CurrentUserAsync() =>
+        (await authProvider.GetAuthenticationStateAsync()).User;
 
-    private static MediaIssueDto ToDto(MediaIssueEntity i) => new()
+    private async Task<bool> IsAdminAsync() => (await CurrentUserAsync()).IsInRole("Admin");
+    private static int? UserId(ClaimsPrincipal user) =>
+        int.TryParse(user.FindFirst("user_id")?.Value, out var id) ? id : null;
+    private static string? Trim(string? value, int max)
     {
-        Id = i.Id, MediaId = i.MediaId, MediaType = i.MediaType, Title = i.Title, PosterUrl = i.PosterUrl,
-        ReportedByUserId = i.ReportedByUserId, ReportedBy = i.ReportedBy, Reason = i.Reason, Detail = i.Detail,
-        SeasonNumber = i.SeasonNumber, EpisodeNumber = i.EpisodeNumber, Status = i.Status,
-        CreatedAt = i.CreatedAt, ResolvedAt = i.ResolvedAt
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var text = value.Trim();
+        return text.Length > max ? text[..max] : text;
+    }
+    private static MediaIssueResultDto Failed(string message) => new() { ErrorMessage = message };
+
+    private static MediaIssueDto ToDto(MediaIssueEntity issue, FulfillmentJobEntity? job) => new()
+    {
+        Id = issue.Id,
+        MediaId = issue.MediaId,
+        MediaType = issue.MediaType,
+        Title = issue.Title,
+        PosterUrl = issue.PosterUrl,
+        ReportedByUserId = issue.ReportedByUserId,
+        ReportedBy = issue.ReportedBy,
+        Reason = issue.Reason,
+        Detail = issue.Detail,
+        SeasonNumber = issue.SeasonNumber,
+        EpisodeNumber = issue.EpisodeNumber,
+        ReplacementRequested = issue.ReplacementRequested,
+        ReplacementJobId = issue.ReplacementJobId,
+        ReplacementJobStatus = job?.Status,
+        ReplacementProgress = job?.Progress ?? 0,
+        ReplacementAttempts = job?.Attempts ?? 0,
+        ReplacementNextRetryAt = job?.NextRetryAt,
+        ReplacementLastError = job?.LastError,
+        Status = issue.Status,
+        CreatedAt = issue.CreatedAt,
+        ResolvedAt = issue.ResolvedAt
     };
 
-    private static MediaRequestDto ToRequestDto(MediaRequestEntity r) => new()
+    private static MediaRequestDto ToRequestDto(MediaRequestEntity request) => new()
     {
-        Id = r.Id, MediaId = r.MediaId, MediaType = r.MediaType, Title = r.Title, PosterUrl = r.PosterUrl,
-        Status = r.Status, RequestedAt = r.RequestedAt, ApprovedAt = r.ApprovedAt,
-        RequestedByUserId = r.RequestedByUserId ?? 0, RequestedByUsername = r.RequestedBy ?? string.Empty,
-        RequestAllSeasons = r.RequestAllSeasons, RequestedEpisodesCsv = r.RequestedEpisodesCsv,
-        RequestScopeKind = r.RequestScopeKind,
-        MediaRef = MediaRef.FromTmdb(r.MediaId, r.MediaType),
-        RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv) ? new() :
-            r.RequestedSeasonsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        Id = request.Id,
+        MediaId = request.MediaId,
+        MediaType = request.MediaType,
+        Title = request.Title,
+        PosterUrl = request.PosterUrl,
+        Status = request.Status,
+        RequestedAt = request.RequestedAt,
+        ApprovedAt = request.ApprovedAt,
+        RequestedByUserId = request.RequestedByUserId ?? 0,
+        RequestedByUsername = request.RequestedBy ?? string.Empty,
+        RequestAllSeasons = request.RequestAllSeasons,
+        RequestedEpisodesCsv = request.RequestedEpisodesCsv,
+        RequestScopeKind = request.RequestScopeKind,
+        QualityProfileId = request.QualityProfileId,
+        MediaRef = !string.IsNullOrWhiteSpace(request.ExternalId)
+            ? MediaRef.FromExternal(request.ExternalSource ?? "external", request.ExternalId, request.MediaType,
+                request.RequestScopeKind.ToMediaKind(request.MediaType))
+            : MediaRef.FromTmdb(request.MediaId, request.MediaType),
+        ExternalId = request.ExternalId,
+        ExternalSource = request.ExternalSource,
+        RequestedSeasons = string.IsNullOrWhiteSpace(request.RequestedSeasonsCsv) ? new() :
+            request.RequestedSeasonsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(x => int.TryParse(x, out var n) ? n : -1).Where(n => n >= 0).ToList()
     };
 }

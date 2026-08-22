@@ -31,6 +31,11 @@ public class MediaIssueEntity
     public int? SeasonNumber { get; set; }      // optional, TV
     public int? EpisodeNumber { get; set; }     // optional, TV
 
+    public bool ReplacementRequested { get; set; }
+    public int? ReplacementJobId { get; set; }
+    public DateTime? ReplacementApprovedAt { get; set; }
+    [MaxLength(128)] public string? ReplacementApprovedBy { get; set; }
+
     public IssueStatus Status { get; set; } = IssueStatus.Open;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ResolvedAt { get; set; }
