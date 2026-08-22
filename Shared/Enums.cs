@@ -71,6 +71,14 @@ public enum UserPermission
     All = AllRequests | AutoApprove | Administrator
 }
 
+/// <summary>Lifecycle state enforced consistently by web authentication, services, and the Discord bridge.</summary>
+public enum UserAccountStatus
+{
+    Active = 0,
+    Suspended = 1,
+    Disabled = 2
+}
+
 public enum NotificationType
 {
     Info = 0,

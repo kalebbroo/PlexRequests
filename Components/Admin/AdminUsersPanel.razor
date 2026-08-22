@@ -15,6 +15,13 @@
                 <MudSelectItem Value="UserSort.Recent">Recently active</MudSelectItem>
                 <MudSelectItem Value="UserSort.Group">Group</MudSelectItem>
                 <MudSelectItem Value="UserSort.Quota">Closest to a limit</MudSelectItem>
+                <MudSelectItem Value="UserSort.Status">Account status</MudSelectItem>
+            </MudSelect>
+            <MudSelect T="UserStatusFilter" @bind-Value="_statusFilter" Label="Status" Variant="Variant.Outlined">
+                <MudSelectItem Value="UserStatusFilter.All">All accounts</MudSelectItem>
+                <MudSelectItem Value="UserStatusFilter.Active">Active</MudSelectItem>
+                <MudSelectItem Value="UserStatusFilter.Suspended">Suspended</MudSelectItem>
+                <MudSelectItem Value="UserStatusFilter.Disabled">Disabled</MudSelectItem>
             </MudSelect>
         </div>
 
@@ -42,6 +49,12 @@
                             </div>
                         </div>
                         <div class="access-chips">
+                            <MudTooltip Text="@StatusDetail(user)">
+                                <MudChip T="string" Size="Size.Small" Color="@StatusColor(user.AccountStatus)"
+                                         Variant="Variant.Outlined" Icon="@StatusIcon(user.AccountStatus)">
+                                    @StatusLabel(user)
+                                </MudChip>
+                            </MudTooltip>
                             <MudChip T="string" Size="Size.Small" Color="@(user.GroupId is null ? Color.Default : Color.Primary)"
                                      Variant="Variant.Outlined" Icon="@Icons.Material.Filled.GroupWork">
                                 @(user.GroupName ?? "Custom access")
@@ -115,6 +128,7 @@
     private bool _loading = true;
     private string _search = string.Empty;
     private UserSort _sort;
+    private UserStatusFilter _statusFilter;
     private List<AdminUserDto> _users = [];
     private List<UserGroupDto> _groups = [];
 
@@ -123,10 +137,17 @@
         get
         {
             IEnumerable<AdminUserDto> users = _users;
+            users = _statusFilter switch
+            {
+                UserStatusFilter.Active => users.Where(x => x.AccountStatus == UserAccountStatus.Active),
+                UserStatusFilter.Suspended => users.Where(x => x.AccountStatus == UserAccountStatus.Suspended),
+                UserStatusFilter.Disabled => users.Where(x => x.AccountStatus == UserAccountStatus.Disabled),
+                _ => users
+            };
             if (!string.IsNullOrWhiteSpace(_search))
             {
                 var term = _search.Trim();
-                users = users.Where(x => new[] { x.Username, x.DisplayName, x.Email, x.PlexUsername, x.GroupName }
+                users = users.Where(x => new[] { x.Username, x.DisplayName, x.Email, x.PlexUsername, x.GroupName, x.AccountStatusReason }
                     .Any(value => value?.Contains(term, StringComparison.OrdinalIgnoreCase) == true));
             }
             users = _sort switch
@@ -134,6 +155,7 @@
                 UserSort.Recent => users.OrderByDescending(x => x.LastLoginAt ?? DateTime.MinValue),
                 UserSort.Group => users.OrderBy(x => x.GroupName ?? "Custom").ThenBy(x => x.Username),
                 UserSort.Quota => users.OrderByDescending(x => QuotaRatio(x)),
+                UserSort.Status => users.OrderByDescending(x => x.AccountStatus).ThenBy(x => x.DisplayName ?? x.Username),
                 _ => users.OrderBy(x => x.DisplayName ?? x.Username)
             };
             return users.ToList();
@@ -185,6 +207,32 @@
     private static double QuotaRatio(AdminUserDto user) => new[] { Ratio(user.MovieQuota), Ratio(user.TvQuota), Ratio(user.MusicQuota) }.Max();
     private static double Ratio(RequestQuotaDto quota) => quota.Limit is null or 0 ? 0 : (double)quota.Used / quota.Limit.Value;
     private static string LastSeen(DateTime? value) => value is null ? "Never signed in" : $"Last seen {value.Value.ToLocalTime():g}";
+    private static Color StatusColor(UserAccountStatus status) => status switch
+    {
+        UserAccountStatus.Active => Color.Success,
+        UserAccountStatus.Suspended => Color.Warning,
+        _ => Color.Error
+    };
+    private static string StatusIcon(UserAccountStatus status) => status switch
+    {
+        UserAccountStatus.Active => Icons.Material.Filled.CheckCircle,
+        UserAccountStatus.Suspended => Icons.Material.Filled.Schedule,
+        _ => Icons.Material.Filled.Block
+    };
+    private static string StatusLabel(AdminUserDto user) => user.AccountStatus switch
+    {
+        UserAccountStatus.Suspended when user.SuspendedUntil is DateTime until => $"Suspended · until {until.ToLocalTime():d}",
+        UserAccountStatus.Disabled => "Disabled",
+        _ => "Active"
+    };
+    private static string StatusDetail(AdminUserDto user)
+    {
+        if (user.AccountStatus == UserAccountStatus.Active) return "Account access is active.";
+        var reason = string.IsNullOrWhiteSpace(user.AccountStatusReason) ? "No reason recorded." : user.AccountStatusReason;
+        var changed = user.AccountStatusChangedAt is DateTime at
+            ? $" Changed {at.ToLocalTime():g} by {user.AccountStatusChangedBy ?? "an administrator"}." : string.Empty;
+        return $"{reason}{changed}";
+    }
 
     private RenderFragment Quota(string label, RequestQuotaDto quota, bool allowed)
     {
@@ -203,5 +251,6 @@
         @if (permissions.HasFlag(UserPermission.RequestMusic)) { <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Music</MudChip> }
     </text>;
 
-    private enum UserSort { Name, Recent, Group, Quota }
+    private enum UserSort { Name, Recent, Group, Quota, Status }
+    private enum UserStatusFilter { All, Active, Suspended, Disabled }
 }

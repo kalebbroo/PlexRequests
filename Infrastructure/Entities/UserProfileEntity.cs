@@ -73,8 +73,13 @@ public class UserProfileEntity
     public int TvRequestLimitDays { get; set; } = 7;
     public int MusicRequestLimitDays { get; set; } = 7;
 
-    [MaxLength(16)]
-    public string WhitelistStatus { get; set; } = "Unknown"; // Unknown | Approved | Denied
+    // Account lifecycle. Suspensions automatically become effective-active after SuspendedUntil; the next
+    // admin read repairs the stored state so a temporary restriction can never strand an account.
+    public UserAccountStatus AccountStatus { get; set; } = UserAccountStatus.Active;
+    public DateTime? SuspendedUntil { get; set; }
+    [MaxLength(256)] public string? AccountStatusReason { get; set; }
+    public DateTime? AccountStatusChangedAt { get; set; }
+    [MaxLength(128)] public string? AccountStatusChangedBy { get; set; }
 
     // Connections
     [MaxLength(64)]

@@ -110,6 +110,80 @@ public sealed class UserAccessControlTests
     }
 
     [Fact]
+    public async Task Suspending_an_account_revokes_web_discord_and_request_access()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var admin = fixture.AddUser("admin", UserPermission.All, "User,Admin");
+        var member = fixture.AddUser("member", UserPermission.AllRequests, "User");
+        member.DiscordUserId = "123456789012345678";
+        member.DiscordDmOptIn = true;
+        await fixture.Db.SaveChangesAsync();
+
+        var configuration = new ConfigurationBuilder().Build();
+        var adminAuth = new FixedAuth(admin.UserId, "admin", adminClaim: true);
+        var adminAccess = new UserAccessService(fixture.Db, adminAuth, configuration);
+        var users = new UserAdministrationService(fixture.Db, adminAccess, new UserQuotaService(fixture.Db), configuration);
+        var suspendedUntil = DateTime.UtcNow.AddDays(7);
+        var updated = await users.UpdateUserAccessAsync(Edit(member, UserAccountStatus.Suspended,
+            suspendedUntil, "Repeated abuse"));
+        Assert.True(updated.Success, updated.Message);
+
+        var memberAuth = new FixedAuth(member.UserId, "member");
+        var memberAccess = new UserAccessService(fixture.Db, memberAuth, configuration);
+        var snapshot = await memberAccess.GetAccessAsync(member.UserId);
+        Assert.False(snapshot.IsActive);
+        Assert.Equal(UserAccountStatus.Suspended, snapshot.AccountStatus);
+        Assert.Null(await memberAccess.GetCurrentUserIdAsync());
+        Assert.False(await memberAccess.CanRequestAsync(member.UserId, MediaType.Movie));
+
+        var links = new DiscordLinkService(fixture.Db, new MemoryCache(new MemoryCacheOptions()),
+            NullLogger<DiscordLinkService>.Instance, memberAccess);
+        var linkStatus = await links.GetStatusByDiscordIdAsync(member.DiscordUserId);
+        Assert.True(linkStatus.Linked);
+        Assert.False(linkStatus.AccountAvailable);
+        Assert.False(linkStatus.DmOptIn);
+
+        var request = await RequestService(fixture.Db, memberAuth, memberAccess)
+            .RequestMediaForUserAsync(member.UserId, 42, MediaType.Movie);
+        Assert.False(request.Success);
+        Assert.Contains("suspended", request.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        var services = new ServiceCollection().AddSingleton<IUserAccessService>(memberAccess).BuildServiceProvider();
+        var transformer = new UserAccessClaimsTransformation(services.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<UserAccessClaimsTransformation>.Instance);
+        var cookie = new ClaimsPrincipal(new ClaimsIdentity([
+            new Claim(ClaimTypes.Name, "member"), new Claim("user_id", member.UserId.ToString()),
+            new Claim(ClaimTypes.Role, "User")], "test"));
+        cookie.AddIdentity(new ClaimsIdentity([
+            new Claim(ClaimTypes.Name, "stale-secondary"),
+            new Claim(ClaimTypes.Role, "Admin")], "secondary-test"));
+        var revoked = await transformer.TransformAsync(cookie);
+        Assert.False(revoked.Identity?.IsAuthenticated);
+        Assert.DoesNotContain(revoked.Identities, identity => identity.IsAuthenticated);
+        Assert.False(revoked.IsInRole("Admin"));
+        Assert.Equal("suspended", revoked.FindFirst(UserAccessClaimsTransformation.AccountStatusClaim)?.Value);
+    }
+
+    [Fact]
+    public async Task Expired_suspension_restores_access_without_admin_intervention()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var member = fixture.AddUser("member", UserPermission.AllRequests, "User");
+        member.AccountStatus = UserAccountStatus.Suspended;
+        member.SuspendedUntil = DateTime.UtcNow.AddMinutes(-1);
+        member.AccountStatusReason = "Temporary hold";
+        await fixture.Db.SaveChangesAsync();
+        var access = new UserAccessService(fixture.Db, new FixedAuth(member.UserId, "member"),
+            new ConfigurationBuilder().Build());
+
+        var snapshot = await access.GetAccessAsync(member.UserId);
+
+        Assert.True(snapshot.IsActive);
+        Assert.True(await access.CanRequestAsync(member.UserId, MediaType.Movie));
+        Assert.Equal(member.UserId, await access.GetCurrentUserIdAsync());
+    }
+
+    [Fact]
     public async Task Profile_reads_the_authenticated_user_not_the_last_login()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -148,6 +222,11 @@ public sealed class UserAccessControlTests
 
         Assert.False(result.Success);
         Assert.Contains("administrator", result.Message, StringComparison.OrdinalIgnoreCase);
+
+        var suspended = await users.UpdateUserAccessAsync(Edit(admin, UserAccountStatus.Suspended,
+            DateTime.UtcNow.AddDays(1), "Security review"));
+        Assert.False(suspended.Success);
+        Assert.Contains("administrator", suspended.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -175,6 +254,12 @@ public sealed class UserAccessControlTests
         Assert.True(snapshot.IsAdmin);
         Assert.True(await access.CanRequestAsync(profile.UserId, MediaType.Movie));
         Assert.Null(snapshot.MovieRequestLimit);
+
+        var users = new UserAdministrationService(fixture.Db, access, new UserQuotaService(fixture.Db), configuration);
+        var disabled = await users.UpdateUserAccessAsync(Edit(profile, UserAccountStatus.Disabled,
+            null, "Compromised account"));
+        Assert.False(disabled.Success);
+        Assert.Contains("emergency", disabled.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -207,6 +292,22 @@ public sealed class UserAccessControlTests
         MediaId = Random.Shared.Next(1, int.MaxValue), MediaType = MediaType.Movie,
         Title = "Quota test", RequestedBy = "member", RequestedByUserId = userId,
         Status = status, RequestedAt = requestedAt
+    };
+
+    private static UserAccessEditDto Edit(UserProfileEntity profile, UserAccountStatus status,
+        DateTime? suspendedUntil, string? reason) => new()
+    {
+        UserId = profile.UserId,
+        CustomPermissions = (UserPermission)profile.Permissions,
+        MovieRequestLimit = profile.MovieRequestLimit,
+        MovieRequestLimitDays = profile.MovieRequestLimitDays,
+        TvRequestLimit = profile.TvRequestLimit,
+        TvRequestLimitDays = profile.TvRequestLimitDays,
+        MusicRequestLimit = profile.MusicRequestLimit,
+        MusicRequestLimitDays = profile.MusicRequestLimitDays,
+        AccountStatus = status,
+        SuspendedUntil = suspendedUntil,
+        AccountStatusReason = reason
     };
 
     private sealed class FixedAuth(int userId, string username, bool adminClaim = false) : AuthenticationStateProvider

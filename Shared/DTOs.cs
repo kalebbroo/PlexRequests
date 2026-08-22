@@ -525,6 +525,11 @@ public class AdminUserDto : UserDto
     public RequestQuotaDto MovieQuota { get; set; } = new();
     public RequestQuotaDto TvQuota { get; set; } = new();
     public RequestQuotaDto MusicQuota { get; set; } = new();
+    public UserAccountStatus AccountStatus { get; set; } = UserAccountStatus.Active;
+    public DateTime? SuspendedUntil { get; set; }
+    public string? AccountStatusReason { get; set; }
+    public DateTime? AccountStatusChangedAt { get; set; }
+    public string? AccountStatusChangedBy { get; set; }
 }
 
 public class UserAccessEditDto
@@ -539,6 +544,9 @@ public class UserAccessEditDto
     public int? MusicRequestLimit { get; set; } = 10;
     public int MusicRequestLimitDays { get; set; } = 7;
     public List<int> CustomAllowedQualityProfileIds { get; set; } = new();
+    public UserAccountStatus AccountStatus { get; set; } = UserAccountStatus.Active;
+    public DateTime? SuspendedUntil { get; set; }
+    public string? AccountStatusReason { get; set; }
 }
 
 public record UserAdminResult(bool Success, string Message)

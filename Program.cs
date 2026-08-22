@@ -1509,6 +1509,8 @@ app.MapGet("/auth/dev-login", async (
     if (!result.Success)
     {
         Logs.Error($"Development login failed for {username}: {result.ErrorMessage}");
+        if (result.ErrorCode is "account_suspended" or "account_disabled")
+            return Results.Redirect($"/login?error={result.ErrorCode}");
         return Results.Problem("Failed to sign in with development account", statusCode: 500);
     }
 
@@ -1561,6 +1563,8 @@ app.MapGet("/auth/callback", async (HttpContext context, IPlexAuthService plexAu
         if (!authResult.Success)
         {
             PlexRequestsHosted.Utils.Logs.Error($"Authentication completion failed: {authResult.ErrorMessage}");
+            if (authResult.ErrorCode is "account_suspended" or "account_disabled")
+                return Results.Redirect($"/login?error={authResult.ErrorCode}");
             return Results.Redirect($"/login?error=auth_completion_failed&returnUrl={Uri.EscapeDataString(returnUrl)}");
         }
 

@@ -56,8 +56,10 @@ public class MediaRequestService(
         var name = user.Identity?.Name ?? "";
         var userId = int.TryParse(user.FindFirst("user_id")?.Value, out var id) ? id :
             await _db.Users.Where(x => x.Username == name).Select(x => x.Id).FirstOrDefaultAsync();
-        var isAdmin = userId > 0 && await _userAccess.IsAdminAsync(userId);
-        return (name, isAdmin);
+        // Preserve username-only access for legacy request rows created before user ids were persisted.
+        if (userId <= 0) return (name, false);
+        var access = await _userAccess.GetAccessAsync(userId);
+        return access.IsActive ? (name, access.IsAdmin) : (string.Empty, false);
     }
 
     public async Task<bool> AddToWatchlistAsync(int mediaId, MediaType mediaType)
@@ -527,7 +529,9 @@ public class MediaRequestService(
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
-        var isAdmin = await _userAccess.IsAdminAsync(userId);
+        var access = await _userAccess.GetAccessAsync(userId);
+        if (!access.IsActive) return AccountUnavailable(access);
+        var isAdmin = access.IsAdmin;
         var monitor = mediaType == MediaType.TvShow
                       && (await _downloadPreferences.GetAsync()).AutoMonitorEntireSeriesRequests;
         return await CreateRequestCoreAsync(userId, user.Username, isAdmin, mediaId, mediaType,
@@ -552,7 +556,9 @@ public class MediaRequestService(
             return new MediaRequestResult { Success = false, ErrorMessage = "No episodes selected" };
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
-        var isAdmin = await _userAccess.IsAdminAsync(userId);
+        var access = await _userAccess.GetAccessAsync(userId);
+        if (!access.IsActive) return AccountUnavailable(access);
+        var isAdmin = access.IsAdmin;
         if (!mediaRef.TryGetTmdbId(out var tmdbId))
             return await CreateProviderRequestCoreAsync(userId, user.Username, isAdmin, mediaRef,
                 requestScope, qualityProfileId);
@@ -566,6 +572,14 @@ public class MediaRequestService(
             allSeasons: requestScope == RequestScopeKind.Series, seasons: seasons, episodes: episodes,
             monitored: monitor, qualityProfileId: qualityProfileId);
     }
+
+    private static MediaRequestResult AccountUnavailable(UserAccessSnapshot access) => new()
+    {
+        Success = false,
+        ErrorMessage = access.AccountStatus == UserAccountStatus.Suspended
+            ? $"Your account is temporarily suspended{(access.SuspendedUntil is DateTime until ? $" until {until:u}" : string.Empty)}."
+            : "Your account is disabled. Contact an administrator."
+    };
 
     private async Task<MediaRequestResult> CreateProviderRequestCoreAsync(
         int userId,

@@ -219,9 +219,13 @@ public sealed record UserAccessSnapshot(
     int TvRequestLimitDays,
     int? MusicRequestLimit,
     int MusicRequestLimitDays,
-    string? AllowedQualityProfileIdsCsv)
+    string? AllowedQualityProfileIdsCsv,
+    UserAccountStatus AccountStatus = UserAccountStatus.Active,
+    DateTime? SuspendedUntil = null,
+    string? AccountStatusReason = null)
 {
-    public bool IsAdmin => Permissions.HasFlag(UserPermission.Administrator);
+    public bool IsActive => AccountStatus == UserAccountStatus.Active;
+    public bool IsAdmin => IsActive && Permissions.HasFlag(UserPermission.Administrator);
     public bool AutoApprove => IsAdmin || Permissions.HasFlag(UserPermission.AutoApprove);
 }
 
@@ -405,6 +409,7 @@ public class PlexUser
 public class AuthenticationResult
 {
     public bool Success { get; set; }
+    public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
     public UserDto? User { get; set; }
     public List<string> Roles { get; set; } = new();

@@ -82,7 +82,10 @@ public sealed class BridgeOutboxService(
         var discordRecipients = requesterIds.Count == 0
             ? new Dictionary<int, string>()
             : await _db.UserProfiles.AsNoTracking()
-                .Where(x => requesterIds.Contains(x.UserId) && x.DiscordDmOptIn && x.DiscordUserId != null)
+                .Where(x => requesterIds.Contains(x.UserId) && x.DiscordDmOptIn && x.DiscordUserId != null
+                            && (x.AccountStatus == UserAccountStatus.Active
+                                || x.AccountStatus == UserAccountStatus.Suspended
+                                && x.SuspendedUntil != null && x.SuspendedUntil <= DateTime.UtcNow))
                 .ToDictionaryAsync(x => x.UserId, x => x.DiscordUserId!, cancellationToken);
 
         var events = new List<BridgeEventDto>(rows.Count);

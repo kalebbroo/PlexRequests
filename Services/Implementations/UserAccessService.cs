@@ -14,13 +14,15 @@ public sealed class UserAccessService(AppDbContext db, AuthenticationStateProvid
     {
         var principal = (await auth.GetAuthenticationStateAsync()).User;
         if (principal.Identity?.IsAuthenticated != true) return null;
-        if (int.TryParse(principal.FindFirst("user_id")?.Value, out var claimedId) && claimedId > 0)
-            return claimedId;
-
+        int? userId = int.TryParse(principal.FindFirst("user_id")?.Value, out var claimedId) && claimedId > 0
+            ? claimedId
+            : null;
         var username = principal.Identity?.Name;
-        return string.IsNullOrWhiteSpace(username)
+        userId ??= string.IsNullOrWhiteSpace(username)
             ? null
             : await db.Users.Where(x => x.Username == username).Select(x => (int?)x.Id).FirstOrDefaultAsync();
+        if (userId is null) return null;
+        return (await GetAccessAsync(userId.Value)).IsActive ? userId : null;
     }
 
     public async Task<UserAccessSnapshot> GetAccessAsync(int userId)
@@ -28,7 +30,8 @@ public sealed class UserAccessService(AppDbContext db, AuthenticationStateProvid
         var profile = await db.UserProfiles.AsNoTracking().Include(x => x.User).Include(x => x.UserGroup)
             .FirstOrDefaultAsync(x => x.UserId == userId);
         if (profile is null)
-            return new UserAccessSnapshot(userId, UserPermission.None, null, null, 0, 7, 0, 7, 0, 7, null);
+            return new UserAccessSnapshot(userId, UserPermission.None, null, null, 0, 7, 0, 7, 0, 7,
+                null, UserAccountStatus.Disabled, null, "Account not found.");
 
         return FromProfile(profile, IsConfiguredAdmin(profile.User?.Username));
     }
@@ -36,6 +39,7 @@ public sealed class UserAccessService(AppDbContext db, AuthenticationStateProvid
     public async Task<bool> CanRequestAsync(int userId, MediaType mediaType)
     {
         var access = await GetAccessAsync(userId);
+        if (!access.IsActive) return false;
         if (access.IsAdmin) return true;
         var required = mediaType switch
         {
@@ -60,6 +64,12 @@ public sealed class UserAccessService(AppDbContext db, AuthenticationStateProvid
 
     internal static UserAccessSnapshot FromProfile(Infrastructure.Entities.UserProfileEntity profile, bool configuredAdmin)
     {
+        var accountStatus = EffectiveAccountStatus(profile, configuredAdmin);
+        if (accountStatus != UserAccountStatus.Active)
+            return new(profile.UserId, UserPermission.None, profile.UserGroupId, profile.UserGroup?.Name,
+                0, 7, 0, 7, 0, 7, null, accountStatus, profile.SuspendedUntil,
+                profile.AccountStatusReason);
+
         if (profile.UserGroup is { } group)
         {
             var groupPermissions = Normalize((UserPermission)group.Permissions);
@@ -67,7 +77,8 @@ public sealed class UserAccessService(AppDbContext db, AuthenticationStateProvid
             return new(profile.UserId, groupPermissions, group.Id, group.Name,
                 groupPermissions.HasFlag(UserPermission.Administrator) ? null : group.MovieRequestLimit, NormalizeDays(group.MovieRequestLimitDays),
                 groupPermissions.HasFlag(UserPermission.Administrator) ? null : group.TvRequestLimit, NormalizeDays(group.TvRequestLimitDays),
-                groupPermissions.HasFlag(UserPermission.Administrator) ? null : group.MusicRequestLimit, NormalizeDays(group.MusicRequestLimitDays), group.AllowedQualityProfileIdsCsv);
+                groupPermissions.HasFlag(UserPermission.Administrator) ? null : group.MusicRequestLimit, NormalizeDays(group.MusicRequestLimitDays),
+                group.AllowedQualityProfileIdsCsv, UserAccountStatus.Active);
         }
 
         var permissions = (UserPermission)profile.Permissions;
@@ -77,7 +88,20 @@ public sealed class UserAccessService(AppDbContext db, AuthenticationStateProvid
         return new(profile.UserId, permissions, null, null,
             permissions.HasFlag(UserPermission.Administrator) ? null : profile.MovieRequestLimit, NormalizeDays(profile.MovieRequestLimitDays),
             permissions.HasFlag(UserPermission.Administrator) ? null : profile.TvRequestLimit, NormalizeDays(profile.TvRequestLimitDays),
-            permissions.HasFlag(UserPermission.Administrator) ? null : profile.MusicRequestLimit, NormalizeDays(profile.MusicRequestLimitDays), profile.AllowedQualityProfileIdsCsv);
+            permissions.HasFlag(UserPermission.Administrator) ? null : profile.MusicRequestLimit, NormalizeDays(profile.MusicRequestLimitDays),
+            profile.AllowedQualityProfileIdsCsv, UserAccountStatus.Active);
+    }
+
+    internal static UserAccountStatus EffectiveAccountStatus(
+        Infrastructure.Entities.UserProfileEntity profile,
+        bool configuredAdmin,
+        DateTime? now = null)
+    {
+        if (configuredAdmin) return UserAccountStatus.Active;
+        if (profile.AccountStatus == UserAccountStatus.Suspended
+            && profile.SuspendedUntil is DateTime until && until <= (now ?? DateTime.UtcNow))
+            return UserAccountStatus.Active;
+        return profile.AccountStatus;
     }
 
     private bool IsConfiguredAdmin(string? username)

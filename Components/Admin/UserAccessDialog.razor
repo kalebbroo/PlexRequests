@@ -6,6 +6,45 @@
 <MudDialog>
     <DialogContent>
         <MudStack Spacing="3">
+            <MudText Typo="Typo.subtitle1">Account status</MudText>
+            <MudSelect T="UserAccountStatus" @bind-Value="_accountStatus" Label="Status" Variant="Variant.Outlined">
+                <MudSelectItem Value="UserAccountStatus.Active">Active</MudSelectItem>
+                <MudSelectItem Value="UserAccountStatus.Suspended">Temporarily suspended</MudSelectItem>
+                <MudSelectItem Value="UserAccountStatus.Disabled">Disabled indefinitely</MudSelectItem>
+            </MudSelect>
+            @if (_accountStatus == UserAccountStatus.Suspended)
+            {
+                <MudSelect T="int" Value="_suspensionDays" ValueChanged="SuspensionDaysChanged"
+                           Label="Suspend for" Variant="Variant.Outlined">
+                    <MudSelectItem Value="1">1 day</MudSelectItem>
+                    <MudSelectItem Value="3">3 days</MudSelectItem>
+                    <MudSelectItem Value="7">7 days</MudSelectItem>
+                    <MudSelectItem Value="14">14 days</MudSelectItem>
+                    <MudSelectItem Value="30">30 days</MudSelectItem>
+                    <MudSelectItem Value="90">90 days</MudSelectItem>
+                    <MudSelectItem Value="365">1 year</MudSelectItem>
+                </MudSelect>
+                @if (User.AccountStatus == UserAccountStatus.Suspended && !_suspensionDurationChanged && User.SuspendedUntil is DateTime currentUntil)
+                {
+                    <MudText Typo="Typo.caption" Class="text-secondary">Current suspension ends @currentUntil.ToLocalTime().ToString("g"). Saving other settings will keep that time.</MudText>
+                }
+            }
+            @if (_accountStatus != UserAccountStatus.Active)
+            {
+                <MudTextField T="string" @bind-Value="_accountStatusReason" Label="Reason" Required="true"
+                              Counter="256" MaxLength="256" Lines="2" Variant="Variant.Outlined"
+                              HelperText="Recorded for administrators so the restriction is easy to understand later." />
+                <MudAlert Severity="@(_accountStatus == UserAccountStatus.Disabled ? Severity.Error : Severity.Warning)" dense="true">
+                    This immediately ends active web access and blocks requests and account linking through Discord.
+                </MudAlert>
+            }
+            @if (User.AccountStatusChangedAt is DateTime changedAt)
+            {
+                <MudText Typo="Typo.caption" Class="text-secondary">
+                    Last changed @changedAt.ToLocalTime().ToString("g") by @(User.AccountStatusChangedBy ?? "an administrator")
+                </MudText>
+            }
+            <MudDivider />
             <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" dense="true">
                 Choose a group for shared live settings, or Custom access for one-off permissions and quotas.
             </MudAlert>
@@ -63,7 +102,7 @@
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving" OnClick="Save">Save access</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving" OnClick="Save">Save account</MudButton>
     </DialogActions>
 </MudDialog>
 
@@ -78,6 +117,10 @@
     private bool _movieUnlimited, _tvUnlimited, _musicUnlimited, _saving;
     private HashSet<int> _qualityIds = [];
     private List<QualityProfileSummaryDto> _qualityProfiles = [];
+    private UserAccountStatus _accountStatus;
+    private string? _accountStatusReason;
+    private int _suspensionDays = 7;
+    private bool _suspensionDurationChanged;
 
     protected override async Task OnInitializedAsync()
     {
@@ -90,6 +133,10 @@
         _tvDays = User.CustomTvRequestLimitDays;
         _musicDays = User.CustomMusicRequestLimitDays;
         _qualityIds = User.CustomAllowedQualityProfileIds.ToHashSet();
+        _accountStatus = User.AccountStatus;
+        _accountStatusReason = User.AccountStatusReason;
+        if (User.SuspendedUntil is DateTime until)
+            _suspensionDays = ClosestSuspensionDays(Math.Max(1, (int)Math.Ceiling((until - DateTime.UtcNow).TotalDays)));
         _qualityProfiles = (await QualityProfiles.GetProfilesAsync())
             .Where(x => x.IsUserSelectable).Select(x => new QualityProfileSummaryDto { Id = x.Id, Name = x.Name, IsDefault = x.IsDefault }).ToList();
     }
@@ -115,7 +162,10 @@
             MovieRequestLimit = _movieUnlimited ? null : _movieLimit, MovieRequestLimitDays = _movieDays,
             TvRequestLimit = _tvUnlimited ? null : _tvLimit, TvRequestLimitDays = _tvDays,
             MusicRequestLimit = _musicUnlimited ? null : _musicLimit, MusicRequestLimitDays = _musicDays,
-            CustomAllowedQualityProfileIds = _qualityIds.Order().ToList()
+            CustomAllowedQualityProfileIds = _qualityIds.Order().ToList(),
+            AccountStatus = _accountStatus,
+            SuspendedUntil = SuspensionUntil(),
+            AccountStatusReason = _accountStatusReason
         });
         _saving = false;
         if (!result.Success) { await Toast.ShowErrorAsync(result.Message); return; }
@@ -125,6 +175,17 @@
 
     private void Set(UserPermission flag, bool enabled) { if (enabled) _permissions |= flag; else _permissions &= ~flag; }
     private void QualityChanged(IEnumerable<int> values) => _qualityIds = values.ToHashSet();
+    private void SuspensionDaysChanged(int days) { _suspensionDays = days; _suspensionDurationChanged = true; }
+    private DateTime? SuspensionUntil()
+    {
+        if (_accountStatus != UserAccountStatus.Suspended) return null;
+        if (User.AccountStatus == UserAccountStatus.Suspended && !_suspensionDurationChanged
+            && User.SuspendedUntil is DateTime existing && existing > DateTime.UtcNow)
+            return existing;
+        return DateTime.UtcNow.AddDays(_suspensionDays);
+    }
+    private static int ClosestSuspensionDays(int days) => new[] { 1, 3, 7, 14, 30, 90, 365 }
+        .OrderBy(x => Math.Abs(x - days)).First();
     private static (int value, bool unlimited) Value(int? value, int fallback) => (value ?? fallback, value is null);
     private static string PermissionSummary(UserPermission p) => string.Join(" · ", new[] {
         p.HasFlag(UserPermission.Administrator) ? "Administrator" : null,

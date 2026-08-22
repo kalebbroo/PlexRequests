@@ -4,6 +4,7 @@ using Microsoft.Extensions.Caching.Memory;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Shared.DTOs;
+using PlexRequestsHosted.Shared.Enums;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
@@ -49,6 +50,15 @@ public class DiscordLinkService(
         var profile = await db.UserProfiles.Include(p => p.User).FirstOrDefaultAsync(p => p.UserId == userId);
         if (profile is null)
             return new BridgeLinkResultDto { Success = false, Message = "Account not found." };
+        var access = await userAccess.GetAccessAsync(userId);
+        if (!access.IsActive)
+            return new BridgeLinkResultDto
+            {
+                Success = false,
+                Message = access.AccountStatus == UserAccountStatus.Suspended
+                    ? "This Plex Requests account is temporarily suspended."
+                    : "This Plex Requests account is disabled."
+            };
 
         await using var transaction = await db.Database.BeginTransactionAsync();
         try
@@ -92,9 +102,19 @@ public class DiscordLinkService(
         var normalized = discordUserId?.Trim() ?? string.Empty;
         if (!IsValidDiscordUserId(normalized)) return new BridgeLinkStatusDto { Linked = false };
         var p = await db.UserProfiles.Include(x => x.User).FirstOrDefaultAsync(x => x.DiscordUserId == normalized);
-        return p is null
-            ? new BridgeLinkStatusDto { Linked = false }
-            : new BridgeLinkStatusDto { Linked = true, PlexUsername = p.PlexUsername ?? p.User?.Username, DmOptIn = p.DiscordDmOptIn };
+        if (p is null) return new BridgeLinkStatusDto { Linked = false };
+        var access = await userAccess.GetAccessAsync(p.UserId);
+        return new BridgeLinkStatusDto
+        {
+            Linked = true,
+            PlexUsername = p.PlexUsername ?? p.User?.Username,
+            DmOptIn = p.DiscordDmOptIn && access.IsActive,
+            AccountAvailable = access.IsActive,
+            AccountStatus = access.AccountStatus,
+            Message = access.IsActive ? null : access.AccountStatus == UserAccountStatus.Suspended
+                ? "The linked Plex Requests account is temporarily suspended."
+                : "The linked Plex Requests account is disabled."
+        };
     }
 
     public Task<int?> ResolveUserIdAsync(string discordUserId)
