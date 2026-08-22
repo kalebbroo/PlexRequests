@@ -12,6 +12,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<UserEntity> Users => Set<UserEntity>();
     public DbSet<UserProfileEntity> UserProfiles => Set<UserProfileEntity>();
     public DbSet<UserGroupEntity> UserGroups => Set<UserGroupEntity>();
+    public DbSet<UserAccessAuditEntity> UserAccessAudits => Set<UserAccessAuditEntity>();
     public DbSet<PlexMappingEntity> PlexMappings => Set<PlexMappingEntity>();
     public DbSet<PlexSeasonAvailabilityEntity> PlexSeasonAvailability => Set<PlexSeasonAvailabilityEntity>();
     public DbSet<MediaMetadataCacheEntity> MediaMetadataCache => Set<MediaMetadataCacheEntity>();
@@ -130,6 +131,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             b.HasKey(x => x.Id);
             b.HasIndex(x => x.Name).IsUnique();
+        });
+
+        modelBuilder.Entity<UserAccessAuditEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.CreatedAt);
+            b.HasIndex(x => new { x.TargetType, x.TargetId, x.Id });
+            b.HasIndex(x => new { x.ActorUserId, x.Id });
         });
 
         modelBuilder.Entity<PlexMappingEntity>(b =>

@@ -555,6 +555,26 @@ public record UserAdminResult(bool Success, string Message)
     public static UserAdminResult Fail(string message) => new(false, message);
 }
 
+public sealed class UserAccessAuditDto
+{
+    public long Id { get; set; }
+    public UserAccessAuditTarget TargetType { get; set; }
+    public int TargetId { get; set; }
+    public string TargetName { get; set; } = string.Empty;
+    public UserAccessAuditAction Action { get; set; }
+    public int? ActorUserId { get; set; }
+    public string ActorUsername { get; set; } = string.Empty;
+    public string Summary { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+}
+
+public sealed class UserAccessAuditPageDto
+{
+    public List<UserAccessAuditDto> Items { get; set; } = new();
+    public bool HasMore { get; set; }
+    public long? NextCursor { get; set; }
+}
+
 // Wire types for the fulfillment worker API — shared by the web app (endpoints) and the downloader (client).
 public record ClaimRequest(string? WorkerId, int? Max);
 

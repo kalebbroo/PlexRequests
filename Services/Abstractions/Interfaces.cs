@@ -233,6 +233,7 @@ public interface IUserAdministrationService
 {
     Task<List<AdminUserDto>> GetUsersAsync();
     Task<List<UserGroupDto>> GetGroupsAsync();
+    Task<UserAccessAuditPageDto> GetAuditAsync(int take = 50, long? beforeId = null, string? search = null);
     Task<UserAdminResult> UpdateUserAccessAsync(UserAccessEditDto edit);
     Task<UserAdminResult> SaveGroupAsync(UserGroupDto group);
     Task<UserAdminResult> DeleteGroupAsync(int groupId);
