@@ -8,7 +8,11 @@ using PlexRequestsHosted.Shared.Enums;
 namespace PlexRequestsHosted.Services.Implementations;
 
 /// <summary>Admin-only mutations and reporting for users and reusable access groups.</summary>
-public sealed class UserAdministrationService(AppDbContext db, IUserAccessService access, IConfiguration configuration) : IUserAdministrationService
+public sealed class UserAdministrationService(
+    AppDbContext db,
+    IUserAccessService access,
+    IUserQuotaService quotas,
+    IConfiguration configuration) : IUserAdministrationService
 {
     public async Task<List<AdminUserDto>> GetUsersAsync()
     {
@@ -16,18 +20,14 @@ public sealed class UserAdministrationService(AppDbContext db, IUserAccessServic
 
         var profiles = await db.UserProfiles.AsNoTracking().Include(x => x.User).Include(x => x.UserGroup)
             .Where(x => x.User != null).OrderBy(x => x.User!.Username).ToListAsync();
-        var now = DateTime.UtcNow;
-        var earliest = now.AddDays(-365);
-        var requests = await db.MediaRequests.AsNoTracking()
-            .Where(x => x.RequestedByUserId != null && x.RequestedAt >= earliest
-                        && x.Status != RequestStatus.Cancelled && x.Status != RequestStatus.Rejected)
-            .Select(x => new { UserId = x.RequestedByUserId!.Value, x.MediaType, x.RequestedAt })
-            .ToListAsync();
+        var effectiveAccess = profiles.ToDictionary(x => x.UserId, Effective);
+        var quotaUsage = await quotas.GetUsageAsync(effectiveAccess.Values.ToList());
 
         var result = new List<AdminUserDto>(profiles.Count);
         foreach (var profile in profiles)
         {
-            var effective = Effective(profile);
+            var effective = effectiveAccess[profile.UserId];
+            var usage = quotaUsage[profile.UserId];
             result.Add(new AdminUserDto
             {
                 Id = profile.UserId,
@@ -54,15 +54,9 @@ public sealed class UserAdministrationService(AppDbContext db, IUserAccessServic
                 MusicRequestLimit = profile.MusicRequestLimit,
                 LastLoginAt = profile.LastLoginAt,
                 ProfileCreatedAt = profile.CreatedAt,
-                MovieQuota = Quota(effective.MovieRequestLimit, effective.MovieRequestLimitDays,
-                    requests.Count(x => x.UserId == profile.UserId && x.MediaType == MediaType.Movie
-                                        && x.RequestedAt >= now.AddDays(-effective.MovieRequestLimitDays))),
-                TvQuota = Quota(effective.TvRequestLimit, effective.TvRequestLimitDays,
-                    requests.Count(x => x.UserId == profile.UserId && x.MediaType is MediaType.TvShow or MediaType.Anime
-                                        && x.RequestedAt >= now.AddDays(-effective.TvRequestLimitDays))),
-                MusicQuota = Quota(effective.MusicRequestLimit, effective.MusicRequestLimitDays,
-                    requests.Count(x => x.UserId == profile.UserId && x.MediaType == MediaType.Music
-                                        && x.RequestedAt >= now.AddDays(-effective.MusicRequestLimitDays)))
+                MovieQuota = usage.Movie,
+                TvQuota = usage.Tv,
+                MusicQuota = usage.Music
             });
         }
         return result;
@@ -213,9 +207,6 @@ public sealed class UserAdministrationService(AppDbContext db, IUserAccessServic
         if (UserAccessService.HasRole(profile.Roles, "Admin")) permissions |= UserPermission.Administrator;
         return UserAccessService.Normalize(permissions);
     }
-
-    private static RequestQuotaDto Quota(int? limit, int days, int used) =>
-        new() { Limit = limit, WindowDays = days, Used = used };
 
     private static bool ValidQuota(int? limit, int days) => limit is null or >= 1 && days is >= 1 and <= 365;
 

@@ -3,6 +3,7 @@ using MudBlazor.Services;
 using Blazored.LocalStorage;
 using Blazored.SessionStorage;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.Authentication;
 using PlexRequestsHosted.Services.Auth;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.Implementations;
@@ -323,15 +324,16 @@ builder.Services.AddAuthorization(options =>
     // (enforced by AuthorizeRouteView); anonymous pages opt out with [AllowAnonymous].
     options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
 });
-builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthStateProvider>();
-// Register the concrete type as well for endpoints that take CustomAuthStateProvider directly
 builder.Services.AddScoped<CustomAuthStateProvider>();
+builder.Services.AddScoped<AuthenticationStateProvider>(sp => sp.GetRequiredService<CustomAuthStateProvider>());
+builder.Services.AddScoped<IClaimsTransformation, UserAccessClaimsTransformation>();
 
 // App service registrations (stubs for now)
 // (Removed duplicate registrations of IPlexApiService/IMediaRequestService)
 builder.Services.AddScoped<IPlexAuthService, PlexAuthService>();
 builder.Services.AddScoped<IUserProfileService, UserProfileService>();
 builder.Services.AddScoped<IUserAccessService, UserAccessService>();
+builder.Services.AddScoped<IUserQuotaService, UserQuotaService>();
 builder.Services.AddScoped<IUserAdministrationService, UserAdministrationService>();
 builder.Services.AddScoped<UserGroupSeeder>();
 builder.Services.AddScoped<IToastService, ToastService>();

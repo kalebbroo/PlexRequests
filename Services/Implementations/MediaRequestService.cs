@@ -23,7 +23,8 @@ public class MediaRequestService(
     IMediaModuleRegistry mediaModules,
     IMusicSettingsService musicSettings,
     IPlexMusicService plexMusic,
-    IUserAccessService userAccess) : IMediaRequestService
+    IUserAccessService userAccess,
+    IUserQuotaService userQuotas) : IMediaRequestService
 {
     private readonly AppDbContext _db = db;
     private readonly AuthenticationStateProvider _auth = authStateProvider;
@@ -39,6 +40,7 @@ public class MediaRequestService(
     private readonly IMusicSettingsService _musicSettings = musicSettings;
     private readonly IPlexMusicService _plexMusic = plexMusic;
     private readonly IUserAccessService _userAccess = userAccess;
+    private readonly IUserQuotaService _userQuotas = userQuotas;
 
     // Statuses that still legitimately block a duplicate request/re-request; Failed/Cancelled/Rejected
     // don't (a failed download should be retryable), and Available is checked separately/live so its
@@ -980,23 +982,7 @@ public class MediaRequestService(
     private async Task<bool> CheckLimitsCoreAsync(int userId, MediaType mediaType)
     {
         var userAccess = await _userAccess.GetAccessAsync(userId);
-        var (limit, windowDays) = mediaType switch
-        {
-            MediaType.Movie => (userAccess.MovieRequestLimit, userAccess.MovieRequestLimitDays),
-            MediaType.TvShow or MediaType.Anime => (userAccess.TvRequestLimit, userAccess.TvRequestLimitDays),
-            MediaType.Music => (userAccess.MusicRequestLimit, userAccess.MusicRequestLimitDays),
-            _ => ((int?)0, 1)
-        };
-        if (limit is null) return true; // null => unlimited
-
-        var since = DateTime.UtcNow.AddDays(-windowDays);
-        var active = await _db.MediaRequests.CountAsync(r =>
-            r.RequestedByUserId == userId
-            && (r.MediaType == mediaType || (mediaType == MediaType.TvShow || mediaType == MediaType.Anime)
-                && (r.MediaType == MediaType.TvShow || r.MediaType == MediaType.Anime))
-            && r.RequestedAt >= since &&
-            r.Status != RequestStatus.Cancelled && r.Status != RequestStatus.Rejected);
-        return active < limit.Value;
+        return await _userQuotas.HasCapacityAsync(userId, mediaType, userAccess);
     }
 
     public async Task<bool> ApproveRequestAsync(int requestId, string? note = null)
