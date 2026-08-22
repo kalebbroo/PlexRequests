@@ -6,6 +6,7 @@ namespace PlexRequestsHosted.Services.Abstractions;
 
 public interface IMediaRequestService
 {
+    /// <summary>The signed-in user's requests. Administrator status does not broaden this personal view.</summary>
     Task<PagedResult<MediaRequestDto>> GetRequestsAsync(MediaFilterDto filter);
     Task<MediaRequestDto?> GetRequestByIdAsync(int id);
     // qualityProfileId is the requester's chosen profile; null means "decide for me" (assignment rules, then

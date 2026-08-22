@@ -49,26 +49,47 @@ public class MediaRequestService(
     private static bool IsActiveStatus(RequestStatus s) =>
         s is RequestStatus.Pending or RequestStatus.Approved or RequestStatus.Processing or RequestStatus.Searching;
 
-    private async Task<(string username, bool isAdmin)> GetUserAsync()
+    private async Task<RequestActor> GetActorAsync()
     {
-        var state = await _auth.GetAuthenticationStateAsync();
-        var user = state.User;
-        var name = user.Identity?.Name ?? "";
-        var userId = int.TryParse(user.FindFirst("user_id")?.Value, out var id) ? id :
-            await _db.Users.Where(x => x.Username == name).Select(x => x.Id).FirstOrDefaultAsync();
-        // Preserve username-only access for legacy request rows created before user ids were persisted.
-        if (userId <= 0) return (name, false);
-        var access = await _userAccess.GetAccessAsync(userId);
-        return access.IsActive ? (name, access.IsAdmin) : (string.Empty, false);
+        var principal = (await _auth.GetAuthenticationStateAsync()).User;
+        if (principal.Identity?.IsAuthenticated != true)
+            return new RequestActor(null, string.Empty, false);
+        var username = principal.Identity?.Name ?? string.Empty;
+        int? userId = int.TryParse(principal.FindFirst("user_id")?.Value, out var claimedId) && claimedId > 0
+            ? claimedId
+            : string.IsNullOrWhiteSpace(username)
+                ? null
+                : await _db.Users.Where(x => x.Username == username).Select(x => (int?)x.Id).FirstOrDefaultAsync();
+        // Username fallback keeps old rows readable until their immutable owner id is backfilled.
+        if (userId is null) return new RequestActor(null, username, false);
+        var access = await _userAccess.GetAccessAsync(userId.Value);
+        return access.IsActive
+            ? new RequestActor(userId, username, access.IsAdmin)
+            : new RequestActor(null, string.Empty, false);
     }
+
+    private static IQueryable<MediaRequestEntity> OwnedRequests(
+        IQueryable<MediaRequestEntity> query, RequestActor actor) => actor.UserId is int userId
+        ? query.Where(x => x.RequestedByUserId == userId
+                           || (x.RequestedByUserId == null && x.RequestedBy == actor.Username))
+        : !string.IsNullOrWhiteSpace(actor.Username)
+            ? query.Where(x => x.RequestedByUserId == null && x.RequestedBy == actor.Username)
+            : query.Where(_ => false);
+
+    private static IQueryable<WatchlistItemEntity> OwnedWatchlist(
+        IQueryable<WatchlistItemEntity> query, RequestActor actor) => actor.UserId is int userId
+        ? query.Where(x => x.UserId == userId || (x.UserId == null && x.Username == actor.Username))
+        : !string.IsNullOrWhiteSpace(actor.Username)
+            ? query.Where(x => x.UserId == null && x.Username == actor.Username)
+            : query.Where(_ => false);
 
     public async Task<bool> AddToWatchlistAsync(int mediaId, MediaType mediaType)
     {
-        var (username, _) = await GetUserAsync();
-        if (string.IsNullOrWhiteSpace(username)) return false;
-        var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
+        var actor = await GetActorAsync();
+        if (string.IsNullOrWhiteSpace(actor.Username)) return false;
         // Avoid duplicates for the same (user, media, type)
-        var already = await _db.Watchlist.AnyAsync(w => w.MediaId == mediaId && w.MediaType == mediaType && w.Username == username);
+        var already = await OwnedWatchlist(_db.Watchlist, actor)
+            .AnyAsync(w => w.MediaId == mediaId && w.MediaType == mediaType);
         if (already) return true;
         var identity = await _mediaIdentities.ResolveAsync(MediaRef.FromTmdb(mediaId, mediaType));
         _db.Watchlist.Add(new WatchlistItemEntity
@@ -76,30 +97,28 @@ public class MediaRequestService(
             MediaIdentityId = identity.Id,
             MediaId = mediaId,
             MediaType = mediaType,
-            UserId = userId,
-            Username = username
+            UserId = actor.UserId,
+            Username = actor.Username
         });
         return await _db.SaveChangesAsync() > 0;
     }
 
     public async Task<bool> CancelRequestAsync(int requestId)
     {
-        var (username, isAdmin) = await GetUserAsync();
-        var req = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == requestId);
+        var actor = await GetActorAsync();
+        var req = await OwnedRequests(_db.MediaRequests, actor)
+            .FirstOrDefaultAsync(r => r.Id == requestId && r.Status == RequestStatus.Pending);
         if (req is null) return false;
-        if (!isAdmin && !string.Equals(req.RequestedBy, username, StringComparison.OrdinalIgnoreCase)) return false;
         req.Status = RequestStatus.Cancelled;
         var changed = await _db.SaveChangesAsync() > 0;
         if (changed) await _notify.RequestCancelledAsync(ToDto(req));
         return changed;
-    } // TODO: Add authorization check for request ownership
+    }
 
     public async Task<UserStatsDto> GetMyStatsAsync()
     {
-        var (username, isAdmin) = await GetUserAsync();
-        var q = _db.MediaRequests.AsQueryable();
-        if (!isAdmin)
-            q = q.Where(r => r.RequestedBy == username);
+        var actor = await GetActorAsync();
+        var q = OwnedRequests(_db.MediaRequests.AsNoTracking(), actor);
         var stats = new UserStatsDto
         {
             TotalRequests = await q.CountAsync(),
@@ -109,13 +128,12 @@ public class MediaRequestService(
             LastRequestDate = await q.OrderByDescending(r => r.RequestedAt).Select(r => (DateTime?)r.RequestedAt).FirstOrDefaultAsync()
         };
         return stats;
-    } // TODO: Filter by current authenticated user
+    }
 
     public async Task<List<MediaCardDto>> GetWatchlistAsync()
     {
-        var (username, _) = await GetUserAsync();
-        var items = await _db.Watchlist
-            .Where(w => w.Username == username)
+        var actor = await GetActorAsync();
+        var items = await OwnedWatchlist(_db.Watchlist.AsNoTracking(), actor)
             .OrderByDescending(w => w.AddedAt)
             .Select(w => new { w.MediaId, w.MediaType })
             .ToListAsync();
@@ -155,16 +173,17 @@ public class MediaRequestService(
 
     public async Task<MediaRequestDto?> GetRequestByIdAsync(int id)
     {
-        var r = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == id);
+        var actor = await GetActorAsync();
+        var query = _db.MediaRequests.AsNoTracking().AsQueryable();
+        if (!actor.IsAdmin) query = OwnedRequests(query, actor);
+        var r = await query.FirstOrDefaultAsync(r => r.Id == id);
         return r is null ? null : ToDto(r);
-    } // TODO: Add authorization check
+    }
 
     public async Task<PagedResult<MediaRequestDto>> GetRequestsAsync(MediaFilterDto filter)
     {
-        var (username, isAdmin) = await GetUserAsync();
-        var query = _db.MediaRequests.AsQueryable();
-        if (!isAdmin)
-            query = query.Where(r => r.RequestedBy == username);
+        var actor = await GetActorAsync();
+        var query = OwnedRequests(_db.MediaRequests.AsQueryable(), actor);
         query = query.OrderByDescending(r => r.RequestedAt);
         var total = await query.CountAsync();
         var entities = await query
@@ -203,26 +222,26 @@ public class MediaRequestService(
             try { await _db.SaveChangesAsync(); } catch { /* non-fatal */ }
         }
         return new PagedResult<MediaRequestDto> { Items = items, TotalCount = total, PageNumber = filter.PageNumber, PageSize = filter.PageSize };
-    } // TODO: Add user filtering and admin permissions
+    }
 
     public async Task<bool> IsInWatchlistAsync(int mediaId, MediaType mediaType)
     {
-        var (username, _) = await GetUserAsync();
-        return await _db.Watchlist.AnyAsync(w => w.MediaId == mediaId && w.MediaType == mediaType && w.Username == username);
+        var actor = await GetActorAsync();
+        return await OwnedWatchlist(_db.Watchlist.AsNoTracking(), actor)
+            .AnyAsync(w => w.MediaId == mediaId && w.MediaType == mediaType);
     }
 
     public async Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null)
     {
-        var (username, isAdmin) = await GetUserAsync();
-        if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
-        var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
-        if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
+        var actor = await GetActorAsync();
+        if (string.IsNullOrWhiteSpace(actor.Username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
+        if (actor.UserId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
         // Keep this compatibility overload safe for older UI/API callers. A bare TV request means the
         // entire series everywhere else, so it must also inherit the administrator's monitoring default;
         // otherwise the initial aired episodes download but future episodes are silently forgotten.
         var monitor = mediaType == MediaType.TvShow
                       && (await _downloadPreferences.GetAsync()).AutoMonitorEntireSeriesRequests;
-        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType,
+        return await CreateRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaId, mediaType,
             monitored: monitor, qualityProfileId: qualityProfileId);
     }
 
@@ -258,25 +277,27 @@ public class MediaRequestService(
     /// <summary>Request specific seasons of a TV show (empty list ⇒ the whole series).</summary>
     public async Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons, int? qualityProfileId = null)
     {
-        var (username, isAdmin) = await GetUserAsync();
-        if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
-        var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
-        if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
+        var actor = await GetActorAsync();
+        if (string.IsNullOrWhiteSpace(actor.Username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
+        if (actor.UserId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
         var allSeasons = seasons is not { Count: > 0 };
-        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons, seasons, qualityProfileId: qualityProfileId);
+        return await CreateRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaId, mediaType, allSeasons, seasons, qualityProfileId: qualityProfileId);
     }
 
     /// <summary>Request specific episodes of a TV show, e.g. [(1,1),(1,2),(2,5)].</summary>
     public async Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes, int? qualityProfileId = null, bool asUpgrade = false)
     {
-        var (username, isAdmin) = await GetUserAsync();
-        if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
+        var actor = await GetActorAsync();
+        if (string.IsNullOrWhiteSpace(actor.Username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
         if (episodes is not { Count: > 0 }) return new MediaRequestResult { Success = false, ErrorMessage = "No episodes selected" };
-        var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
-        if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
+        if (actor.UserId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
         if (asUpgrade)
-            return await QueueEpisodeUpgradeAsync(userId.Value, mediaId, mediaType, episodes, qualityProfileId);
-        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons: false, seasons: null, episodes: episodes, qualityProfileId: qualityProfileId, asUpgrade: asUpgrade);
+        {
+            if (!await _userAccess.CanRequestAsync(actor.UserId.Value, mediaType))
+                return new MediaRequestResult { Success = false, ErrorMessage = "Your account is not allowed to request this media type." };
+            return await QueueEpisodeUpgradeAsync(actor.UserId.Value, mediaId, mediaType, episodes, qualityProfileId);
+        }
+        return await CreateRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaId, mediaType, allSeasons: false, seasons: null, episodes: episodes, qualityProfileId: qualityProfileId, asUpgrade: asUpgrade);
     }
 
     /// <summary>
@@ -516,12 +537,11 @@ public class MediaRequestService(
     /// a per-request user choice.</summary>
     public async Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null)
     {
-        var (username, isAdmin) = await GetUserAsync();
-        if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
-        var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
-        if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
+        var actor = await GetActorAsync();
+        if (string.IsNullOrWhiteSpace(actor.Username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
+        if (actor.UserId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
         var monitor = (await _downloadPreferences.GetAsync()).AutoMonitorEntireSeriesRequests;
-        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, allSeasons: true, seasons: null, episodes: null, monitored: monitor, qualityProfileId: qualityProfileId);
+        return await CreateRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaId, mediaType, allSeasons: true, seasons: null, episodes: null, monitored: monitor, qualityProfileId: qualityProfileId);
     }
 
     /// <summary>Create a request on behalf of an explicit user (used by the Discord bridge, which has no cookie session).</summary>
@@ -679,14 +699,12 @@ public class MediaRequestService(
         string? fallbackTitle = null,
         string? fallbackPoster = null)
     {
-        var (username, isAdmin) = await GetUserAsync();
-        if (string.IsNullOrWhiteSpace(username))
+        var actor = await GetActorAsync();
+        if (string.IsNullOrWhiteSpace(actor.Username))
             return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
-        var userId = await _db.Users.Where(u => u.Username == username)
-            .Select(u => (int?)u.Id).FirstOrDefaultAsync();
-        return userId is null
+        return actor.UserId is null
             ? new MediaRequestResult { Success = false, ErrorMessage = "User not found" }
-            : await CreateProviderRequestCoreAsync(userId.Value, username, isAdmin, mediaRef,
+            : await CreateProviderRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaRef,
                 requestScope, qualityProfileId, fallbackTitle, fallbackPoster);
     }
 
@@ -976,8 +994,9 @@ public class MediaRequestService(
 
     public async Task<bool> RemoveFromWatchlistAsync(int mediaId, MediaType mediaType)
     {
-        var (username, _) = await GetUserAsync();
-        var item = await _db.Watchlist.FirstOrDefaultAsync(w => w.MediaId == mediaId && w.MediaType == mediaType && w.Username == username);
+        var actor = await GetActorAsync();
+        var item = await OwnedWatchlist(_db.Watchlist, actor)
+            .FirstOrDefaultAsync(w => w.MediaId == mediaId && w.MediaType == mediaType);
         if (item == null) return false;
         _db.Watchlist.Remove(item);
         return await _db.SaveChangesAsync() > 0;
@@ -985,12 +1004,11 @@ public class MediaRequestService(
 
     public async Task<bool> CheckRequestLimitsAsync(MediaType mediaType)
     {
-        var (username, isAdmin) = await GetUserAsync();
-        var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
-        if (userId is null) return false;
-        if (!await _userAccess.CanRequestAsync(userId.Value, mediaType)) return false;
-        if (isAdmin) return true;
-        return await CheckLimitsCoreAsync(userId.Value, mediaType);
+        var actor = await GetActorAsync();
+        if (actor.UserId is null) return false;
+        if (!await _userAccess.CanRequestAsync(actor.UserId.Value, mediaType)) return false;
+        if (actor.IsAdmin) return true;
+        return await CheckLimitsCoreAsync(actor.UserId.Value, mediaType);
     }
 
     private async Task<bool> CheckLimitsCoreAsync(int userId, MediaType mediaType)
@@ -1001,8 +1019,7 @@ public class MediaRequestService(
 
     public async Task<bool> ApproveRequestAsync(int requestId, string? note = null)
     {
-        var (_, isAdmin) = await GetUserAsync();
-        if (!isAdmin) return false;
+        if (!(await GetActorAsync()).IsAdmin) return false;
         return await ApproveCoreAsync(requestId, note);
     }
 
@@ -1031,8 +1048,7 @@ public class MediaRequestService(
 
     public async Task<bool> DenyRequestAsync(int requestId, string reason)
     {
-        var (_, isAdmin) = await GetUserAsync();
-        if (!isAdmin) return false;
+        if (!(await GetActorAsync()).IsAdmin) return false;
         return await DenyCoreAsync(requestId, reason);
     }
 
@@ -1052,8 +1068,7 @@ public class MediaRequestService(
 
     public async Task<bool> MarkAvailableAsync(int requestId)
     {
-        var (_, isAdmin) = await GetUserAsync();
-        if (!isAdmin) return false;
+        if (!(await GetActorAsync()).IsAdmin) return false;
         var req = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == requestId);
         if (req is null) return false;
         req.Status = RequestStatus.Available;
@@ -1068,7 +1083,7 @@ public class MediaRequestService(
 
     public async Task<Dictionary<string, RequestStatus>> GetMyRequestStatusesAsync(IEnumerable<MediaRef> items)
     {
-        var (username, isAdmin) = await GetUserAsync();
+        var actor = await GetActorAsync();
         var refs = items.Where(x => x is { IsValid: true })
             .DistinctBy(x => x.StableKey, StringComparer.OrdinalIgnoreCase).ToList();
         if (refs.Count == 0) return new(StringComparer.OrdinalIgnoreCase);
@@ -1102,15 +1117,8 @@ public class MediaRequestService(
         if (identityByInputKey.Count == 0) return new(StringComparer.OrdinalIgnoreCase);
 
         var identityIds = identityByInputKey.Values.Distinct().ToList();
-        IQueryable<MediaRequestEntity> query = _db.MediaRequests
+        IQueryable<MediaRequestEntity> query = OwnedRequests(_db.MediaRequests, actor)
             .Where(x => x.MediaIdentityId != null && identityIds.Contains(x.MediaIdentityId.Value));
-        if (!isAdmin)
-        {
-            var userId = await _db.Users.Where(x => x.Username == username)
-                .Select(x => (int?)x.Id).FirstOrDefaultAsync();
-            query = query.Where(x => (userId != null && x.RequestedByUserId == userId)
-                                     || (x.RequestedByUserId == null && x.RequestedBy == username));
-        }
         var requests = await query.Select(x => new { IdentityId = x.MediaIdentityId!.Value, x.Status }).ToListAsync();
         var keysByIdentity = identityByInputKey.GroupBy(x => x.Value)
             .ToDictionary(x => x.Key, x => x.Select(y => y.Key).ToList());
@@ -1142,4 +1150,6 @@ public class MediaRequestService(
         };
         return Rank(a) >= Rank(b) ? a : b;
     }
+
+    private sealed record RequestActor(int? UserId, string Username, bool IsAdmin);
 }
