@@ -28,7 +28,7 @@ public sealed class UserQuotaService(AppDbContext db) : IUserQuotaService
             .Where(x => x.RequestedByUserId != null && ids.Contains(x.RequestedByUserId.Value)
                         && x.RequestedAt >= earliest
                         && x.Status != RequestStatus.Cancelled && x.Status != RequestStatus.Rejected)
-            .Select(x => new QuotaRequest(x.RequestedByUserId!.Value, x.MediaType, x.RequestedAt))
+            .Select(x => new QuotaRequest(x.RequestedByUserId!.Value, x.MediaType, x.Status, x.RequestedAt))
             .ToListAsync();
 
         return users.DistinctBy(x => x.UserId).ToDictionary(
@@ -56,14 +56,14 @@ public sealed class UserQuotaService(AppDbContext db) : IUserQuotaService
         DateTime now) => new()
     {
         Movie = Quota(access.MovieRequestLimit, access.MovieRequestLimitDays,
-            requests.Count(x => x.UserId == access.UserId && x.MediaType == MediaType.Movie
-                                && x.RequestedAt >= now.AddDays(-access.MovieRequestLimitDays))),
+            requests.Count(x => x.UserId == access.UserId && CountsTowardQuota(x.MediaType, x.Status, x.RequestedAt, access, now)
+                                && x.MediaType == MediaType.Movie)),
         Tv = Quota(access.TvRequestLimit, access.TvRequestLimitDays,
-            requests.Count(x => x.UserId == access.UserId && x.MediaType is MediaType.TvShow or MediaType.Anime
-                                && x.RequestedAt >= now.AddDays(-access.TvRequestLimitDays))),
+            requests.Count(x => x.UserId == access.UserId && CountsTowardQuota(x.MediaType, x.Status, x.RequestedAt, access, now)
+                                && x.MediaType is MediaType.TvShow or MediaType.Anime)),
         Music = Quota(access.MusicRequestLimit, access.MusicRequestLimitDays,
-            requests.Count(x => x.UserId == access.UserId && x.MediaType == MediaType.Music
-                                && x.RequestedAt >= now.AddDays(-access.MusicRequestLimitDays)))
+            requests.Count(x => x.UserId == access.UserId && CountsTowardQuota(x.MediaType, x.Status, x.RequestedAt, access, now)
+                                && x.MediaType == MediaType.Music))
     };
 
     private static UserQuotaOverviewDto Empty(UserAccessSnapshot access) => new()
@@ -76,5 +76,20 @@ public sealed class UserQuotaService(AppDbContext db) : IUserQuotaService
     private static RequestQuotaDto Quota(int? limit, int days, int used) =>
         new() { Limit = limit, WindowDays = days, Used = used };
 
-    private sealed record QuotaRequest(int UserId, MediaType MediaType, DateTime RequestedAt);
+    internal static bool CountsTowardQuota(MediaType mediaType, RequestStatus status, DateTime requestedAt,
+        UserAccessSnapshot access, DateTime now) =>
+        status is not (RequestStatus.Cancelled or RequestStatus.Rejected)
+        && QuotaExpiresAt(mediaType, requestedAt, access) is DateTime expires
+        && expires >= now;
+
+    internal static DateTime? QuotaExpiresAt(MediaType mediaType, DateTime requestedAt, UserAccessSnapshot access) =>
+        mediaType switch
+        {
+            MediaType.Movie => requestedAt.AddDays(access.MovieRequestLimitDays),
+            MediaType.TvShow or MediaType.Anime => requestedAt.AddDays(access.TvRequestLimitDays),
+            MediaType.Music => requestedAt.AddDays(access.MusicRequestLimitDays),
+            _ => null
+        };
+
+    private sealed record QuotaRequest(int UserId, MediaType MediaType, RequestStatus Status, DateTime RequestedAt);
 }

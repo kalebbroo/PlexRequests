@@ -80,6 +80,80 @@ public sealed class UserAdministrationService(
         return result;
     }
 
+    public async Task<AdminUserActivityDto?> GetUserActivityAsync(int userId)
+    {
+        if (!await CallerIsAdminAsync()) return null;
+
+        var profile = await db.UserProfiles.AsNoTracking().Include(x => x.User).Include(x => x.UserGroup)
+            .FirstOrDefaultAsync(x => x.UserId == userId && x.User != null);
+        if (profile is null) return null;
+
+        var effective = Effective(profile);
+        var now = DateTime.UtcNow;
+        var usage = await quotas.GetUsageAsync(userId, effective);
+        var requests = db.MediaRequests.AsNoTracking().Where(x => x.RequestedByUserId == userId);
+        var requestStats = await requests.GroupBy(x => new { x.MediaType, x.Status })
+            .Select(x => new { x.Key.MediaType, x.Key.Status, Count = x.Count() }).ToListAsync();
+        var recentRequestEntities = await requests.OrderByDescending(x => x.RequestedAt).ThenByDescending(x => x.Id)
+            .Take(30).ToListAsync();
+
+        // Use the same media-specific windows as quota enforcement. Taking one extra row lets the UI be
+        // honest when the explanation list is capped without loading an unbounded account history.
+        var movieStart = now.AddDays(-effective.MovieRequestLimitDays);
+        var tvStart = now.AddDays(-effective.TvRequestLimitDays);
+        var musicStart = now.AddDays(-effective.MusicRequestLimitDays);
+        var quotaEntities = await requests
+            .Where(x => x.Status != RequestStatus.Cancelled && x.Status != RequestStatus.Rejected
+                        && ((x.MediaType == MediaType.Movie && x.RequestedAt >= movieStart)
+                            || ((x.MediaType == MediaType.TvShow || x.MediaType == MediaType.Anime) && x.RequestedAt >= tvStart)
+                            || (x.MediaType == MediaType.Music && x.RequestedAt >= musicStart)))
+            .OrderByDescending(x => x.RequestedAt).ThenByDescending(x => x.Id).Take(101).ToListAsync();
+
+        var issues = db.MediaIssues.AsNoTracking().Where(x => x.ReportedByUserId == userId);
+        var issueStats = await issues.GroupBy(x => x.Status)
+            .Select(x => new { Status = x.Key, Count = x.Count() }).ToListAsync();
+        var recentIssues = await issues.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id)
+            .Take(20).Select(x => new AdminUserIssueActivityDto
+            {
+                Id = x.Id, Title = x.Title, PosterUrl = x.PosterUrl, MediaType = x.MediaType,
+                Reason = x.Reason, Detail = x.Detail, SeasonNumber = x.SeasonNumber,
+                EpisodeNumber = x.EpisodeNumber, Status = x.Status, CreatedAt = x.CreatedAt,
+                ResolvedAt = x.ResolvedAt
+            }).ToListAsync();
+
+        int RequestsWithStatus(params RequestStatus[] statuses) =>
+            requestStats.Where(x => statuses.Contains(x.Status)).Sum(x => x.Count);
+        int RequestsOfType(params MediaType[] mediaTypes) =>
+            requestStats.Where(x => mediaTypes.Contains(x.MediaType)).Sum(x => x.Count);
+        int IssuesWithStatus(params IssueStatus[] statuses) =>
+            issueStats.Where(x => statuses.Contains(x.Status)).Sum(x => x.Count);
+
+        return new AdminUserActivityDto
+        {
+            UserId = userId,
+            Quotas = usage,
+            TotalRequests = requestStats.Sum(x => x.Count),
+            ActiveRequests = RequestsWithStatus(RequestStatus.Pending, RequestStatus.Approved,
+                RequestStatus.Searching, RequestStatus.Processing),
+            AvailableRequests = RequestsWithStatus(RequestStatus.Available, RequestStatus.PartiallyAvailable),
+            FailedRequests = RequestsWithStatus(RequestStatus.Failed),
+            MovieRequests = RequestsOfType(MediaType.Movie),
+            TvRequests = RequestsOfType(MediaType.TvShow, MediaType.Anime),
+            MusicRequests = RequestsOfType(MediaType.Music),
+            TotalIssues = issueStats.Sum(x => x.Count),
+            OpenIssues = IssuesWithStatus(IssueStatus.Open),
+            ReplacementIssues = IssuesWithStatus(IssueStatus.ReplacementQueued),
+            ResolvedIssues = IssuesWithStatus(IssueStatus.Resolved, IssueStatus.Dismissed),
+            DiscordLinked = !string.IsNullOrWhiteSpace(profile.DiscordUserId),
+            DiscordUsername = profile.DiscordUsername,
+            DiscordDmOptIn = profile.DiscordDmOptIn,
+            RecentRequests = recentRequestEntities.Select(x => ToActivity(x, effective, now)).ToList(),
+            QuotaContributors = quotaEntities.Take(100).Select(x => ToActivity(x, effective, now)).ToList(),
+            QuotaContributorsTruncated = quotaEntities.Count > 100,
+            RecentIssues = recentIssues
+        };
+    }
+
     public async Task<List<UserGroupDto>> GetGroupsAsync()
     {
         if (!await CallerIsAdminAsync()) return [];
@@ -312,6 +386,24 @@ public sealed class UserAdministrationService(
         var id = await access.GetCurrentUserIdAsync();
         return id is int userId && await access.IsAdminAsync(userId);
     }
+
+    private static AdminUserRequestActivityDto ToActivity(MediaRequestEntity request,
+        UserAccessSnapshot effective, DateTime now) => new()
+    {
+        Id = request.Id,
+        Title = request.Title,
+        PosterUrl = request.PosterUrl,
+        MediaType = request.MediaType,
+        Scope = request.RequestScopeKind,
+        Status = request.Status,
+        RequestedAt = request.RequestedAt,
+        CountsTowardQuota = UserQuotaService.CountsTowardQuota(
+            request.MediaType, request.Status, request.RequestedAt, effective, now),
+        QuotaExpiresAt = UserQuotaService.QuotaExpiresAt(request.MediaType, request.RequestedAt, effective),
+        Monitored = request.MonitorMode != MonitorMode.None || request.Monitored,
+        RequestedSeasonsCsv = request.RequestedSeasonsCsv,
+        RequestedEpisodesCsv = request.RequestedEpisodesCsv
+    };
 
     private async Task<AuditActor> CurrentActorAsync()
     {

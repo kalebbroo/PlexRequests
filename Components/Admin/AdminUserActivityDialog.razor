@@ -1,0 +1,188 @@
+@inject IUserAdministrationService Users
+
+<MudDialog>
+    <DialogContent>
+        @if (_loading)
+        {
+            <div class="activity-loading"><MudProgressCircular Indeterminate="true" /></div>
+        }
+        else if (_activity is null)
+        {
+            <MudAlert Severity="Severity.Error">This activity record is unavailable or you no longer have administrator access.</MudAlert>
+        }
+        else
+        {
+            <header class="activity-header">
+                <MudAvatar Size="Size.Large"><MudImage Src="@(User.AvatarUrl ?? "/default-avatar.svg")" /></MudAvatar>
+                <div>
+                    <MudText Typo="Typo.h6">@(User.DisplayName ?? User.Username)</MudText>
+                    <MudText Typo="Typo.body2" Class="text-secondary">@IdentityDetail()</MudText>
+                </div>
+            </header>
+
+            <div class="connection-grid">
+                @Connection(Icons.Material.Filled.VideoLibrary, "Plex", User.PlexLinked,
+                    User.PlexLinked ? User.PlexUsername ?? "Linked account" : "Not linked")
+                @Connection(Icons.Material.Filled.Forum, "Discord", _activity.DiscordLinked,
+                    !_activity.DiscordLinked ? "Not linked" : $"{_activity.DiscordUsername ?? "Linked account"} · {(_activity.DiscordDmOptIn ? "DMs enabled" : "DMs off")}")
+            </div>
+
+            <div class="stat-grid">
+                @Stat("Requests", _activity.TotalRequests, $"{_activity.ActiveRequests} active")
+                @Stat("Available", _activity.AvailableRequests, $"{_activity.FailedRequests} failed")
+                @Stat("Issues", _activity.TotalIssues, $"{_activity.OpenIssues + _activity.ReplacementIssues} need attention")
+                @Stat("Media mix", _activity.MovieRequests + _activity.TvRequests + _activity.MusicRequests,
+                    $"{_activity.MovieRequests} film · {_activity.TvRequests} TV · {_activity.MusicRequests} music")
+            </div>
+
+            <MudTabs Rounded="true" Elevation="0" MinimumTabWidth="90px" PanelClass="activity-tab-panel">
+                <MudTabPanel Text="Quota" Icon="@Icons.Material.Filled.DataUsage">
+                    <MudText Typo="Typo.body2" Class="text-secondary quota-explanation">
+                        Rolling usage is calculated by the same rule that accepts or blocks requests. Failed and completed requests count until they expire; cancelled and rejected requests never count.
+                    </MudText>
+                    <div class="quota-summary-grid">
+                        @Quota("Movies", _activity.Quotas.Movie)
+                        @Quota("TV & anime", _activity.Quotas.Tv)
+                        @Quota("Music", _activity.Quotas.Music)
+                    </div>
+                    <MudText Typo="Typo.subtitle2" Class="section-title">Requests currently consuming quota</MudText>
+                    @if (_activity.QuotaContributors.Count == 0)
+                    {
+                        <div class="empty-state">Nothing is currently consuming this user's rolling quota.</div>
+                    }
+                    else
+                    {
+                        <div class="activity-list compact">
+                            @foreach (var item in _activity.QuotaContributors)
+                            {
+                                @RequestRow(item, true)
+                            }
+                        </div>
+                        @if (_activity.QuotaContributorsTruncated)
+                        {
+                            <MudAlert Severity="Severity.Info" Dense="true" Class="mt-3">Showing the 100 newest quota contributors.</MudAlert>
+                        }
+                    }
+                </MudTabPanel>
+                <MudTabPanel Text="Requests" Icon="@Icons.Material.Filled.PlaylistAddCheck">
+                    @if (_activity.RecentRequests.Count == 0)
+                    {
+                        <div class="empty-state">This user has not made any requests.</div>
+                    }
+                    else
+                    {
+                        <div class="activity-list">
+                            @foreach (var item in _activity.RecentRequests)
+                            {
+                                @RequestRow(item, false)
+                            }
+                        </div>
+                        <MudText Typo="Typo.caption" Class="text-secondary mt-3 d-block">Showing the 30 most recent requests.</MudText>
+                    }
+                </MudTabPanel>
+                <MudTabPanel Text="Issues" Icon="@Icons.Material.Filled.ReportProblem">
+                    @if (_activity.RecentIssues.Count == 0)
+                    {
+                        <div class="empty-state">This user has not reported any media issues.</div>
+                    }
+                    else
+                    {
+                        <div class="activity-list">
+                            @foreach (var issue in _activity.RecentIssues)
+                            {
+                                <article class="activity-row">
+                                    <img class="activity-poster" src="@(issue.PosterUrl ?? "/img/poster-placeholder.svg")" alt="" onerror="this.src='/img/poster-placeholder.svg'" />
+                                    <div class="activity-copy">
+                                        <strong>@issue.Title</strong>
+                                        <span>@IssueTarget(issue) · @issue.Reason</span>
+                                        @if (!string.IsNullOrWhiteSpace(issue.Detail)) { <small>@issue.Detail</small> }
+                                    </div>
+                                    <div class="activity-state">
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@IssueColor(issue.Status)">@IssueLabel(issue.Status)</MudChip>
+                                        <time>@issue.CreatedAt.ToLocalTime().ToString("g")</time>
+                                    </div>
+                                </article>
+                            }
+                        </div>
+                    }
+                </MudTabPanel>
+            </MudTabs>
+        }
+    </DialogContent>
+    <DialogActions><MudButton OnClick="Close">Close</MudButton></DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter, EditorRequired] public AdminUserDto User { get; set; } = default!;
+    private AdminUserActivityDto? _activity;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _activity = await Users.GetUserActivityAsync(User.Id); }
+        finally { _loading = false; }
+    }
+
+    private RenderFragment Connection(string icon, string label, bool linked, string detail) => @<div class="connection-card">
+        <MudIcon Icon="@icon" Color="@(linked ? Color.Success : Color.Default)" />
+        <div><strong>@label</strong><span>@detail</span></div>
+        <MudIcon Icon="@(linked ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RemoveCircleOutline)"
+                 Color="@(linked ? Color.Success : Color.Default)" Size="Size.Small" />
+    </div>;
+
+    private RenderFragment Stat(string label, int value, string detail) => @<div class="stat-card">
+        <span>@label</span><strong>@value</strong><small>@detail</small>
+    </div>;
+
+    private RenderFragment Quota(string label, RequestQuotaDto quota)
+    {
+        var ratio = quota.Limit is null or 0 ? 0 : Math.Min(100, 100d * quota.Used / quota.Limit.Value);
+        return @<div class="quota-card">
+            <div><span>@label</span><strong>@(quota.Limit is null ? $"{quota.Used} used · unlimited" : $"{quota.Used} / {quota.Limit} used")</strong></div>
+            @if (quota.Limit is not null) { <MudProgressLinear Value="ratio" Color="@(ratio >= 100 ? Color.Error : ratio >= 75 ? Color.Warning : Color.Primary)" Rounded="true" /> }
+            <small>Rolling @quota.WindowDays-day window</small>
+        </div>;
+    }
+
+    private RenderFragment RequestRow(AdminUserRequestActivityDto item, bool quotaView) => @<article class="activity-row">
+        <img class="activity-poster" src="@(item.PosterUrl ?? "/img/poster-placeholder.svg")" alt="" onerror="this.src='/img/poster-placeholder.svg'" />
+        <div class="activity-copy">
+            <strong>@item.Title</strong>
+            <span>@MediaLabel(item.MediaType) · @ScopeLabel(item)</span>
+            @if (item.Monitored) { <small class="monitor-label"><MudIcon Icon="@Icons.Material.Filled.Autorenew" Size="Size.Small" /> Ongoing monitoring</small> }
+        </div>
+        <div class="activity-state">
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@RequestColor(item.Status)">@RequestLabel(item.Status)</MudChip>
+            @if (quotaView && item.QuotaExpiresAt is DateTime expires) { <time>Expires @expires.ToLocalTime().ToString("g")</time> }
+            else
+            {
+                <time>@item.RequestedAt.ToLocalTime().ToString("g")</time>
+                <small class="@(item.CountsTowardQuota ? "counts" : "does-not-count")">@(item.CountsTowardQuota ? $"Counts until {item.QuotaExpiresAt?.ToLocalTime():g}" : "Not in current quota")</small>
+            }
+        </div>
+    </article>;
+
+    private static string MediaLabel(MediaType type) => type switch { MediaType.TvShow => "TV", MediaType.Anime => "Anime", MediaType.Music => "Music", _ => "Movie" };
+    private string IdentityDetail() => $"@{User.Username}" + (string.IsNullOrWhiteSpace(User.Email) ? string.Empty : $" · {User.Email}");
+    private static string ScopeLabel(AdminUserRequestActivityDto item)
+    {
+        if (!string.IsNullOrWhiteSpace(item.RequestedEpisodesCsv)) return item.RequestedEpisodesCsv.Replace(",", ", ");
+        if (!string.IsNullOrWhiteSpace(item.RequestedSeasonsCsv)) return $"Seasons {item.RequestedSeasonsCsv.Replace(",", ", ")}";
+        return item.Scope switch { RequestScopeKind.Series => "Full series", RequestScopeKind.ArtistCatalog => "Artist catalog", _ => item.Scope.ToString() };
+    }
+    private static string IssueTarget(AdminUserIssueActivityDto issue) => issue.SeasonNumber is int season
+        ? issue.EpisodeNumber is int episode ? $"S{season}E{episode}" : $"Season {season}" : MediaLabel(issue.MediaType);
+    private static string RequestLabel(RequestStatus status) => status == RequestStatus.PartiallyAvailable ? "Partial" : status.ToString();
+    private static Color RequestColor(RequestStatus status) => status switch
+    {
+        RequestStatus.Available => Color.Success,
+        RequestStatus.PartiallyAvailable or RequestStatus.Searching or RequestStatus.Processing => Color.Info,
+        RequestStatus.Pending or RequestStatus.Approved => Color.Warning,
+        RequestStatus.Failed or RequestStatus.Rejected => Color.Error,
+        _ => Color.Default
+    };
+    private static string IssueLabel(IssueStatus status) => status == IssueStatus.ReplacementQueued ? "Replacement queued" : status.ToString();
+    private static Color IssueColor(IssueStatus status) => status switch { IssueStatus.Open => Color.Warning, IssueStatus.ReplacementQueued => Color.Info, IssueStatus.Resolved => Color.Success, _ => Color.Default };
+    private void Close() => MudDialog.Close();
+}

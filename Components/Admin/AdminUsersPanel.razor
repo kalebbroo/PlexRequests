@@ -74,8 +74,12 @@
                             @Quota("TV", user.TvQuota, Has(user, UserPermission.RequestTv))
                             @Quota("Music", user.MusicQuota, Has(user, UserPermission.RequestMusic))
                         </div>
-                        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.ManageAccounts"
-                                   OnClick="() => EditUser(user)">Edit access</MudButton>
+                        <div class="user-actions">
+                            <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Insights"
+                                       OnClick="() => ViewActivity(user)">Activity</MudButton>
+                            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.ManageAccounts"
+                                       OnClick="() => EditUser(user)">Edit access</MudButton>
+                        </div>
                     </article>
                 }
             </div>
@@ -199,6 +203,13 @@
         var dialog = await Dialogs.ShowAsync<UserAccessDialog>($"Access · {user.DisplayName ?? user.Username}", parameters,
             new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true });
         if (await dialog.Result is { Canceled: false }) await Load();
+    }
+
+    private async Task ViewActivity(AdminUserDto user)
+    {
+        var parameters = new DialogParameters<AdminUserActivityDialog> { { x => x.User, user } };
+        await Dialogs.ShowAsync<AdminUserActivityDialog>("User activity", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true });
     }
 
     private async Task EditGroup(UserGroupDto? group)

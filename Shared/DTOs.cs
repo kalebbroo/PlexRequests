@@ -532,6 +532,62 @@ public class AdminUserDto : UserDto
     public string? AccountStatusChangedBy { get; set; }
 }
 
+/// <summary>Read-only administrator view of one user's request and issue history.</summary>
+public sealed class AdminUserActivityDto
+{
+    public int UserId { get; set; }
+    public UserQuotaOverviewDto Quotas { get; set; } = new();
+    public int TotalRequests { get; set; }
+    public int ActiveRequests { get; set; }
+    public int AvailableRequests { get; set; }
+    public int FailedRequests { get; set; }
+    public int MovieRequests { get; set; }
+    public int TvRequests { get; set; }
+    public int MusicRequests { get; set; }
+    public int TotalIssues { get; set; }
+    public int OpenIssues { get; set; }
+    public int ReplacementIssues { get; set; }
+    public int ResolvedIssues { get; set; }
+    public bool DiscordLinked { get; set; }
+    public string? DiscordUsername { get; set; }
+    public bool DiscordDmOptIn { get; set; }
+    public List<AdminUserRequestActivityDto> RecentRequests { get; set; } = new();
+    public List<AdminUserRequestActivityDto> QuotaContributors { get; set; } = new();
+    public bool QuotaContributorsTruncated { get; set; }
+    public List<AdminUserIssueActivityDto> RecentIssues { get; set; } = new();
+}
+
+public sealed class AdminUserRequestActivityDto
+{
+    public int Id { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string? PosterUrl { get; set; }
+    public MediaType MediaType { get; set; }
+    public RequestScopeKind Scope { get; set; }
+    public RequestStatus Status { get; set; }
+    public DateTime RequestedAt { get; set; }
+    public bool CountsTowardQuota { get; set; }
+    public DateTime? QuotaExpiresAt { get; set; }
+    public bool Monitored { get; set; }
+    public string? RequestedSeasonsCsv { get; set; }
+    public string? RequestedEpisodesCsv { get; set; }
+}
+
+public sealed class AdminUserIssueActivityDto
+{
+    public int Id { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string? PosterUrl { get; set; }
+    public MediaType MediaType { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public string? Detail { get; set; }
+    public int? SeasonNumber { get; set; }
+    public int? EpisodeNumber { get; set; }
+    public IssueStatus Status { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? ResolvedAt { get; set; }
+}
+
 public class UserAccessEditDto
 {
     public int UserId { get; set; }
