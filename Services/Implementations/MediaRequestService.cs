@@ -209,7 +209,13 @@ public class MediaRequestService(
         if (string.IsNullOrWhiteSpace(username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
         var userId = await _db.Users.Where(u => u.Username == username).Select(u => (int?)u.Id).FirstOrDefaultAsync();
         if (userId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
-        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType, qualityProfileId: qualityProfileId);
+        // Keep this compatibility overload safe for older UI/API callers. A bare TV request means the
+        // entire series everywhere else, so it must also inherit the administrator's monitoring default;
+        // otherwise the initial aired episodes download but future episodes are silently forgotten.
+        var monitor = mediaType == MediaType.TvShow
+                      && (await _downloadPreferences.GetAsync()).AutoMonitorEntireSeriesRequests;
+        return await CreateRequestCoreAsync(userId.Value, username, isAdmin, mediaId, mediaType,
+            monitored: monitor, qualityProfileId: qualityProfileId);
     }
 
     public async Task<MediaRequestResult> RequestMediaAsync(MediaRef mediaRef, MediaRequestScope? scope = null,
@@ -642,7 +648,13 @@ public class MediaRequestService(
         {
             await _notify.RequestCreatedAsync(dto);
         }
-        return new MediaRequestResult { Success = true, RequestId = entity.Id, NewStatus = entity.Status };
+        return new MediaRequestResult
+        {
+            Success = true,
+            RequestId = entity.Id,
+            NewStatus = entity.Status,
+            RequestScope = requestScope
+        };
     }
 
     private async Task<MediaRequestResult> CreateProviderRequestForCurrentUserAsync(
@@ -763,7 +775,14 @@ public class MediaRequestService(
                 await _notify.RequestCreatedAsync(dto);
             }
         }
-        return new MediaRequestResult { Success = saved, RequestId = entity.Id, NewStatus = entity.Status };
+        return new MediaRequestResult
+        {
+            Success = saved,
+            RequestId = entity.Id,
+            NewStatus = entity.Status,
+            RequestScope = requestScope,
+            MonitorsFutureReleases = entity.Monitored
+        };
     }
 
     /// <summary>

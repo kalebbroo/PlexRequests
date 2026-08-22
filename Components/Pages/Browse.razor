@@ -345,11 +345,11 @@
 
     private async Task Request(MediaCardDto media)
     {
-        var result = await MediaRequestService.RequestMediaAsync(media.Id, media.MediaType);
+        var result = await MediaRequestService.RequestMediaAsync(media.ResolveMediaRef());
         if (result.Success)
         {
-            media.RequestStatus = RequestStatus.Pending;
-            await ToastService.ShowSuccessAsync($"{media.Title} has been requested!");
+            media.RequestStatus = result.NewStatus ?? RequestStatus.Pending;
+            await ToastService.ShowSuccessAsync(MediaRequestFeedback.Success(media, result));
             await InvokeAsync(StateHasChanged);
         }
         else await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request");

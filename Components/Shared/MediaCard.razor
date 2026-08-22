@@ -65,8 +65,9 @@
                     }
                     else if (CanRequest && Media.RequestStatus == RequestStatus.None)
                     {
-                        <button class="mcard-btn primary" @onclick:stopPropagation="true" @onclick="HandleRequest">
-                            <MudIcon Icon="@Icons.Material.Filled.Add" Size="Size.Small" /> Request
+                        <button class="mcard-btn primary" title="@RequestButtonTitle" aria-label="@RequestButtonAriaLabel"
+                                @onclick:stopPropagation="true" @onclick="HandleRequest">
+                            <MudIcon Icon="@Icons.Material.Filled.Add" Size="Size.Small" /> @RequestButtonLabel
                         </button>
                     }
                     else if (!CanRequest)
@@ -119,6 +120,13 @@
     private bool CanRequest => MediaModules.IsEnabled(Media.MediaType)
         && MediaModules.Get(Media.MediaType).Capabilities.HasFlag(MediaModuleCapabilities.Request)
         && (Media.MediaType != MediaType.Music || _musicRequestsEnabled);
+
+    private bool IsSeries => Media.ResolveMediaRef().Kind == MediaKind.Series;
+    private string RequestButtonLabel => IsSeries ? "Request series" : "Request";
+    private string RequestButtonTitle => IsSeries ? "Request the full series" : $"Request {Media.Title}";
+    private string RequestButtonAriaLabel => IsSeries
+        ? $"Request the full series {Media.Title}"
+        : $"Request {Media.Title}";
 
     private string DetailsHref
     {

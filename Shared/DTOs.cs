@@ -1046,6 +1046,10 @@ public class MediaRequestResult
     public int? RequestId { get; set; }
     public string? ErrorMessage { get; set; }
     public RequestStatus? NewStatus { get; set; }
+    /// <summary>The durable scope that was accepted, allowing clients to describe the request accurately.</summary>
+    public RequestScopeKind? RequestScope { get; set; }
+    /// <summary>True when the accepted request will continue watching for future releases.</summary>
+    public bool MonitorsFutureReleases { get; set; }
 }
 
 /// <summary>
