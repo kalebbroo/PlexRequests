@@ -60,7 +60,7 @@
                     @if (Media.IsAvailable)
                     {
                         <button class="mcard-btn primary" @onclick:stopPropagation="true" @onclick="HandlePlay">
-                            <MudIcon Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small" /> Play
+                            <MudIcon Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small" /> @(Media.MediaType == MediaType.Music ? "Listen" : "Play")
                         </button>
                     }
                     else if (CanRequest && Media.RequestStatus == RequestStatus.None)

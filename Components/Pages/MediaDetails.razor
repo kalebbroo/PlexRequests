@@ -81,7 +81,7 @@ else
                                 {
                                     <button class="action-btn primary full" @onclick="PlayNow">
                                         <MudIcon Icon="@Icons.Material.Filled.PlayArrow" />
-                                        <span>Play</span>
+                                        <span>@PrimaryPlayLabel</span>
                                     </button>
                                 }
                                 else if (CanRequest && _media.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.None)
@@ -161,7 +161,7 @@ else
                                 {
                                     <button class="action-btn primary large" @onclick="PlayNow">
                                         <MudIcon Icon="@Icons.Material.Filled.PlayArrow" />
-                                        <span>Play</span>
+                                        <span>@PrimaryPlayLabel</span>
                                     </button>
                                 }
                                 else if (CanRequest && _media.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.None)
@@ -256,7 +256,7 @@ else
                                 <div class="similar-grid">
                                     @foreach (var album in _media.Music.Albums)
                                     {
-                                        <PlexRequestsHosted.Components.Shared.MediaCard Media="album" OnRequest="RequestSimilar"
+                                        <PlexRequestsHosted.Components.Shared.MediaCard Media="album" OnRequest="RequestSimilar" OnPlay="PlayCard"
                                             ReturnUrl="@CurrentDetailsUrl" ReturnLabel="@_media.Title" />
                                     }
                                 </div>
@@ -299,7 +299,13 @@ else
                                                 }
                                                 @if (trackCard is not null)
                                                 {
-                                                    @if (trackCard.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.None && _musicRequestsEnabled)
+                                                    @if (trackCard.IsAvailable)
+                                                    {
+                                                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                                                   StartIcon="@Icons.Material.Filled.PlayArrow"
+                                                                   OnClick="() => PlayCard(trackCard)">Listen</MudButton>
+                                                    }
+                                                    else if (trackCard.RequestStatus == PlexRequestsHosted.Shared.Enums.RequestStatus.None && _musicRequestsEnabled)
                                                     {
                                                         <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
                                                                    OnClick="() => RequestSimilar(trackCard)">Request</MudButton>
@@ -620,19 +626,8 @@ else
             if (media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music)
             {
                 _musicRequestsEnabled = (await MusicSettings.GetAsync()).RequestsEnabled;
-                var present = await PlexMusic.VerifyAsync(new PlexRequestsHosted.Shared.DTOs.PlexVerificationRequest(
-                    PlexRequestsHosted.Shared.Enums.MediaType.Music,
-                    mediaRef.Kind,
-                    mediaRef.Provider,
-                    mediaRef.Id,
-                    mediaRef.Kind == MediaKind.Artist ? media.Title : media.Music?.ArtistCredit,
-                    mediaRef.Kind == MediaKind.Album ? media.Title
-                        : mediaRef.Kind == MediaKind.Track ? media.Music?.AlbumTitle : null,
-                    mediaRef.Kind == MediaKind.Track ? media.Title : null,
-                    media.Music?.AlbumTitles,
-                    media.Music?.Tracks.Select(x => x.Title).ToList(),
-                    media.Music?.Tracks.FirstOrDefault()?.DurationMs));
-                media.IsAvailable = present.Available;
+                await PlexMusic.AnnotatePresenceAsync([media]);
+                if (version != _loadVersion) return;
             }
 
             // Phase 1: show the title/poster/overview immediately.
@@ -652,6 +647,8 @@ else
             var statusCards = new List<PlexRequestsHosted.Shared.DTOs.MediaCardDto> { media };
             if (media.Music?.Albums.Count > 0) statusCards.AddRange(media.Music.Albums);
             statusCards.AddRange(_trackCards.Values);
+            await PlexMusic.AnnotatePresenceAsync(statusCards);
+            if (version != _loadVersion) return;
             var statusMap = await MediaRequestService.GetMyRequestStatusesAsync(
                 statusCards.Select(x => x.ResolveMediaRef()));
             if (version != _loadVersion) return;
@@ -697,6 +694,7 @@ else
             if (similarMedia?.Any() == true)
             {
                 await PlexApiService.AnnotateAvailabilityAsync(similarMedia);
+                await PlexMusic.AnnotatePresenceAsync(similarMedia);
                 if (version != _loadVersion) return;
                 var map = await MediaRequestService.GetMyRequestStatusesAsync(
                     similarMedia.Select(m => m.ResolveMediaRef()));
@@ -909,6 +907,16 @@ else
         if (!string.IsNullOrEmpty(_media?.PlexUrl))
             Navigation.NavigateTo(_media.PlexUrl, true);
     }
+
+    private void PlayCard(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    {
+        if (!string.IsNullOrWhiteSpace(media.PlexUrl))
+            Navigation.NavigateTo(media.PlexUrl, true);
+    }
+
+    private string PrimaryPlayLabel => _media?.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music
+        ? "Listen in Plex"
+        : "Play";
 
     private void PlayTrailer()
     {

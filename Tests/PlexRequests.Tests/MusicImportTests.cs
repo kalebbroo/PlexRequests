@@ -7,6 +7,7 @@ using PlexRequests.Downloader.Worker;
 using PlexRequestsHosted.Services.Implementations;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 using PlexRequestsHosted.Shared.Releases;
 using Xunit;
 
@@ -296,6 +297,75 @@ public sealed class MusicImportTests
         Assert.False(result.Available);
         Assert.Contains("missing 1", result.Detail);
     }
+
+    [Fact]
+    public async Task Music_presence_marks_an_exact_album_and_builds_a_plex_listen_url()
+    {
+        const string search = """
+            {"MediaContainer":{"Hub":[{"type":"album","Metadata":[
+              {"type":"album","ratingKey":"77","title":"Random Access Memories","parentTitle":"Daft Punk"}
+            ]}]}}
+            """;
+        const string identity = """{"MediaContainer":{"machineIdentifier":"plex-machine"}}""";
+        var service = new PlexMusicService(new HttpClient(new JsonHandler(search, identity)),
+            Options.Create(new PlexConfiguration { PrimaryServerUrl = "http://plex:32400", ServerToken = "token" }),
+            NullLogger<PlexMusicService>.Instance);
+        var card = MusicCard("Random Access Memories", "Daft Punk", MediaKind.Album);
+
+        await service.AnnotatePresenceAsync([card]);
+
+        Assert.True(card.IsAvailable);
+        Assert.Equal(
+            "https://app.plex.tv/desktop#!/server/plex-machine/details?key=%2Flibrary%2Fmetadata%2F77",
+            card.PlexUrl);
+    }
+
+    [Fact]
+    public async Task Music_presence_rejects_a_same_named_album_by_another_artist()
+    {
+        const string search = """
+            {"MediaContainer":{"Hub":[{"type":"album","Metadata":[
+              {"type":"album","ratingKey":"77","title":"Greatest Hits","parentTitle":"Wrong Artist"}
+            ]}]}}
+            """;
+        var service = new PlexMusicService(new HttpClient(new JsonHandler(search)),
+            Options.Create(new PlexConfiguration { PrimaryServerUrl = "http://plex:32400", ServerToken = "token" }),
+            NullLogger<PlexMusicService>.Instance);
+        var card = MusicCard("Greatest Hits", "Right Artist", MediaKind.Album);
+
+        await service.AnnotatePresenceAsync([card]);
+
+        Assert.False(card.IsAvailable);
+        Assert.Null(card.PlexUrl);
+    }
+
+    [Fact]
+    public async Task Music_presence_matches_a_track_by_title_and_artist()
+    {
+        const string search = """
+            {"MediaContainer":{"Hub":[{"type":"track","Metadata":[
+              {"type":"track","ratingKey":"31","title":"Digital Love","grandparentTitle":"Daft Punk"}
+            ]}]}}
+            """;
+        const string identity = """{"MediaContainer":{"machineIdentifier":"plex-machine"}}""";
+        var service = new PlexMusicService(new HttpClient(new JsonHandler(search, identity)),
+            Options.Create(new PlexConfiguration { PrimaryServerUrl = "http://plex:32400", ServerToken = "token" }),
+            NullLogger<PlexMusicService>.Instance);
+        var card = MusicCard("Digital Love", "Daft Punk", MediaKind.Track);
+
+        await service.AnnotatePresenceAsync([card]);
+
+        Assert.True(card.IsAvailable);
+        Assert.Contains("%2Flibrary%2Fmetadata%2F31", card.PlexUrl);
+    }
+
+    private static MediaCardDto MusicCard(string title, string artist, MediaKind kind) => new()
+    {
+        Title = title,
+        Subtitle = artist,
+        MediaType = MediaType.Music,
+        MediaRef = MediaRef.FromExternal("youtube", $"test-{kind}", MediaType.Music, kind)
+    };
 
     private static LibraryOrganizer CreateOrganizer() => new(
         new NoArchives(), new NoSeasonPacks(), new NoEpisodes(), new PlexNamingService(),

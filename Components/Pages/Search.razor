@@ -4,6 +4,7 @@
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject PlexRequestsHosted.Services.Abstractions.IMusicSettingsService MusicSettings
+@inject PlexRequestsHosted.Services.Implementations.IPlexMusicService PlexMusic
 @inject NavigationManager Navigation
 @using PlexRequestsHosted.Shared.Media
 @implements IDisposable
@@ -323,6 +324,7 @@
             if (results.Count > 0)
             {
                 await PlexApiService.AnnotateAvailabilityAsync(results);
+                await PlexMusic.AnnotatePresenceAsync(results);
                 if (version != _searchVersion) return;
                 var statuses = await MediaRequestService.GetMyRequestStatusesAsync(
                     results.Select(m => m.ResolveMediaRef()));
