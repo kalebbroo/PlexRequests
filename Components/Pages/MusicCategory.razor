@@ -1,5 +1,6 @@
 @page "/music/category"
 @inject IMusicDiscoveryService Discovery
+@inject NavigationManager Navigation
 
 <PageTitle>@(Name ?? "Music category") - Plex Requests</PageTitle>
 
@@ -24,7 +25,7 @@
         <div class="subpage-playlists">
             @foreach (var playlist in _playlists.Take(_visibleCount))
             {
-                <MusicPlaylistCard Playlist="playlist" />
+                <MusicPlaylistCard Playlist="playlist" ReturnUrl="@CurrentCategoryUrl" ReturnLabel="@CategoryLabel" />
             }
         </div>
         @if (_visibleCount < _playlists.Count)
@@ -45,6 +46,8 @@
     private bool _hasLoaded;
     private string? _loadedToken;
     private int _visibleCount = 48;
+    private string CurrentCategoryUrl => $"/{Navigation.ToBaseRelativePath(Navigation.Uri)}";
+    private string CategoryLabel => string.IsNullOrWhiteSpace(Name) ? "Music category" : Name;
 
     protected override async Task OnParametersSetAsync()
     {

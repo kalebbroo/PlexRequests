@@ -12,6 +12,7 @@
 @inject NavigationManager Navigation
 @inject IJSRuntime JSRuntime
 @using PlexRequestsHosted.Shared.Media
+@using PlexRequestsHosted.Shared.Navigation
 
 <PageTitle>@(_media?.Title ?? "Loading...") - Plex Requests</PageTitle>
 
@@ -58,6 +59,10 @@ else
             
             <div class="hero-content">
                 <MudContainer MaxWidth="MaxWidth.Large">
+                    @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music)
+                    {
+                        <a class="details-back" href="@BackUrl"><MudIcon Icon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" /> @BackLabel</a>
+                    }
                     <div class="hero-grid">
                         <div class="poster-section">
                             @if (!string.IsNullOrEmpty(_media.PosterUrl))
@@ -251,7 +256,8 @@ else
                                 <div class="similar-grid">
                                     @foreach (var album in _media.Music.Albums)
                                     {
-                                        <PlexRequestsHosted.Components.Shared.MediaCard Media="album" OnRequest="RequestSimilar" />
+                                        <PlexRequestsHosted.Components.Shared.MediaCard Media="album" OnRequest="RequestSimilar"
+                                            ReturnUrl="@CurrentDetailsUrl" ReturnLabel="@_media.Title" />
                                     }
                                 </div>
                             </div>
@@ -548,6 +554,8 @@ else
     [Parameter] public String? Kind { get; set; }
     [Parameter] public String? Provider { get; set; }
     [Parameter] public String? ExternalId { get; set; }
+    [SupplyParameterFromQuery(Name = "returnUrl")] public string? ReturnUrl { get; set; }
+    [SupplyParameterFromQuery(Name = "returnLabel")] public string? ReturnLabel { get; set; }
 
     private PlexRequestsHosted.Shared.DTOs.MediaDetailDto? _media;
     private List<PlexRequestsHosted.Shared.DTOs.MediaCardDto>? _similarMedia;
@@ -559,6 +567,9 @@ else
 
     private bool _rendered = false;
     private bool _musicRequestsEnabled;
+    private string BackUrl => MusicNavigationContext.ValidateReturnUrl(ReturnUrl);
+    private string BackLabel => MusicNavigationContext.ResolveReturnLabel(ReturnUrl, ReturnLabel);
+    private string CurrentDetailsUrl => $"/{Navigation.ToBaseRelativePath(Navigation.Uri)}";
     private string? _loadedKey;
     private int _loadVersion;
     private bool CanRequest => _media is not null && MediaModules.IsEnabled(_media.MediaType)
@@ -958,10 +969,11 @@ else
             }, StringComparer.Ordinal);
     }
 
-    private static string MediaHref(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
+    private string MediaHref(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
     {
         var mediaRef = media.ResolveMediaRef();
-        return $"/media/music/{mediaRef.Kind.ToString().ToLowerInvariant()}/{Uri.EscapeDataString(mediaRef.Provider)}/{Uri.EscapeDataString(mediaRef.Id)}";
+        var href = $"/media/music/{mediaRef.Kind.ToString().ToLowerInvariant()}/{Uri.EscapeDataString(mediaRef.Provider)}/{Uri.EscapeDataString(mediaRef.Id)}";
+        return MusicNavigationContext.AddReturnContext(href, CurrentDetailsUrl, _media?.Title);
     }
 
     private static string TrackStatus(PlexRequestsHosted.Shared.DTOs.MediaCardDto media) => media.RequestStatus switch
