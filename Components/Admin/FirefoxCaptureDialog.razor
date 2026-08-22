@@ -30,9 +30,9 @@
             else
             {
                 <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-                    Browse 1337x listing pages normally. Firefox queues their detail links and resolves them
-                    through one rate-limited inactive tab; your cookies and Cloudflare session remain inside
-                    Firefox and are never sent to Plex Requests.
+                    Browse @_status.IndexerName listing pages normally. Firefox queues visible releases and resolves
+                    their magnets through the browser session at a controlled rate; your cookies and challenge session
+                    remain inside Firefox and are never sent to Plex Requests.
                 </MudText>
 
                 <MudPaper Outlined="true" Class="pa-3 mb-3">
@@ -57,7 +57,8 @@
                         <div>
                             <MudText Typo="Typo.subtitle2">2. Pair this server</MudText>
                             <MudText Typo="Typo.caption" Color="Color.Tertiary">
-                                Generate a single-use code, then enter it with <code>@ServerOrigin</code> in the extension.
+                                Generate a source-specific single-use code, then enter it with <code>@ServerOrigin</code>
+                                in the extension. Existing pairings for other indexers remain connected.
                             </MudText>
                         </div>
                         <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_creating"

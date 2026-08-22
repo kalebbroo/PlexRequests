@@ -95,12 +95,14 @@ public sealed class FirefoxCaptureService(
 
         logger.LogInformation("Firefox capture device {DeviceId} paired with indexer {IndexerId}",
             device.Id, device.IndexerId);
+        var indexer = pairing.Indexer!;
         return new FirefoxCapturePairResponseDto
         {
             Token = rawToken,
             ExpiresAt = device.ExpiresAt,
             IndexerId = device.IndexerId,
-            Source = SourceName(pairing.Indexer!.Name)
+            Implementation = indexer.Implementation,
+            Source = SourceName(indexer.Name)
         };
     }
 
@@ -115,12 +117,14 @@ public sealed class FirefoxCaptureService(
         if (device is null) return null;
         device.LastSeenAt = now;
         await db.SaveChangesAsync(cancellationToken);
+        var indexer = device.Indexer!;
         return new FirefoxCaptureConnectionDto
         {
             Connected = true,
             ServerTime = now,
             ExpiresAt = device.ExpiresAt,
-            Source = SourceName(device.Indexer!.Name)
+            Implementation = indexer.Implementation,
+            Source = SourceName(indexer.Name)
         };
     }
 
@@ -231,7 +235,7 @@ public sealed class FirefoxCaptureService(
     {
         var indexer = await db.Indexers.SingleOrDefaultAsync(x => x.Id == indexerId, cancellationToken);
         if (!IsSupportedIndexer(indexer))
-            throw new ArgumentException("Firefox capture currently supports only a configured 1337x indexer.");
+            throw new ArgumentException("Firefox capture supports configured 1337x and ext.to indexers.");
         return indexer!;
     }
 
@@ -264,7 +268,7 @@ public sealed class FirefoxCaptureService(
             || batch.Items.Count > Math.Clamp(captureOptions.Value.MaxBatchSize, 1, 1000))
             throw new ArgumentException($"A capture batch must contain 1-{captureOptions.Value.MaxBatchSize} items.");
         if (!TryAllowedUri(batch.PageUrl, indexer, out _))
-            throw new ArgumentException("The captured page is not on an allowed 1337x host.");
+            throw new ArgumentException($"The captured page is not on an allowed {indexer.Implementation} host.");
 
         foreach (var item in batch.Items)
         {
@@ -312,7 +316,9 @@ public sealed class FirefoxCaptureService(
             || !string.IsNullOrEmpty(candidate.UserInfo))
             return false;
 
-        var allowed = (captureOptions.Value.AllowedHosts ?? [])
+        var configuredHosts = captureOptions.Value.AllowedHostsByIndexer
+            .FirstOrDefault(entry => entry.Key.Equals(indexer.Implementation, StringComparison.OrdinalIgnoreCase)).Value;
+        var allowed = (configuredHosts ?? [])
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => x.Trim().Trim('.'))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -327,7 +333,8 @@ public sealed class FirefoxCaptureService(
     }
 
     private static bool IsSupportedIndexer(IndexerEntity? indexer) =>
-        indexer is not null && indexer.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase);
+        indexer is not null && (indexer.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase)
+            || indexer.Implementation.Equals("ext.to", StringComparison.OrdinalIgnoreCase));
 
     private DateTime UtcNow => clock.GetUtcNow().UtcDateTime;
     private static string SourceName(string indexerName) => Clean(indexerName, 110) + SourceSuffix;

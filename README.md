@@ -227,13 +227,14 @@ Indexers are managed in **Admin → Acquisition → Indexers**: enable/disable e
 and watch per-source health (result counts, failure streaks, latency) updated live from every search. An
 optional standards-compatible endpoint can be added with `TORZNAB_URL`/`TORZNAB_API_KEY`.
 
-Scraped sources such as 1337x may refuse automated requests. PlexRequests reports those responses as
-**blocked** and backs off instead of turning them into misleading empty results. For 1337x, the optional
+Scraped sources such as 1337x and ext.to may refuse automated requests. PlexRequests reports those responses as
+**blocked** and backs off instead of turning them into misleading empty results. For both sources, the optional
 Firefox capture extension reads structured release information from pages you browse successfully and
 writes it into the catalog without exporting browser cookies. Enable the catalog in shadow mode, then use
-the extension button on the 1337x row to download and pair it. Listing pages enqueue their torrent detail
-URLs automatically; the extension reuses one inactive, rate-limited Firefox tab to resolve magnets. It
-pauses and asks for normal user verification if 1337x presents another browser challenge.
+the extension button on the 1337x or ext.to row to download and pair it. Pair each source once; both remain
+connected simultaneously. Listing pages enqueue visible releases automatically. The extension resolves 1337x
+details in one inactive, rate-limited Firefox tab and resolves ext.to magnets through its session-bound request.
+It pauses and asks for normal user verification if either site presents another browser challenge.
 
 The optional release catalog is disabled by default. Set `CATALOG_ENABLED=true` on both web and downloader
 to start shadow ingestion into a separate, rebuildable `catalog.db`. Shadow mode does not change which
@@ -307,7 +308,7 @@ All settings are read from `.env` (mapped to the app's config keys). Only the fi
 | `CATALOG_USE_FOR_SEARCH` | | Supplement normal fulfillment searches from the local catalog. |
 | `CATALOG_USE_FOR_MONITORING` | | Match wanted episodes locally instead of repeatedly searching upstream sources. |
 | `CATALOG_POLL_MINUTES` | | Structured-feed polling interval; default `15`. |
-| `FIREFOX_CAPTURE_ENABLED` | | Permit paired Firefox profiles to submit rendered 1337x releases; requires the catalog. |
+| `FIREFOX_CAPTURE_ENABLED` | | Permit paired Firefox profiles to submit rendered 1337x and ext.to releases; requires the catalog. |
 | `DELUGE_URL` / `DELUGE_PASSWORD` | | Your torrent client's Web API (downloader). |
 | `VPN_ENABLED` | | Only meaningful when the downloader runs inside a VPN namespace. |
 | `VPN_PROVIDER`, `WIREGUARD_*`, `VPN_COUNTRIES`, `DOCKER_SUBNET` | | Managed-VPN stack only (`docker-compose.vpn.yml`). |

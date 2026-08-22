@@ -1,30 +1,38 @@
 (function exposeHydration(root, factory) {
-  const hydration = factory();
+  const sources = typeof module === "object" && module.exports
+    ? require("./sources.js")
+    : root.PlexRequestsCaptureSources;
+  const hydration = factory(sources);
   root.PlexRequestsHydration = hydration;
   if (typeof module === "object" && module.exports) module.exports = hydration;
-})(typeof globalThis !== "undefined" ? globalThis : this, function createHydration() {
+})(typeof globalThis !== "undefined" ? globalThis : this, function createHydration(sources) {
   "use strict";
 
-  const SUPPORTED_HOSTS = new Set([
-    "1337x.to", "1337x.st", "1337x.ws", "1337x.eu", "1337x.se", "1337x.so", "1337x.is"
-  ]);
-
   function isSupportedHost(hostname) {
-    const host = String(hostname || "").toLowerCase().replace(/^www\./, "");
-    return SUPPORTED_HOSTS.has(host);
+    return Boolean(sources.byHost(hostname));
   }
 
   function detailCandidate(item, observedAt = Date.now()) {
     if (!item || item.needsHydration !== true || !item.externalId || !item.sourceUrl) return null;
     try {
       const url = new URL(item.sourceUrl);
-      if (!["http:", "https:"].includes(url.protocol) || !isSupportedHost(url.hostname)) return null;
-      if (!/^\/torrent\/\d+(?:\/|$)/i.test(url.pathname)) return null;
+      const source = sources.fromUrl(url.toString());
+      if (!source || !sources.isDetailUrl(url.toString(), source.key)) return null;
       url.hash = "";
       return {
         externalId: String(item.externalId).slice(0, 512),
+        sourceKey: source.key,
         sourceUrl: url.toString(),
         releaseName: String(item.releaseName || "").slice(0, 512),
+        category: item.category || null,
+        uploader: item.uploader || null,
+        seeders: item.seeders ?? null,
+        leechers: item.leechers ?? null,
+        sizeBytes: item.sizeBytes ?? null,
+        publishedAt: item.publishedAt || null,
+        captureTorrentId: item.captureTorrentId || null,
+        capturePageToken: item.capturePageToken || null,
+        captureSessionId: item.captureSessionId || null,
         state: "queued",
         attempts: 0,
         createdAt: observedAt,
@@ -46,9 +54,10 @@
     return 8_000 + Math.floor(random() * 7_000);
   }
 
-  function nextDue(records, now = Date.now()) {
+  function nextDue(records, now = Date.now(), allowedSources = null) {
     return records
-      .filter(item => item.state === "queued" && item.nextAttemptAt <= now)
+      .filter(item => item.state === "queued" && item.nextAttemptAt <= now
+        && (!allowedSources || allowedSources.has(item.sourceKey || sources.fromUrl(item.sourceUrl)?.key)))
       .sort((a, b) => a.nextAttemptAt - b.nextAttemptAt || a.createdAt - b.createdAt)[0] || null;
   }
 

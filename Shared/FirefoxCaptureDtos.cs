@@ -21,6 +21,7 @@ public sealed class FirefoxCapturePairResponseDto
     public string Token { get; set; } = string.Empty;
     public DateTime ExpiresAt { get; set; }
     public int IndexerId { get; set; }
+    public string Implementation { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
 }
 
@@ -53,6 +54,7 @@ public sealed class FirefoxCaptureConnectionDto
     public bool Connected { get; set; }
     public DateTime ServerTime { get; set; }
     public DateTime ExpiresAt { get; set; }
+    public string Implementation { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
 }
 

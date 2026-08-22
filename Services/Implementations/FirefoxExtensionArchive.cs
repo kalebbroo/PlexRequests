@@ -11,6 +11,7 @@ public static class FirefoxExtensionArchive
         "content.js",
         "hydration.js",
         "parser.js",
+        "sources.js",
         "popup/popup.html",
         "popup/popup.css",
         "popup/popup.js",
