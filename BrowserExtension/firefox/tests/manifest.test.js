@@ -8,7 +8,7 @@ const path = require("node:path");
 test("manifest is Firefox MV3 and never requests cookie or browsing-history access", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8"));
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "1.2.0");
+  assert.equal(manifest.version, "1.2.1");
   assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, "140.0");
   assert.equal(manifest.browser_specific_settings.gecko_android.strict_min_version, "142.0");
   assert.deepEqual(
