@@ -186,9 +186,26 @@
 .mcard-btn.icon:hover { background: rgba(255,255,255,0.3); }
 .mcard-btn.icon.danger:hover { background: var(--color-error); color: #fff; }
 
-/* On touch / small screens the overlay is always legible and actions are visible. */
+/* Touch devices cannot reveal actions with hover. Keep the primary action visible, while the full-card
+   link remains the details target. The separate info button is redundant there and its space is more
+   valuable to labels such as "Request series" on a 130px card. */
 @media (hover: none) {
-    .mcard-overlay { opacity: 1; background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 60%); }
-    .mcard-overlay-body .mcard-actions { display: none; }
+    .mcard:hover { transform: none; }
+    .mcard-overlay {
+        opacity: 1;
+        padding: 6px;
+        background: linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.55) 52%, rgba(0,0,0,0) 78%);
+    }
+    .mcard-overlay-body .mcard-actions { display: flex; gap: 4px; }
+    .mcard-actions > a.icon { display: none; }
+    .mcard-btn {
+        min-width: 0;
+        padding: 5px 6px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .mcard-btn ::deep .mud-icon-root { flex: 0 0 auto; }
+    .mcard-music .mcard-meta { display: none; }
     .mcard-seasons { display: none; }
 }
