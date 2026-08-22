@@ -14,6 +14,10 @@
     return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
   }
 
+  function publicItems(items) {
+    return items.map(({ captureTorrentId, capturePageToken, captureSessionId, ...item }) => item);
+  }
+
   async function observe(pageType, pageUrl) {
     const fingerprint = `${pageType}:${pageUrl}`;
     if (fingerprint === lastObservation) return;
@@ -51,9 +55,10 @@
     lastObservation = null;
     const fingerprintSource = JSON.stringify({
       parserVersion: parser.PARSER_VERSION,
+      sourceKey: parsed.sourceKey,
       pageUrl: pageUrl.toString(),
       pageType: parsed.pageType,
-      items: parsed.items.slice().sort((a, b) => a.externalId.localeCompare(b.externalId))
+      items: publicItems(parsed.items).sort((a, b) => a.externalId.localeCompare(b.externalId))
     });
     const fingerprint = await sha256(fingerprintSource);
     if (fingerprint === lastFingerprint) return;
@@ -64,6 +69,7 @@
         type: "queue-capture",
         batch: {
           batchId: `firefox-v${parser.PARSER_VERSION}-${fingerprint}`,
+          sourceKey: parsed.sourceKey,
           pageUrl: pageUrl.toString(),
           pageType: parsed.pageType,
           parserVersion: parser.PARSER_VERSION,

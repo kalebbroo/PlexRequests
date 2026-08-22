@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const hydration = require("../hydration.js");
 
-test("accepts only supported 1337x detail URLs", () => {
+test("accepts supported source detail URLs and retains their adapter key", () => {
   const candidate = hydration.detailCandidate({
     externalId: "1337x:torrent:7654321",
     sourceUrl: "https://1337x.to/torrent/7654321/example/#comments",
@@ -14,6 +14,15 @@ test("accepts only supported 1337x detail URLs", () => {
 
   assert.equal(candidate.sourceUrl, "https://1337x.to/torrent/7654321/example/");
   assert.equal(candidate.createdAt, 1234);
+  assert.equal(candidate.sourceKey, "1337x");
+  const extCandidate = hydration.detailCandidate({
+    externalId: "extto:torrent:10000002",
+    sourceUrl: "https://ext.to/example-show-s01e02-10000002/#comments",
+    releaseName: "Example.Show.S01E02",
+    needsHydration: true
+  }, 5678);
+  assert.equal(extCandidate.sourceKey, "ext.to");
+  assert.equal(extCandidate.sourceUrl, "https://ext.to/example-show-s01e02-10000002/");
   assert.equal(hydration.detailCandidate({
     externalId: "bad",
     sourceUrl: "https://example.com/torrent/1/",
@@ -34,6 +43,14 @@ test("selects the oldest due queued hydration without selecting future or failed
     { externalId: "first", state: "queued", nextAttemptAt: 10, createdAt: 1 }
   ], 100);
   assert.equal(selected.externalId, "first");
+});
+
+test("selects hydration work only for paired source adapters", () => {
+  const selected = hydration.nextDue([
+    { externalId: "ext", sourceKey: "ext.to", state: "queued", nextAttemptAt: 0, createdAt: 1 },
+    { externalId: "x", sourceKey: "1337x", state: "queued", nextAttemptAt: 0, createdAt: 2 }
+  ], 100, new Set(["1337x"]));
+  assert.equal(selected.externalId, "x");
 });
 
 test("navigation and retry delays are bounded", () => {

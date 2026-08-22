@@ -119,8 +119,8 @@ else
                 <MudTd DataLabel="Activity">
                     @if (IsFirefoxIndexer(context))
                     {
-                        <span>Last capture @Relative(LastFirefoxCapture() ?? coverage.LastSeenAt)</span>
-                        <div class="text-muted small">@FirefoxItems() items in @FirefoxBatches() batches</div>
+                        <span>Last capture @Relative(LastFirefoxCapture(context) ?? coverage.LastSeenAt)</span>
+                        <div class="text-muted small">@FirefoxItems(context) items in @FirefoxBatches(context) batches</div>
                     }
                     else
                     {
@@ -137,10 +137,10 @@ else
                     }
                     else if (IsFirefoxIndexer(context))
                     {
-                        <MudTooltip Text="@FirefoxHealthHelp(coverage)">
-                            <MudChip T="string" Color="@FirefoxHealthColor()" Size="Size.Small"
-                                     Icon="@FirefoxHealthIcon()">
-                                @FirefoxHealthLabel(coverage)
+                        <MudTooltip Text="@FirefoxHealthHelp(context, coverage)">
+                            <MudChip T="string" Color="@FirefoxHealthColor(context)" Size="Size.Small"
+                                     Icon="@FirefoxHealthIcon(context)">
+                                @FirefoxHealthLabel(context, coverage)
                             </MudChip>
                         </MudTooltip>
                     }
@@ -175,7 +175,7 @@ else
                     <div class="d-flex">
                         <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
                                        OnClick="() => OpenDialog(context)" />
-                        @if (context.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase))
+                        @if (IsFirefoxIndexer(context))
                         {
                             <MudTooltip Text="Capture release metadata from pages rendered in your paired Firefox profile.">
                                 <MudIconButton Icon="@Icons.Material.Filled.Extension" Size="Size.Small" Color="Color.Primary"
@@ -229,7 +229,7 @@ else
     private bool _loading = true;
     private List<IndexerSettingDto> _items = new();
     private CatalogStatsDto? _catalog;
-    private FirefoxCaptureAdminStatusDto? _firefoxStatus;
+    private Dictionary<int, FirefoxCaptureAdminStatusDto> _firefoxStatuses = new();
 
     protected override async Task OnInitializedAsync() => await Load();
 
@@ -240,10 +240,10 @@ else
         {
             _items = await Indexers.GetAllAsync();
             _catalog = await Catalog.GetStatsAsync(CancellationToken.None);
-            var firefoxIndexer = _items.FirstOrDefault(IsFirefoxIndexer);
-            _firefoxStatus = firefoxIndexer is null
-                ? null
-                : await FirefoxCapture.GetAdminStatusAsync(firefoxIndexer.Id, CancellationToken.None);
+            _firefoxStatuses = new();
+            foreach (var firefoxIndexer in _items.Where(IsFirefoxIndexer))
+                _firefoxStatuses[firefoxIndexer.Id] = await FirefoxCapture.GetAdminStatusAsync(
+                    firefoxIndexer.Id, CancellationToken.None);
         }
         finally { _loading = false; StateHasChanged(); }
     }
@@ -302,30 +302,33 @@ else
     }
 
     private static bool IsFirefoxIndexer(IndexerSettingDto indexer) =>
-        indexer.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase);
+        indexer.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase)
+        || indexer.Implementation.Equals("ext.to", StringComparison.OrdinalIgnoreCase);
 
-    private bool FirefoxPaired() => _firefoxStatus?.Devices.Any(device => device.IsActive) == true;
-    private bool FirefoxRecentlySeen() => _firefoxStatus?.Devices.Any(device =>
+    private FirefoxCaptureAdminStatusDto? FirefoxStatus(IndexerSettingDto indexer) =>
+        _firefoxStatuses.GetValueOrDefault(indexer.Id);
+    private bool FirefoxPaired(IndexerSettingDto indexer) => FirefoxStatus(indexer)?.Devices.Any(device => device.IsActive) == true;
+    private bool FirefoxRecentlySeen(IndexerSettingDto indexer) => FirefoxStatus(indexer)?.Devices.Any(device =>
         device.IsActive && device.LastSeenAt >= DateTime.UtcNow.AddMinutes(-5)) == true;
-    private DateTime? LastFirefoxCapture() => _firefoxStatus?.Devices
+    private DateTime? LastFirefoxCapture(IndexerSettingDto indexer) => FirefoxStatus(indexer)?.Devices
         .OrderByDescending(device => device.LastCaptureAt)
         .FirstOrDefault()?.LastCaptureAt;
-    private long FirefoxItems() => _firefoxStatus?.Devices.Sum(device => device.ItemsReceived) ?? 0;
-    private long FirefoxBatches() => _firefoxStatus?.Devices.Sum(device => device.BatchesReceived) ?? 0;
+    private long FirefoxItems(IndexerSettingDto indexer) => FirefoxStatus(indexer)?.Devices.Sum(device => device.ItemsReceived) ?? 0;
+    private long FirefoxBatches(IndexerSettingDto indexer) => FirefoxStatus(indexer)?.Devices.Sum(device => device.BatchesReceived) ?? 0;
 
-    private Color FirefoxHealthColor() => FirefoxRecentlySeen()
+    private Color FirefoxHealthColor(IndexerSettingDto indexer) => FirefoxRecentlySeen(indexer)
         ? Color.Success
-        : FirefoxPaired() ? Color.Info : Color.Warning;
-    private string FirefoxHealthIcon() => FirefoxRecentlySeen()
+        : FirefoxPaired(indexer) ? Color.Info : Color.Warning;
+    private string FirefoxHealthIcon(IndexerSettingDto indexer) => FirefoxRecentlySeen(indexer)
         ? Icons.Material.Filled.Sync
-        : FirefoxPaired() ? Icons.Material.Filled.Extension : Icons.Material.Filled.ExtensionOff;
-    private string FirefoxHealthLabel(IndexerCoverage coverage) => FirefoxRecentlySeen()
+        : FirefoxPaired(indexer) ? Icons.Material.Filled.Extension : Icons.Material.Filled.ExtensionOff;
+    private string FirefoxHealthLabel(IndexerSettingDto indexer, IndexerCoverage coverage) => FirefoxRecentlySeen(indexer)
         ? (coverage.Sightings > 0 ? "capturing" : "Firefox ready")
-        : FirefoxPaired() ? "Firefox paired" : "pair Firefox";
-    private string FirefoxHealthHelp(IndexerCoverage coverage) => FirefoxPaired()
-        ? $"Firefox has stored {coverage.Sightings} distinct 1337x releases and was last seen {Relative(_firefoxStatus?.Devices.Max(device => device.LastSeenAt))}. "
+        : FirefoxPaired(indexer) ? "Firefox paired" : "pair Firefox";
+    private string FirefoxHealthHelp(IndexerSettingDto indexer, IndexerCoverage coverage) => FirefoxPaired(indexer)
+        ? $"Firefox has stored {coverage.Sightings} distinct {indexer.Name} releases and was last seen {Relative(FirefoxStatus(indexer)?.Devices.Max(device => device.LastSeenAt))}. "
           + "The direct HTTP scraper's state does not interrupt browser capture."
-        : "No active Firefox profile is paired. Open Firefox capture and pair the browser used for 1337x.";
+        : $"No active Firefox profile is paired. Open Firefox capture and pair the browser used for {indexer.Name}.";
 
     private static string FormatBytes(long bytes) => bytes switch
     {
@@ -362,7 +365,7 @@ else
     {
         var parameters = new DialogParameters<FirefoxCaptureDialog> { { x => x.IndexerId, indexer.Id } };
         var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true };
-        var dialog = await Dialogs.ShowAsync<FirefoxCaptureDialog>("Firefox capture · 1337x", parameters, options);
+        var dialog = await Dialogs.ShowAsync<FirefoxCaptureDialog>($"Firefox capture · {indexer.Name}", parameters, options);
         await dialog.Result;
         await Load();
     }

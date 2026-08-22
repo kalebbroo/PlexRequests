@@ -41,14 +41,14 @@
             <MudItem xs="12"><MudDivider Class="my-2" /></MudItem>
 
             <MudItem xs="12">
-                @if (_model.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase))
+                @if (SupportsFirefoxCapture())
                 {
                     <MudAlert Severity="Severity.Info" Variant="Variant.Text" dense="true">
-                        1337x coverage is managed by the paired Firefox capture worker. Use the extension button
-                        on the indexer row to install, pair, and monitor it.
+                        @_model.Name browser coverage is managed by a source-specific Firefox pairing. Use the
+                        extension button on the indexer row to install, pair, and monitor it.
                     </MudAlert>
                 }
-                else
+                @if (!_model.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase))
                 {
                     <MudExpansionPanel Text="@ClearanceSummary()" dense="true">
                         <MudText Typo="Typo.caption" Class="text-muted mb-2 d-block">
@@ -351,6 +351,10 @@
     }
 
     private void Cancel() => MudDialog.Cancel();
+
+    private bool SupportsFirefoxCapture() =>
+        _model.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase)
+        || _model.Implementation.Equals("ext.to", StringComparison.OrdinalIgnoreCase);
 
     private void SetCategories(MediaType mediaType, string categories)
     {

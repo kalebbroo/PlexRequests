@@ -36,13 +36,21 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         await using (var app = await _appFactory.CreateDbContextAsync())
         {
             await app.Database.EnsureCreatedAsync();
-            app.Indexers.Add(new IndexerEntity
-            {
-                Id = 37,
-                Name = "1337x",
-                Implementation = "1337x",
-                IsBuiltIn = true
-            });
+            app.Indexers.AddRange(
+                new IndexerEntity
+                {
+                    Id = 37,
+                    Name = "1337x",
+                    Implementation = "1337x",
+                    IsBuiltIn = true
+                },
+                new IndexerEntity
+                {
+                    Id = 38,
+                    Name = "ext.to",
+                    Implementation = "ext.to",
+                    IsBuiltIn = true
+                });
             await app.SaveChangesAsync();
         }
         await using (var catalogDb = await _catalogFactory.CreateDbContextAsync())
@@ -82,6 +90,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
 
         Assert.NotNull(paired);
         Assert.StartsWith("prfc_", paired.Token);
+        Assert.Equal("1337x", paired.Implementation);
         Assert.Null(await _capture.RedeemPairingAsync(new FirefoxCapturePairRequestDto
         {
             PairingCode = pairing.Code,
@@ -135,7 +144,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(2, device.BatchesReceived);
         Assert.Equal(2, device.ItemsReceived);
         Assert.Equal(1, device.LastParserVersion);
-        Assert.Equal("1.1.0", device.ExtensionVersion);
+        Assert.Equal("1.2.0", device.ExtensionVersion);
     }
 
     [Fact]
@@ -150,8 +159,43 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         badItem.Items[0].SourceUrl = "https://example.com/torrent/1";
         await Assert.ThrowsAsync<ArgumentException>(() => _capture.IngestAsync(token, badItem));
 
+        var extPage = Batch("wrong-source", "listing", Item());
+        extPage.PageUrl = "https://ext.to/browse/tv/";
+        extPage.Items[0].ExternalId = "extto:torrent:1";
+        extPage.Items[0].SourceUrl = "https://ext.to/torrent/1/example";
+        await Assert.ThrowsAsync<ArgumentException>(() => _capture.IngestAsync(token, extPage));
+
         await using var catalog = await _catalogFactory.CreateDbContextAsync();
         Assert.Empty(await catalog.Sightings.ToListAsync());
+    }
+
+    [Fact]
+    public async Task ExtTo_pairing_ingests_only_ExtTo_pages_into_its_own_catalog_source()
+    {
+        var token = await PairAsync(38);
+        var batch = Batch("ext-listing", "listing", new CatalogItemDto
+        {
+            ExternalId = "extto:torrent:10000002",
+            ReleaseName = "Example.Show.S03E04.1080p.WEB-DL",
+            SourceUrl = "https://ext.to/example-show-s03e04-10000002/",
+            MagnetUri = $"magnet:?xt=urn:btih:{new string('B', 40)}&dn=Example.Show",
+            Seeders = 1200
+        });
+        batch.PageUrl = "https://ext.to/browse/tv/";
+
+        var result = await _capture.IngestAsync(token, batch);
+
+        Assert.Equal(1, result.ReleasesInserted);
+        var connection = await _capture.GetConnectionAsync(token);
+        Assert.Equal("ext.to", connection!.Implementation);
+        await using var catalog = await _catalogFactory.CreateDbContextAsync();
+        var sighting = await catalog.Sightings.SingleAsync();
+        Assert.Equal(38, sighting.IndexerId);
+        Assert.Equal("ext.to (Firefox)", sighting.Source);
+
+        batch.BatchId = "cross-source";
+        batch.PageUrl = "https://1337x.to/search/example/1/";
+        await Assert.ThrowsAsync<ArgumentException>(() => _capture.IngestAsync(token, batch));
     }
 
     [Fact]
@@ -197,7 +241,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         {
             foreach (var file in new[]
             {
-                "manifest.json", "background.js", "content.js", "hydration.js", "parser.js",
+                "manifest.json", "background.js", "content.js", "hydration.js", "parser.js", "sources.js",
                 "popup/popup.html", "popup/popup.css", "popup/popup.js", "icons/capture.svg", "README.md"
             })
             {
@@ -209,6 +253,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             using var stream = new MemoryStream(FirefoxExtensionArchive.Create(root));
             using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
             Assert.Contains(archive.Entries, entry => entry.FullName == "hydration.js");
+            Assert.Contains(archive.Entries, entry => entry.FullName == "sources.js");
         }
         finally
         {
@@ -216,9 +261,9 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         }
     }
 
-    private async Task<string> PairAsync()
+    private async Task<string> PairAsync(int indexerId = 37)
     {
-        var pairing = await _capture.CreatePairingAsync(37);
+        var pairing = await _capture.CreatePairingAsync(indexerId);
         var response = await _capture.RedeemPairingAsync(new FirefoxCapturePairRequestDto
         {
             PairingCode = pairing.Code,
@@ -234,7 +279,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         PageUrl = "https://1337x.to/search/example/1/",
         PageType = pageType,
         ParserVersion = 1,
-        ExtensionVersion = "1.1.0",
+        ExtensionVersion = "1.2.0",
         CapturedAt = new DateTime(2026, 8, 16, 17, 30, 0, DateTimeKind.Utc),
         Items = [item]
     };

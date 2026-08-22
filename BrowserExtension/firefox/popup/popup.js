@@ -12,7 +12,8 @@ function showMessage(message, error = true) {
 }
 
 function render(status) {
-  const paired = Boolean(status.serverUrl && status.tokenExpiresAt && new Date(status.tokenExpiresAt) > new Date());
+  const paired = Boolean(status.serverUrl && (status.connections || [])
+    .some(connection => !connection.expiresAt || new Date(connection.expiresAt) > new Date()));
   elements.pairing.hidden = paired;
   elements.connected.hidden = !paired;
   if (!paired) {
@@ -30,7 +31,7 @@ function render(status) {
   elements["capture-enabled"].checked = status.captureEnabled;
   const paused = status.hydrationPausedUntil && new Date(status.hydrationPausedUntil) > new Date();
   elements["resume-hydration"].hidden = !paused;
-  const message = status.lastError || status.hydrationLastError;
+  const message = status.lastError || status.hydrationLastError || status.connectionError;
   showMessage(message, Boolean(message));
 }
 
@@ -49,14 +50,14 @@ elements.pair.addEventListener("click", async () => {
     // Firefox requires this permission request to run directly inside the user's click handler.
     const granted = await browser.permissions.request({ origins: [`${server.origin}/*`] });
     if (!granted) throw new Error("Firefox needs permission to connect to this Plex Requests server.");
-    await browser.runtime.sendMessage({
+    const paired = await browser.runtime.sendMessage({
       type: "pair",
       serverUrl: server.origin,
       pairingCode: elements["pairing-code"].value,
       deviceName: elements["device-name"].value
     });
     render(await browser.runtime.sendMessage({ type: "status", checkServer: true }));
-    showMessage("Firefox is paired. Browse 1337x normally to capture releases.", false);
+    showMessage(`${paired.source} is paired. Browse that site normally to capture releases.`, false);
   } catch (error) {
     showMessage(error.message);
   } finally {
@@ -79,9 +80,12 @@ elements["resume-hydration"].addEventListener("click", async () => {
 });
 
 elements.repair.addEventListener("click", async () => {
-  await browser.runtime.sendMessage({ type: "forget-pairing" });
-  render(await browser.runtime.sendMessage({ type: "status" }));
-  showMessage("Generate a new code in Plex Requests, then pair again.", false);
+  const status = await browser.runtime.sendMessage({ type: "status" });
+  if (status.serverUrl) elements["server-url"].value = status.serverUrl;
+  elements.pairing.hidden = false;
+  elements.connected.hidden = true;
+  elements["pairing-code"].focus();
+  showMessage("Generate a code from the indexer you want to add or replace.", false);
 });
 
 elements["capture-enabled"].addEventListener("change", async event => {

@@ -16,7 +16,7 @@ fi
 rm -f "$artifact_path"
 (
   cd "$extension_dir"
-  zip -q -r "$artifact_path" manifest.json background.js content.js hydration.js parser.js popup icons README.md \
+  zip -q -r "$artifact_path" manifest.json background.js content.js hydration.js parser.js sources.js popup icons README.md \
     -x '*.DS_Store'
 )
 echo "$artifact_path"

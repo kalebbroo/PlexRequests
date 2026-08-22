@@ -26,9 +26,81 @@ test("derives the same durable external id from listing and detail URLs", () => 
     "1337x:torrent:7654321"
   );
   assert.equal(
+    parser.externalId("/example-show-s03e04-10000002/", "https://ext.to/browse/?cat=2"),
+    "extto:torrent:10000002"
+  );
+  assert.equal(
     parser.externalId("https://1337x.to/torrent/7654321/Example-Show/", "https://1337x.to/"),
     "1337x:torrent:7654321"
   );
+});
+
+test("parses EXT.to grouped TV links without depending on a fixed table layout", () => {
+  const values = {
+    "[data-seeders]": element("1.2K"),
+    "[data-leechers]": element("34"),
+    "[data-size]": element("2.5 GiB"),
+    "[class*='uploader']": element("scene-group")
+  };
+  const container = {
+    textContent: "Example Show S03E04 Seeders 1.2K Leechers 34 Size 2.5 GiB",
+    querySelector: selector => values[selector] || null
+  };
+  const link = {
+    textContent: "View",
+    parentElement: container,
+    closest: () => container,
+    getAttribute: name => ({ href: "/example-show-s03e04-10000002/", title: "Example.Show.S03E04.1080p.WEB-DL" })[name] || null
+  };
+
+  const item = parser.parseExtListingLink(link, "https://ext.to/browse/tv/", "tv");
+
+  assert.equal(item.externalId, "extto:torrent:10000002");
+  assert.equal(item.releaseName, "Example.Show.S03E04.1080p.WEB-DL");
+  assert.equal(item.seeders, 1200);
+  assert.equal(item.leechers, 34);
+  assert.equal(item.sizeBytes, 2684354560);
+  assert.equal(item.category, "tv");
+  assert.equal(item.needsHydration, true);
+});
+
+test("deduplicates repeated EXT.to torrent links on grouped show pages", () => {
+  const container = {
+    textContent: "Show S01E01 Size 800 MB",
+    querySelector: selector => selector === ".search-magnet-btn[data-id]"
+      ? { getAttribute: name => name === "data-id" ? "987" : null }
+      : null,
+    querySelectorAll: () => []
+  };
+  const link = title => ({
+    textContent: title,
+    parentElement: container,
+    closest: () => container,
+    getAttribute: name => name === "href" ? "/show-s01e01-987/" : null
+  });
+  const document = {
+    title: "Show torrents | EXT.to",
+    body: { textContent: "Show torrents" },
+    querySelector: selector => selector === "meta[name='csrf-token']"
+      ? { getAttribute: name => name === "content" ? "csrf-session" : null }
+      : null,
+    querySelectorAll: selector => {
+      if (selector === "script") return [{ textContent: "window.searchPageToken = 'page-token';" }];
+      if (selector === "table.search-table tbody a.torrent-title-link, a.torrent-title-link")
+        return [link("Show.S01E01.720p"), link("Show.S01E01.1080p.WEB-DL")];
+      return [];
+    }
+  };
+
+  const parsed = parser.parsePage(document, "https://ext.to/browse/?cat=2");
+
+  assert.equal(parsed.sourceKey, "ext.to");
+  assert.equal(parsed.pageType, "listing");
+  assert.equal(parsed.items.length, 1);
+  assert.equal(parsed.items[0].releaseName, "Show.S01E01.1080p.WEB-DL");
+  assert.equal(parsed.items[0].captureTorrentId, 987);
+  assert.equal(parsed.items[0].capturePageToken, "page-token");
+  assert.equal(parsed.items[0].captureSessionId, "csrf-session");
 });
 
 test("listing rows remain pending until a detail page supplies a magnet", () => {

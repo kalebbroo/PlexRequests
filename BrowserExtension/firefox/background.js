@@ -1,5 +1,6 @@
 "use strict";
 
+const sources = globalThis.PlexRequestsCaptureSources;
 const hydration = globalThis.PlexRequestsHydration;
 const DATABASE_NAME = "plexrequests-browser-capture";
 const DATABASE_VERSION = 2;
@@ -106,24 +107,32 @@ async function enqueueHydrations(items) {
   const now = Date.now();
   const records = await allRecords(HYDRATION_STORE_NAME);
   const retained = records.filter(item => item.state !== "complete" || (item.completedAt || 0) >= now - COMPLETED_HYDRATION_RETENTION_MS);
+  const retainedById = new Map(retained.map(item => [item.externalId, item]));
   const retainedIds = new Set(retained.map(item => item.externalId));
   const pendingCount = retained.filter(item => item.state !== "complete").length;
   const available = Math.max(0, MAX_HYDRATION_ITEMS - pendingCount);
   const candidateMap = new Map();
   for (const item of items || []) {
     const candidate = hydration.detailCandidate(item, now);
-    if (candidate && !retainedIds.has(candidate.externalId)) candidateMap.set(candidate.externalId, candidate);
+    if (candidate) candidateMap.set(candidate.externalId, candidate);
   }
-  const candidates = [...candidateMap.values()].slice(0, available);
+  const newCandidates = [...candidateMap.values()].filter(candidate => !retainedIds.has(candidate.externalId));
+  const candidates = newCandidates.slice(0, available);
+  const refreshed = [...candidateMap.values()].filter(candidate => {
+    const existing = retainedById.get(candidate.externalId);
+    return existing && existing.state !== "complete"
+      && (candidate.capturePageToken || candidate.sourceUrl !== existing.sourceUrl);
+  }).map(candidate => ({ ...retainedById.get(candidate.externalId), ...candidate }));
 
   await withStore(HYDRATION_STORE_NAME, "readwrite", store => {
     for (const record of records) {
       if (!retainedIds.has(record.externalId)) store.delete(record.externalId);
     }
     for (const candidate of candidates) store.put(candidate);
+    for (const candidate of refreshed) store.put(candidate);
   });
 
-  if (candidateMap.size > candidates.length) {
+  if (newCandidates.length > candidates.length) {
     await browser.storage.local.set({
       hydrationLastError: `Detail queue is full (${MAX_HYDRATION_ITEMS} releases). Let Firefox catch up before browsing more listings.`
     });
@@ -155,13 +164,53 @@ function normalizedServerUrl(value) {
   return url.origin;
 }
 
-async function apiFetch(path, options = {}) {
-  const config = await browser.storage.local.get(["serverUrl", "token"]);
+async function connectionConfig() {
+  const config = await browser.storage.local.get({
+    serverUrl: "",
+    connections: {},
+    token: null,
+    tokenExpiresAt: null,
+    source: ""
+  });
+  if (config.token && !Object.keys(config.connections || {}).length) {
+    const legacyKey = /ext\.to/i.test(config.source) ? "ext.to" : "1337x";
+    config.connections = {
+      [legacyKey]: {
+        token: config.token,
+        expiresAt: config.tokenExpiresAt,
+        source: config.source || sources.byKey(legacyKey)?.displayName || legacyKey,
+        connected: true,
+        lastError: null
+      }
+    };
+    await browser.storage.local.set({ connections: config.connections });
+    await browser.storage.local.remove(["token", "tokenExpiresAt", "source", "connected"]);
+  }
+  return config;
+}
+
+async function updateConnection(sourceKey, changes) {
+  const config = await connectionConfig();
+  const current = config.connections[sourceKey];
+  if (!current) return;
+  config.connections[sourceKey] = { ...current, ...changes };
+  await browser.storage.local.set({ connections: config.connections });
+}
+
+async function apiFetch(path, options = {}, sourceKey = null) {
+  const config = await connectionConfig();
   if (!config.serverUrl) throw new Error("Pair this extension with Plex Requests first.");
   const headers = new Headers(options.headers || {});
   headers.set("Accept", "application/json");
   if (options.body) headers.set("Content-Type", "application/json");
-  if (config.token) headers.set("Authorization", `Bearer ${config.token}`);
+  if (sourceKey) {
+    const connection = config.connections[sourceKey];
+    if (!connection?.token) {
+      const name = sources.byKey(sourceKey)?.displayName || sourceKey;
+      throw new Error(`Pair ${name} from its indexer row before uploading captured pages.`);
+    }
+    headers.set("Authorization", `Bearer ${connection.token}`);
+  }
   return fetch(`${config.serverUrl}${path}`, { ...options, headers });
 }
 
@@ -171,9 +220,10 @@ async function pair(serverUrl, pairingCode, deviceName) {
   const granted = await browser.permissions.contains({ origins: [originPermission] });
   if (!granted) throw new Error("Firefox needs permission to connect to this Plex Requests server.");
 
-  await browser.storage.local.set({ serverUrl: server });
-  const response = await apiFetch("/api/browser-capture/pair", {
+  const previous = await connectionConfig();
+  const response = await fetch(`${server}/api/browser-capture/pair`, {
     method: "POST",
+    headers: { "Accept": "application/json", "Content-Type": "application/json" },
     body: JSON.stringify({
       pairingCode,
       deviceName: String(deviceName || "Firefox").trim() || "Firefox",
@@ -185,13 +235,21 @@ async function pair(serverUrl, pairingCode, deviceName) {
     throw new Error(response.status === 401 ? "The pairing code is invalid, expired, or already used." : detail);
   }
   const paired = await response.json();
-  await browser.storage.local.set({
+  const sourceKey = String(paired.implementation || "").trim().toLowerCase();
+  if (!sources.byKey(sourceKey)) throw new Error("The server paired an unsupported capture source.");
+  const connections = previous.serverUrl && previous.serverUrl !== server ? {} : previous.connections || {};
+  connections[sourceKey] = {
     token: paired.token,
-    tokenExpiresAt: paired.expiresAt,
+    expiresAt: paired.expiresAt,
     source: paired.source,
+    connected: true,
+    lastError: null
+  };
+  await browser.storage.local.set({
+    serverUrl: server,
+    connections,
     lastError: null,
-    hydrationLastError: null,
-    connected: true
+    hydrationLastError: null
   });
   await drainQueue(true);
   void drainHydrationQueue(true);
@@ -199,12 +257,9 @@ async function pair(serverUrl, pairingCode, deviceName) {
 }
 
 async function connectionStatus(checkServer = false) {
-  const config = await browser.storage.local.get({
+  const state = await browser.storage.local.get({
     captureEnabled: true,
-    connected: false,
     serverUrl: "",
-    tokenExpiresAt: null,
-    source: "",
     lastError: null,
     lastSuccessAt: null,
     acceptedItems: 0,
@@ -212,18 +267,37 @@ async function connectionStatus(checkServer = false) {
     hydrationLastError: null,
     hydrationPausedUntil: null
   });
+  const config = await connectionConfig();
+  const connections = config.connections || {};
   if (checkServer && config.serverUrl) {
-    try {
-      const response = await apiFetch("/api/browser-capture/status");
-      config.connected = response.ok;
-      if (!response.ok && response.status === 401) config.lastError = "Pairing expired or was revoked.";
-      await browser.storage.local.set({ connected: config.connected, lastError: config.lastError });
-    } catch (error) {
-      config.connected = false;
-      config.lastError = error.message;
+    for (const [sourceKey, connection] of Object.entries(connections)) {
+      try {
+        const response = await apiFetch("/api/browser-capture/status", {}, sourceKey);
+        connection.connected = response.ok;
+        connection.lastError = response.ok ? null : response.status === 401
+          ? "Pairing expired or was revoked."
+          : `Server returned HTTP ${response.status}.`;
+      } catch (error) {
+        connection.connected = false;
+        connection.lastError = error.message;
+      }
     }
+    await browser.storage.local.set({ connections });
   }
-  return { ...config, ...(await queueStatus()) };
+  const connectionList = Object.entries(connections).map(([sourceKey, connection]) => ({
+    sourceKey,
+    ...connection
+  }));
+  return {
+    ...state,
+    serverUrl: config.serverUrl,
+    connections: connectionList,
+    connected: connectionList.some(connection => connection.connected),
+    source: connectionList.map(connection => connection.source).filter(Boolean).join(" · "),
+    tokenExpiresAt: connectionList.map(connection => connection.expiresAt).filter(Boolean).sort().at(-1) || null,
+    connectionError: connectionList.find(connection => connection.lastError)?.lastError || null,
+    ...(await queueStatus())
+  };
 }
 
 async function safeError(response) {
@@ -240,7 +314,77 @@ function retryDelay(attempts) {
   return base + Math.floor(Math.random() * Math.min(base / 4, 30_000));
 }
 
+function publicCatalogItems(items) {
+  return (items || []).map(({ captureTorrentId, capturePageToken, captureSessionId, ...item }) => item);
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function resolveExtMagnet(record) {
+  if (!record.captureTorrentId || !record.capturePageToken || !record.captureSessionId) {
+    throw new Error("EXT.to page credentials expired or were unavailable; revisit the listing to refresh them.");
+  }
+  const timestamp = Math.floor(Date.now() / 1000);
+  const hmac = await sha256Hex(`${record.captureTorrentId}|${timestamp}|${record.capturePageToken}`);
+  const endpoint = new URL("/ajax/getSearchMagnet.php", record.sourceUrl);
+  const response = await fetch(endpoint.toString(), {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Accept": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-Requested-With": "XMLHttpRequest"
+    },
+    body: new URLSearchParams({
+      torrent_id: String(record.captureTorrentId),
+      hash: "",
+      name: "",
+      timestamp: String(timestamp),
+      hmac,
+      sessid: record.captureSessionId
+    }).toString()
+  });
+  if (!response.ok) throw new Error(`EXT.to magnet lookup returned HTTP ${response.status}.`);
+  const body = await response.json();
+  if (!body.success || typeof body.url !== "string" || !body.url.startsWith("magnet:")) {
+    throw new Error("EXT.to did not return a usable magnet; revisit the listing after completing any challenge.");
+  }
+  const infoHash = body.url.match(/(?:^|[?&])xt=urn:btih:([a-z0-9]+)/i)?.[1] || null;
+  const item = {
+    externalId: record.externalId,
+    releaseName: record.releaseName,
+    sourceUrl: record.sourceUrl,
+    infoHash,
+    magnetUri: body.url,
+    category: record.category,
+    uploader: record.uploader,
+    seeders: record.seeders,
+    leechers: record.leechers,
+    sizeBytes: record.sizeBytes,
+    publishedAt: record.publishedAt,
+    needsHydration: false
+  };
+  const fingerprint = await sha256Hex(`ext.to:${record.externalId}:${infoHash || body.url}`);
+  const queued = await queueRecord({
+    batchId: `firefox-v2-${fingerprint}`,
+    sourceKey: "ext.to",
+    pageUrl: record.sourceUrl,
+    pageType: "detail",
+    parserVersion: 2,
+    capturedAt: new Date().toISOString(),
+    items: [item]
+  });
+  if (!queued.queued && !queued.duplicate) {
+    throw new Error("The upload queue is full; EXT.to detail resolution will retry after pending uploads drain.");
+  }
+  await completeHydrations([item]);
+}
+
 async function sendRecord(record) {
+  const sourceKey = record.sourceKey || sources.fromUrl(record.pageUrl)?.key;
   try {
     const response = await apiFetch("/api/browser-capture/batches", {
       method: "POST",
@@ -251,19 +395,19 @@ async function sendRecord(record) {
         parserVersion: record.parserVersion,
         extensionVersion: browser.runtime.getManifest().version,
         capturedAt: record.capturedAt,
-        items: record.items
+        items: publicCatalogItems(record.items)
       })
-    });
+    }, sourceKey);
     if (response.ok) {
       const result = await response.json();
       await deleteRecord(CAPTURE_STORE_NAME, record.batchId);
       const state = await browser.storage.local.get({ acceptedItems: 0 });
       await browser.storage.local.set({
-        connected: true,
         lastError: null,
         lastSuccessAt: new Date().toISOString(),
         acceptedItems: state.acceptedItems + (result.duplicateBatch ? 0 : result.acceptedItems)
       });
+      await updateConnection(sourceKey, { connected: true, lastError: null });
       return;
     }
 
@@ -275,7 +419,7 @@ async function sendRecord(record) {
       record.nextAttemptAt = Number.MAX_SAFE_INTEGER;
     } else if (response.status === 401 || response.status === 403) {
       record.nextAttemptAt = Date.now() + 60 * 60 * 1000;
-      await browser.storage.local.set({ connected: false, lastError: "Pairing expired or was revoked." });
+      await updateConnection(sourceKey, { connected: false, lastError: "Pairing expired or was revoked." });
     } else if (response.status === 409) {
       record.nextAttemptAt = Date.now() + 15 * 60 * 1000;
       await browser.storage.local.set({ lastError: detail });
@@ -297,8 +441,9 @@ async function sendRecord(record) {
 async function drainQueue(force = false) {
   if (drainPromise) return drainPromise;
   drainPromise = (async () => {
-    const config = await browser.storage.local.get({ captureEnabled: true, token: null });
-    if (!config.captureEnabled || !config.token) return;
+    const state = await browser.storage.local.get({ captureEnabled: true });
+    const config = await connectionConfig();
+    if (!state.captureEnabled || !Object.keys(config.connections || {}).length) return;
     const due = (await allRecords(CAPTURE_STORE_NAME))
       .filter(item => item.state === "queued" && (force || item.nextAttemptAt <= Date.now()))
       .sort((a, b) => a.nextAttemptAt - b.nextAttemptAt)
@@ -350,6 +495,7 @@ async function workerState() {
   return browser.storage.local.get({
     hydrationWorkerTabId: null,
     hydrationWorkerExternalId: null,
+    hydrationWorkerSourceKey: null,
     hydrationWorkerStartedAt: null
   });
 }
@@ -362,7 +508,7 @@ async function existingTab(tabId) {
 async function clearWorker(closeTab = false) {
   const state = await workerState();
   await browser.storage.local.remove([
-    "hydrationWorkerTabId", "hydrationWorkerExternalId", "hydrationWorkerStartedAt"
+    "hydrationWorkerTabId", "hydrationWorkerExternalId", "hydrationWorkerSourceKey", "hydrationWorkerStartedAt"
   ]);
   if (closeTab && await existingTab(state.hydrationWorkerTabId)) {
     try { await browser.tabs.remove(state.hydrationWorkerTabId); } catch { /* already closed */ }
@@ -399,6 +545,7 @@ async function finishWorker(tabId, items) {
   if (state.hydrationWorkerTabId !== tabId) return;
   await browser.storage.local.set({
     hydrationWorkerExternalId: null,
+    hydrationWorkerSourceKey: null,
     hydrationWorkerStartedAt: null,
     hydrationLastError: null
   });
@@ -412,6 +559,7 @@ async function failWorker(tabId, reason) {
   await retryHydration(state.hydrationWorkerExternalId, reason);
   await browser.storage.local.set({
     hydrationWorkerExternalId: null,
+    hydrationWorkerSourceKey: null,
     hydrationWorkerStartedAt: null
   });
   await updateBadge();
@@ -421,15 +569,16 @@ async function failWorker(tabId, reason) {
 async function pauseForChallenge(tabId) {
   const state = await workerState();
   if (state.hydrationWorkerTabId !== tabId) return;
+  const sourceName = sources.byKey(state.hydrationWorkerSourceKey)?.displayName || "The indexer";
   const pausedUntil = Date.now() + HYDRATION_CHALLENGE_PAUSE_MS;
   await retryHydration(
     state.hydrationWorkerExternalId,
-    "1337x presented a browser challenge. Automatic detail capture is paused; open 1337x normally, complete it, then resume.",
+    `${sourceName} presented a browser challenge. Automatic detail capture is paused; open it normally, complete the challenge, then resume.`,
     HYDRATION_CHALLENGE_PAUSE_MS
   );
   await browser.storage.local.set({
     hydrationPausedUntil: pausedUntil,
-    hydrationLastError: "1337x challenge detected. Complete it in a normal tab, then resume detail capture."
+    hydrationLastError: `${sourceName} challenge detected. Complete it in a normal tab, then resume detail capture.`
   });
   await clearWorker(true);
   await updateBadge();
@@ -450,21 +599,24 @@ async function recoverStaleWorker() {
 async function drainHydrationQueue(force = false) {
   if (hydrationPromise) return hydrationPromise;
   hydrationPromise = (async () => {
-    const config = await browser.storage.local.get({
+    const state = await browser.storage.local.get({
       captureEnabled: true,
-      token: null,
       hydrationPausedUntil: null
     });
-    if (!config.captureEnabled || !config.token) return;
-    if (!force && config.hydrationPausedUntil && config.hydrationPausedUntil > Date.now()) return;
-    if (force && config.hydrationPausedUntil) {
+    const config = await connectionConfig();
+    const activeSources = new Set(Object.entries(config.connections || {})
+      .filter(([, connection]) => !connection.expiresAt || new Date(connection.expiresAt) > new Date())
+      .map(([sourceKey]) => sourceKey));
+    if (!state.captureEnabled || !activeSources.size) return;
+    if (!force && state.hydrationPausedUntil && state.hydrationPausedUntil > Date.now()) return;
+    if (force && state.hydrationPausedUntil) {
       await browser.storage.local.set({ hydrationPausedUntil: null, hydrationLastError: null });
     }
 
     const current = await recoverStaleWorker();
     if (current.hydrationWorkerExternalId) return;
     const records = await allRecords(HYDRATION_STORE_NAME);
-    const next = hydration.nextDue(records, Date.now());
+    const next = hydration.nextDue(records, Date.now(), activeSources);
     if (!next) {
       if (await existingTab(current.hydrationWorkerTabId)) await clearWorker(true);
       return;
@@ -476,12 +628,25 @@ async function drainHydrationQueue(force = false) {
     next.lastError = null;
     await updateRecord(HYDRATION_STORE_NAME, next);
 
+    if (next.sourceKey === "ext.to") {
+      try {
+        await resolveExtMagnet(next);
+        await browser.storage.local.set({ hydrationLastError: null });
+      } catch (error) {
+        await retryHydration(next.externalId, error.message);
+      }
+      await updateBadge();
+      scheduleHydration();
+      return;
+    }
+
     try {
       let tab = await existingTab(current.hydrationWorkerTabId);
       if (!tab) tab = await browser.tabs.create({ url: "about:blank", active: false });
       await browser.storage.local.set({
         hydrationWorkerTabId: tab.id,
         hydrationWorkerExternalId: next.externalId,
+        hydrationWorkerSourceKey: next.sourceKey || sources.fromUrl(next.sourceUrl)?.key || null,
         hydrationWorkerStartedAt: next.startedAt
       });
       await browser.tabs.update(tab.id, { url: next.sourceUrl, active: false });
@@ -560,7 +725,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
     case "set-enabled": return setCaptureEnabled(message.enabled);
     case "forget-pairing":
       return clearWorker(true).then(() => browser.storage.local.remove([
-        "token", "tokenExpiresAt", "source", "connected", "lastError",
+        "token", "tokenExpiresAt", "source", "connected", "connections", "lastError",
         "hydrationPausedUntil", "hydrationLastError"
       ]));
     default: return undefined;

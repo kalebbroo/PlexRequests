@@ -6,5 +6,6 @@ node --check "$extension_dir/background.js"
 node --check "$extension_dir/content.js"
 node --check "$extension_dir/hydration.js"
 node --check "$extension_dir/parser.js"
+node --check "$extension_dir/sources.js"
 node --check "$extension_dir/popup/popup.js"
 node --test "$extension_dir/tests"/*.test.js

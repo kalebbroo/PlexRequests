@@ -9,15 +9,19 @@ public sealed class FirefoxCaptureOptions
     public int DeviceLifetimeDays { get; set; } = 90;
     public int MaxBatchSize { get; set; } = 250;
 
-    /// <summary>Only rendered pages from these source domains may enter the catalog.</summary>
-    public string[] AllowedHosts { get; set; } =
-    [
-        "1337x.to",
-        "1337x.st",
-        "1337x.ws",
-        "1337x.eu",
-        "1337x.se",
-        "1337x.so",
-        "1337x.is"
-    ];
+    /// <summary>Rendered page domains permitted for each implementation. Tokens remain source-scoped.</summary>
+    public Dictionary<string, string[]> AllowedHostsByIndexer { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["1337x"] =
+        [
+            "1337x.to",
+            "1337x.st",
+            "1337x.ws",
+            "1337x.eu",
+            "1337x.se",
+            "1337x.so",
+            "1337x.is"
+        ],
+        ["ext.to"] = ["ext.to"]
+    };
 }
