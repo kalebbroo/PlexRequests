@@ -65,6 +65,9 @@ public class BridgeLinkStatusDto
     public bool Linked { get; set; }
     public string? PlexUsername { get; set; }
     public bool DmOptIn { get; set; }
+    public bool AccountAvailable { get; set; } = true;
+    public UserAccountStatus? AccountStatus { get; set; }
+    public string? Message { get; set; }
 }
 
 public class BridgeEventDto

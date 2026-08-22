@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Services.Abstractions;
+using PlexRequestsHosted.Services.Implementations;
 using PlexRequestsHosted.Utils;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
@@ -110,6 +111,18 @@ public class CustomAuthStateProvider(
                 return cookieState;
             }
 
+            // Claims transformation deliberately turns a suspended/disabled cookie into an unauthenticated
+            // principal while retaining the account-status claim. Preserve it so the route redirect can
+            // explain why access ended instead of showing a generic sign-in screen.
+            if (cookieUser?.FindFirst(UserAccessClaimsTransformation.AccountStatusClaim)?.Value
+                is "suspended" or "disabled")
+            {
+                var restrictedState = new AuthenticationState(cookieUser);
+                _cachedAuthState = restrictedState;
+                _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
+                return restrictedState;
+            }
+
             Logs.Debug("GetAuthenticationState: No cookie authentication found, returning unauthenticated state");
             var unauthState = new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()));
             _cachedAuthState = unauthState;
@@ -142,10 +155,13 @@ public class CustomAuthStateProvider(
                 if (previous?.User.Identity?.IsAuthenticated != true) continue;
 
                 var refreshed = await RefreshAccessAsync(previous.User, cancellationToken);
-                var roleChanged = previous.User.IsInRole("Admin") != refreshed.IsInRole("Admin");
+                var accessChanged = previous.User.Identity?.IsAuthenticated != refreshed.Identity?.IsAuthenticated
+                                    || previous.User.IsInRole("Admin") != refreshed.IsInRole("Admin")
+                                    || previous.User.FindFirst(UserAccessClaimsTransformation.AccountStatusClaim)?.Value
+                                       != refreshed.FindFirst(UserAccessClaimsTransformation.AccountStatusClaim)?.Value;
                 _cachedAuthState = new AuthenticationState(refreshed);
                 _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
-                if (roleChanged)
+                if (accessChanged)
                 {
                     _logger.LogInformation("Live access changed for user {Username}; refreshing the active session",
                         refreshed.Identity?.Name);
@@ -175,7 +191,7 @@ public class CustomAuthStateProvider(
             await using var scope = _scopeFactory.CreateAsyncScope();
             var access = scope.ServiceProvider.GetRequiredService<IUserAccessService>();
             var snapshot = await access.GetAccessAsync(userId);
-            return UserAccessClaimsTransformation.RefreshRoles(principal, snapshot.IsAdmin);
+            return UserAccessClaimsTransformation.RefreshAccess(principal, snapshot);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -334,21 +350,33 @@ public class CustomAuthStateProvider(
                     UserId = existing.Id,
                     PlexId = plexUserId,
                     PlexUsername = normalizedUsername,
-                    Roles = roleCsv,
-                    LastLoginAt = now
+                    Roles = roleCsv
                 };
                 _db.UserProfiles.Add(profile);
             }
             else
             {
+                var accountStatus = UserAccessService.EffectiveAccountStatus(profile, forceAdmin);
+                if (accountStatus != UserAccountStatus.Active)
+                {
+                    var code = accountStatus == UserAccountStatus.Suspended ? "account_suspended" : "account_disabled";
+                    return new AuthenticationResult
+                    {
+                        Success = false,
+                        ErrorCode = code,
+                        ErrorMessage = accountStatus == UserAccountStatus.Suspended
+                            ? $"This account is temporarily suspended{(profile.SuspendedUntil is DateTime until ? $" until {until:u}" : string.Empty)}."
+                            : "This account has been disabled by an administrator."
+                    };
+                }
                 profile.PlexId = plexUserId ?? profile.PlexId;
                 profile.PlexUsername = normalizedUsername;
-                profile.LastLoginAt = now;
                 if (overwriteProfileRoles || string.IsNullOrWhiteSpace(profile.Roles))
                 {
                     profile.Roles = roleCsv;
                 }
             }
+            profile.LastLoginAt = now;
             await _db.SaveChangesAsync();
 
             // Store token and user info in session storage (best-effort; may fail during server-only callback)

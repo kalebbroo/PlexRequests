@@ -23,12 +23,14 @@
         }
 
         var isAuth = false;
+        string? accountStatus = null;
         try
         {
             if (AuthenticationStateTask is not null)
             {
                 var state = await AuthenticationStateTask;
                 isAuth = state.User?.Identity?.IsAuthenticated == true;
+                accountStatus = state.User?.FindFirst(PlexRequestsHosted.Services.Auth.UserAccessClaimsTransformation.AccountStatusClaim)?.Value;
             }
         }
         catch { /* ignore */ }
@@ -41,7 +43,8 @@
 
         // Pass the destination as a local path so the login page can send the user back after auth
         var returnUrl = Uri.EscapeDataString(current.PathAndQuery);
-        Navigation.NavigateTo($"/login?returnUrl={returnUrl}", false);
+        var error = accountStatus is "suspended" or "disabled" ? $"&error=account_{accountStatus}" : string.Empty;
+        Navigation.NavigateTo($"/login?returnUrl={returnUrl}{error}", false);
     }
 }
 

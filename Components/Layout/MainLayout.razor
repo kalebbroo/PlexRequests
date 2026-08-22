@@ -255,8 +255,17 @@
         try
         {
             var wasAdmin = _isAdmin;
-            ApplyAuthenticationState(await stateTask);
+            var wasAuthenticated = _isAuthenticated;
+            var authState = await stateTask;
+            ApplyAuthenticationState(authState);
             await InvokeAsync(StateHasChanged);
+            if (wasAuthenticated && !_isAuthenticated)
+            {
+                var status = authState.User.FindFirst(PlexRequestsHosted.Services.Auth.UserAccessClaimsTransformation.AccountStatusClaim)?.Value;
+                var error = status is "suspended" or "disabled" ? $"account_{status}" : "auth_failed";
+                Navigation.NavigateTo($"/login?error={error}", forceLoad: true);
+                return;
+            }
             if (wasAdmin && !_isAdmin && Navigation.ToBaseRelativePath(Navigation.Uri).StartsWith("admin", StringComparison.OrdinalIgnoreCase))
                 Navigation.NavigateTo("/browse");
         }

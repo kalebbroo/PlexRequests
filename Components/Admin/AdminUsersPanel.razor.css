@@ -1,5 +1,5 @@
 .access-toolbar, .group-heading, .group-title-row, .group-actions { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
-.access-toolbar { margin-bottom:1rem; }
+.access-toolbar { flex-wrap:wrap; margin-bottom:1rem; }
 .access-toolbar > * { flex:1 1 240px; }
 .access-loading { display:grid; place-items:center; min-height:180px; }
 .user-list { display:grid; gap:.75rem; }

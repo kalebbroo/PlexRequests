@@ -66,6 +66,12 @@ public sealed class BridgeIntegrationTests
         Assert.Equal(bridgeEvent.Media, metadata.LastDetailsRequest);
         Assert.False(string.IsNullOrWhiteSpace(bridgeEvent.EventId));
 
+        await db.UserProfiles.Where(x => x.UserId == user.Id).ExecuteUpdateAsync(setters => setters
+            .SetProperty(x => x.AccountStatus, UserAccountStatus.Disabled)
+            .SetProperty(x => x.AccountStatusReason, "Account disabled"));
+        var restricted = await service.ReadBatchAsync(0, 25);
+        Assert.Null(Assert.Single(restricted.Events).RequesterDiscordId);
+
         // Repair and an explicit duplicate write converge on the same stable event key.
         await service.EnqueueAsync(new MediaRequestDto { Id = request.Id }, BridgeEventType.Available);
         Assert.Equal(1, await db.BridgeOutbox.CountAsync());

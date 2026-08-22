@@ -18,6 +18,19 @@ public sealed class UserAdministrationService(
     {
         if (!await CallerIsAdminAsync()) return [];
 
+        // Temporary suspensions are self-healing. Access checks already treat an elapsed suspension as
+        // active; repair the persisted display state whenever an admin opens the user list.
+        var now = DateTime.UtcNow;
+        await db.UserProfiles
+            .Where(x => x.AccountStatus == UserAccountStatus.Suspended
+                        && x.SuspendedUntil != null && x.SuspendedUntil <= now)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.AccountStatus, UserAccountStatus.Active)
+                .SetProperty(x => x.SuspendedUntil, (DateTime?)null)
+                .SetProperty(x => x.AccountStatusReason, (string?)null)
+                .SetProperty(x => x.AccountStatusChangedAt, now)
+                .SetProperty(x => x.AccountStatusChangedBy, "System · suspension expired"));
+
         var profiles = await db.UserProfiles.AsNoTracking().Include(x => x.User).Include(x => x.UserGroup)
             .Where(x => x.User != null).OrderBy(x => x.User!.Username).ToListAsync();
         var effectiveAccess = profiles.ToDictionary(x => x.UserId, Effective);
@@ -56,7 +69,12 @@ public sealed class UserAdministrationService(
                 ProfileCreatedAt = profile.CreatedAt,
                 MovieQuota = usage.Movie,
                 TvQuota = usage.Tv,
-                MusicQuota = usage.Music
+                MusicQuota = usage.Music,
+                AccountStatus = effective.AccountStatus,
+                SuspendedUntil = effective.SuspendedUntil,
+                AccountStatusReason = effective.IsActive ? null : profile.AccountStatusReason,
+                AccountStatusChangedAt = profile.AccountStatusChangedAt,
+                AccountStatusChangedBy = profile.AccountStatusChangedBy
             });
         }
         return result;
@@ -89,6 +107,32 @@ public sealed class UserAdministrationService(
             || !ValidQuota(edit.MusicRequestLimit, edit.MusicRequestLimitDays))
             return UserAdminResult.Fail("Limits must be positive and quota windows must be between 1 and 365 days.");
 
+        var reason = edit.AccountStatusReason?.Trim();
+        var requestedStatus = edit.AccountStatus;
+        DateTime? suspendedUntil = edit.SuspendedUntil is DateTime suppliedUntil
+            ? suppliedUntil.Kind == DateTimeKind.Utc ? suppliedUntil : DateTime.SpecifyKind(suppliedUntil, DateTimeKind.Utc)
+            : null;
+        if (!Enum.IsDefined(requestedStatus))
+            return UserAdminResult.Fail("The selected account status is invalid.");
+        if (requestedStatus == UserAccountStatus.Suspended
+            && (suspendedUntil is null || suspendedUntil <= DateTime.UtcNow || suspendedUntil > DateTime.UtcNow.AddDays(366)))
+            return UserAdminResult.Fail("A suspension must end in the future and cannot exceed one year.");
+        if (requestedStatus != UserAccountStatus.Active && string.IsNullOrWhiteSpace(reason))
+            return UserAdminResult.Fail("Add a reason before restricting an account.");
+        if (reason?.Length > 256)
+            return UserAdminResult.Fail("Account status reasons cannot exceed 256 characters.");
+        if (requestedStatus == UserAccountStatus.Active)
+        {
+            suspendedUntil = null;
+            reason = null;
+        }
+        else if (requestedStatus == UserAccountStatus.Disabled)
+        {
+            suspendedUntil = null;
+        }
+        if (requestedStatus != UserAccountStatus.Active && IsConfiguredAdmin(profile.User?.Username))
+            return UserAdminResult.Fail("Configured emergency administrators cannot be suspended or disabled. Remove the username from ADMIN_USERNAMES first.");
+
         UserGroupEntity? group = null;
         if (edit.GroupId is int groupId)
         {
@@ -101,7 +145,8 @@ public sealed class UserAdministrationService(
         var willBeAdmin = IsConfiguredAdmin(profile.User?.Username) || (group is not null
             ? UserAccessService.Normalize((UserPermission)group.Permissions).HasFlag(UserPermission.Administrator)
             : custom.HasFlag(UserPermission.Administrator));
-        if (wasAdmin && !willBeAdmin && !await HasAnotherAdminAsync(profile.UserId))
+        var willBeActive = requestedStatus == UserAccountStatus.Active;
+        if (wasAdmin && (!willBeAdmin || !willBeActive) && !await HasAnotherAdminAsync(profile.UserId))
             return UserAdminResult.Fail("At least one administrator must remain.");
 
         profile.UserGroupId = group?.Id;
@@ -115,8 +160,22 @@ public sealed class UserAdministrationService(
         profile.MusicRequestLimit = edit.MusicRequestLimit;
         profile.MusicRequestLimitDays = edit.MusicRequestLimitDays;
         profile.AllowedQualityProfileIdsCsv = ToCsv(edit.CustomAllowedQualityProfileIds);
+        var statusChanged = profile.AccountStatus != requestedStatus
+                            || profile.SuspendedUntil != suspendedUntil
+                            || !string.Equals(profile.AccountStatusReason, reason, StringComparison.Ordinal);
+        profile.AccountStatus = requestedStatus;
+        profile.SuspendedUntil = suspendedUntil;
+        profile.AccountStatusReason = reason;
+        if (statusChanged)
+        {
+            profile.AccountStatusChangedAt = DateTime.UtcNow;
+            var callerId = await access.GetCurrentUserIdAsync();
+            profile.AccountStatusChangedBy = callerId is int id
+                ? await db.Users.Where(x => x.Id == id).Select(x => x.Username).FirstOrDefaultAsync()
+                : null;
+        }
         await db.SaveChangesAsync();
-        return UserAdminResult.Ok($"Access updated for {profile.User?.Username ?? "user"}.");
+        return UserAdminResult.Ok($"Access and account status updated for {profile.User?.Username ?? "user"}.");
     }
 
     public async Task<UserAdminResult> SaveGroupAsync(UserGroupDto dto)

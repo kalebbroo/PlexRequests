@@ -45,6 +45,10 @@ public class MediaIssueService(
         var user = await CurrentUserAsync();
         if (user.Identity?.IsAuthenticated != true)
             return Failed("You must be signed in to report a problem.");
+        var currentUserId = UserId(user);
+        if (currentUserId is int accessUserId && userAccess is not null
+            && !(await userAccess.GetAccessAsync(accessUserId)).IsActive)
+            return Failed("Your account is suspended or disabled.");
         if (report.MediaId <= 0 || string.IsNullOrWhiteSpace(report.Title))
             return Failed("The media item could not be identified.");
 
@@ -55,7 +59,7 @@ public class MediaIssueService(
             (report.SeasonNumber is null or < 0 || report.EpisodeNumber is null or < 1))
             return Failed("Choose a valid season and episode.");
 
-        var userId = UserId(user);
+        var userId = currentUserId;
         var duplicate = await db.MediaIssues.AsNoTracking().AnyAsync(i =>
             i.MediaId == report.MediaId && i.MediaType == report.MediaType &&
             i.ReportedByUserId == userId && i.SeasonNumber == report.SeasonNumber &&
