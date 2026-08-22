@@ -144,11 +144,11 @@
 
     private async Task RequestMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
     {
-        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(media.Id, media.MediaType);
+        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(media.ResolveMediaRef());
         if (result.Success)
         {
-            media.RequestStatus = PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
-            await ToastService.ShowSuccessAsync($"{media.Title} has been requested!");
+            media.RequestStatus = result.NewStatus ?? PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
+            await ToastService.ShowSuccessAsync(MediaRequestFeedback.Success(media, result));
         }
         else
         {
