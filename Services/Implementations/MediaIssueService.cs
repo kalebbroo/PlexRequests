@@ -31,7 +31,8 @@ public class MediaIssueService(
     AuthenticationStateProvider authProvider,
     IFulfillmentQueue fulfillment,
     IQualityProfileService qualityProfiles,
-    IReleaseBlocklistService blocklist) : IMediaIssueService
+    IReleaseBlocklistService blocklist,
+    IUserAccessService? userAccess = null) : IMediaIssueService
 {
     private static readonly HashSet<string> Reasons = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -83,7 +84,7 @@ public class MediaIssueService(
         db.MediaIssues.Add(issue);
         await db.SaveChangesAsync();
 
-        if (report.RequestReplacement && user.IsInRole("Admin"))
+        if (report.RequestReplacement && await IsAdminAsync(user))
         {
             var queued = await QueueReplacementCoreAsync(issue, user.Identity.Name ?? "Admin");
             queued.IssueId = issue.Id;
@@ -122,7 +123,7 @@ public class MediaIssueService(
     private async Task<bool> CloseAsync(int issueId, IssueStatus status)
     {
         var user = await CurrentUserAsync();
-        if (!user.IsInRole("Admin")) return false;
+        if (!await IsAdminAsync(user)) return false;
         var issue = await db.MediaIssues.FirstOrDefaultAsync(i => i.Id == issueId);
         if (issue is null || issue.Status == IssueStatus.ReplacementQueued) return false;
         issue.Status = status;
@@ -134,7 +135,7 @@ public class MediaIssueService(
     public async Task<MediaIssueResultDto> RequestRedownloadAsync(int issueId)
     {
         var user = await CurrentUserAsync();
-        if (!user.IsInRole("Admin")) return Failed("Administrator access is required.");
+        if (!await IsAdminAsync(user)) return Failed("Administrator access is required.");
         var issue = await db.MediaIssues.FirstOrDefaultAsync(i => i.Id == issueId);
         if (issue is null) return Failed("Issue not found.");
         if (issue.Status == IssueStatus.ReplacementQueued)
@@ -230,7 +231,14 @@ public class MediaIssueService(
     private async Task<ClaimsPrincipal> CurrentUserAsync() =>
         (await authProvider.GetAuthenticationStateAsync()).User;
 
-    private async Task<bool> IsAdminAsync() => (await CurrentUserAsync()).IsInRole("Admin");
+    private async Task<bool> IsAdminAsync() => await IsAdminAsync(await CurrentUserAsync());
+    private async Task<bool> IsAdminAsync(ClaimsPrincipal user)
+    {
+        var userId = UserId(user);
+        return userAccess is not null && userId is int id
+            ? await userAccess.IsAdminAsync(id)
+            : user.IsInRole("Admin");
+    }
     private static int? UserId(ClaimsPrincipal user) =>
         int.TryParse(user.FindFirst("user_id")?.Value, out var id) ? id : null;
     private static string? Trim(string? value, int max)

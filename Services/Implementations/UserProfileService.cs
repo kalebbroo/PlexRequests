@@ -6,27 +6,36 @@ using PlexRequestsHosted.Shared.DTOs;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
-public class UserProfileService(AppDbContext db) : IUserProfileService
+public class UserProfileService(AppDbContext db, IUserAccessService access) : IUserProfileService
 {
     private readonly AppDbContext _db = db;
+    private readonly IUserAccessService _access = access;
 
     public async Task<UserDto?> GetProfileAsync()
     {
-        // Get the most recently logged-in user profile.
-        // TODO: This should be updated to get the current authenticated user from context.
+        var userId = await _access.GetCurrentUserIdAsync();
+        if (userId is null) return null;
         var profile = await _db.UserProfiles
-            .OrderByDescending(p => p.LastLoginAt)
             .Include(p => p.User)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(p => p.UserId == userId);
 
         if (profile?.User == null) return null;
 
-        return MapToDto(profile.User, profile);
+        var dto = MapToDto(profile.User, profile);
+        var effective = await _access.GetAccessAsync(profile.UserId);
+        dto.Roles = effective.IsAdmin ? ["User", "Admin"] : ["User"];
+        dto.AutoApprove = effective.AutoApprove;
+        dto.MovieRequestLimit = effective.MovieRequestLimit;
+        dto.TvRequestLimit = effective.TvRequestLimit;
+        dto.MusicRequestLimit = effective.MusicRequestLimit;
+        return dto;
     }
 
     public async Task<bool> UpdateProfileAsync(UserDto profileDto)
     {
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == profileDto.Id);
+        var currentUserId = await _access.GetCurrentUserIdAsync();
+        if (currentUserId is null || profileDto.Id != currentUserId.Value) return false;
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == currentUserId.Value);
         if (user is null) return false;
 
         user.DisplayName = profileDto.DisplayName;
@@ -47,17 +56,19 @@ public class UserProfileService(AppDbContext db) : IUserProfileService
 
     public async Task<UserPreferencesDto> GetPreferencesAsync()
     {
+        var userId = await _access.GetCurrentUserIdAsync();
+        if (userId is null) return new UserPreferencesDto();
         var profile = await _db.UserProfiles
-            .OrderByDescending(p => p.LastLoginAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(p => p.UserId == userId.Value);
         return MapPreferences(profile);
     }
 
     public async Task<bool> UpdatePreferencesAsync(UserPreferencesDto preferences)
     {
+        var userId = await _access.GetCurrentUserIdAsync();
+        if (userId is null) return false;
         var profile = await _db.UserProfiles
-            .OrderByDescending(p => p.LastLoginAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(p => p.UserId == userId.Value);
 
         if (profile == null) return false;
 
@@ -74,49 +85,13 @@ public class UserProfileService(AppDbContext db) : IUserProfileService
 
     public async Task<bool> UpdateAvatarAsync(string avatarUrl)
     {
+        var userId = await _access.GetCurrentUserIdAsync();
+        if (userId is null) return false;
         var profile = await _db.UserProfiles
-            .OrderByDescending(p => p.LastLoginAt)
             .Include(p => p.User)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(p => p.UserId == userId.Value);
         if (profile?.User == null) return false;
         profile.User.AvatarUrl = avatarUrl;
-        await _db.SaveChangesAsync();
-        return true;
-    }
-
-    public async Task<List<UserDto>> GetAllUsersAsync()
-    {
-        var profiles = await _db.UserProfiles
-            .Include(p => p.User)
-            .OrderBy(p => p.User!.Username)
-            .ToListAsync();
-        return profiles
-            .Where(p => p.User != null)
-            .Select(p => MapToDto(p.User!, p))
-            .ToList();
-    }
-
-    public async Task<bool> SetAdminAsync(int userId, bool isAdmin)
-    {
-        var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
-        if (profile is null) return false;
-
-        var set = (profile.Roles ?? "User")
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        set.Add("User");
-        if (isAdmin) set.Add("Admin"); else set.Remove("Admin");
-        profile.Roles = string.Join(",", set);
-
-        await _db.SaveChangesAsync();
-        return true;
-    }
-
-    public async Task<bool> SetAutoApproveAsync(int userId, bool autoApprove)
-    {
-        var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
-        if (profile is null) return false;
-        profile.AutoApprove = autoApprove;
         await _db.SaveChangesAsync();
         return true;
     }

@@ -100,16 +100,27 @@ public sealed class MediaIssueReplacementTests
     }
 
     [Fact]
-    public async Task Regular_user_replacement_request_stays_open_for_admin_approval()
+    public async Task Revoked_admin_claim_cannot_auto_approve_a_replacement()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
         var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
         await using var db = new AppDbContext(options);
         await db.Database.EnsureCreatedAsync();
+        var user = new UserEntity { Username = "former-admin" };
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+        db.UserProfiles.Add(new UserProfileEntity
+        {
+            UserId = user.Id, PlexUsername = user.Username, Roles = "User",
+            Permissions = (int)UserPermission.AllRequests
+        });
+        await db.SaveChangesAsync();
+        var auth = new TestAuthProvider(user.Id, admin: true); // deliberately stale cookie/circuit claim
+        var access = new UserAccessService(db, auth, new ConfigurationBuilder().Build());
         var queue = new CapturingQueue { ReplacementJobId = 42 };
-        var service = new MediaIssueService(db, new TestAuthProvider(7, admin: false), queue,
-            new FixedQualityProfiles(), new ReleaseBlocklistService(db, NullLogger<ReleaseBlocklistService>.Instance));
+        var service = new MediaIssueService(db, auth, queue,
+            new FixedQualityProfiles(), new ReleaseBlocklistService(db, NullLogger<ReleaseBlocklistService>.Instance), access);
 
         var result = await service.ReportIssueAsync(new MediaIssueReportDto
         {

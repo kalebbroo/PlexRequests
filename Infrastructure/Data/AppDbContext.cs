@@ -11,6 +11,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<WatchlistItemEntity> Watchlist => Set<WatchlistItemEntity>();
     public DbSet<UserEntity> Users => Set<UserEntity>();
     public DbSet<UserProfileEntity> UserProfiles => Set<UserProfileEntity>();
+    public DbSet<UserGroupEntity> UserGroups => Set<UserGroupEntity>();
     public DbSet<PlexMappingEntity> PlexMappings => Set<PlexMappingEntity>();
     public DbSet<PlexSeasonAvailabilityEntity> PlexSeasonAvailability => Set<PlexSeasonAvailabilityEntity>();
     public DbSet<MediaMetadataCacheEntity> MediaMetadataCache => Set<MediaMetadataCacheEntity>();
@@ -119,6 +120,16 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithOne()
                 .HasForeignKey<UserProfileEntity>(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+            b.HasOne(x => x.UserGroup)
+                .WithMany(x => x.Members)
+                .HasForeignKey(x => x.UserGroupId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<UserGroupEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.Name).IsUnique();
         });
 
         modelBuilder.Entity<PlexMappingEntity>(b =>

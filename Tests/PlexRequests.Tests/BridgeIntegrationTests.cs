@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -92,14 +94,17 @@ public sealed class BridgeIntegrationTests
         await db.SaveChangesAsync();
 
         using var cache = new MemoryCache(new MemoryCacheOptions());
-        var links = new DiscordLinkService(db, cache, NullLogger<DiscordLinkService>.Instance);
+        var auth = new MutableAuth(firstUser.Id, firstUser.Username);
+        var access = new UserAccessService(db, auth, new ConfigurationBuilder().Build());
+        var links = new DiscordLinkService(db, cache, NullLogger<DiscordLinkService>.Instance, access);
         const string discordId = "123456789012345678";
 
-        var firstCode = links.GenerateLinkCode(firstUser.Id);
+        var firstCode = Assert.IsType<string>(await links.GenerateLinkCodeAsync());
         Assert.True((await links.CompleteLinkAsync(firstCode, discordId, "listener")).Success);
         Assert.False((await links.CompleteLinkAsync(firstCode, discordId, "listener")).Success);
 
-        var secondCode = links.GenerateLinkCode(secondUser.Id);
+        auth.Set(secondUser.Id, secondUser.Username);
+        var secondCode = Assert.IsType<string>(await links.GenerateLinkCodeAsync());
         Assert.True((await links.CompleteLinkAsync(secondCode, discordId, "listener")).Success);
         var owners = await db.UserProfiles.Where(x => x.DiscordUserId == discordId).ToListAsync();
         Assert.Equal(secondUser.Id, Assert.Single(owners).UserId);
@@ -115,6 +120,16 @@ public sealed class BridgeIntegrationTests
     [InlineData("123456789012345678901", false)]
     public void Discord_snowflake_validation_is_strict(string value, bool expected) =>
         Assert.Equal(expected, DiscordLinkService.IsValidDiscordUserId(value));
+
+    private sealed class MutableAuth(int userId, string username) : AuthenticationStateProvider
+    {
+        private int _userId = userId;
+        private string _username = username;
+        public void Set(int id, string name) { _userId = id; _username = name; }
+        public override Task<AuthenticationState> GetAuthenticationStateAsync() => Task.FromResult(
+            new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity([
+                new Claim(ClaimTypes.Name, _username), new Claim("user_id", _userId.ToString())], "test"))));
+    }
 
     private static BridgeOutboxService CreateOutbox(AppDbContext db, IMediaMetadataProvider metadata)
     {

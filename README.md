@@ -7,8 +7,8 @@ requests are fetched, sorted into your library, and marked **Available** automat
 
 Built with Blazor Server (.NET 10), MudBlazor, EF Core + SQLite. Ships as Docker containers.
 
-- **Request portal** — Plex sign-in, TMDB-powered browse/search, watchlist, per-user request limits.
-- **Admin dashboard** — approve/deny, manage users, see request status (Pending → Approved →
+- **Request portal** — Plex sign-in, metadata-powered browse/search, watchlist, and rolling per-media request quotas.
+- **Admin dashboard** — approve/deny, manage reusable permission groups and user access, see request status (Pending → Approved →
   Downloading → Available / Failed).
 - **Notifications** — in-app, and optionally to Discord via the companion bridge extension.
 - **Optional automation** — an out-of-process downloader that searches indexers, ranks releases,
@@ -135,6 +135,11 @@ TZ=America/New_York
 2. Because your Plex username is in `ADMIN_USERNAMES`, you land with the **Admin** role — you'll see the
    admin dashboard and the requests queue.
 3. Have a friend sign in the same way; they get a normal user account and can start requesting.
+
+Use **Admin → Access → Users and permissions** to assign reusable groups or keep an account on custom
+access. Permissions cover movies, TV/anime, music, automatic approval, administrator access, and allowed
+quality profiles. Movie, TV, and music quotas use independent rolling windows; rejected and cancelled
+requests do not consume quota, and completed requests age out when the window expires.
 4. Approve a request from the dashboard. Without a downloader configured, "approve" just marks it
    Approved for you to fulfill manually. With one (see §6), it's queued for automatic download.
 

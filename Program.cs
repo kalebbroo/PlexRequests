@@ -331,6 +331,9 @@ builder.Services.AddScoped<CustomAuthStateProvider>();
 // (Removed duplicate registrations of IPlexApiService/IMediaRequestService)
 builder.Services.AddScoped<IPlexAuthService, PlexAuthService>();
 builder.Services.AddScoped<IUserProfileService, UserProfileService>();
+builder.Services.AddScoped<IUserAccessService, UserAccessService>();
+builder.Services.AddScoped<IUserAdministrationService, UserAdministrationService>();
+builder.Services.AddScoped<UserGroupSeeder>();
 builder.Services.AddScoped<IToastService, ToastService>();
 builder.Services.AddScoped<IThemeService, ThemeService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
@@ -468,6 +471,7 @@ using (var scope = app.Services.CreateScope())
     // app from starting, and the next boot retries.
     try
     {
+        await scope.ServiceProvider.GetRequiredService<UserGroupSeeder>().SeedAsync();
         await scope.ServiceProvider.GetRequiredService<PlexRequestsHosted.Services.Implementations.QualityProfileSeeder>()
             .SeedAsync();
         // Stock custom formats, so the panel is populated and the feature is usable on first boot rather
@@ -483,7 +487,7 @@ using (var scope = app.Services.CreateScope())
     {
         app.Services.GetRequiredService<ILoggerFactory>()
             .CreateLogger("QualityProfileSeeder")
-            .LogError(ex, "Quality profile seeding failed; it will be retried on the next start");
+            .LogError(ex, "Startup data seeding failed; it will be retried on the next start");
     }
 }
 

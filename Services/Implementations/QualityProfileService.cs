@@ -82,7 +82,11 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
 
         // A per-user allow-list narrows this further, so a member can be capped below what admins may pick.
         var allowedCsv = userId is int uid
-            ? await db.UserProfiles.Where(u => u.UserId == uid).Select(u => u.AllowedQualityProfileIdsCsv).FirstOrDefaultAsync()
+            ? await db.UserProfiles.Where(u => u.UserId == uid)
+                .Select(u => u.UserGroupId != null
+                    ? u.UserGroup!.AllowedQualityProfileIdsCsv
+                    : u.AllowedQualityProfileIdsCsv)
+                .FirstOrDefaultAsync()
             : null;
         if (string.IsNullOrWhiteSpace(allowedCsv)) return profiles;
 

@@ -1,0 +1,34 @@
+.access-toolbar, .group-heading, .group-title-row, .group-actions { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+.access-toolbar { margin-bottom:1rem; }
+.access-toolbar > * { flex:1 1 240px; }
+.access-loading { display:grid; place-items:center; min-height:180px; }
+.user-list { display:grid; gap:.75rem; }
+.user-card { display:grid; grid-template-columns:minmax(210px,1.25fr) minmax(170px,1fr) minmax(280px,1.5fr) auto; align-items:center; gap:1rem; padding:1rem; border:1px solid rgba(255,255,255,.08); border-radius:var(--radius-md); background:rgba(255,255,255,.018); }
+.user-identity { display:flex; align-items:center; min-width:0; gap:.75rem; }
+.user-copy { min-width:0; }
+.user-name { overflow:hidden; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
+.user-meta { overflow:hidden; color:var(--text-secondary); font-size:.75rem; text-overflow:ellipsis; white-space:nowrap; }
+.access-chips { display:flex; flex-wrap:wrap; gap:.35rem; }
+.quota-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.45rem; }
+.quota-item { min-width:0; padding:.5rem .6rem; border-radius:8px; background:rgba(255,255,255,.035); }
+.quota-item span,.quota-item strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.quota-item span { color:var(--text-secondary); font-size:.68rem; text-transform:uppercase; }
+.quota-item strong { margin-top:.1rem; font-size:.78rem; }
+.group-heading { margin-bottom:1rem; }
+.group-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.75rem; }
+.group-card { display:flex; min-height:220px; flex-direction:column; padding:1rem; }
+.group-description { min-height:2.75rem; margin:.75rem 0; }
+.group-actions { margin-top:auto; padding-top:1rem; }
+
+@media (max-width:1100px) { .user-card { grid-template-columns:minmax(200px,1fr) minmax(250px,1.2fr) auto; } .access-chips { grid-column:1; } }
+@media (max-width:700px) {
+  .access-toolbar,.group-heading { align-items:stretch; flex-direction:column; }
+  .access-toolbar > * { width:100%; flex-basis:auto; }
+  .group-heading ::deep .mud-button-root { width:100%; }
+  .group-grid { grid-template-columns:1fr; }
+  .user-card { grid-template-columns:1fr; }
+  .access-chips { grid-column:auto; }
+  .quota-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .user-card ::deep > .mud-button-root { width:100%; }
+}
+@media (max-width:420px) { .quota-grid { grid-template-columns:1fr; } }

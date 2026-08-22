@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using PlexRequestsHosted.Shared.Enums;
 
 namespace PlexRequestsHosted.Infrastructure.Entities;
 
@@ -11,6 +12,13 @@ public class UserProfileEntity
     [ForeignKey(nameof(User))]
     public int UserId { get; set; }
     public UserEntity? User { get; set; }
+
+    /// <summary>
+    /// When assigned, the group's permissions and quotas are authoritative. Null keeps this profile's custom
+    /// access settings, preserving every existing account during migration.
+    /// </summary>
+    public int? UserGroupId { get; set; }
+    public UserGroupEntity? UserGroup { get; set; }
 
     // Plex linkage
     [MaxLength(64)]
@@ -25,6 +33,9 @@ public class UserProfileEntity
     // When true, this user's requests skip the pending queue and are approved automatically.
     // Admins are always auto-approved regardless of this flag.
     public bool AutoApprove { get; set; }
+
+    // Custom-user request capabilities. Group members inherit the group's flags instead.
+    public int Permissions { get; set; } = (int)UserPermission.AllRequests;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastLoginAt { get; set; }
@@ -58,6 +69,9 @@ public class UserProfileEntity
     public int? MovieRequestLimit { get; set; } = 5;
     public int? TvRequestLimit { get; set; } = 3;
     public int? MusicRequestLimit { get; set; } = 10;
+    public int MovieRequestLimitDays { get; set; } = 7;
+    public int TvRequestLimitDays { get; set; } = 7;
+    public int MusicRequestLimitDays { get; set; } = 7;
 
     [MaxLength(16)]
     public string WhitelistStatus { get; set; } = "Unknown"; // Unknown | Approved | Denied

@@ -10,7 +10,8 @@ namespace PlexRequestsHosted.Services.Implementations;
 /// order (FKs also cascade DB-side, so order is belt-and-braces); backups use VACUUM INTO, which produces
 /// a consistent snapshot even while the app is live.
 /// </summary>
-public class DatabaseAdminService(AppDbContext db, IPlexApiService plex, ILogger<DatabaseAdminService> logger)
+public class DatabaseAdminService(AppDbContext db, IPlexApiService plex, ILogger<DatabaseAdminService> logger,
+    UserGroupSeeder userGroups)
     : IDatabaseAdminService
 {
     public async Task<DbOverviewDto> GetOverviewAsync()
@@ -28,6 +29,7 @@ public class DatabaseAdminService(AppDbContext db, IPlexApiService plex, ILogger
             new("Issues", await db.MediaIssues.CountAsync()),
             new("Users", await db.Users.CountAsync()),
             new("User profiles", await db.UserProfiles.CountAsync()),
+            new("User access groups", await db.UserGroups.CountAsync()),
             new("Notifications", await db.Notifications.CountAsync()),
             new("Plex mappings (availability)", await db.PlexMappings.CountAsync()),
             new("Plex season availability", await db.PlexSeasonAvailability.CountAsync()),
@@ -154,7 +156,9 @@ public class DatabaseAdminService(AppDbContext db, IPlexApiService plex, ILogger
         if (!keepUsers)
         {
             await db.UserProfiles.ExecuteDeleteAsync();
+            await db.UserGroups.ExecuteDeleteAsync();
             await db.Users.ExecuteDeleteAsync();
+            await userGroups.SeedAsync();
         }
 
         await CompactAsync();
