@@ -61,6 +61,11 @@
                                  OnClick="() => SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType.TvShow)">
                             TV Shows
                         </MudChip>
+                        <MudChip T="PlexRequestsHosted.Shared.Enums.MediaType?"
+                                 Variant="@(_filterType == PlexRequestsHosted.Shared.Enums.MediaType.Anime ? Variant.Filled : Variant.Outlined)"
+                                 OnClick="() => SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType.Anime)">
+                            Anime
+                        </MudChip>
                         @if (_musicCatalogEnabled)
                         {
                             <MudChip T="PlexRequestsHosted.Shared.Enums.MediaType?"
@@ -364,66 +369,50 @@
 
     private void SearchFor(String query)
     {
-        if (MusicOnlyMode)
-        {
-            Navigation.NavigateTo(BuildMusicSearchUri(_musicKind, query));
-            return;
-        }
-        _searchQuery = query;
-        _ = PerformSearch();
+        _debounceTimer?.Stop();
+        Navigation.NavigateTo(BuildSearchUri(_filterType, query));
     }
 
     private void BrowseGenre(String genre)
     {
         if (MusicOnlyMode)
         {
-            Navigation.NavigateTo(BuildMusicSearchUri(_musicKind, genre));
+            Navigation.NavigateTo(BuildSearchUri(PlexRequestsHosted.Shared.Enums.MediaType.Music, genre));
+            return;
+        }
+        if (_filterType == PlexRequestsHosted.Shared.Enums.MediaType.Anime)
+        {
+            Navigation.NavigateTo(BuildSearchUri(PlexRequestsHosted.Shared.Enums.MediaType.Anime, genre));
             return;
         }
         // The typed grid reads ?genre=; plain /browse (Home) ignores it.
-        Navigation.NavigateTo($"/browse/movie?genre={Uri.EscapeDataString(genre)}");
+        var type = _filterType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow ? "tvshow" : "movie";
+        Navigation.NavigateTo($"/browse/{type}?genre={Uri.EscapeDataString(genre)}");
     }
 
     private void ClearSearch()
     {
-        if (MusicOnlyMode)
-        {
-            _debounceTimer?.Stop();
-            Navigation.NavigateTo(BuildMusicSearchUri(_musicKind), replace: true);
-            return;
-        }
-        Interlocked.Increment(ref _searchVersion);
-        _searchQuery = "";
-        _searchResults = null;
-        _isSearching = false;
-        _showFilters = RouteMediaType.HasValue;
+        _debounceTimer?.Stop();
+        Navigation.NavigateTo(BuildSearchUri(_filterType), replace: true);
     }
 
     private void SetTypeFilter(PlexRequestsHosted.Shared.Enums.MediaType? type)
     {
         if (MusicOnlyMode) return;
-        _filterType = type;
-        _ = PerformSearch();
+        _debounceTimer?.Stop();
+        Navigation.NavigateTo(BuildSearchUri(type, _searchQuery));
     }
 
     private void SetMusicKind(MediaKind kind)
     {
-        if (MusicOnlyMode)
-        {
-            _debounceTimer?.Stop();
-            Navigation.NavigateTo(BuildMusicSearchUri(kind, _searchQuery));
-            return;
-        }
-        _filterType = PlexRequestsHosted.Shared.Enums.MediaType.Music;
         _musicKind = kind;
-        _ = PerformSearch();
+        _debounceTimer?.Stop();
+        Navigation.NavigateTo(BuildSearchUri(PlexRequestsHosted.Shared.Enums.MediaType.Music, _searchQuery));
     }
 
     private Task RunDebouncedSearchAsync()
     {
-        if (!MusicOnlyMode) return PerformSearch();
-
-        var target = BuildMusicSearchUri(_musicKind, _searchQuery);
+        var target = BuildSearchUri(_filterType, _searchQuery);
         var current = $"/{Navigation.ToBaseRelativePath(Navigation.Uri)}";
         if (string.Equals(current, target, StringComparison.Ordinal))
             return PerformSearch();
@@ -434,19 +423,10 @@
         return Task.CompletedTask;
     }
 
-    private string BuildMusicSearchUri(MediaKind kind, string? query = null)
-    {
-        var parameters = new List<string>
-        {
-            "type=music",
-            $"kind={kind.ToString().ToLowerInvariant()}"
-        };
-        if (!string.IsNullOrWhiteSpace(QuerySource))
-            parameters.Add($"source={Uri.EscapeDataString(QuerySource.Trim())}");
-        if (!string.IsNullOrWhiteSpace(query))
-            parameters.Add($"q={Uri.EscapeDataString(query.Trim())}");
-        return $"/search?{string.Join('&', parameters)}";
-    }
+    private string BuildSearchUri(PlexRequestsHosted.Shared.Enums.MediaType? mediaType, string? query = null)
+        => SearchNavigationContext.BuildUrl(query, mediaType,
+            mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music ? _musicKind : null,
+            mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music ? QuerySource : null);
 
     private async Task RequestMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
     {
