@@ -1,6 +1,7 @@
 @page "/music/playlist"
 @inject IMusicDiscoveryService Discovery
 @inject IMediaRequestService MediaRequestService
+@inject PlexRequestsHosted.Services.Implementations.IPlexMusicService PlexMusic
 @inject IToastService ToastService
 @inject NavigationManager Navigation
 @using PlexRequestsHosted.Shared.Navigation
@@ -37,7 +38,7 @@
             <div class="track-grid">
                 @foreach (var track in _playlist.Tracks)
                 {
-                    <MediaCard Media="track" OnRequest="Request" ReturnUrl="@CurrentPlaylistUrl" ReturnLabel="@_playlist.Title" />
+                    <MediaCard Media="track" OnRequest="Request" OnPlay="Play" ReturnUrl="@CurrentPlaylistUrl" ReturnLabel="@_playlist.Title" />
                 }
             </div>
         </section>
@@ -67,6 +68,7 @@
             _playlist = string.IsNullOrWhiteSpace(Id) ? null : await Discovery.GetPlaylistAsync(Id);
             if (_playlist?.Tracks.Count > 0)
             {
+                await PlexMusic.AnnotatePresenceAsync(_playlist.Tracks);
                 var statuses = await MediaRequestService.GetMyRequestStatusesAsync(
                     _playlist.Tracks.Select(x => x.ResolveMediaRef()));
                 foreach (var track in _playlist.Tracks)
@@ -88,4 +90,10 @@
         }
         else await ToastService.ShowErrorAsync(result.ErrorMessage ?? "Failed to request");
     }
+
+    private void Play(MediaCardDto media)
+    {
+        if (!string.IsNullOrWhiteSpace(media.PlexUrl)) Navigation.NavigateTo(media.PlexUrl, true);
+    }
+
 }

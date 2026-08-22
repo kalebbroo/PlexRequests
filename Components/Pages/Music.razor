@@ -2,6 +2,7 @@
 @inject IMusicDiscoveryService Discovery
 @inject IMusicSettingsService MusicSettings
 @inject IMediaRequestService MediaRequestService
+@inject PlexRequestsHosted.Services.Implementations.IPlexMusicService PlexMusic
 @inject IToastService ToastService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
@@ -126,6 +127,7 @@
             if (_hub is not null)
             {
                 var cards = _hub.TrendingTracks.Concat(_hub.NewReleases).Concat(_hub.PopularArtists).ToList();
+                await PlexMusic.AnnotatePresenceAsync(cards);
                 var statuses = await MediaRequestService.GetMyRequestStatusesAsync(
                     cards.Select(x => x.ResolveMediaRef()));
                 foreach (var card in cards)

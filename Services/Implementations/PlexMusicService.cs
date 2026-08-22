@@ -1,13 +1,18 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using PlexRequestsHosted.Shared.DTOs;
+using PlexRequestsHosted.Shared.Enums;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
 public interface IPlexMusicService
 {
     Task<MusicSearchResultDto> SearchAsync(string query, int limit = 30);
+    /// <summary>Annotate discovery cards when the matching artist, album, or track exists in Plex.
+    /// This is a presence check for browse/play UI, not the stricter fulfillment-completion check.</summary>
+    Task AnnotatePresenceAsync(IReadOnlyCollection<MediaCardDto> items, CancellationToken ct = default);
     Task<List<MusicAlbumDto>> GetArtistAlbumsAsync(string artistRatingKey);
     /// <summary>Is an album (by artist + title) already on Plex? Used for request dedup / availability.</summary>
     Task<bool> IsAlbumOnPlexAsync(string artist, string album);
@@ -22,23 +27,35 @@ public interface IPlexMusicService
 /// This is the foundation for music requests (request an album/artist); availability is matched by
 /// name since music has no TMDB id.
 /// </summary>
-public class PlexMusicService(HttpClient http, IOptions<PlexConfiguration> options, ILogger<PlexMusicService> logger) : IPlexMusicService
+public class PlexMusicService(
+    HttpClient http,
+    IOptions<PlexConfiguration> options,
+    ILogger<PlexMusicService> logger,
+    IMemoryCache? cache = null) : IPlexMusicService
 {
     private const int TrackDurationToleranceMs = 8_000;
+    private const int PresenceConcurrency = 6;
+    private static readonly TimeSpan PresenceBudget = TimeSpan.FromSeconds(5);
     private readonly PlexConfiguration _cfg = options.Value;
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+    private readonly SemaphoreSlim _machineIdLock = new(1, 1);
+    private string? _machineId;
 
     private bool Configured => !string.IsNullOrWhiteSpace(_cfg.PrimaryServerUrl) && !string.IsNullOrWhiteSpace(_cfg.ServerToken);
     private string Base => (_cfg.PrimaryServerUrl ?? string.Empty).TrimEnd('/');
     private string Tok => Uri.EscapeDataString(_cfg.ServerToken ?? string.Empty);
 
-    public async Task<MusicSearchResultDto> SearchAsync(string query, int limit = 30)
+    public Task<MusicSearchResultDto> SearchAsync(string query, int limit = 30)
+        => SearchAsync(query, limit, CancellationToken.None);
+
+    private async Task<MusicSearchResultDto> SearchAsync(string query, int limit, CancellationToken ct)
     {
         var result = new MusicSearchResultDto();
         if (!Configured || string.IsNullOrWhiteSpace(query)) return result;
         try
         {
-            var doc = await GetJsonAsync($"{Base}/hubs/search?query={Uri.EscapeDataString(query)}&limit={limit}&X-Plex-Token={Tok}");
+            using var doc = await GetJsonAsync(
+                $"{Base}/hubs/search?query={Uri.EscapeDataString(query)}&limit={limit}&X-Plex-Token={Tok}", ct);
             if (doc is null) return result;
             var mc = doc.RootElement.TryGetProperty("MediaContainer", out var m) ? m : doc.RootElement;
             if (!mc.TryGetProperty("Hub", out var hubs) || hubs.ValueKind != JsonValueKind.Array) return result;
@@ -64,9 +81,155 @@ public class PlexMusicService(HttpClient http, IOptions<PlexConfiguration> optio
                 }
             }
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) { logger.LogWarning(ex, "Plex music search failed for {Query}", query); }
         return result;
     }
+
+    public async Task AnnotatePresenceAsync(IReadOnlyCollection<MediaCardDto> items,
+        CancellationToken ct = default)
+    {
+        if (!Configured || items.Count == 0) return;
+        var groups = items.Where(x => x.MediaType == MediaType.Music && !x.IsAvailable)
+            .GroupBy(PresenceIdentity, StringComparer.Ordinal)
+            .Where(x => x.Key.Length > 0)
+            .ToList();
+        if (groups.Count == 0) return;
+
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(PresenceBudget);
+        try
+        {
+            await Parallel.ForEachAsync(groups,
+                new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = PresenceConcurrency,
+                    CancellationToken = budget.Token
+                },
+                async (group, cancellationToken) =>
+                {
+                    var representative = group.First();
+                    var presence = await FindPresenceCachedAsync(representative, cancellationToken);
+                    if (presence is null) return;
+                    var plexUrl = await BuildPlexWebUrlAsync(presence.RatingKey, cancellationToken);
+                    foreach (var item in group)
+                    {
+                        item.IsAvailable = true;
+                        item.PlexUrl = plexUrl;
+                    }
+                });
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            logger.LogDebug("Plex music presence annotation reached its {BudgetSeconds}-second UI budget",
+                PresenceBudget.TotalSeconds);
+        }
+    }
+
+    private async Task<MusicPresence?> FindPresenceCachedAsync(MediaCardDto item, CancellationToken ct)
+    {
+        var identity = PresenceIdentity(item);
+        var cacheKey = $"plex:music-presence:{Base}:{identity}";
+        if (cache?.TryGetValue<MusicPresence>(cacheKey, out var found) == true) return found;
+        if (cache?.TryGetValue<bool>(cacheKey + ":missing", out var missing) == true && missing) return null;
+
+        var presence = await FindPresenceAsync(item, ct);
+        if (cache is not null)
+        {
+            if (presence is null) cache.Set(cacheKey + ":missing", true, TimeSpan.FromMinutes(2));
+            else cache.Set(cacheKey, presence, TimeSpan.FromMinutes(10));
+        }
+        return presence;
+    }
+
+    private async Task<MusicPresence?> FindPresenceAsync(MediaCardDto item, CancellationToken ct)
+    {
+        var mediaRef = item.ResolveMediaRef();
+        if (mediaRef.Provider.Equals("plex", StringComparison.OrdinalIgnoreCase))
+            return new MusicPresence(mediaRef.Id);
+
+        var query = item.Title.Trim();
+        if (query.Length == 0) return null;
+        try
+        {
+            var results = await SearchAsync(query, 50, ct);
+            var wantedArtist = ArtistFromCard(item);
+            var ratingKey = mediaRef.Kind switch
+            {
+                MediaKind.Artist => results.Artists
+                    .FirstOrDefault(x => Same(x.Name, item.Title))?.RatingKey,
+                MediaKind.Track => results.Tracks
+                    .FirstOrDefault(x => Same(x.Title, item.Title)
+                                         && (string.IsNullOrWhiteSpace(wantedArtist)
+                                             || Same(x.Artist, wantedArtist)))?.RatingKey,
+                _ => results.Albums
+                    .FirstOrDefault(x => Same(x.Title, item.Title)
+                                         && (string.IsNullOrWhiteSpace(wantedArtist)
+                                             || Same(x.Artist, wantedArtist)))?.RatingKey
+            };
+            return string.IsNullOrWhiteSpace(ratingKey) ? null : new MusicPresence(ratingKey);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Plex music presence check failed for {Kind} {Title}", mediaRef.Kind, item.Title);
+        }
+        return null;
+    }
+
+    private static string? ArtistFromCard(MediaCardDto item)
+    {
+        if (item is MediaDetailDto detail && !string.IsNullOrWhiteSpace(detail.Music?.ArtistCredit))
+            return detail.Music.ArtistCredit;
+        return item.Subtitle?.Split(['·', '•'], 2, StringSplitOptions.TrimEntries)[0];
+    }
+
+    private static string PresenceIdentity(MediaCardDto item)
+    {
+        if (item.MediaType != MediaType.Music) return string.Empty;
+        var mediaRef = item.ResolveMediaRef();
+        if (!mediaRef.IsValid) return string.Empty;
+        var artist = mediaRef.Kind == MediaKind.Artist ? string.Empty : Normalize(ArtistFromCard(item));
+        return $"{mediaRef.Kind}:{Normalize(item.Title)}:{artist}";
+    }
+
+    private async Task<string> BuildPlexWebUrlAsync(string ratingKey, CancellationToken ct)
+    {
+        var machineId = await GetMachineIdAsync(ct);
+        var encodedKey = Uri.EscapeDataString($"/library/metadata/{ratingKey}");
+        return !string.IsNullOrWhiteSpace(machineId)
+            ? $"https://app.plex.tv/desktop#!/server/{machineId}/details?key={encodedKey}"
+            : $"{Base}/web/index.html#!/details?key={encodedKey}";
+    }
+
+    private async Task<string?> GetMachineIdAsync(CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(_machineId)) return _machineId;
+        var cacheKey = $"plex:machine-id:{Base}";
+        if (cache?.TryGetValue<string>(cacheKey, out var cached) == true
+            && !string.IsNullOrWhiteSpace(cached)) return _machineId = cached;
+
+        await _machineIdLock.WaitAsync(ct);
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(_machineId)) return _machineId;
+            using var doc = await GetJsonAsync($"{Base}/identity?X-Plex-Token={Tok}", ct);
+            if (doc is null) return null;
+            var container = doc.RootElement.TryGetProperty("MediaContainer", out var mediaContainer)
+                ? mediaContainer : doc.RootElement;
+            _machineId = Str(container, "machineIdentifier");
+            if (!string.IsNullOrWhiteSpace(_machineId))
+                cache?.Set(cacheKey, _machineId, TimeSpan.FromHours(12));
+            return _machineId;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Plex machine identifier lookup failed; using the local Plex web URL");
+            return null;
+        }
+        finally { _machineIdLock.Release(); }
+    }
+
+    private sealed record MusicPresence(string RatingKey);
 
     public async Task<List<MusicAlbumDto>> GetArtistAlbumsAsync(string artistRatingKey)
     {
