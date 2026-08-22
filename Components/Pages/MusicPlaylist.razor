@@ -4,7 +4,9 @@
 @inject PlexRequestsHosted.Services.Implementations.IPlexMusicService PlexMusic
 @inject IToastService ToastService
 @inject NavigationManager Navigation
+@inject ILogger<MusicPlaylist> Logger
 @using PlexRequestsHosted.Shared.Navigation
+@implements IDisposable
 
 <PageTitle>@(_playlist?.Title ?? "Music playlist") - Plex Requests</PageTitle>
 
@@ -16,7 +18,12 @@
     }
     else if (_playlist is null)
     {
-        <div class="playlist-empty"><MudIcon Icon="@Icons.Material.Filled.PlaylistRemove" /><h1>Playlist unavailable</h1><p>It may have been removed or changed by the catalog provider.</p></div>
+        <div class="playlist-empty">
+            <MudIcon Icon="@Icons.Material.Filled.PlaylistRemove" />
+            <h1>Playlist unavailable</h1>
+            <p>It may be temporarily unavailable, removed, or changed by the catalog provider.</p>
+            <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="ReloadAsync">Check again</MudButton>
+        </div>
     }
     else
     {
@@ -53,6 +60,8 @@
     private bool _loading = true;
     private bool _hasLoaded;
     private string? _loadedId;
+    private int _loadVersion;
+    private CancellationTokenSource? _loadCts;
     private string BackUrl => MusicNavigationContext.ValidateReturnUrl(ReturnUrl);
     private string BackLabel => MusicNavigationContext.ResolveReturnLabel(ReturnUrl, ReturnLabel);
     private string CurrentPlaylistUrl => $"/{Navigation.ToBaseRelativePath(Navigation.Uri)}";
@@ -62,22 +71,51 @@
         if (_hasLoaded && Id == _loadedId) return;
         _hasLoaded = true;
         _loadedId = Id;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        var version = Interlocked.Increment(ref _loadVersion);
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _loadCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
         _loading = true;
+        await InvokeAsync(StateHasChanged);
         try
         {
-            _playlist = string.IsNullOrWhiteSpace(Id) ? null : await Discovery.GetPlaylistAsync(Id);
-            if (_playlist?.Tracks.Count > 0)
+            var playlist = string.IsNullOrWhiteSpace(Id)
+                ? null
+                : await Discovery.GetPlaylistAsync(Id, cts.Token);
+            if (playlist?.Tracks.Count > 0)
             {
-                await PlexMusic.AnnotatePresenceAsync(_playlist.Tracks);
+                await PlexMusic.AnnotatePresenceAsync(playlist.Tracks, cts.Token);
+                if (version != _loadVersion) return;
                 var statuses = await MediaRequestService.GetMyRequestStatusesAsync(
-                    _playlist.Tracks.Select(x => x.ResolveMediaRef()));
-                foreach (var track in _playlist.Tracks)
+                    playlist.Tracks.Select(x => x.ResolveMediaRef()));
+                if (version != _loadVersion) return;
+                foreach (var track in playlist.Tracks)
                     if (statuses.TryGetValue(track.ResolveMediaRef().StableKey, out var status))
                         track.RequestStatus = status;
             }
+            if (version == _loadVersion) _playlist = playlist;
         }
-        catch { _playlist = null; }
-        finally { _loading = false; }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (version != _loadVersion) return;
+            _playlist = null;
+            Logger.LogWarning(ex, "Music playlist {PlaylistId} could not be loaded", Id);
+        }
+        finally
+        {
+            if (version == _loadVersion)
+            {
+                _loading = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
     }
 
     private async Task Request(MediaCardDto media)
@@ -96,4 +134,10 @@
         if (!string.IsNullOrWhiteSpace(media.PlexUrl)) Navigation.NavigateTo(media.PlexUrl, true);
     }
 
+    public void Dispose()
+    {
+        Interlocked.Increment(ref _loadVersion);
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+    }
 }

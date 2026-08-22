@@ -1,6 +1,8 @@
 @page "/music/category"
 @inject IMusicDiscoveryService Discovery
 @inject NavigationManager Navigation
+@inject ILogger<MusicCategory> Logger
+@implements IDisposable
 
 <PageTitle>@(Name ?? "Music category") - Plex Requests</PageTitle>
 
@@ -18,7 +20,12 @@
     }
     else if (_playlists.Count == 0)
     {
-        <div class="subpage-empty"><MudIcon Icon="@Icons.Material.Filled.QueueMusic" /><h2>No playlists available</h2><p>This category may be temporarily unavailable or changed upstream.</p></div>
+        <div class="subpage-empty">
+            <MudIcon Icon="@Icons.Material.Filled.QueueMusic" />
+            <h2>No playlists available</h2>
+            <p>This category may be empty, temporarily unavailable, or may have changed upstream.</p>
+            <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="ReloadAsync">Check again</MudButton>
+        </div>
     }
     else
     {
@@ -46,6 +53,8 @@
     private bool _hasLoaded;
     private string? _loadedToken;
     private int _visibleCount = 48;
+    private int _loadVersion;
+    private CancellationTokenSource? _loadCts;
     private string CurrentCategoryUrl => $"/{Navigation.ToBaseRelativePath(Navigation.Uri)}";
     private string CategoryLabel => string.IsNullOrWhiteSpace(Name) ? "Music category" : Name;
 
@@ -54,12 +63,49 @@
         if (_hasLoaded && Token == _loadedToken) return;
         _hasLoaded = true;
         _loadedToken = Token;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        var version = Interlocked.Increment(ref _loadVersion);
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _loadCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
         _loading = true;
         _visibleCount = 48;
-        try { _playlists = string.IsNullOrWhiteSpace(Token) ? new() : await Discovery.GetCategoryAsync(Token); }
-        catch { _playlists = new(); }
-        finally { _loading = false; }
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var playlists = string.IsNullOrWhiteSpace(Token)
+                ? new()
+                : await Discovery.GetCategoryAsync(Token, cts.Token);
+            if (version == _loadVersion) _playlists = playlists;
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (version != _loadVersion) return;
+            _playlists = new();
+            Logger.LogWarning(ex, "Music category {Token} could not be loaded", Token);
+        }
+        finally
+        {
+            if (version == _loadVersion)
+            {
+                _loading = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
     }
 
     private void ShowMore() => _visibleCount = Math.Min(_visibleCount + 48, _playlists.Count);
+
+    public void Dispose()
+    {
+        Interlocked.Increment(ref _loadVersion);
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+    }
 }
