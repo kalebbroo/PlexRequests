@@ -514,13 +514,22 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
     }
 
     public async Task<bool> EnqueueUpgradeAsync(MediaRequestDto request, Quality target, IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes)
+        => await EnqueueFileReplacementAsync(request, target, replacePaths, episodes, mediaIssueId: null) is not null;
+
+    public Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor,
+        IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId) =>
+        EnqueueFileReplacementAsync(request, floor, replacePaths, episodes, mediaIssueId);
+
+    private async Task<int?> EnqueueFileReplacementAsync(MediaRequestDto request, Quality target,
+        IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int? mediaIssueId)
     {
-        // Never run two upgrades for the same request at once.
-        var activeUpgrade = await _db.FulfillmentJobs.AnyAsync(j =>
-            j.MediaRequestId == request.Id && j.IsUpgrade &&
+        // The database also enforces this invariant. Checking here gives callers an idempotent result instead
+        // of turning a concurrent/live job into an exception.
+        var activeJob = await _db.FulfillmentJobs.AnyAsync(j =>
+            j.MediaRequestId == request.Id &&
             (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
              j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred));
-        if (activeUpgrade) return false;
+        if (activeJob) return null;
 
         // Copy identity fields (IMDb id / year / genres / anime flag) from the most recent real job so the
         // ranker can search without another metadata lookup; fall back to the request where needed.
@@ -532,7 +541,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             ? string.Join(",", episodes.Select(e => $"S{e.season}E{e.episode}"))
             : null;
 
-        _db.FulfillmentJobs.Add(new FulfillmentJobEntity
+        var job = new FulfillmentJobEntity
         {
             MediaRequestId = request.Id,
             MediaIdentityId = origin?.MediaIdentityId,
@@ -550,15 +559,31 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             ExternalSource = request.ExternalSource,
             RequestedEpisodesCsv = episodesCsv,
             Quality = target,
+            QualityProfileId = request.QualityProfileId,
             GenresCsv = origin?.GenresCsv,
             IsAnime = origin?.IsAnime ?? false,
             IsUpgrade = true,
+            IsReplacement = mediaIssueId.HasValue,
+            MediaIssueId = mediaIssueId,
             ReplacePathsJson = replacePaths.Count > 0 ? JsonSerializer.Serialize(replacePaths) : null,
             Status = FulfillmentStatus.Queued,
             CreatedAt = DateTime.UtcNow
-        });
-        await _db.SaveChangesAsync();
-        return true;
+        };
+        _db.FulfillmentJobs.Add(job);
+        try
+        {
+            await _db.SaveChangesAsync();
+            return job.Id;
+        }
+        catch (DbUpdateException)
+        {
+            _db.Entry(job).State = EntityState.Detached;
+            if (await _db.FulfillmentJobs.AnyAsync(j => j.MediaRequestId == request.Id &&
+                    (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
+                     j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred)))
+                return null;
+            throw;
+        }
     }
 
     public async Task<Quality> RecomputeAchievedQualityAsync(int mediaRequestId)
@@ -846,6 +871,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         Attempts = j.Attempts,
         Progress = j.Progress,
         IsUpgrade = j.IsUpgrade,
+        IsReplacement = j.IsReplacement,
+        MediaIssueId = j.MediaIssueId,
         ReplacePaths = string.IsNullOrWhiteSpace(j.ReplacePathsJson)
             ? new List<string>()
             : (JsonSerializer.Deserialize<List<string>>(j.ReplacePathsJson) ?? new List<string>())

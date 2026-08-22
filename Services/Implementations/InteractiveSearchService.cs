@@ -204,6 +204,8 @@ public class InteractiveSearchService(
                         && (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed
                             || j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred))
             .ToListAsync();
+        if (existing.Any(j => j.IsReplacement))
+            return (false, "This request has a protected issue replacement in progress. Wait for that replacement to finish before forcing another release.");
         foreach (var j in existing)
         {
             j.Status = FulfillmentStatus.Cancelled;

@@ -49,7 +49,7 @@ public class FulfillmentReaperService(
         {
             var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == job.MediaRequestId, ct);
 
-            if (job.Attempts >= maxAttempts && job.IsUpgrade)
+            if (job.Attempts >= maxAttempts && job.IsUpgrade && !job.IsReplacement)
             {
                 // The content is already available; a stuck upgrade attempt just ends quietly (same
                 // semantics as upgrade-exhausted), leaving the request untouched for a later scan.

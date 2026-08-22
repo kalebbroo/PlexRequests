@@ -1006,7 +1006,12 @@ app.MapPost("/api/fulfillment/{jobId:int}/imported-files", async (int jobId, Lis
                 SeasonNumber = f.SeasonNumber,
                 EpisodeNumber = f.EpisodeNumber,
                 SizeBytes = f.SizeBytes,
-                ResolutionHeight = f.ResolutionHeight
+                ResolutionHeight = f.ResolutionHeight,
+                ReleaseName = string.IsNullOrWhiteSpace(f.ReleaseName) ? null
+                    : f.ReleaseName.Length > 512 ? f.ReleaseName[..512] : f.ReleaseName,
+                InfoHash = f.Protocol == AcquisitionProtocol.Torrent
+                    ? PlexRequestsHosted.Shared.Releases.MagnetUtil.Normalize(f.SourceId)
+                    : null
             });
             added++;
         }
@@ -1212,7 +1217,27 @@ app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpConte
     if (req is not null)
     {
         try { await plex.RebuildAvailabilityIndexAsync(); } catch { /* best-effort */ }
-        await notify.RequestUpgradedAsync(ToRequestDto(req), newQuality);
+        if (job.IsReplacement)
+        {
+            if (job.MediaIssueId is int issueId)
+            {
+                var issue = await db.MediaIssues.FirstOrDefaultAsync(i => i.Id == issueId);
+                if (issue is not null)
+                {
+                    issue.Status = IssueStatus.Resolved;
+                    issue.ResolvedAt = DateTime.UtcNow;
+                    issue.ResolvedBy = "Automatic replacement";
+                    await db.SaveChangesAsync();
+                }
+            }
+            var target = job.RequestedEpisodesCsv?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault() ?? "title";
+            await notify.RequestReplacedAsync(ToRequestDto(req), target);
+        }
+        else
+        {
+            await notify.RequestUpgradedAsync(ToRequestDto(req), newQuality);
+        }
     }
     return Results.Ok(new { jobId, achievedQuality = newQuality.ToString() });
 });

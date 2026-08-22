@@ -82,7 +82,7 @@ public class FulfillmentPipeline(
                 var detail = candidates.Count == 0
                     ? $"No indexer returned a release ({search.Summary})"
                     : $"{candidates.Count} candidate(s) all rejected by quality/seeder/title filters ({search.Summary})";
-                if (job.IsUpgrade) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
+                if (job.IsUpgrade && !job.IsReplacement) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
                 // Flag whether the search had anything to reject. Only that case counts toward relaxing the
                 // quality target — a title that simply isn't out yet gains nothing from lowering the bar.
                 else await api.MarkDeferredAsync(job.Id, detail, candidates.Count > 0, ct);
@@ -130,7 +130,7 @@ public class FulfillmentPipeline(
             {
                 // Adding to the download client failed for everything (usually a transient Deluge/VPN blip).
                 // Defer with a backoff rather than failing so it's retried automatically.
-                if (job.IsUpgrade) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
+                if (job.IsUpgrade && !job.IsReplacement) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
                 else await api.MarkDeferredAsync(job.Id, "Could not enqueue release(s) with an available acquisition backend", false, ct);
                 return;
             }
@@ -171,7 +171,7 @@ public class FulfillmentPipeline(
             // (Deluge/VPN/indexer/web-API hiccups), so park the job for re-search on the same backoff as
             // an empty search — permanently failing the request meant a single blip ended its retries.
             // An upgrade job's request is already Available; just stop this attempt.
-            if (job.IsUpgrade) await SafeMarkUpgradeExhausted(job.Id);
+            if (job.IsUpgrade && !job.IsReplacement) await SafeMarkUpgradeExhausted(job.Id);
             else await SafeDefer(job.Id, $"Downloader error: {ex.Message}");
             await SafeRemoveState(job.Id);
         }
@@ -188,7 +188,7 @@ public class FulfillmentPipeline(
         catch (Exception ex)
         {
             logger.LogError(ex, "Resume error for job {JobId}", record.Job.Id);
-            if (record.Job.IsUpgrade) await SafeMarkUpgradeExhausted(record.Job.Id);
+            if (record.Job.IsUpgrade && !record.Job.IsReplacement) await SafeMarkUpgradeExhausted(record.Job.Id);
             else await SafeDefer(record.Job.Id, $"Downloader error on resume: {ex.Message}");
             await SafeRemoveState(record.Job.Id);
         }
@@ -418,12 +418,26 @@ public class FulfillmentPipeline(
                             SeasonNumber = f.Season,
                             EpisodeNumber = f.Episode,
                             SizeBytes = f.SizeBytes,
-                            ResolutionHeight = it.Resolution // resolution the ranker chose for this torrent
+                            ResolutionHeight = it.Resolution, // resolution the ranker chose for this torrent
+                            ReleaseName = it.ReleaseName,
+                            SourceId = it.SourceId
                         }).ToList();
-                        await api.ReportImportedFilesAsync(job.Id, files, ct);
+                        var auditSaved = await api.ReportImportedFilesAsync(job.Id, files, ct);
+                        if (!auditSaved && job.IsReplacement)
+                        {
+                            logger.LogWarning("Job {JobId}: replacement import is on disk but its audit row was not accepted; retaining transfer and retrying before old-file cleanup", job.Id);
+                            continue;
+                        }
                         foreach (var f in files) importedDestinations.Add(f.DestinationPath);
                     }
-                    catch (Exception ex) { logger.LogWarning(ex, "Could not persist import audit rows for job {JobId}", job.Id); }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Could not persist import audit rows for job {JobId}", job.Id);
+                        // Replacement cleanup is driven by that audit trail. Never advance to deletion while
+                        // the web API cannot prove which new episode actually landed; the next monitor tick
+                        // reuses the idempotent import result and retries this write.
+                        if (job.IsReplacement) continue;
+                    }
 
                     try { await api.RefreshLibraryAsync(job.MediaType, ct); }
                     catch (Exception ex) { logger.LogDebug(ex, "Plex library refresh trigger skipped for job {JobId}", job.Id); }
@@ -449,12 +463,18 @@ public class FulfillmentPipeline(
 
         if (job.IsUpgrade)
         {
-            // Upgrade job: the request is already Available, so there's no "fail" outcome — either we imported
-            // a better release (replace the old files + report the upgrade) or we got nothing (exhausted).
+            // Upgrade/replacement job: keep the old file until a new import succeeds. Routine upgrades stop
+            // quietly when exhausted; issue replacements defer and search again because the old file is known bad.
             if (importedCount > 0)
             {
                 DeleteReplacedFiles(job, importedDestinations);
                 await SafeMarkUpgraded(job.Id);
+            }
+            else if (job.IsReplacement)
+            {
+                await SafeDefer(job.Id, failReasons.Count > 0
+                    ? $"Replacement downloads failed: {string.Join("; ", failReasons.Distinct())}"
+                    : "No replacement imported; searching again later");
             }
             else
             {

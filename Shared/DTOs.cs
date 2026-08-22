@@ -329,9 +329,38 @@ public class MediaIssueDto
     public string? Detail { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
+    public bool ReplacementRequested { get; set; }
+    public int? ReplacementJobId { get; set; }
+    public FulfillmentStatus? ReplacementJobStatus { get; set; }
+    public int ReplacementProgress { get; set; }
+    public int ReplacementAttempts { get; set; }
+    public DateTime? ReplacementNextRetryAt { get; set; }
+    public string? ReplacementLastError { get; set; }
     public IssueStatus Status { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ResolvedAt { get; set; }
+}
+
+/// <summary>Structured problem report submitted from a media detail page.</summary>
+public sealed class MediaIssueReportDto
+{
+    public int MediaId { get; set; }
+    public MediaType MediaType { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string? PosterUrl { get; set; }
+    public string Reason { get; set; } = "Other";
+    public string? Detail { get; set; }
+    public int? SeasonNumber { get; set; }
+    public int? EpisodeNumber { get; set; }
+    public bool RequestReplacement { get; set; }
+}
+
+public sealed class MediaIssueResultDto
+{
+    public bool Success { get; set; }
+    public int? IssueId { get; set; }
+    public bool ReplacementQueued { get; set; }
+    public string? ErrorMessage { get; set; }
 }
 
 // --- Music (Plex-native model, ported from PlexBot's artist/album/track hierarchy) ---
@@ -670,6 +699,9 @@ public class FulfillmentJobDto
     /// unconditionally (never a downgrade) and, on success, replaces <see cref="ReplacePaths"/> instead of
     /// treating the content as newly acquired.</summary>
     public bool IsUpgrade { get; set; }
+    /// <summary>Issue-triggered safe replacement. These jobs retry instead of ending after one empty search.</summary>
+    public bool IsReplacement { get; set; }
+    public int? MediaIssueId { get; set; }
     /// <summary>For an upgrade job: existing library file paths this upgrade supersedes. The downloader
     /// deletes any of these NOT re-written by the new import; the web app clears their audit rows.</summary>
     public List<string> ReplacePaths { get; set; } = new();
@@ -1127,6 +1159,8 @@ public class ImportedFileDto
     public long SizeBytes { get; set; }
     /// <summary>Vertical resolution (pixel height) of the release this file came from, per the ranker. 0 = unknown.</summary>
     public int ResolutionHeight { get; set; }
+    public string? ReleaseName { get; set; }
+    public string? SourceId { get; set; }
 }
 
 // ---------------------------------------------------------------------------------------------

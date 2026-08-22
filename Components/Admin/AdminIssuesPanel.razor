@@ -41,6 +41,10 @@ else
                         <div class="fw-bold">@context.Title</div>
                         <div class="text-muted small">@(context.MediaType == MediaType.Movie ? "Movie" : context.MediaType == MediaType.TvShow ? "TV" : context.MediaType.ToString())
                             @if (context.SeasonNumber is int s) { <text> · S@(s)@(context.EpisodeNumber is int e ? $"E{e}" : "")</text> }</div>
+                        @if (context.ReplacementRequested)
+                        {
+                            <div class="small text-primary">Replacement requested</div>
+                        }
                     </div>
                 </div>
             </MudTd>
@@ -49,16 +53,32 @@ else
             <MudTd>@context.ReportedBy</MudTd>
             <MudTd>@context.CreatedAt.ToLocalTime().ToString("g")</MudTd>
             <MudTd>
-                <MudChip T="string" Size="Size.Small"
-                         Color="@(context.Status == IssueStatus.Open ? Color.Warning : context.Status == IssueStatus.Resolved ? Color.Success : Color.Default)">
-                    @context.Status
-                </MudChip>
+                <MudChip T="string" Size="Size.Small" Color="@StatusColor(context)">@StatusText(context)</MudChip>
+                @if (context.Status == IssueStatus.ReplacementQueued && context.ReplacementJobStatus.HasValue)
+                {
+                    <div class="small text-muted mt-1">
+                        @if (context.ReplacementJobStatus == FulfillmentStatus.Downloading)
+                        {
+                            <text>@context.ReplacementProgress% downloaded</text>
+                        }
+                        else if (context.ReplacementJobStatus == FulfillmentStatus.Deferred)
+                        {
+                            <text>Retry @(context.ReplacementNextRetryAt?.ToLocalTime().ToString("g") ?? "later")</text>
+                        }
+                        else
+                        {
+                            <text>@context.ReplacementJobStatus</text>
+                        }
+                    </div>
+                }
             </MudTd>
             <MudTd>
                 @if (context.Status == IssueStatus.Open)
                 {
                     <div class="d-flex gap-1">
-                        <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled" OnClick="() => Redownload(context)">Re-download</MudButton>
+                        <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled" OnClick="() => Redownload(context)">
+                            @(context.ReplacementRequested ? "Approve replacement" : "Replace file")
+                        </MudButton>
                         <MudButton Size="Size.Small" Color="Color.Success" Variant="Variant.Text" OnClick="() => Resolve(context)">Resolve</MudButton>
                         <MudButton Size="Size.Small" Color="Color.Default" Variant="Variant.Text" OnClick="() => Dismiss(context)">Dismiss</MudButton>
                     </div>
@@ -90,12 +110,13 @@ else
 
     private async Task Redownload(MediaIssueDto i)
     {
-        if (await IssueService.RequestRedownloadAsync(i.Id))
+        var result = await IssueService.RequestRedownloadAsync(i.Id);
+        if (result.Success && result.ReplacementQueued)
         {
-            await Toast.ShowSuccessAsync($"Re-download queued for {i.Title}.");
+            await Toast.ShowSuccessAsync($"Safe replacement queued for {i.Title}.");
             await Load();
         }
-        else await Toast.ShowErrorAsync("Failed to queue re-download.");
+        else await Toast.ShowErrorAsync(result.ErrorMessage ?? "Failed to queue replacement.");
     }
 
     private async Task Resolve(MediaIssueDto i)
@@ -107,4 +128,18 @@ else
     {
         if (await IssueService.DismissIssueAsync(i.Id)) { await Toast.ShowInfoAsync("Dismissed."); await Load(); }
     }
+
+    private static string StatusText(MediaIssueDto issue) => issue.Status == IssueStatus.ReplacementQueued
+        ? issue.ReplacementJobStatus == FulfillmentStatus.Deferred ? "Searching again"
+        : issue.ReplacementJobStatus == FulfillmentStatus.Downloading ? "Replacing"
+        : "Replacement queued"
+        : issue.Status.ToString();
+
+    private static Color StatusColor(MediaIssueDto issue) => issue.Status switch
+    {
+        IssueStatus.Open => Color.Warning,
+        IssueStatus.ReplacementQueued => Color.Info,
+        IssueStatus.Resolved => Color.Success,
+        _ => Color.Default
+    };
 }

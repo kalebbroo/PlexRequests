@@ -80,7 +80,9 @@ public enum NotificationType
     /// so they can intervene (add an indexer, adjust quality rules) instead of the request silently failing.</summary>
     RequestSearchStalled = 8,
     /// <summary>An already-available title was auto-upgraded to a better-quality release matching preferences.</summary>
-    RequestUpgraded = 9
+    RequestUpgraded = 9,
+    /// <summary>A reported bad/wrong file was safely replaced after the new copy imported.</summary>
+    RequestReplaced = 10
 }
 
 public enum BridgeEventType
@@ -116,7 +118,9 @@ public enum IssueStatus
 {
     Open = 0,
     Resolved = 1,
-    Dismissed = 2
+    Dismissed = 2,
+    /// <summary>An approved replacement is queued, downloading, or waiting for another search.</summary>
+    ReplacementQueued = 3
 }
 
 /// <summary>A kind of recurring/on-demand background job the generic scheduler can run. Each value maps to

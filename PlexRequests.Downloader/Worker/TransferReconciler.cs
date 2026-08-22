@@ -205,7 +205,7 @@ public class TransferReconciler(
 
         try
         {
-            await api.ReportImportedFilesAsync(job.Id, result.Files.Select(f => new ImportedFileDto
+            var auditSaved = await api.ReportImportedFilesAsync(job.Id, result.Files.Select(f => new ImportedFileDto
             {
                 TransferId = t.TransferId,
                 Protocol = t.Protocol,
@@ -215,10 +215,19 @@ public class TransferReconciler(
                 SeasonNumber = f.Season,
                 EpisodeNumber = f.Episode,
                 SizeBytes = f.SizeBytes,
-                ResolutionHeight = t.Resolution
+                ResolutionHeight = t.Resolution,
+                ReleaseName = t.ReleaseName,
+                SourceId = t.SourceId
             }).ToList(), ct);
+            if (!auditSaved && job.IsReplacement)
+                return (TransferTrackingState.Finished, "Waiting: replacement import audit could not be persisted");
         }
-        catch (Exception ex) { logger.LogWarning(ex, "Could not persist import audit rows for job {JobId}", job.Id); }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not persist import audit rows for job {JobId}", job.Id);
+            if (job.IsReplacement)
+                return (TransferTrackingState.Finished, "Waiting: replacement import audit API is unavailable");
+        }
 
         try { await api.RefreshLibraryAsync(job.MediaType, ct); }
         catch (Exception ex) { logger.LogDebug(ex, "Plex refresh trigger skipped"); }

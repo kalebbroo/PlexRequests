@@ -69,6 +69,10 @@ public class FulfillmentJobEntity
     /// jobs enforce the quality floor unconditionally (never a downgrade/side-grade) and, on success,
     /// replace <see cref="ReplacePathsJson"/> rather than adding fresh content.</summary>
     public bool IsUpgrade { get; set; }
+    /// <summary>An issue-triggered replacement. It shares upgrade-safe file swapping, but it remains
+    /// deferred and keeps searching when no acceptable alternative is currently available.</summary>
+    public bool IsReplacement { get; set; }
+    public int? MediaIssueId { get; set; }
     /// <summary>For an upgrade job: JSON array of the existing library file paths this upgrade supersedes.
     /// The downloader deletes them after the better release imports; the web app removes their audit rows.</summary>
     public string? ReplacePathsJson { get; set; }
