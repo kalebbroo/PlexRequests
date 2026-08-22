@@ -50,6 +50,44 @@ public sealed class UserAccessControlTests
     }
 
     [Fact]
+    public async Task Discord_profile_operations_are_scoped_to_the_authenticated_user()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var member = fixture.AddUser("member", UserPermission.AllRequests, "User");
+        member.DiscordUserId = "123456789012345678";
+        member.DiscordUsername = "member#1234";
+        member.DiscordDmOptIn = true;
+        var other = fixture.AddUser("other", UserPermission.AllRequests, "User");
+        other.DiscordUserId = "223456789012345678";
+        other.DiscordUsername = "other#1234";
+        other.DiscordDmOptIn = true;
+        await fixture.Db.SaveChangesAsync();
+
+        var access = new UserAccessService(fixture.Db, new FixedAuth(member.UserId, "member"),
+            new ConfigurationBuilder().Build());
+        var links = new DiscordLinkService(fixture.Db, new MemoryCache(new MemoryCacheOptions()),
+            NullLogger<DiscordLinkService>.Instance, access);
+
+        var status = await links.GetCurrentStatusAsync();
+        Assert.True(status.Linked);
+        Assert.Equal("member#1234", status.DiscordUsername);
+        Assert.True(status.DmOptIn);
+
+        Assert.True(await links.SetCurrentUserDmOptInAsync(false));
+        Assert.False(member.DiscordDmOptIn);
+        Assert.True(other.DiscordDmOptIn);
+
+        Assert.True(await links.UnlinkCurrentUserAsync());
+        status = await links.GetCurrentStatusAsync();
+        Assert.False(status.Linked);
+        Assert.Null(status.DiscordUsername);
+        Assert.False(status.DmOptIn);
+        Assert.False(await links.SetCurrentUserDmOptInAsync(true));
+        Assert.False(member.DiscordDmOptIn);
+        Assert.Equal("223456789012345678", other.DiscordUserId);
+    }
+
+    [Fact]
     public async Task Rolling_quota_expires_completed_requests_and_ignores_rejected_or_cancelled()
     {
         await using var fixture = await Fixture.CreateAsync();

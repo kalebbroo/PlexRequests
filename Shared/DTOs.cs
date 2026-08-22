@@ -478,6 +478,14 @@ public class UserDto : BaseDto
     public int? MusicRequestLimit { get; set; }
 }
 
+/// <summary>Discord connection details for the currently authenticated Plex Requests user.</summary>
+public sealed class DiscordLinkStatusDto
+{
+    public bool Linked { get; set; }
+    public string? DiscordUsername { get; set; }
+    public bool DmOptIn { get; set; }
+}
+
 public class RequestQuotaDto
 {
     public int? Limit { get; set; }
