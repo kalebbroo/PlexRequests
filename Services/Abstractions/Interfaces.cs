@@ -246,10 +246,12 @@ public interface IDiscordLinkService
     /// <summary>Mint a one-time code (shown on the Profile page) that the bot's /request link consumes.</summary>
     Task<string?> GenerateLinkCodeAsync();
     Task<BridgeLinkResultDto> CompleteLinkAsync(string code, string discordUserId, string? discordUsername);
+    /// <summary>Read the Discord connection owned by the currently authenticated user.</summary>
+    Task<DiscordLinkStatusDto> GetCurrentStatusAsync();
     Task<BridgeLinkStatusDto> GetStatusByDiscordIdAsync(string discordUserId);
     Task<int?> ResolveUserIdAsync(string discordUserId);
     Task<bool> IsAdminAsync(string discordUserId);
-    Task<bool> SetDmOptInAsync(int userId, bool optIn);
+    Task<bool> SetCurrentUserDmOptInAsync(bool optIn);
     Task<bool> UnlinkCurrentUserAsync();
 }
 

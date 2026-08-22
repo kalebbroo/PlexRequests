@@ -1,13 +1,12 @@
 @page "/profile"
 @attribute [Authorize]
 @using Microsoft.AspNetCore.Components.Authorization
-@using Microsoft.EntityFrameworkCore
 @inject IUserProfileService UserProfileService
+@inject IMediaRequestService MediaRequests
 @inject IUserAccessService UserAccess
 @inject IUserQuotaService UserQuotas
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IDiscordLinkService DiscordLink
-@inject PlexRequestsHosted.Infrastructure.Data.AppDbContext Db
 
 <PageTitle>My Profile - Plex Requests</PageTitle>
 
@@ -139,7 +138,7 @@
 
 @code {
     private UserDto? _profile;
-    private List<PlexRequestsHosted.Infrastructure.Entities.MediaRequestEntity>? _myRequests;
+    private List<MediaRequestDto>? _myRequests;
     private UserStatsDto _stats = new();
     private UserAccessSnapshot? _access;
     private UserQuotaOverviewDto? _quota;
@@ -203,21 +202,18 @@
 
     private async Task LoadDiscordStatus()
     {
-        if (_userId <= 0) return;
-        var p = await Db.UserProfiles.Where(x => x.UserId == _userId)
-            .Select(x => new { x.DiscordUserId, x.DiscordUsername, x.DiscordDmOptIn })
-            .FirstOrDefaultAsync();
-        _discordLinked = !string.IsNullOrEmpty(p?.DiscordUserId);
-        _discordUsername = p?.DiscordUsername;
-        _dmOptIn = p?.DiscordDmOptIn ?? false;
+        var status = await DiscordLink.GetCurrentStatusAsync();
+        _discordLinked = status.Linked;
+        _discordUsername = status.DiscordUsername;
+        _dmOptIn = status.DmOptIn;
     }
 
     private async Task GenerateCode() => _linkCode = await DiscordLink.GenerateLinkCodeAsync();
 
     private async Task ToggleDm(bool v)
     {
-        await DiscordLink.SetDmOptInAsync(_userId, v);
-        _dmOptIn = v;
+        if (await DiscordLink.SetCurrentUserDmOptInAsync(v))
+            _dmOptIn = v;
     }
 
     private async Task Unlink()
@@ -231,37 +227,17 @@
     {
         try
         {
-            if (_profile?.Username is null)
+            _stats = await MediaRequests.GetMyStatsAsync();
+            _myRequests = (await MediaRequests.GetRequestsAsync(new MediaFilterDto
             {
-                // Always assign so the "My Requests" tab shows its empty state instead of spinning forever.
-                _myRequests = new();
-                _stats = new UserStatsDto();
-                return;
-            }
-
-            var baseQuery = Db.MediaRequests.Where(r => r.RequestedBy == _profile.Username);
-
-            // Stats come from the full set (server-side counts) — not the 25-item display list —
-            // so totals match /requests instead of capping at 25.
-            _stats = new UserStatsDto
-            {
-                TotalRequests = await baseQuery.CountAsync(),
-                ApprovedRequests = await baseQuery.CountAsync(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Approved || r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Available),
-                PendingRequests = await baseQuery.CountAsync(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Pending),
-                AvailableRequests = await baseQuery.CountAsync(r => r.Status == PlexRequestsHosted.Shared.Enums.RequestStatus.Available),
-                LastRequestDate = await baseQuery.OrderByDescending(r => r.RequestedAt).Select(r => (DateTime?)r.RequestedAt).FirstOrDefaultAsync()
-            };
-
-            // Recent 25 for the list itself.
-            _myRequests = await baseQuery
-                .OrderByDescending(r => r.RequestedAt)
-                .Take(25)
-                .ToListAsync();
+                PageNumber = 1,
+                PageSize = 25
+            })).Items;
         }
         catch
         {
             _myRequests = new();
-            _stats ??= new UserStatsDto();
+            _stats = new UserStatsDto();
         }
     }
 }

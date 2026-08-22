@@ -117,6 +117,22 @@ public class DiscordLinkService(
         };
     }
 
+    public async Task<DiscordLinkStatusDto> GetCurrentStatusAsync()
+    {
+        var userId = await userAccess.GetCurrentUserIdAsync();
+        if (userId is null) return new DiscordLinkStatusDto();
+
+        return await db.UserProfiles.AsNoTracking()
+            .Where(p => p.UserId == userId.Value)
+            .Select(p => new DiscordLinkStatusDto
+            {
+                Linked = p.DiscordUserId != null && p.DiscordUserId != string.Empty,
+                DiscordUsername = p.DiscordUsername,
+                DmOptIn = p.DiscordUserId != null && p.DiscordUserId != string.Empty && p.DiscordDmOptIn
+            })
+            .FirstOrDefaultAsync() ?? new DiscordLinkStatusDto();
+    }
+
     public Task<int?> ResolveUserIdAsync(string discordUserId)
     {
         var normalized = discordUserId?.Trim() ?? string.Empty;
@@ -135,12 +151,12 @@ public class DiscordLinkService(
         return userId is int id && await userAccess.IsAdminAsync(id);
     }
 
-    public async Task<bool> SetDmOptInAsync(int userId, bool optIn)
+    public async Task<bool> SetCurrentUserDmOptInAsync(bool optIn)
     {
-        var callerId = await userAccess.GetCurrentUserIdAsync();
-        if (callerId != userId && !(callerId is int id && await userAccess.IsAdminAsync(id))) return false;
-        var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
-        if (profile is null) return false;
+        var userId = await userAccess.GetCurrentUserIdAsync();
+        if (userId is null) return false;
+        var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId.Value);
+        if (profile is null || string.IsNullOrEmpty(profile.DiscordUserId)) return false;
         profile.DiscordDmOptIn = optIn;
         await db.SaveChangesAsync();
         return true;
