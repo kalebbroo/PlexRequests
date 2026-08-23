@@ -29,10 +29,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Update="BrowserExtension/firefox/manifest.json;BrowserExtension/firefox/background.js;BrowserExtension/firefox/content.js;BrowserExtension/firefox/hydration.js;BrowserExtension/firefox/parser.js;BrowserExtension/firefox/popup/**;BrowserExtension/firefox/icons/**;BrowserExtension/firefox/README.md"
+    <Content Update="BrowserExtension/firefox/manifest.json;BrowserExtension/firefox/background.js;BrowserExtension/firefox/content.js;BrowserExtension/firefox/hydration.js;BrowserExtension/firefox/telemetry.js;BrowserExtension/firefox/parser.js;BrowserExtension/firefox/popup/**;BrowserExtension/firefox/icons/**;BrowserExtension/firefox/README.md"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
-    <None Update="BrowserExtension/firefox/background.js;BrowserExtension/firefox/content.js;BrowserExtension/firefox/hydration.js;BrowserExtension/firefox/parser.js;BrowserExtension/firefox/popup/**;BrowserExtension/firefox/icons/**;BrowserExtension/firefox/README.md"
+    <None Update="BrowserExtension/firefox/background.js;BrowserExtension/firefox/content.js;BrowserExtension/firefox/hydration.js;BrowserExtension/firefox/telemetry.js;BrowserExtension/firefox/parser.js;BrowserExtension/firefox/popup/**;BrowserExtension/firefox/icons/**;BrowserExtension/firefox/README.md"
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>

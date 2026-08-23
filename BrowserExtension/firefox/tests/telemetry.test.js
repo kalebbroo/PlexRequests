@@ -1,0 +1,49 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const telemetry = require("../telemetry.js");
+
+test("queue snapshots are source-scoped and contain no captured release data", () => {
+  const snapshot = telemetry.queueSnapshot("1337x", [
+    { sourceKey: "1337x", state: "queued", releaseName: "private title" },
+    { pageUrl: "https://1337x.to/search/a/1/", state: "failed" },
+    { sourceKey: "ext.to", state: "queued" }
+  ], [
+    { sourceKey: "1337x", state: "queued" },
+    { sourceUrl: "https://1337x.to/torrent/1/a/", state: "loading", needsAttention: true },
+    { sourceKey: "ext.to", state: "failed" }
+  ], { captureEnabled: true, hydrationPauses: {} }, 1000);
+
+  assert.deepEqual(snapshot, {
+    captureEnabled: true,
+    queuedUploads: 1,
+    failedUploads: 1,
+    pendingDetails: 1,
+    attentionDetails: 1,
+    hydrationPausedUntil: null
+  });
+  assert.ok(!JSON.stringify(snapshot).includes("private title"));
+});
+
+test("source pause wins over a legacy global pause and expired pauses disappear", () => {
+  const snapshot = telemetry.queueSnapshot("ext.to", [], [], {
+    captureEnabled: false,
+    hydrationPauses: { "1337x": 9000, "ext.to": 8000 },
+    hydrationPausedUntil: 10000
+  }, 7000);
+  assert.equal(snapshot.captureEnabled, false);
+  assert.equal(snapshot.hydrationPausedUntil, 8000);
+
+  const unaffected = telemetry.queueSnapshot("ext.to", [], [], {
+    hydrationPauses: { "1337x": 9000 },
+    hydrationPausedUntil: 10000
+  }, 7000);
+  assert.equal(unaffected.hydrationPausedUntil, null);
+
+  const resumed = telemetry.queueSnapshot("ext.to", [], [], {
+    hydrationPauses: { "ext.to": 6000 },
+    hydrationPausedUntil: 6500
+  }, 7000);
+  assert.equal(resumed.hydrationPausedUntil, null);
+});

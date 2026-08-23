@@ -58,6 +58,21 @@ public sealed class FirefoxCaptureConnectionDto
     public string Source { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// A privacy-preserving queue snapshot. The bearer token determines the source; browser history, release
+/// names, URLs, cookies, and session data are deliberately excluded.
+/// </summary>
+public sealed class FirefoxCaptureHeartbeatDto
+{
+    public bool CaptureEnabled { get; set; }
+    public int QueuedUploads { get; set; }
+    public int FailedUploads { get; set; }
+    public int PendingDetails { get; set; }
+    public int AttentionDetails { get; set; }
+    public DateTime? HydrationPausedUntil { get; set; }
+    public string ExtensionVersion { get; set; } = string.Empty;
+}
+
 public sealed class FirefoxCaptureDeviceDto
 {
     public Guid Id { get; set; }
@@ -67,6 +82,13 @@ public sealed class FirefoxCaptureDeviceDto
     public DateTime ExpiresAt { get; set; }
     public DateTime? LastSeenAt { get; set; }
     public DateTime? LastCaptureAt { get; set; }
+    public DateTime? LastHeartbeatAt { get; set; }
+    public bool CaptureEnabled { get; set; }
+    public int QueuedUploads { get; set; }
+    public int FailedUploads { get; set; }
+    public int PendingDetails { get; set; }
+    public int AttentionDetails { get; set; }
+    public DateTime? HydrationPausedUntil { get; set; }
     public long BatchesReceived { get; set; }
     public long ItemsReceived { get; set; }
     public int? LastParserVersion { get; set; }

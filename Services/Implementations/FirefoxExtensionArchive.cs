@@ -10,6 +10,7 @@ public static class FirefoxExtensionArchive
         "background.js",
         "content.js",
         "hydration.js",
+        "telemetry.js",
         "parser.js",
         "sources.js",
         "popup/popup.html",

@@ -128,6 +128,33 @@ public sealed class FirefoxCaptureService(
         };
     }
 
+    public async Task<bool> RecordHeartbeatAsync(
+        string token,
+        FirefoxCaptureHeartbeatDto heartbeat,
+        CancellationToken cancellationToken = default)
+    {
+        if (!captureOptions.Value.Enabled || string.IsNullOrWhiteSpace(token)) return false;
+        var now = UtcNow;
+        await using var db = await appFactory.CreateDbContextAsync(cancellationToken);
+        var device = await FindActiveDeviceAsync(db, token, now, cancellationToken);
+        if (device is null) return false;
+        ValidateHeartbeat(heartbeat, now);
+
+        device.LastSeenAt = now;
+        device.LastHeartbeatAt = now;
+        device.CaptureEnabled = heartbeat.CaptureEnabled;
+        device.QueuedUploads = heartbeat.QueuedUploads;
+        device.FailedUploads = heartbeat.FailedUploads;
+        device.PendingDetails = heartbeat.PendingDetails;
+        device.AttentionDetails = heartbeat.AttentionDetails;
+        device.HydrationPausedUntil = heartbeat.HydrationPausedUntil > now
+            ? heartbeat.HydrationPausedUntil
+            : null;
+        device.ExtensionVersion = Clean(heartbeat.ExtensionVersion, 32) ?? device.ExtensionVersion;
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     public async Task<FirefoxCaptureIngestResponseDto> IngestAsync(
         string token,
         FirefoxCaptureBatchDto batch,
@@ -199,6 +226,13 @@ public sealed class FirefoxCaptureService(
                 ExpiresAt = x.ExpiresAt,
                 LastSeenAt = x.LastSeenAt,
                 LastCaptureAt = x.LastCaptureAt,
+                LastHeartbeatAt = x.LastHeartbeatAt,
+                CaptureEnabled = x.CaptureEnabled,
+                QueuedUploads = x.QueuedUploads,
+                FailedUploads = x.FailedUploads,
+                PendingDetails = x.PendingDetails,
+                AttentionDetails = x.AttentionDetails,
+                HydrationPausedUntil = x.HydrationPausedUntil,
                 BatchesReceived = x.BatchesReceived,
                 ItemsReceived = x.ItemsReceived,
                 LastParserVersion = x.LastParserVersion,
@@ -283,6 +317,20 @@ public sealed class FirefoxCaptureService(
                     || item.MagnetUri.Length > 4096))
                 throw new ArgumentException("A captured item contains an invalid magnet URI.");
         }
+    }
+
+    private static void ValidateHeartbeat(FirefoxCaptureHeartbeatDto heartbeat, DateTime now)
+    {
+        if (heartbeat.ExtensionVersion?.Length > 32)
+            throw new ArgumentException("ExtensionVersion must be 32 characters or fewer.");
+        if (heartbeat.QueuedUploads is < 0 or > 10_000
+            || heartbeat.FailedUploads is < 0 or > 10_000
+            || heartbeat.PendingDetails is < 0 or > 10_000
+            || heartbeat.AttentionDetails is < 0 or > 10_000)
+            throw new ArgumentException("Firefox queue counts must be between 0 and 10,000.");
+        if (heartbeat.HydrationPausedUntil is { } pausedUntil
+            && pausedUntil > now.AddDays(1))
+            throw new ArgumentException("HydrationPausedUntil is outside the allowed range.");
     }
 
     private List<CatalogItemDto> NormalizeItems(IEnumerable<CatalogItemDto> items) => items

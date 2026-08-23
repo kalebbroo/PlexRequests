@@ -10,6 +10,9 @@ durable across restarts, bounded at 2,000 pending details, and retries transient
 indexer has its own source-scoped pairing, so both sites can remain connected at the same time. If a browser
 challenge appears, the worker pauses; complete the challenge in a normal tab for that site and choose
 **Resume detail capture** in the extension. The extension never clicks or solves browser challenges itself.
+Once per minute it reports only source-scoped queue counts, capture/pause state, and its version so the admin
+screen can show whether work is flowing or needs attention. It never includes release names, page URLs, or
+browser session data in that health report.
 
 Hydration failures are never permanently abandoned. Interrupted work is recovered after Firefox restarts;
 ordinary failures retry with capped exponential backoff, while repeated failures and expired site sessions
