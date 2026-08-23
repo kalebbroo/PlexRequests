@@ -231,7 +231,9 @@ Scraped sources such as 1337x and ext.to may refuse automated requests. PlexRequ
 **blocked** and backs off instead of turning them into misleading empty results. For both sources, the optional
 Firefox capture extension reads structured release information from pages you browse successfully and
 writes it into the catalog without exporting browser cookies. Enable the catalog in shadow mode, then use
-the extension button on the 1337x or ext.to row to download and pair it. Pair each source once; both remain
+the extension button on the 1337x or ext.to row to download the ZIP. Extract it, then open
+`about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `manifest.json`.
+Pair each source once; both remain
 connected simultaneously. Listing pages enqueue visible releases automatically. The extension resolves 1337x
 details in one inactive, rate-limited Firefox tab and resolves ext.to magnets through its session-bound request.
 It pauses and asks for normal user verification if either site presents another browser challenge.
