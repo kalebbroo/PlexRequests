@@ -114,3 +114,63 @@ test("server backlog reconciliation respects queue capacity and safely wraps cur
   assert.equal(hydration.nextBacklogCursor(25, { nextCursor: 25, items: [{}] }), 0);
   assert.equal(hydration.nextBacklogCursor(25, { nextCursor: 40, items: [] }), 0);
 });
+
+test("hydration retention reserves capacity while keeping active work and recent diagnostics", () => {
+  const records = [
+    { externalId: "fresh", sourceKey: "1337x", state: "queued", needsAttention: false },
+    { externalId: "loading", sourceKey: "1337x", state: "loading", needsAttention: true },
+    { externalId: "recent-complete", state: "complete", completedAt: 950 },
+    { externalId: "old-complete", state: "complete", completedAt: 100 },
+    { externalId: "x-new", sourceKey: "1337x", state: "queued", needsAttention: true, attentionAt: 990 },
+    { externalId: "x-old", sourceKey: "1337x", state: "queued", needsAttention: true, attentionAt: 980 },
+    { externalId: "ext-new", sourceKey: "ext.to", state: "queued", needsAttention: true, attentionAt: 970 },
+    { externalId: "ext-old", sourceKey: "ext.to", state: "queued", needsAttention: true, attentionAt: 960 },
+    { externalId: "expired-attention", sourceKey: "ext.to", state: "queued", needsAttention: true, attentionAt: 200 }
+  ];
+
+  const plan = hydration.retentionPlan(records, {
+    now: 1000,
+    completedRetentionMs: 500,
+    attentionRetentionMs: 500,
+    maxAttention: 3,
+    maxAttentionPerSource: 2
+  });
+
+  assert.deepEqual(plan.retained.map(record => record.externalId), [
+    "fresh", "loading", "recent-complete", "x-new", "x-old", "ext-new"
+  ]);
+  assert.deepEqual(plan.discarded.map(record => record.externalId), [
+    "old-complete", "ext-old", "expired-attention"
+  ]);
+});
+
+test("source limits prevent one failing adapter from consuming the diagnostic reserve", () => {
+  const records = [
+    { externalId: "x-1", sourceKey: "1337x", state: "failed", attentionAt: 1000 },
+    { externalId: "x-2", sourceKey: "1337x", state: "queued", needsAttention: true, attentionAt: 999 },
+    { externalId: "ext-1", sourceUrl: "https://ext.to/title-1/", state: "queued", needsAttention: true, attentionAt: 998 }
+  ];
+  const plan = hydration.retentionPlan(records, {
+    now: 1000,
+    completedRetentionMs: 500,
+    attentionRetentionMs: 500,
+    maxAttention: 2,
+    maxAttentionPerSource: 1
+  });
+
+  assert.deepEqual(plan.retained.map(record => record.externalId), ["x-1", "ext-1"]);
+  assert.deepEqual(plan.discarded.map(record => record.externalId), ["x-2"]);
+});
+
+test("revisiting a listing creates a fresh hydration candidate without inherited attention age", () => {
+  const candidate = hydration.detailCandidate({
+    externalId: "extto:torrent:10000002",
+    sourceUrl: "https://ext.to/example-show-10000002/",
+    releaseName: "Example Show",
+    needsHydration: true
+  }, 5000);
+
+  assert.equal(candidate.needsAttention, false);
+  assert.equal(candidate.attentionAt, null);
+  assert.equal(candidate.createdAt, 5000);
+});

@@ -16,6 +16,9 @@ const MAX_QUEUE_ITEMS = 2000;
 const MAX_FAILED_CAPTURES = 100;
 const CAPTURE_FAILURE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_HYDRATION_ITEMS = 2000;
+const MAX_ATTENTION_HYDRATIONS = 400;
+const MAX_ATTENTION_HYDRATIONS_PER_SOURCE = 200;
+const ATTENTION_HYDRATION_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const HYDRATION_TIMEOUT_MS = 90_000;
 const HYDRATION_CHALLENGE_PAUSE_MS = 15 * 60 * 1000;
 const COMPLETED_HYDRATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -25,6 +28,7 @@ let heartbeatPromise = null;
 let backlogPromise = null;
 let hydrationTimer = null;
 let captureCompactionPromise = null;
+let hydrationCompactionPromise = null;
 
 function openDatabase() {
   return new Promise((resolve, reject) => {
@@ -104,6 +108,23 @@ async function retainedCaptureRecords() {
   return captureCompactionPromise;
 }
 
+async function retainedHydrationRecords() {
+  if (hydrationCompactionPromise) return hydrationCompactionPromise;
+  hydrationCompactionPromise = (async () => {
+    const records = await allRecords(HYDRATION_STORE_NAME);
+    const plan = hydration.retentionPlan(records, {
+      now: Date.now(),
+      completedRetentionMs: COMPLETED_HYDRATION_RETENTION_MS,
+      attentionRetentionMs: ATTENTION_HYDRATION_RETENTION_MS,
+      maxAttention: MAX_ATTENTION_HYDRATIONS,
+      maxAttentionPerSource: MAX_ATTENTION_HYDRATIONS_PER_SOURCE
+    });
+    await deleteRecords(HYDRATION_STORE_NAME, plan.discarded.map(record => record.externalId));
+    return plan.retained;
+  })().finally(() => { hydrationCompactionPromise = null; });
+  return hydrationCompactionPromise;
+}
+
 async function queueRecord(batch) {
   const current = await browser.storage.local.get({ captureEnabled: true });
   if (!current.captureEnabled) return { queued: false };
@@ -135,8 +156,7 @@ async function queueRecord(batch) {
 
 async function enqueueHydrations(items) {
   const now = Date.now();
-  const records = await allRecords(HYDRATION_STORE_NAME);
-  const retained = records.filter(item => item.state !== "complete" || (item.completedAt || 0) >= now - COMPLETED_HYDRATION_RETENTION_MS);
+  const retained = await retainedHydrationRecords();
   const retainedById = new Map(retained.map(item => [item.externalId, item]));
   const retainedIds = new Set(retained.map(item => item.externalId));
   const pendingCount = retained.filter(item => item.state !== "complete").length;
@@ -155,9 +175,6 @@ async function enqueueHydrations(items) {
   }).map(candidate => ({ ...retainedById.get(candidate.externalId), ...candidate }));
 
   await withStore(HYDRATION_STORE_NAME, "readwrite", store => {
-    for (const record of records) {
-      if (!retainedIds.has(record.externalId)) store.delete(record.externalId);
-    }
     for (const candidate of candidates) store.put(candidate);
     for (const candidate of refreshed) store.put(candidate);
   });
@@ -174,7 +191,7 @@ async function enqueueHydrations(items) {
 async function queueStatus() {
   const [captures, details, state] = await Promise.all([
     retainedCaptureRecords(),
-    allRecords(HYDRATION_STORE_NAME),
+    retainedHydrationRecords(),
     browser.storage.local.get({ hydrationPausedUntil: null, hydrationPauses: {} })
   ]);
   const now = Date.now();
@@ -357,7 +374,7 @@ async function reportHeartbeats() {
   heartbeatPromise = (async () => {
     const [captures, details, state, config] = await Promise.all([
       retainedCaptureRecords(),
-      allRecords(HYDRATION_STORE_NAME),
+      retainedHydrationRecords(),
       browser.storage.local.get({
         captureEnabled: true,
         hydrationPausedUntil: null,
@@ -408,7 +425,7 @@ async function reconcileBacklog() {
     const [config, state, details] = await Promise.all([
       connectionConfig(),
       browser.storage.local.get({ captureEnabled: true, backlogCursors: {} }),
-      allRecords(HYDRATION_STORE_NAME)
+      retainedHydrationRecords()
     ]);
     if (!state.captureEnabled || !config.serverUrl) return;
 
@@ -625,7 +642,7 @@ async function retryFailedCaptures() {
 async function completeHydrations(items) {
   const externalIds = new Set((items || []).map(item => item.externalId).filter(Boolean));
   if (!externalIds.size) return 0;
-  const records = await allRecords(HYDRATION_STORE_NAME);
+  const records = await retainedHydrationRecords();
   let completed = 0;
   for (const record of records.filter(item => externalIds.has(item.externalId) && item.state !== "complete")) {
     record.state = "complete";
@@ -633,6 +650,7 @@ async function completeHydrations(items) {
     record.startedAt = null;
     record.lastError = null;
     record.needsAttention = false;
+    record.attentionAt = null;
     await updateRecord(HYDRATION_STORE_NAME, record);
     completed++;
   }
@@ -673,13 +691,14 @@ async function clearWorker(closeTab = false) {
 
 async function retryHydration(externalId, error, delay = null, attentionOverride = null) {
   if (!externalId) return;
-  const records = await allRecords(HYDRATION_STORE_NAME);
+  const records = await retainedHydrationRecords();
   const record = records.find(item => item.externalId === externalId);
   if (!record || record.state === "complete") return;
   record.startedAt = null;
   record.lastError = error;
   record.state = "queued";
   record.needsAttention = attentionOverride ?? hydration.needsAttention(error, record.attempts);
+  record.attentionAt = record.needsAttention ? (record.attentionAt || Date.now()) : null;
   const retryIn = delay ?? (record.needsAttention
     ? hydration.attentionRetryDelay()
     : hydration.retryDelay(record.attempts));
@@ -689,7 +708,7 @@ async function retryHydration(externalId, error, delay = null, attentionOverride
 }
 
 async function reviveStrandedHydrations(activeExternalId = null) {
-  const records = await allRecords(HYDRATION_STORE_NAME);
+  const records = await retainedHydrationRecords();
   const now = Date.now();
   const changed = [];
   const normalized = records.map(record => {
@@ -854,11 +873,12 @@ async function drainHydrationQueue(force = false) {
 }
 
 async function retryHydrations() {
-  const records = await allRecords(HYDRATION_STORE_NAME);
+  const records = await retainedHydrationRecords();
   for (const record of records.filter(item => item.state === "failed" || item.state === "queued")) {
     record.state = "queued";
     record.attempts = 0;
     record.needsAttention = false;
+    record.attentionAt = null;
     record.startedAt = null;
     record.nextAttemptAt = 0;
     record.lastError = null;

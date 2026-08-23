@@ -36,6 +36,7 @@
         state: "queued",
         attempts: 0,
         needsAttention: false,
+        attentionAt: null,
         createdAt: observedAt,
         startedAt: null,
         nextAttemptAt: 0,
@@ -68,6 +69,7 @@
       ...record,
       state: "queued",
       needsAttention: true,
+      attentionAt: record.attentionAt || now,
       startedAt: null,
       nextAttemptAt: now
     };
@@ -110,6 +112,47 @@
     return Math.min(Math.max(0, pageSize), Math.max(0, maximum - pending));
   }
 
+  function retentionPlan(records, options = {}) {
+    const now = Number.isFinite(options.now) ? options.now : Date.now();
+    const completedRetentionMs = Math.max(0, Number(options.completedRetentionMs) || 0);
+    const attentionRetentionMs = Math.max(0, Number(options.attentionRetentionMs) || 0);
+    const maxAttention = Math.max(0, Math.floor(Number(options.maxAttention) || 0));
+    const maxAttentionPerSource = Math.max(0, Math.floor(Number(options.maxAttentionPerSource) || 0));
+    const all = records || [];
+    const keep = new Set(all.filter(record => {
+      if (record?.state === "complete") {
+        return Number(record.completedAt) >= now - completedRetentionMs;
+      }
+      return record?.state === "loading" || (record?.state !== "failed" && !record?.needsAttention);
+    }));
+
+    const attention = all
+      .filter(record => record?.state === "failed" || (record?.state === "queued" && record?.needsAttention))
+      .map((record, order) => ({
+        record,
+        order,
+        sourceKey: record.sourceKey || sources.fromUrl(record.sourceUrl)?.key || "unknown",
+        attentionAt: Number(record.attentionAt) || Number(record.createdAt) || now
+      }))
+      .filter(item => item.attentionAt >= now - attentionRetentionMs);
+    const sourceCounts = new Map();
+    const bounded = attention
+      .sort((left, right) => right.attentionAt - left.attentionAt || right.order - left.order)
+      .filter(item => {
+        const count = sourceCounts.get(item.sourceKey) || 0;
+        if (count >= maxAttentionPerSource) return false;
+        sourceCounts.set(item.sourceKey, count + 1);
+        return true;
+      })
+      .slice(0, maxAttention);
+    for (const item of bounded) keep.add(item.record);
+
+    return {
+      retained: all.filter(record => keep.has(record)),
+      discarded: all.filter(record => !keep.has(record))
+    };
+  }
+
   function nextBacklogCursor(current, page) {
     const cursor = Math.max(0, Number(current) || 0);
     const items = Array.isArray(page?.items) ? page.items : [];
@@ -131,6 +174,7 @@
     activePauses,
     eligibleSources,
     backlogCapacity,
+    retentionPlan,
     nextBacklogCursor
   };
 });

@@ -35,6 +35,11 @@ move to a slower “Needs attention” cadence. Revisiting a listing refreshes i
 back to the fast queue. Challenge pauses are scoped to one indexer, so EXT.to can keep resolving while 1337x
 is waiting for verification, and vice versa.
 
+The detail queue always reserves at least 1,600 of its 2,000 slots for fresh or actively recoverable work.
+Needs-attention diagnostics are retained for up to 14 days, capped at 200 per source and 400 overall. Evicted
+1337x work is rebuilt from the durable server backlog; stale EXT.to work is rebuilt when its listing is revisited
+with fresh session credentials.
+
 Firefox's install prompt explicitly discloses the required transmission of supported-site browsing activity, search
 terms, and visible release metadata to the Plex Requests server you pair. No cookies or general browser
 history are read or transmitted.
