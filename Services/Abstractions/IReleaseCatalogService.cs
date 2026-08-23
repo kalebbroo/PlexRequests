@@ -10,4 +10,5 @@ public interface IReleaseCatalogService
     Task<CatalogCheckpointDto> GetCheckpointAsync(int indexerId, CancellationToken cancellationToken);
     Task<CatalogCheckpointDto> ReportFailureAsync(CatalogFailureDto failure, CancellationToken cancellationToken);
     Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(CatalogQueryDto query, CancellationToken cancellationToken);
+    Task<CatalogBrowsePageDto> BrowseAsync(CatalogBrowseQueryDto query, CancellationToken cancellationToken);
 }

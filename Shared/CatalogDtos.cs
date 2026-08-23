@@ -103,3 +103,49 @@ public sealed class CatalogQueryDto
     public int? Year { get; set; }
     public int Limit { get; set; } = 500;
 }
+
+/// <summary>Admin-facing catalog browser query. Blank search text returns the newest hydrated releases.</summary>
+public sealed class CatalogBrowseQueryDto
+{
+    public string Search { get; set; } = string.Empty;
+    public int? IndexerId { get; set; }
+    public MediaType? MediaType { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 50;
+}
+
+public sealed class CatalogBrowsePageDto
+{
+    public long Total { get; set; }
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public List<CatalogBrowseItemDto> Items { get; set; } = new();
+}
+
+/// <summary>
+/// Safe operational view of a hydrated release. It deliberately omits magnet URIs and infohashes: the
+/// explorer is for proving coverage and parsing, while acquisition remains behind the fulfillment worker.
+/// </summary>
+public sealed class CatalogBrowseItemDto
+{
+    public string ReleaseName { get; set; } = string.Empty;
+    public MediaType? MediaType { get; set; }
+    public int? Year { get; set; }
+    public int? Season { get; set; }
+    public int? Episode { get; set; }
+    public bool IsSeasonPack { get; set; }
+    public int Resolution { get; set; }
+    public ReleaseSource ReleaseSource { get; set; }
+    public string? Codec { get; set; }
+    public long? SizeBytes { get; set; }
+    public DateTime? PublishedAt { get; set; }
+    public DateTime LastSeenAt { get; set; }
+    public int IndexerId { get; set; }
+    public string Source { get; set; } = string.Empty;
+    public string? SourceUrl { get; set; }
+    public string? Category { get; set; }
+    public string? Uploader { get; set; }
+    public int? Seeders { get; set; }
+    public int? Leechers { get; set; }
+    public int SightingCount { get; set; }
+}

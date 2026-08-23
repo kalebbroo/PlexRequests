@@ -32,6 +32,11 @@
                 </MudText>
             </div>
             <div class="d-flex flex-wrap gap-2">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.ManageSearch" Disabled="@(_catalog.Releases == 0)"
+                           OnClick="OpenCatalogExplorer">
+                    Search catalog
+                </MudButton>
                 <MudChip T="string" Size="Size.Small" Color="Color.Primary">@_catalog.Releases releases</MudChip>
                 <MudChip T="string" Size="Size.Small">@_catalog.Sightings sightings</MudChip>
                 @if (_catalog.UnresolvedSightings > 0)
@@ -368,6 +373,13 @@ else
         var dialog = await Dialogs.ShowAsync<FirefoxCaptureDialog>($"Firefox capture · {indexer.Name}", parameters, options);
         await dialog.Result;
         await Load();
+    }
+
+    private async Task OpenCatalogExplorer()
+    {
+        var parameters = new DialogParameters<CatalogExplorerDialog> { { x => x.Indexers, _items } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
+        await Dialogs.ShowAsync<CatalogExplorerDialog>("Captured release catalog", parameters, options);
     }
 
     private async Task Delete(IndexerSettingDto item)

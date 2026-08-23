@@ -1,0 +1,236 @@
+@inject PlexRequestsHosted.Services.Abstractions.IReleaseCatalogService Catalog
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+            Search the hydrated release catalog directly, even while automatic fulfillment remains in shadow mode.
+            This is the exact durable data captured by Firefox and structured feeds; unresolved listing rows stay
+            visible in the catalog summary until their magnet is resolved.
+        </MudText>
+
+        <MudGrid Spacing="2" Class="mb-2">
+            <MudItem xs="12" md="5">
+                <MudTextField T="string" @bind-Value="_search" Label="Release or title" Variant="Variant.Outlined"
+                              Margin="Margin.Dense" Placeholder="Rick and Morty"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                              OnKeyDown="HandleKeyDown" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="int?" @bind-Value="_indexerId" Label="Source" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem T="int?" Value="@((int?)null)">All indexers</MudSelectItem>
+                    @foreach (var indexer in Indexers.OrderBy(item => item.Name))
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)indexer.Id)">@indexer.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="MediaType?" @bind-Value="_mediaType" Label="Media" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem T="MediaType?" Value="@((MediaType?)null)">All media</MudSelectItem>
+                    <MudSelectItem T="MediaType?" Value="@(MediaType.Movie)">Movies / non-episodic</MudSelectItem>
+                    <MudSelectItem T="MediaType?" Value="@(MediaType.TvShow)">TV</MudSelectItem>
+                    <MudSelectItem T="MediaType?" Value="@(MediaType.Anime)">Anime</MudSelectItem>
+                    <MudSelectItem T="MediaType?" Value="@(MediaType.Music)">Music</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="2" Class="d-flex align-center">
+                <MudButton FullWidth="true" Color="Color.Primary" Variant="Variant.Filled" OnClick="NewSearch"
+                           Disabled="_loading" StartIcon="@Icons.Material.Filled.ManageSearch">
+                    Search
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@_error</MudAlert>
+        }
+
+        @if (_loading)
+        {
+            <div class="d-flex justify-content-center py-8"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+        }
+        else if (_result is null || _result.Items.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true">
+                No hydrated releases match these filters. If the catalog summary shows rows awaiting detail,
+                keep Firefox open and use Resume detail capture from the extension.
+            </MudAlert>
+        }
+        else
+        {
+            <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-2">
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                    @ResultSummary
+                </MudText>
+                <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">
+                    Hydrated and acquisition-ready
+                </MudChip>
+            </div>
+
+            <MudTable T="CatalogBrowseItemDto" Items="_result.Items" Dense="true" Hover="true"
+                      Breakpoint="Breakpoint.Sm" FixedHeader="true" Height="460px" Class="elevation-1">
+                <HeaderContent>
+                    <MudTh>Release</MudTh>
+                    <MudTh>Parsed as</MudTh>
+                    <MudTh>Source</MudTh>
+                    <MudTh>Size</MudTh>
+                    <MudTh>Seeds</MudTh>
+                    <MudTh>Seen</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Release">
+                        <div style="word-break:break-word;">@context.ReleaseName</div>
+                        <div class="d-flex gap-1 flex-wrap mt-1">
+                            @if (context.Resolution > 0)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@($"{context.Resolution}p")</MudChip>
+                            }
+                            @if (context.ReleaseSource != ReleaseSource.Unknown)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@SourceLabel(context.ReleaseSource)</MudChip>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(context.Codec))
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@context.Codec</MudChip>
+                            }
+                        </div>
+                    </MudTd>
+                    <MudTd DataLabel="Parsed as">
+                        <b>@ScopeLabel(context)</b>
+                        @if (context.Year is not null)
+                        {
+                            <div class="text-muted small">@context.Year</div>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Source">
+                        <div class="d-flex align-items-center gap-1">
+                            <span>@context.Source</span>
+                            @if (!string.IsNullOrWhiteSpace(context.SourceUrl))
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.OpenInNew" Size="Size.Small"
+                                               Href="@context.SourceUrl" Target="_blank"
+                                               aria-label="Open source page" />
+                            }
+                        </div>
+                        <div class="text-muted small">
+                            @context.SightingCount @(context.SightingCount == 1 ? "sighting" : "sightings")
+                            @if (!string.IsNullOrWhiteSpace(context.Uploader))
+                            {
+                                <span> · @context.Uploader</span>
+                            }
+                        </div>
+                    </MudTd>
+                    <MudTd DataLabel="Size">@FormatBytes(context.SizeBytes)</MudTd>
+                    <MudTd DataLabel="Seeds">@(context.Seeders?.ToString() ?? "—")</MudTd>
+                    <MudTd DataLabel="Seen">@Relative(context.LastSeenAt)</MudTd>
+                </RowTemplate>
+            </MudTable>
+
+            @if (PageCount > 1)
+            {
+                <div class="d-flex justify-content-center pt-3">
+                    <MudPagination Count="@PageCount" Selected="@_result.Page" SelectedChanged="ChangePage" />
+                </div>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public IReadOnlyList<IndexerSettingDto> Indexers { get; set; } = [];
+
+    private string _search = string.Empty;
+    private int? _indexerId;
+    private MediaType? _mediaType;
+    private CatalogBrowsePageDto? _result;
+    private bool _loading;
+    private string? _error;
+
+    private int PageCount => _result is null ? 1 : Math.Max(1, (int)Math.Ceiling(_result.Total / (double)_result.PageSize));
+    private string ResultSummary => _result is null ? string.Empty
+        : $"Showing {((_result.Page - 1) * _result.PageSize) + 1}-{Math.Min(_result.Page * _result.PageSize, _result.Total)} of {_result.Total:N0} releases";
+
+    protected override async Task OnInitializedAsync() => await SearchAsync(1);
+
+    private Task NewSearch() => SearchAsync(1);
+    private Task ChangePage(int page) => SearchAsync(page);
+
+    private async Task HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter") await NewSearch();
+    }
+
+    private async Task SearchAsync(int page)
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            _result = await Catalog.BrowseAsync(new CatalogBrowseQueryDto
+            {
+                Search = _search,
+                IndexerId = _indexerId,
+                MediaType = _mediaType,
+                Page = page,
+                PageSize = 50
+            }, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _error = $"Catalog search failed: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string ScopeLabel(CatalogBrowseItemDto item)
+    {
+        if (item.IsSeasonPack && item.Season is int packSeason) return $"Season {packSeason} pack";
+        if (item.Season is int season && item.Episode is int episode) return $"S{season:00}E{episode:00}";
+        if (item.Season is int seasonOnly) return $"Season {seasonOnly}";
+        return item.MediaType switch
+        {
+            MediaType.Movie => "Movie",
+            MediaType.Music => "Music",
+            MediaType.Anime => "Anime",
+            MediaType.TvShow => "TV series",
+            _ => "Non-episodic"
+        };
+    }
+
+    private static string SourceLabel(ReleaseSource source) => source switch
+    {
+        ReleaseSource.WebDl => "WEB-DL",
+        ReleaseSource.WebRip => "WEBRip",
+        ReleaseSource.BluRay => "BluRay",
+        ReleaseSource.Hdtv => "HDTV",
+        _ => source.ToString()
+    };
+
+    private static string FormatBytes(long? bytes) => bytes switch
+    {
+        >= 1_073_741_824 => $"{bytes.Value / 1_073_741_824d:F1} GB",
+        >= 1_048_576 => $"{bytes.Value / 1_048_576d:F1} MB",
+        >= 1024 => $"{bytes.Value / 1024d:F1} KB",
+        > 0 => $"{bytes} B",
+        _ => "—"
+    };
+
+    private static string Relative(DateTime utc)
+    {
+        var span = DateTime.UtcNow - utc;
+        if (span.TotalMinutes < 1) return "just now";
+        if (span.TotalHours < 1) return $"{(int)span.TotalMinutes}m ago";
+        if (span.TotalDays < 1) return $"{(int)span.TotalHours}h ago";
+        return $"{(int)span.TotalDays}d ago";
+    }
+
+    private void Close() => MudDialog.Cancel();
+}

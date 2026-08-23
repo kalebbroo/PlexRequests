@@ -242,6 +242,8 @@ release is downloaded; it exists so ingestion coverage can be measured safely be
 After validating coverage in **Admin → Downloads → Indexers**, set `CATALOG_USE_FOR_SEARCH=true` to let
 catalog candidates supplement live searches. Set `CATALOG_USE_FOR_MONITORING=true` only after that to make
 new-episode monitoring use the local catalog instead of issuing a live search per wanted show.
+The **Search catalog** action on that admin page can inspect hydrated releases by title, media type, and
+indexer while still in shadow mode; it never exposes magnets or infohashes to the browser UI.
 
 Set `FULFILLMENT_API_KEY` (the same value on web + downloader) and pick a scenario:
 
