@@ -9,12 +9,14 @@
     {
       key: "1337x",
       displayName: "1337x",
+      durableBacklog: true,
       hosts: ["1337x.to", "1337x.st", "1337x.ws", "1337x.eu", "1337x.se", "1337x.so", "1337x.is"],
       detailPath: /^\/torrent\/\d+(?:\/|$)/i
     },
     {
       key: "ext.to",
       displayName: "EXT.to",
+      durableBacklog: false,
       hosts: ["ext.to"],
       detailPath: /^\/(?!browse(?:\/|$)|search(?:\/|$)|ajax(?:\/|$)|cdn-cgi(?:\/|$))[^/]*-\d+\/?$/i
     }

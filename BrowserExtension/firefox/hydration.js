@@ -105,6 +105,19 @@
     return new Set([...sourceKeys].filter(sourceKey => !active[sourceKey]));
   }
 
+  function backlogCapacity(records, maximum = 2000, pageSize = 250) {
+    const pending = (records || []).filter(record => record.state !== "complete").length;
+    return Math.min(Math.max(0, pageSize), Math.max(0, maximum - pending));
+  }
+
+  function nextBacklogCursor(current, page) {
+    const cursor = Math.max(0, Number(current) || 0);
+    const items = Array.isArray(page?.items) ? page.items : [];
+    if (!items.length) return 0;
+    const next = Number(page?.nextCursor);
+    return Number.isSafeInteger(next) && next > cursor ? next : 0;
+  }
+
   return {
     isSupportedHost,
     detailCandidate,
@@ -116,6 +129,8 @@
     navigationDelay,
     nextDue,
     activePauses,
-    eligibleSources
+    eligibleSources,
+    backlogCapacity,
+    nextBacklogCursor
   };
 });

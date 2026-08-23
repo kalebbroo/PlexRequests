@@ -256,6 +256,32 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Durable_backlog_is_authenticated_source_scoped_and_limited_to_recoverable_adapters()
+    {
+        var token = await PairAsync();
+        await _capture.IngestAsync(token, Batch("recoverable", "listing", Item()));
+
+        var page = await _capture.GetPendingDetailsAsync(token, 0, 250);
+        var item = Assert.Single(page!.Items);
+        Assert.Equal("1337x:torrent:1", item.ExternalId);
+        Assert.True(item.NeedsHydration);
+        Assert.Null(await _capture.GetPendingDetailsAsync("invalid-token", 0, 250));
+
+        var extToken = await PairAsync(38);
+        var extBatch = Batch("ext-pending", "listing", new CatalogItemDto
+        {
+            ExternalId = "extto:torrent:10000002",
+            ReleaseName = "Example.Show.S01E02.1080p.WEB-DL",
+            SourceUrl = "https://ext.to/example-show-s01e02-10000002/",
+            NeedsHydration = true
+        });
+        extBatch.PageUrl = "https://ext.to/browse/tv/";
+        await _capture.IngestAsync(extToken, extBatch);
+
+        Assert.Empty((await _capture.GetPendingDetailsAsync(extToken, 0, 250))!.Items);
+    }
+
+    [Fact]
     public async Task Expired_pairing_codes_cannot_be_redeemed()
     {
         var pairing = await _capture.CreatePairingAsync(37);

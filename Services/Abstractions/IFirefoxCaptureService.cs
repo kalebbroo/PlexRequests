@@ -15,6 +15,11 @@ public interface IFirefoxCaptureService
         string token,
         FirefoxCaptureHeartbeatDto heartbeat,
         CancellationToken cancellationToken = default);
+    Task<CatalogHydrationPageDto?> GetPendingDetailsAsync(
+        string token,
+        long afterId,
+        int limit,
+        CancellationToken cancellationToken = default);
     Task<FirefoxCaptureIngestResponseDto> IngestAsync(
         string token,
         FirefoxCaptureBatchDto batch,

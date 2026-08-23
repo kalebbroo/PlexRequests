@@ -14,6 +14,12 @@ Once per minute it reports only source-scoped queue counts, capture/pause state,
 screen can show whether work is flowing or needs attention. It never includes release names, page URLs, or
 browser session data in that health report.
 
+For adapters whose detail URLs can be safely revisited, Firefox also reconciles the server's unresolved
+catalog backlog every five minutes. This rebuilds missing local detail work after an extension update,
+browser storage loss, or interrupted profile. The capability currently applies to 1337x. EXT.to remains
+listing-driven because its magnet requests require short-lived credentials that are intentionally never
+stored by Plex Requests.
+
 Hydration failures are never permanently abandoned. Interrupted work is recovered after Firefox restarts;
 ordinary failures retry with capped exponential backoff, while repeated failures and expired site sessions
 move to a slower “Needs attention” cadence. Revisiting a listing refreshes its session-bound data and moves it
