@@ -12,7 +12,9 @@ window.plexui = {
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
-        URL.revokeObjectURL(url);
+        // Firefox resolves Blob-backed downloads after the synthetic click returns. Revoking the URL
+        // synchronously can leave a download entry whose file is zero bytes.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
     },
 
     // Smoothly scroll a horizontal media row by ~90% of its visible width. dir: -1 left, +1 right.
