@@ -11,7 +11,7 @@ public interface IFirefoxCaptureService
     Task<FirefoxCaptureConnectionDto?> GetConnectionAsync(
         string token,
         CancellationToken cancellationToken = default);
-    Task<bool> RecordHeartbeatAsync(
+    Task<FirefoxCaptureConnectionDto?> RecordHeartbeatAsync(
         string token,
         FirefoxCaptureHeartbeatDto heartbeat,
         CancellationToken cancellationToken = default);

@@ -577,9 +577,8 @@ app.MapPost("/api/browser-capture/heartbeat", async (
     if (token is null) return Results.Unauthorized();
     try
     {
-        return await capture.RecordHeartbeatAsync(token, body, cancellationToken)
-            ? Results.NoContent()
-            : Results.Unauthorized();
+        var result = await capture.RecordHeartbeatAsync(token, body, cancellationToken);
+        return result is null ? Results.Unauthorized() : Results.Ok(result);
     }
     catch (ArgumentException ex)
     {

@@ -55,3 +55,17 @@ test("extension versions compare numerically and malformed installed versions re
   assert.equal(telemetry.isVersionOlder("unknown", "1.6.0"), true);
   assert.equal(telemetry.isVersionOlder("1.6.0", "invalid"), false);
 });
+
+test("server connection changes refresh the authoritative lease without erasing good local state", () => {
+  assert.deepEqual(telemetry.connectionChanges({
+    expiresAt: "2026-12-01T12:00:00Z",
+    currentExtensionVersion: "1.7.0"
+  }, "1.6.0"), {
+    expiresAt: "2026-12-01T12:00:00Z",
+    currentExtensionVersion: "1.7.0",
+    updateAvailable: true
+  });
+
+  assert.deepEqual(telemetry.connectionChanges({ expiresAt: "not-a-date" }, "1.7.0"), {});
+  assert.deepEqual(telemetry.connectionChanges(null, "1.7.0"), {});
+});

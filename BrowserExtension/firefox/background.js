@@ -291,10 +291,9 @@ async function connectionStatus(checkServer = false) {
         connection.connected = response.ok;
         if (response.ok) {
           const serverStatus = await response.json();
-          connection.currentExtensionVersion = serverStatus.currentExtensionVersion || null;
-          connection.updateAvailable = telemetry.isVersionOlder(
-            browser.runtime.getManifest().version,
-            connection.currentExtensionVersion);
+          Object.assign(connection, telemetry.connectionChanges(
+            serverStatus,
+            browser.runtime.getManifest().version));
           connection.lastError = null;
         } else {
           connection.lastError = response.status === 401
@@ -356,11 +355,18 @@ async function reportHeartbeats() {
             extensionVersion: browser.runtime.getManifest().version
           })
         }, sourceKey);
+        let serverStatus = null;
+        if (response.ok && response.status !== 204) {
+          try { serverStatus = await response.json(); } catch { /* compatible with older servers */ }
+        }
         await updateConnection(sourceKey, {
           connected: response.ok,
           lastError: response.ok ? null : response.status === 401
             ? "Pairing expired or was revoked."
-            : `Health report returned HTTP ${response.status}.`
+            : `Health report returned HTTP ${response.status}.`,
+          ...(serverStatus ? telemetry.connectionChanges(
+            serverStatus,
+            browser.runtime.getManifest().version) : {})
         });
       } catch (error) {
         await updateConnection(sourceKey, { connected: false, lastError: error.message });

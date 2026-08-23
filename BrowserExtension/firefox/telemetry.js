@@ -49,5 +49,17 @@
     return false;
   }
 
-  return { recordSource, queueSnapshot, isVersionOlder };
+  function connectionChanges(serverStatus, installedVersion) {
+    const changes = {};
+    if (typeof serverStatus?.expiresAt === "string" && !Number.isNaN(Date.parse(serverStatus.expiresAt))) {
+      changes.expiresAt = serverStatus.expiresAt;
+    }
+    if (typeof serverStatus?.currentExtensionVersion === "string" && serverStatus.currentExtensionVersion.trim()) {
+      changes.currentExtensionVersion = serverStatus.currentExtensionVersion;
+      changes.updateAvailable = isVersionOlder(installedVersion, serverStatus.currentExtensionVersion);
+    }
+    return changes;
+  }
+
+  return { recordSource, queueSnapshot, isVersionOlder, connectionChanges };
 });

@@ -67,7 +67,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             catalog,
             Options.Create(new FirefoxCaptureOptions { Enabled = true }),
             catalogOptions,
-            new FirefoxExtensionInfo("1.6.0"),
+            new FirefoxExtensionInfo("1.7.0"),
             _clock,
             NullLogger<FirefoxCaptureService>.Instance);
     }
@@ -147,7 +147,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(2, device.ItemsReceived);
         Assert.Equal(1, device.LastParserVersion);
         Assert.Equal("1.2.0", device.ExtensionVersion);
-        Assert.Equal("1.6.0", status.CurrentExtensionVersion);
+        Assert.Equal("1.7.0", status.CurrentExtensionVersion);
         Assert.True(device.UpdateAvailable);
     }
 
@@ -192,7 +192,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(1, result.ReleasesInserted);
         var connection = await _capture.GetConnectionAsync(token);
         Assert.Equal("ext.to", connection!.Implementation);
-        Assert.Equal("1.6.0", connection.CurrentExtensionVersion);
+        Assert.Equal("1.7.0", connection.CurrentExtensionVersion);
         await using var catalog = await _catalogFactory.CreateDbContextAsync();
         var sighting = await catalog.Sightings.SingleAsync();
         Assert.Equal(38, sighting.IndexerId);
@@ -221,7 +221,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         var token = await PairAsync(38);
         var pausedUntil = _clock.GetUtcNow().UtcDateTime.AddMinutes(15);
 
-        Assert.True(await _capture.RecordHeartbeatAsync(token, new FirefoxCaptureHeartbeatDto
+        Assert.NotNull(await _capture.RecordHeartbeatAsync(token, new FirefoxCaptureHeartbeatDto
         {
             CaptureEnabled = true,
             QueuedUploads = 2,
@@ -229,7 +229,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             PendingDetails = 37,
             AttentionDetails = 4,
             HydrationPausedUntil = pausedUntil,
-            ExtensionVersion = "1.6.0"
+            ExtensionVersion = "1.7.0"
         }));
 
         var status = await _capture.GetAdminStatusAsync(38);
@@ -242,7 +242,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(37, device.PendingDetails);
         Assert.Equal(4, device.AttentionDetails);
         Assert.Equal(pausedUntil, device.HydrationPausedUntil);
-        Assert.Equal("1.6.0", device.ExtensionVersion);
+        Assert.Equal("1.7.0", device.ExtensionVersion);
         Assert.False(device.UpdateAvailable);
 
         var otherSource = await _capture.GetAdminStatusAsync(37);
@@ -258,7 +258,37 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
 
         var device = Assert.Single((await _capture.GetAdminStatusAsync(37)).Devices);
         Assert.True(await _capture.RevokeDeviceAsync(device.Id));
-        Assert.False(await _capture.RecordHeartbeatAsync(token, new FirefoxCaptureHeartbeatDto()));
+        Assert.Null(await _capture.RecordHeartbeatAsync(token, new FirefoxCaptureHeartbeatDto()));
+    }
+
+    [Fact]
+    public async Task Active_device_lease_renews_near_expiry_and_returns_the_authoritative_expiration()
+    {
+        var token = await PairAsync();
+        var originalExpiry = Assert.Single((await _capture.GetAdminStatusAsync(37)).Devices).ExpiresAt;
+
+        _clock.Advance(TimeSpan.FromDays(59));
+        var beforeWindow = await _capture.RecordHeartbeatAsync(token, new FirefoxCaptureHeartbeatDto());
+        Assert.NotNull(beforeWindow);
+        Assert.Equal(originalExpiry, beforeWindow.ExpiresAt);
+
+        _clock.Advance(TimeSpan.FromDays(2));
+        var renewed = await _capture.RecordHeartbeatAsync(token, new FirefoxCaptureHeartbeatDto());
+        Assert.NotNull(renewed);
+        Assert.Equal(_clock.GetUtcNow().UtcDateTime.AddDays(90), renewed.ExpiresAt);
+        Assert.Equal(renewed.ExpiresAt, Assert.Single((await _capture.GetAdminStatusAsync(37)).Devices).ExpiresAt);
+    }
+
+    [Fact]
+    public async Task Expired_device_lease_cannot_be_revived_by_heartbeat_or_status()
+    {
+        var token = await PairAsync();
+        _clock.Advance(TimeSpan.FromDays(91));
+
+        Assert.Null(await _capture.RecordHeartbeatAsync(token, new FirefoxCaptureHeartbeatDto()));
+        Assert.Null(await _capture.GetConnectionAsync(token));
+        var device = Assert.Single((await _capture.GetAdminStatusAsync(37)).Devices);
+        Assert.False(device.IsActive);
     }
 
     [Fact]
@@ -347,14 +377,15 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         try
         {
             Directory.CreateDirectory(extension);
-            File.WriteAllText(Path.Combine(extension, "manifest.json"), "{\"version\":\"1.6.0\"}");
+            File.WriteAllText(Path.Combine(extension, "manifest.json"), "{\"version\":\"1.7.0\"}");
 
             var info = FirefoxExtensionArchive.Inspect(root);
 
-            Assert.Equal("1.6.0", info.CurrentVersion);
+            Assert.Equal("1.7.0", info.CurrentVersion);
             Assert.True(info.IsUpdateAvailable("1.5.9"));
-            Assert.False(info.IsUpdateAvailable("1.6.0"));
-            Assert.False(info.IsUpdateAvailable("1.6"));
+            Assert.True(info.IsUpdateAvailable("1.6.0"));
+            Assert.False(info.IsUpdateAvailable("1.7.0"));
+            Assert.True(info.IsUpdateAvailable("1.6"));
             Assert.False(info.IsUpdateAvailable("1.10.0"));
             Assert.True(info.IsUpdateAvailable("unknown"));
         }

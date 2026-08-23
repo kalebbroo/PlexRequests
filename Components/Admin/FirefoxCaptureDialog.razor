@@ -120,6 +120,9 @@
                                             last capture @Relative(device.LastCaptureAt)
                                         </MudText>
                                         <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                                            Device lease @LeaseStatus(device)
+                                        </MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Tertiary">
                                             @device.ItemsReceived items in @device.BatchesReceived batches
                                             @if (device.LastParserVersion is int parserVersion)
                                             {
@@ -238,6 +241,15 @@
     {
         var span = utc - DateTime.UtcNow;
         return span.TotalSeconds <= 0 ? "now" : $"in {Math.Max(1, (int)Math.Ceiling(span.TotalMinutes))} minutes";
+    }
+
+    private static string LeaseStatus(FirefoxCaptureDeviceDto device)
+    {
+        if (device.RevokedAt is not null) return "revoked";
+        if (!device.IsActive) return "expired";
+        var remaining = device.ExpiresAt - DateTime.UtcNow;
+        var days = Math.Max(1, (int)Math.Ceiling(remaining.TotalDays));
+        return $"renews while active · expires after {days} inactive day{(days == 1 ? "" : "s")}";
     }
 
     private static FirefoxCaptureHealthState DeviceHealth(FirefoxCaptureDeviceDto device) =>

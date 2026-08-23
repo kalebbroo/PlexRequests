@@ -7,6 +7,7 @@ public sealed class FirefoxCaptureOptions
     public bool Enabled { get; set; } = true;
     public int PairingLifetimeMinutes { get; set; } = 10;
     public int DeviceLifetimeDays { get; set; } = 90;
+    public int DeviceRenewalWindowDays { get; set; } = 30;
     public int MaxBatchSize { get; set; } = 250;
 
     /// <summary>Rendered page domains permitted for each implementation. Tokens remain source-scoped.</summary>
