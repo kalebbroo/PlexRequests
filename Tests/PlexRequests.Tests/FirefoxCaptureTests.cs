@@ -340,7 +340,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
     }
 
     [Fact]
-    public void Downloadable_archive_contains_the_hydration_runtime()
+    public void Downloadable_xpi_is_nonempty_and_contains_the_hydration_runtime()
     {
         var root = Path.Combine(Path.GetTempPath(), $"plexrequests-firefox-{Guid.NewGuid():N}");
         var extension = Path.Combine(root, "BrowserExtension", "firefox");
@@ -368,7 +368,12 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
                 File.WriteAllText(path, file);
             }
 
-            using var stream = new MemoryStream(FirefoxExtensionArchive.Create(root));
+            var xpi = FirefoxExtensionArchive.Create(root);
+            Assert.True(xpi.Length > 4);
+            Assert.Equal((byte)'P', xpi[0]);
+            Assert.Equal((byte)'K', xpi[1]);
+
+            using var stream = new MemoryStream(xpi);
             using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
             Assert.Contains(archive.Entries, entry => entry.FullName == "hydration.js");
             Assert.Contains(archive.Entries, entry => entry.FullName == "sources.js");

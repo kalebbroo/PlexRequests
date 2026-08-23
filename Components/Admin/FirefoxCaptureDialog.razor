@@ -3,7 +3,6 @@
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 @inject IJSRuntime JavaScript
 @inject NavigationManager Navigation
-@inject IWebHostEnvironment Environment
 
 <MudDialog>
     <DialogContent>
@@ -41,16 +40,16 @@
                         <div>
                             <MudText Typo="Typo.subtitle2">1. Install the Firefox extension</MudText>
                             <MudText Typo="Typo.caption" Color="Color.Tertiary">
-                                Current version @_status.CurrentExtensionVersion · extract the ZIP, then use
-                                about:debugging → This Firefox → Load Temporary Add-on and select <code>manifest.json</code>.
+                                Current version @_status.CurrentExtensionVersion · use about:debugging → This Firefox →
+                                Load Temporary Add-on and select the downloaded XPI.
                                 Reload the same extension ID when updating to preserve its data.
                             </MudText>
                         </div>
-                        <MudButton OnClick="DownloadExtension"
-                                   Disabled="_downloading"
+                        <MudButton Href="/api/admin/browser-capture/firefox-extension"
+                                   Target="_blank"
                                    Variant="Variant.Outlined"
                                    StartIcon="@Icons.Material.Filled.Download">
-                            @(_downloading ? "Preparing…" : $"Download v{_status.CurrentExtensionVersion}")
+                            Download XPI v@_status.CurrentExtensionVersion
                         </MudButton>
                     </div>
                 </MudPaper>
@@ -189,7 +188,6 @@
 
     private bool _loading = true;
     private bool _creating;
-    private bool _downloading;
     private FirefoxCaptureAdminStatusDto? _status;
     private FirefoxCapturePairingDto? _pairing;
     private string ServerOrigin => new Uri(Navigation.BaseUri).GetLeftPart(UriPartial.Authority);
@@ -221,32 +219,6 @@
         if (_pairing is null) return;
         await JavaScript.InvokeVoidAsync("navigator.clipboard.writeText", _pairing.Code);
         await Toast.ShowSuccessAsync("Pairing code copied.");
-    }
-
-    private async Task DownloadExtension()
-    {
-        if (_status is null) return;
-        _downloading = true;
-        try
-        {
-            var archive = PlexRequestsHosted.Services.Implementations.FirefoxExtensionArchive.Create(
-                Environment.ContentRootPath);
-            using var stream = new MemoryStream(archive);
-            using var reference = new DotNetStreamReference(stream);
-            await JavaScript.InvokeVoidAsync(
-                "plexui.downloadFileFromStream",
-                $"plexrequests-firefox-capture-v{_status.CurrentExtensionVersion}.zip",
-                "application/zip",
-                reference);
-        }
-        catch (Exception ex)
-        {
-            await Toast.ShowErrorAsync($"Could not prepare the Firefox extension: {ex.Message}");
-        }
-        finally
-        {
-            _downloading = false;
-        }
     }
 
     private async Task Revoke(FirefoxCaptureDeviceDto device)

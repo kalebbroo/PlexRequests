@@ -22,7 +22,7 @@ while it remains open, and detail hydration is not completed until its upload is
 terminal batch explicitly revives it instead of mistaking the failed record for a successful duplicate.
 
 When the paired server is distributing a newer extension, both the admin indexer health and the Firefox
-popup show the manifest-derived version and link to the current ZIP. Reloading the same extension ID keeps
+popup show the manifest-derived version and link to the current XPI. Reloading the same extension ID keeps
 its pairings and IndexedDB queues; the server never relies on a separately maintained version setting.
 
 For adapters whose detail URLs can be safely revisited, Firefox also reconciles the server's unresolved
@@ -49,8 +49,8 @@ history are read or transmitted.
 ## Development installation
 
 1. Open `about:debugging#/runtime/this-firefox`.
-2. Download the extension ZIP from **Admin → Acquisition → Indexers → Firefox capture** and extract it.
-3. Choose **Load Temporary Add-on** and select the extracted `manifest.json`.
+2. Download the extension XPI from **Admin → Acquisition → Indexers → Firefox capture**.
+3. Choose **Load Temporary Add-on** and select the downloaded XPI.
 4. Generate a pairing code and enter it in the extension popup with the Plex Requests URL. Repeat from the
    other indexer row to keep both sources paired.
 
@@ -60,4 +60,4 @@ by Mozilla. Use an unlisted AMO submission for private self-distribution; never 
 ## Packaging and checks
 
 Run `./scripts/test-firefox-extension.sh` to execute parser tests, syntax checks, and manifest safety checks.
-Run `./scripts/package-firefox-extension.sh` to create an unsigned development ZIP under `artifacts/`.
+Run `./scripts/package-firefox-extension.sh` to create an unsigned development XPI under `artifacts/`.
