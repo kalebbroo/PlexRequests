@@ -15,6 +15,10 @@ screen can show whether work is flowing or needs attention. It never includes re
 browser session data in that health report. A valid device lease renews automatically near expiry while these
 heartbeats continue. Inactive profiles still expire and administrators can revoke a device immediately.
 
+Capture uploads keep 2,000 slots reserved for recoverable work. Permanently rejected pages are retained in a
+separate diagnostic window capped at 100 records and seven days, so obsolete parser output cannot eventually
+fill the durable queue and block every new page.
+
 When the paired server is distributing a newer extension, both the admin indexer health and the Firefox
 popup show the manifest-derived version and link to the current XPI. Reloading the same extension ID keeps
 its pairings and IndexedDB queues; the server never relies on a separately maintained version setting.

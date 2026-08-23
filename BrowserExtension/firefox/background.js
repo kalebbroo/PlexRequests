@@ -3,6 +3,7 @@
 const sources = globalThis.PlexRequestsCaptureSources;
 const hydration = globalThis.PlexRequestsHydration;
 const telemetry = globalThis.PlexRequestsCaptureTelemetry;
+const captureQueue = globalThis.PlexRequestsCaptureQueue;
 const DATABASE_NAME = "plexrequests-browser-capture";
 const DATABASE_VERSION = 2;
 const CAPTURE_STORE_NAME = "captureQueue";
@@ -12,6 +13,8 @@ const HYDRATION_ALARM = "drain-hydration-queue";
 const HEARTBEAT_ALARM = "report-capture-health";
 const BACKLOG_ALARM = "reconcile-server-backlog";
 const MAX_QUEUE_ITEMS = 2000;
+const MAX_FAILED_CAPTURES = 100;
+const CAPTURE_FAILURE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_HYDRATION_ITEMS = 2000;
 const HYDRATION_TIMEOUT_MS = 90_000;
 const HYDRATION_CHALLENGE_PAUSE_MS = 15 * 60 * 1000;
@@ -21,6 +24,7 @@ let hydrationPromise = null;
 let heartbeatPromise = null;
 let backlogPromise = null;
 let hydrationTimer = null;
+let captureCompactionPromise = null;
 
 function openDatabase() {
   return new Promise((resolve, reject) => {
@@ -78,19 +82,41 @@ async function updateRecord(storeName, record) {
   await withStore(storeName, "readwrite", store => store.put(record));
 }
 
+async function deleteRecords(storeName, keys) {
+  if (!keys.length) return;
+  await withStore(storeName, "readwrite", store => {
+    for (const key of keys) store.delete(key);
+  });
+}
+
+async function retainedCaptureRecords() {
+  if (captureCompactionPromise) return captureCompactionPromise;
+  captureCompactionPromise = (async () => {
+    const records = await allRecords(CAPTURE_STORE_NAME);
+    const plan = captureQueue.retentionPlan(records, {
+      now: Date.now(),
+      maxFailures: MAX_FAILED_CAPTURES,
+      failureRetentionMs: CAPTURE_FAILURE_RETENTION_MS
+    });
+    await deleteRecords(CAPTURE_STORE_NAME, plan.discarded.map(record => record.batchId));
+    return plan.retained;
+  })().finally(() => { captureCompactionPromise = null; });
+  return captureCompactionPromise;
+}
+
 async function queueRecord(batch) {
   const current = await browser.storage.local.get({ captureEnabled: true });
   if (!current.captureEnabled) return { queued: false };
 
   if (batch.pageType === "listing") await enqueueHydrations(batch.items);
-  const records = await allRecords(CAPTURE_STORE_NAME);
+  const records = await retainedCaptureRecords();
   if (records.some(item => item.batchId === batch.batchId)) {
     void drainHydrationQueue();
     return { queued: false, duplicate: true };
   }
-  if (records.length >= MAX_QUEUE_ITEMS) {
+  if (captureQueue.pendingCount(records) >= MAX_QUEUE_ITEMS) {
     await browser.storage.local.set({
-      lastError: `Capture queue is full (${MAX_QUEUE_ITEMS} pages). Pair or retry before browsing more pages.`
+      lastError: `Capture queue is full (${MAX_QUEUE_ITEMS} pending pages). Pair or retry before browsing more pages.`
     });
     return { queued: false, full: true };
   }
@@ -147,7 +173,7 @@ async function enqueueHydrations(items) {
 
 async function queueStatus() {
   const [captures, details, state] = await Promise.all([
-    allRecords(CAPTURE_STORE_NAME),
+    retainedCaptureRecords(),
     allRecords(HYDRATION_STORE_NAME),
     browser.storage.local.get({ hydrationPausedUntil: null, hydrationPauses: {} })
   ]);
@@ -330,7 +356,7 @@ async function reportHeartbeats() {
   if (heartbeatPromise) return heartbeatPromise;
   heartbeatPromise = (async () => {
     const [captures, details, state, config] = await Promise.all([
-      allRecords(CAPTURE_STORE_NAME),
+      retainedCaptureRecords(),
       allRecords(HYDRATION_STORE_NAME),
       browser.storage.local.get({
         captureEnabled: true,
@@ -542,6 +568,7 @@ async function sendRecord(record) {
     record.lastError = detail;
     if (response.status === 400) {
       record.state = "failed";
+      record.failedAt = Date.now();
       record.nextAttemptAt = Number.MAX_SAFE_INTEGER;
     } else if (response.status === 401 || response.status === 403) {
       record.nextAttemptAt = Date.now() + 60 * 60 * 1000;
@@ -570,7 +597,7 @@ async function drainQueue(force = false) {
     const state = await browser.storage.local.get({ captureEnabled: true });
     const config = await connectionConfig();
     if (!state.captureEnabled || !Object.keys(config.connections || {}).length) return;
-    const due = (await allRecords(CAPTURE_STORE_NAME))
+    const due = (await retainedCaptureRecords())
       .filter(item => item.state === "queued" && (force || item.nextAttemptAt <= Date.now()))
       .sort((a, b) => a.nextAttemptAt - b.nextAttemptAt)
       .slice(0, 20);
@@ -583,10 +610,11 @@ async function drainQueue(force = false) {
 }
 
 async function retryFailedCaptures() {
-  const records = await allRecords(CAPTURE_STORE_NAME);
+  const records = await retainedCaptureRecords();
   for (const record of records.filter(item => item.state === "failed")) {
     record.state = "queued";
     record.attempts = 0;
+    record.failedAt = null;
     record.nextAttemptAt = 0;
     record.lastError = null;
     await updateRecord(CAPTURE_STORE_NAME, record);

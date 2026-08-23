@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Plex Requests Browser Capture",
   "short_name": "PR Capture",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Captures supported torrent listings you browse and safely resolves their release details for Plex Requests.",
   "browser_specific_settings": {
     "gecko": {
@@ -45,7 +45,7 @@
     "http://127.0.0.1/*"
   ],
   "background": {
-    "scripts": ["sources.js", "hydration.js", "telemetry.js", "background.js"]
+    "scripts": ["sources.js", "hydration.js", "telemetry.js", "capture-queue.js", "background.js"]
   },
   "action": {
     "default_title": "Plex Requests Browser Capture",

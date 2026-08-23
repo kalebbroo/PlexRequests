@@ -67,7 +67,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             catalog,
             Options.Create(new FirefoxCaptureOptions { Enabled = true }),
             catalogOptions,
-            new FirefoxExtensionInfo("1.7.0"),
+            new FirefoxExtensionInfo("1.8.0"),
             _clock,
             NullLogger<FirefoxCaptureService>.Instance);
     }
@@ -147,7 +147,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(2, device.ItemsReceived);
         Assert.Equal(1, device.LastParserVersion);
         Assert.Equal("1.2.0", device.ExtensionVersion);
-        Assert.Equal("1.7.0", status.CurrentExtensionVersion);
+        Assert.Equal("1.8.0", status.CurrentExtensionVersion);
         Assert.True(device.UpdateAvailable);
     }
 
@@ -192,7 +192,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(1, result.ReleasesInserted);
         var connection = await _capture.GetConnectionAsync(token);
         Assert.Equal("ext.to", connection!.Implementation);
-        Assert.Equal("1.7.0", connection.CurrentExtensionVersion);
+        Assert.Equal("1.8.0", connection.CurrentExtensionVersion);
         await using var catalog = await _catalogFactory.CreateDbContextAsync();
         var sighting = await catalog.Sightings.SingleAsync();
         Assert.Equal(38, sighting.IndexerId);
@@ -229,7 +229,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             PendingDetails = 37,
             AttentionDetails = 4,
             HydrationPausedUntil = pausedUntil,
-            ExtensionVersion = "1.7.0"
+            ExtensionVersion = "1.8.0"
         }));
 
         var status = await _capture.GetAdminStatusAsync(38);
@@ -242,7 +242,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(37, device.PendingDetails);
         Assert.Equal(4, device.AttentionDetails);
         Assert.Equal(pausedUntil, device.HydrationPausedUntil);
-        Assert.Equal("1.7.0", device.ExtensionVersion);
+        Assert.Equal("1.8.0", device.ExtensionVersion);
         Assert.False(device.UpdateAvailable);
 
         var otherSource = await _capture.GetAdminStatusAsync(37);
@@ -348,7 +348,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         {
             foreach (var file in new[]
             {
-                "manifest.json", "background.js", "content.js", "hydration.js", "parser.js", "sources.js", "telemetry.js",
+                "manifest.json", "background.js", "capture-queue.js", "content.js", "hydration.js", "parser.js", "sources.js", "telemetry.js",
                 "popup/popup.html", "popup/popup.css", "popup/popup.js", "icons/capture.svg", "README.md"
             })
             {
@@ -362,6 +362,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             Assert.Contains(archive.Entries, entry => entry.FullName == "hydration.js");
             Assert.Contains(archive.Entries, entry => entry.FullName == "sources.js");
             Assert.Contains(archive.Entries, entry => entry.FullName == "telemetry.js");
+            Assert.Contains(archive.Entries, entry => entry.FullName == "capture-queue.js");
         }
         finally
         {
@@ -377,14 +378,15 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         try
         {
             Directory.CreateDirectory(extension);
-            File.WriteAllText(Path.Combine(extension, "manifest.json"), "{\"version\":\"1.7.0\"}");
+            File.WriteAllText(Path.Combine(extension, "manifest.json"), "{\"version\":\"1.8.0\"}");
 
             var info = FirefoxExtensionArchive.Inspect(root);
 
-            Assert.Equal("1.7.0", info.CurrentVersion);
+            Assert.Equal("1.8.0", info.CurrentVersion);
             Assert.True(info.IsUpdateAvailable("1.5.9"));
             Assert.True(info.IsUpdateAvailable("1.6.0"));
-            Assert.False(info.IsUpdateAvailable("1.7.0"));
+            Assert.True(info.IsUpdateAvailable("1.7.0"));
+            Assert.False(info.IsUpdateAvailable("1.8.0"));
             Assert.True(info.IsUpdateAvailable("1.6"));
             Assert.False(info.IsUpdateAvailable("1.10.0"));
             Assert.True(info.IsUpdateAvailable("unknown"));
