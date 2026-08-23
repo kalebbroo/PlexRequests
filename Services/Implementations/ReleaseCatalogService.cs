@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using PlexRequestsHosted.Infrastructure.Catalog;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Shared.DTOs;
+using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequestsHosted.Services.Implementations;
@@ -324,8 +325,110 @@ public sealed class ReleaseCatalogService(
         }).ToList();
     }
 
+    public async Task<CatalogBrowsePageDto> BrowseAsync(
+        CatalogBrowseQueryDto query,
+        CancellationToken cancellationToken)
+    {
+        var page = Math.Max(1, query.Page);
+        var pageSize = Math.Clamp(query.PageSize, 10, 100);
+        if (!options.Value.Enabled)
+            return new CatalogBrowsePageDto { Page = page, PageSize = pageSize };
+
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var releases = db.Releases.AsNoTracking()
+            .Where(release => release.Sightings.Any());
+        if (query.IndexerId is int indexerId and > 0)
+            releases = releases.Where(release => release.Sightings.Any(sighting => sighting.IndexerId == indexerId));
+
+        releases = query.MediaType switch
+        {
+            MediaType.Movie => releases.Where(release => release.MediaType == MediaType.Movie
+                || (release.MediaType == null && release.Season == null)),
+            MediaType.TvShow => releases.Where(release => release.MediaType == MediaType.TvShow
+                || (release.MediaType == null && release.Season != null)),
+            MediaType.Anime => releases.Where(release => release.MediaType == MediaType.Anime),
+            MediaType.Music => releases.Where(release => release.MediaType == MediaType.Music),
+            _ => releases
+        };
+
+        var search = Clean(query.Search, 256);
+        if (search is not null)
+        {
+            var parsed = parser.Parse(search).Title;
+            var tokens = (string.IsNullOrWhiteSpace(parsed) ? search : parsed)
+                .ToUpperInvariant()
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.Ordinal)
+                .Take(8)
+                .ToList();
+            foreach (var token in tokens)
+            {
+                var term = token;
+                releases = releases.Where(release => release.NormalizedTitle.Contains(term));
+            }
+        }
+
+        var total = await releases.LongCountAsync(cancellationToken);
+        var maxPage = Math.Max(1, (int)Math.Min(int.MaxValue / pageSize,
+            (total + pageSize - 1) / pageSize));
+        page = Math.Min(page, maxPage);
+        var rows = await releases
+            .Include(release => release.Sightings)
+            .OrderByDescending(release => release.LastSeenAt)
+            .ThenBy(release => release.ReleaseName)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .AsSplitQuery()
+            .ToListAsync(cancellationToken);
+
+        return new CatalogBrowsePageDto
+        {
+            Total = total,
+            Page = page,
+            PageSize = pageSize,
+            Items = rows.Select(release =>
+            {
+                var sightings = query.IndexerId is int selected and > 0
+                    ? release.Sightings.Where(sighting => sighting.IndexerId == selected).ToList()
+                    : release.Sightings.ToList();
+                var best = sightings
+                    .OrderByDescending(sighting => sighting.Seeders ?? -1)
+                    .ThenByDescending(sighting => sighting.LastSeenAt)
+                    .First();
+                return new CatalogBrowseItemDto
+                {
+                    ReleaseName = release.ReleaseName,
+                    MediaType = release.MediaType ?? (release.Season is not null ? MediaType.TvShow : null),
+                    Year = release.Year,
+                    Season = release.Season,
+                    Episode = release.Episode,
+                    IsSeasonPack = release.IsSeasonPack,
+                    Resolution = release.Resolution,
+                    ReleaseSource = release.ReleaseSource,
+                    Codec = release.Codec,
+                    SizeBytes = release.SizeBytes ?? best.SizeBytes,
+                    PublishedAt = release.PublishedAt ?? best.PublishedAt,
+                    LastSeenAt = release.LastSeenAt,
+                    IndexerId = best.IndexerId,
+                    Source = best.Source,
+                    SourceUrl = SafeSourceUrl(best.SourceUrl),
+                    Category = best.Category,
+                    Uploader = best.Uploader,
+                    Seeders = best.Seeders,
+                    Leechers = best.Leechers,
+                    SightingCount = release.Sightings.Count
+                };
+            }).ToList()
+        };
+    }
+
     private static string BuildMinimalMagnet(string infoHash, string releaseName) =>
         $"magnet:?xt=urn:btih:{infoHash}&dn={Uri.EscapeDataString(releaseName)}";
+
+    private static string? SafeSourceUrl(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
+            ? uri.ToString()
+            : null;
 
     internal static TimeSpan FailureDelay(CatalogFailureDto failure, int consecutiveFailures)
     {

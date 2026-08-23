@@ -227,6 +227,75 @@ public sealed class ReleaseCatalogTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Catalog_browser_filters_captured_releases_by_source_and_title_tokens()
+    {
+        var ext = Item("ext-row", Hex('6'));
+        ext.ReleaseName = "Rick.and.Morty.S09E01.1080p.WEB-DL.x265-GROUP";
+        ext.SourceUrl = "https://ext.to/rick-and-morty-s09e01-10000001/";
+        ext.Uploader = "trusted-group";
+        ext.Seeders = 73;
+        var extBatch = Batch(38, "ext-capture", "ignored", ext);
+        extBatch.Source = "ext.to (Firefox)";
+        extBatch.AdvanceCheckpoint = false;
+        await _catalog.UpsertBatchAsync(extBatch, CancellationToken.None);
+
+        var mirror = Item("mirror-row", Hex('6'));
+        mirror.ReleaseName = ext.ReleaseName;
+        mirror.Seeders = 4;
+        var mirrorBatch = Batch(37, "mirror-capture", "ignored", mirror);
+        mirrorBatch.Source = "1337x (Firefox)";
+        mirrorBatch.AdvanceCheckpoint = false;
+        await _catalog.UpsertBatchAsync(mirrorBatch, CancellationToken.None);
+
+        var results = await _catalog.BrowseAsync(new CatalogBrowseQueryDto
+        {
+            Search = "Morty Rick",
+            IndexerId = 38,
+            MediaType = MediaType.TvShow,
+            PageSize = 50
+        }, CancellationToken.None);
+
+        var release = Assert.Single(results.Items);
+        Assert.Equal(1, results.Total);
+        Assert.Equal("ext.to (Firefox)", release.Source);
+        Assert.Equal(38, release.IndexerId);
+        Assert.Equal(73, release.Seeders);
+        Assert.Equal(2, release.SightingCount);
+        Assert.Equal(9, release.Season);
+        Assert.Equal(1, release.Episode);
+        Assert.Equal(MediaType.TvShow, release.MediaType);
+        Assert.Equal(ext.SourceUrl, release.SourceUrl);
+        Assert.Equal("trusted-group", release.Uploader);
+    }
+
+    [Fact]
+    public async Task Catalog_browser_returns_newest_releases_in_bounded_pages()
+    {
+        for (var i = 0; i < 12; i++)
+        {
+            var item = Item($"row-{i}", Hex("0123456789AB"[i]));
+            item.ReleaseName = $"Example.Show.S01E{i + 1:00}.1080p.WEB-DL";
+            if (i == 11) item.SourceUrl = "javascript:alert(1)";
+            var batch = Batch(20, $"batch-{i}", i.ToString(), item);
+            batch.ObservedAt = new DateTime(2026, 8, 15, 12, i, 0, DateTimeKind.Utc);
+            await _catalog.UpsertBatchAsync(batch, CancellationToken.None);
+        }
+
+        var first = await _catalog.BrowseAsync(new CatalogBrowseQueryDto { PageSize = 5 }, CancellationToken.None);
+        var second = await _catalog.BrowseAsync(new CatalogBrowseQueryDto { Page = 2, PageSize = 5 }, CancellationToken.None);
+        var beyondEnd = await _catalog.BrowseAsync(new CatalogBrowseQueryDto { Page = 99, PageSize = 5 }, CancellationToken.None);
+
+        Assert.Equal(12, first.Total);
+        Assert.Equal(10, first.PageSize);
+        Assert.Equal(10, first.Items.Count);
+        Assert.Equal(2, second.Items.Count);
+        Assert.Contains("S01E12", first.Items[0].ReleaseName);
+        Assert.Null(first.Items[0].SourceUrl);
+        Assert.Equal(2, beyondEnd.Page);
+        Assert.Equal(2, beyondEnd.Items.Count);
+    }
+
+    [Fact]
     public async Task Maintenance_prunes_in_batches_but_preserves_hashes_referenced_by_application_history()
     {
         var protectedHash = Hex('4');
