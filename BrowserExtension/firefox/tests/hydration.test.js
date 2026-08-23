@@ -15,6 +15,7 @@ test("accepts supported source detail URLs and retains their adapter key", () =>
   assert.equal(candidate.sourceUrl, "https://1337x.to/torrent/7654321/example/");
   assert.equal(candidate.createdAt, 1234);
   assert.equal(candidate.sourceKey, "1337x");
+  assert.equal(candidate.needsAttention, false);
   const extCandidate = hydration.detailCandidate({
     externalId: "extto:torrent:10000002",
     sourceUrl: "https://ext.to/example-show-s01e02-10000002/#comments",
@@ -53,9 +54,50 @@ test("selects hydration work only for paired source adapters", () => {
   assert.equal(selected.externalId, "x");
 });
 
+test("a challenge pause blocks only its own source adapter", () => {
+  const eligible = hydration.eligibleSources(
+    new Set(["1337x", "ext.to"]),
+    { "1337x": 200, "ext.to": 50 },
+    100
+  );
+  assert.deepEqual([...eligible], ["ext.to"]);
+  assert.deepEqual(hydration.activePauses({ "1337x": 200, "ext.to": 50 }, 100), { "1337x": 200 });
+});
+
 test("navigation and retry delays are bounded", () => {
   assert.equal(hydration.navigationDelay(() => 0), 8000);
   assert.ok(hydration.navigationDelay(() => 0.999) < 15000);
   assert.equal(hydration.retryDelay(1, () => 0), 15000);
   assert.ok(hydration.retryDelay(20, () => 0) <= 30 * 60 * 1000);
+  assert.equal(hydration.attentionRetryDelay(() => 0), 6 * 60 * 60 * 1000);
+  assert.ok(hydration.attentionRetryDelay(() => 0.999) < 6.5 * 60 * 60 * 1000);
+});
+
+test("repeated and session-bound failures request attention without becoming terminal", () => {
+  assert.equal(hydration.needsAttention("temporary network failure", 3), false);
+  assert.equal(hydration.needsAttention("temporary network failure", 4), true);
+  assert.equal(hydration.needsAttention("EXT.to magnet lookup returned HTTP 403.", 1), true);
+  assert.equal(hydration.needsAttention("page credentials expired or were unavailable", 1), true);
+
+  const revived = hydration.reviveLegacyFailure({
+    externalId: "old-failure",
+    state: "failed",
+    attempts: 4,
+    nextAttemptAt: Number.MAX_SAFE_INTEGER,
+    startedAt: 123
+  }, 5000);
+  assert.equal(revived.state, "queued");
+  assert.equal(revived.needsAttention, true);
+  assert.equal(revived.startedAt, null);
+  assert.equal(revived.nextAttemptAt, 5000);
+
+  const interrupted = hydration.reviveInterrupted({
+    externalId: "interrupted",
+    state: "loading",
+    attempts: 1,
+    startedAt: 123
+  }, null, 6000);
+  assert.equal(interrupted.state, "queued");
+  assert.equal(interrupted.nextAttemptAt, 6000);
+  assert.match(interrupted.lastError, /Firefox restarted/);
 });

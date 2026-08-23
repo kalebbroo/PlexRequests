@@ -30,9 +30,10 @@
         <div><dt>Details pending</dt><dd id="hydration-queued">0</dd></div>
         <div><dt>Needs attention</dt><dd id="failed">0</dd></div>
       </dl>
+      <p class="recovery-note">Pending details retry automatically with capped backoff. “Needs attention” is not terminal; revisit that source after completing a challenge to refresh its session.</p>
       <label class="toggle"><input id="capture-enabled" type="checkbox" checked> Capture pages as I browse</label>
       <button id="resume-hydration" class="secondary" hidden>Resume detail capture</button>
-      <button id="retry" class="secondary">Retry pending work</button>
+      <button id="retry" class="secondary">Retry all now</button>
       <button id="repair" class="secondary">Pair another source</button>
     </section>
 

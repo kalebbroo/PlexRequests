@@ -10,7 +10,6 @@ const DRAIN_ALARM = "drain-capture-queue";
 const HYDRATION_ALARM = "drain-hydration-queue";
 const MAX_QUEUE_ITEMS = 2000;
 const MAX_HYDRATION_ITEMS = 2000;
-const MAX_HYDRATION_ATTEMPTS = 4;
 const HYDRATION_TIMEOUT_MS = 90_000;
 const HYDRATION_CHALLENGE_PAUSE_MS = 15 * 60 * 1000;
 const COMPLETED_HYDRATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -145,14 +144,23 @@ async function queueStatus() {
   const [captures, details, state] = await Promise.all([
     allRecords(CAPTURE_STORE_NAME),
     allRecords(HYDRATION_STORE_NAME),
-    browser.storage.local.get({ hydrationPausedUntil: null })
+    browser.storage.local.get({ hydrationPausedUntil: null, hydrationPauses: {} })
   ]);
+  const now = Date.now();
+  const pauseEntries = Object.entries(state.hydrationPauses || {})
+    .filter(([, until]) => Number(until) > now);
+  const pauseTimes = pauseEntries.map(([, until]) => Number(until));
+  if (Number(state.hydrationPausedUntil) > now) pauseTimes.push(Number(state.hydrationPausedUntil));
+  const hydrationPausedUntil = pauseTimes.length ? Math.max(...pauseTimes) : null;
+  const hydrationNeedsAttention = details.filter(item => item.state === "failed" || item.needsAttention).length;
   return {
     queued: captures.filter(item => item.state === "queued").length,
     failed: captures.filter(item => item.state === "failed").length,
-    hydrationQueued: details.filter(item => item.state === "queued" || item.state === "loading").length,
-    hydrationFailed: details.filter(item => item.state === "failed").length,
-    hydrationPausedUntil: state.hydrationPausedUntil
+    hydrationQueued: details.filter(item => (item.state === "queued" || item.state === "loading") && !item.needsAttention).length,
+    hydrationFailed: hydrationNeedsAttention,
+    hydrationNeedsAttention,
+    hydrationPausedUntil,
+    hydrationPausedSources: pauseEntries.map(([sourceKey]) => sourceKey)
   };
 }
 
@@ -478,6 +486,7 @@ async function completeHydrations(items) {
     record.completedAt = Date.now();
     record.startedAt = null;
     record.lastError = null;
+    record.needsAttention = false;
     await updateRecord(HYDRATION_STORE_NAME, record);
     completed++;
   }
@@ -516,22 +525,39 @@ async function clearWorker(closeTab = false) {
   return state;
 }
 
-async function retryHydration(externalId, error, delay = null) {
+async function retryHydration(externalId, error, delay = null, attentionOverride = null) {
   if (!externalId) return;
   const records = await allRecords(HYDRATION_STORE_NAME);
   const record = records.find(item => item.externalId === externalId);
   if (!record || record.state === "complete") return;
   record.startedAt = null;
   record.lastError = error;
-  if (record.attempts >= MAX_HYDRATION_ATTEMPTS) {
-    record.state = "failed";
-    record.nextAttemptAt = Number.MAX_SAFE_INTEGER;
-  } else {
-    record.state = "queued";
-    record.nextAttemptAt = Date.now() + (delay ?? hydration.retryDelay(record.attempts));
-  }
+  record.state = "queued";
+  record.needsAttention = attentionOverride ?? hydration.needsAttention(error, record.attempts);
+  const retryIn = delay ?? (record.needsAttention
+    ? hydration.attentionRetryDelay()
+    : hydration.retryDelay(record.attempts));
+  record.nextAttemptAt = Date.now() + retryIn;
   await updateRecord(HYDRATION_STORE_NAME, record);
   await browser.storage.local.set({ hydrationLastError: error });
+}
+
+async function reviveStrandedHydrations(activeExternalId = null) {
+  const records = await allRecords(HYDRATION_STORE_NAME);
+  const now = Date.now();
+  const changed = [];
+  const normalized = records.map(record => {
+    const revivedFailed = hydration.reviveLegacyFailure(record, now);
+    const revived = hydration.reviveInterrupted(revivedFailed, activeExternalId, now);
+    if (revived !== record) changed.push(revived);
+    return revived;
+  });
+  if (changed.length) {
+    await withStore(HYDRATION_STORE_NAME, "readwrite", store => {
+      for (const record of changed) store.put(record);
+    });
+  }
+  return normalized;
 }
 
 function scheduleHydration(delay = hydration.navigationDelay()) {
@@ -574,10 +600,15 @@ async function pauseForChallenge(tabId) {
   await retryHydration(
     state.hydrationWorkerExternalId,
     `${sourceName} presented a browser challenge. Automatic detail capture is paused; open it normally, complete the challenge, then resume.`,
-    HYDRATION_CHALLENGE_PAUSE_MS
+    HYDRATION_CHALLENGE_PAUSE_MS,
+    true
   );
+  const pauseState = await browser.storage.local.get({ hydrationPauses: {} });
+  const hydrationPauses = { ...(pauseState.hydrationPauses || {}) };
+  if (state.hydrationWorkerSourceKey) hydrationPauses[state.hydrationWorkerSourceKey] = pausedUntil;
   await browser.storage.local.set({
-    hydrationPausedUntil: pausedUntil,
+    hydrationPauses,
+    hydrationPausedUntil: null,
     hydrationLastError: `${sourceName} challenge detected. Complete it in a normal tab, then resume detail capture.`
   });
   await clearWorker(true);
@@ -601,22 +632,36 @@ async function drainHydrationQueue(force = false) {
   hydrationPromise = (async () => {
     const state = await browser.storage.local.get({
       captureEnabled: true,
-      hydrationPausedUntil: null
+      hydrationPausedUntil: null,
+      hydrationPauses: {}
     });
     const config = await connectionConfig();
     const activeSources = new Set(Object.entries(config.connections || {})
       .filter(([, connection]) => !connection.expiresAt || new Date(connection.expiresAt) > new Date())
       .map(([sourceKey]) => sourceKey));
     if (!state.captureEnabled || !activeSources.size) return;
-    if (!force && state.hydrationPausedUntil && state.hydrationPausedUntil > Date.now()) return;
-    if (force && state.hydrationPausedUntil) {
-      await browser.storage.local.set({ hydrationPausedUntil: null, hydrationLastError: null });
+    const now = Date.now();
+    let hydrationPauses = { ...(state.hydrationPauses || {}) };
+    if (Number(state.hydrationPausedUntil) > now && !Object.keys(hydrationPauses).length) {
+      for (const sourceKey of activeSources) hydrationPauses[sourceKey] = Number(state.hydrationPausedUntil);
+    }
+    hydrationPauses = hydration.activePauses(hydrationPauses, now);
+    if (force) hydrationPauses = {};
+    await browser.storage.local.set({
+      hydrationPauses,
+      hydrationPausedUntil: null,
+      ...(force ? { hydrationLastError: null } : {})
+    });
+    const eligibleSources = hydration.eligibleSources(activeSources, hydrationPauses, now);
+    if (!eligibleSources.size) {
+      await updateBadge();
+      return;
     }
 
     const current = await recoverStaleWorker();
+    const records = await reviveStrandedHydrations(current.hydrationWorkerExternalId);
     if (current.hydrationWorkerExternalId) return;
-    const records = await allRecords(HYDRATION_STORE_NAME);
-    const next = hydration.nextDue(records, Date.now(), activeSources);
+    const next = hydration.nextDue(records, Date.now(), eligibleSources);
     if (!next) {
       if (await existingTab(current.hydrationWorkerTabId)) await clearWorker(true);
       return;
@@ -667,12 +712,13 @@ async function retryHydrations() {
   for (const record of records.filter(item => item.state === "failed" || item.state === "queued")) {
     record.state = "queued";
     record.attempts = 0;
+    record.needsAttention = false;
     record.startedAt = null;
     record.nextAttemptAt = 0;
     record.lastError = null;
     await updateRecord(HYDRATION_STORE_NAME, record);
   }
-  await browser.storage.local.set({ hydrationPausedUntil: null, hydrationLastError: null });
+  await browser.storage.local.set({ hydrationPausedUntil: null, hydrationPauses: {}, hydrationLastError: null });
   return drainHydrationQueue(true);
 }
 
@@ -686,7 +732,7 @@ async function setCaptureEnabled(enabled) {
   await browser.storage.local.set({ captureEnabled: Boolean(enabled) });
   if (!enabled) {
     const state = await workerState();
-    await retryHydration(state.hydrationWorkerExternalId, "Detail capture paused.", 0);
+    await retryHydration(state.hydrationWorkerExternalId, "Detail capture paused.", 0, false);
     await clearWorker(true);
   } else {
     void drainQueue(true);
@@ -726,7 +772,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
     case "forget-pairing":
       return clearWorker(true).then(() => browser.storage.local.remove([
         "token", "tokenExpiresAt", "source", "connected", "connections", "lastError",
-        "hydrationPausedUntil", "hydrationLastError"
+        "hydrationPausedUntil", "hydrationPauses", "hydrationLastError"
       ]));
     default: return undefined;
   }

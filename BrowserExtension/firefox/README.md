@@ -11,6 +11,12 @@ indexer has its own source-scoped pairing, so both sites can remain connected at
 challenge appears, the worker pauses; complete the challenge in a normal tab for that site and choose
 **Resume detail capture** in the extension. The extension never clicks or solves browser challenges itself.
 
+Hydration failures are never permanently abandoned. Interrupted work is recovered after Firefox restarts;
+ordinary failures retry with capped exponential backoff, while repeated failures and expired site sessions
+move to a slower “Needs attention” cadence. Revisiting a listing refreshes its session-bound data and moves it
+back to the fast queue. Challenge pauses are scoped to one indexer, so EXT.to can keep resolving while 1337x
+is waiting for verification, and vice versa.
+
 Firefox's install prompt explicitly discloses the required transmission of supported-site browsing activity, search
 terms, and visible release metadata to the Plex Requests server you pair. No cookies or general browser
 history are read or transmitted.

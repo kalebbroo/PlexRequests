@@ -35,6 +35,7 @@
         captureSessionId: item.captureSessionId || null,
         state: "queued",
         attempts: 0,
+        needsAttention: false,
         createdAt: observedAt,
         startedAt: null,
         nextAttemptAt: 0,
@@ -50,6 +51,39 @@
     return base + Math.floor(random() * Math.min(base / 3, 30_000));
   }
 
+  function attentionRetryDelay(random = Math.random) {
+    const base = 6 * 60 * 60 * 1000;
+    return base + Math.floor(random() * 30 * 60 * 1000);
+  }
+
+  function needsAttention(error, attempts) {
+    const message = String(error || "");
+    return attempts >= 4
+      || /credentials expired|credentials.*unavailable|did not return a usable magnet|HTTP (?:401|403)|browser challenge/i.test(message);
+  }
+
+  function reviveLegacyFailure(record, now = Date.now()) {
+    if (!record || record.state !== "failed") return record;
+    return {
+      ...record,
+      state: "queued",
+      needsAttention: true,
+      startedAt: null,
+      nextAttemptAt: now
+    };
+  }
+
+  function reviveInterrupted(record, activeExternalId = null, now = Date.now()) {
+    if (!record || record.state !== "loading" || record.externalId === activeExternalId) return record;
+    return {
+      ...record,
+      state: "queued",
+      startedAt: null,
+      nextAttemptAt: now,
+      lastError: record.lastError || "Recovered after Firefox restarted."
+    };
+  }
+
   function navigationDelay(random = Math.random) {
     return 8_000 + Math.floor(random() * 7_000);
   }
@@ -61,5 +95,27 @@
       .sort((a, b) => a.nextAttemptAt - b.nextAttemptAt || a.createdAt - b.createdAt)[0] || null;
   }
 
-  return { isSupportedHost, detailCandidate, retryDelay, navigationDelay, nextDue };
+  function activePauses(pauses, now = Date.now()) {
+    return Object.fromEntries(Object.entries(pauses || {})
+      .filter(([, until]) => Number(until) > now));
+  }
+
+  function eligibleSources(sourceKeys, pauses, now = Date.now()) {
+    const active = activePauses(pauses, now);
+    return new Set([...sourceKeys].filter(sourceKey => !active[sourceKey]));
+  }
+
+  return {
+    isSupportedHost,
+    detailCandidate,
+    retryDelay,
+    attentionRetryDelay,
+    needsAttention,
+    reviveLegacyFailure,
+    reviveInterrupted,
+    navigationDelay,
+    nextDue,
+    activePauses,
+    eligibleSources
+  };
 });
