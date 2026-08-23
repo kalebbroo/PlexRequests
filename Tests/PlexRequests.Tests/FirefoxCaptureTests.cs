@@ -67,7 +67,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             catalog,
             Options.Create(new FirefoxCaptureOptions { Enabled = true }),
             catalogOptions,
-            new FirefoxExtensionInfo("1.9.0"),
+            new FirefoxExtensionInfo("1.10.0"),
             _clock,
             NullLogger<FirefoxCaptureService>.Instance);
     }
@@ -147,7 +147,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(2, device.ItemsReceived);
         Assert.Equal(1, device.LastParserVersion);
         Assert.Equal("1.2.0", device.ExtensionVersion);
-        Assert.Equal("1.9.0", status.CurrentExtensionVersion);
+        Assert.Equal("1.10.0", status.CurrentExtensionVersion);
         Assert.True(device.UpdateAvailable);
     }
 
@@ -192,7 +192,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(1, result.ReleasesInserted);
         var connection = await _capture.GetConnectionAsync(token);
         Assert.Equal("ext.to", connection!.Implementation);
-        Assert.Equal("1.9.0", connection.CurrentExtensionVersion);
+        Assert.Equal("1.10.0", connection.CurrentExtensionVersion);
         await using var catalog = await _catalogFactory.CreateDbContextAsync();
         var sighting = await catalog.Sightings.SingleAsync();
         Assert.Equal(38, sighting.IndexerId);
@@ -229,7 +229,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             PendingDetails = 37,
             AttentionDetails = 4,
             HydrationPausedUntil = pausedUntil,
-            ExtensionVersion = "1.9.0"
+            ExtensionVersion = "1.10.0"
         }));
 
         var status = await _capture.GetAdminStatusAsync(38);
@@ -242,7 +242,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(37, device.PendingDetails);
         Assert.Equal(4, device.AttentionDetails);
         Assert.Equal(pausedUntil, device.HydrationPausedUntil);
-        Assert.Equal("1.9.0", device.ExtensionVersion);
+        Assert.Equal("1.10.0", device.ExtensionVersion);
         Assert.False(device.UpdateAvailable);
 
         var otherSource = await _capture.GetAdminStatusAsync(37);
@@ -349,9 +349,9 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             Directory.CreateDirectory(extension);
             File.WriteAllText(Path.Combine(extension, "manifest.json"), """
                 {
-                  "version": "1.9.0",
+                  "version": "1.10.0",
                   "background": { "scripts": ["sources.js", "hydration.js", "telemetry.js", "capture-queue.js", "background.js"] },
-                  "content_scripts": [{ "js": ["sources.js", "parser.js", "content.js"] }],
+                  "content_scripts": [{ "js": ["sources.js", "capture-queue.js", "parser.js", "content.js"] }],
                   "action": { "default_popup": "popup/popup.html", "default_icon": "icons/capture.svg" },
                   "icons": { "48": "icons/capture.svg" }
                 }
@@ -392,7 +392,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         {
             Directory.CreateDirectory(extension);
             File.WriteAllText(Path.Combine(extension, "manifest.json"), """
-                { "version": "1.9.0", "background": { "scripts": ["missing-runtime.js"] } }
+                { "version": "1.10.0", "background": { "scripts": ["missing-runtime.js"] } }
                 """);
 
             var error = Assert.Throws<FileNotFoundException>(() => FirefoxExtensionArchive.Create(root));
@@ -415,7 +415,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             Directory.CreateDirectory(extension);
             File.WriteAllText(Path.Combine(root, "outside.js"), "outside");
             File.WriteAllText(Path.Combine(extension, "manifest.json"), """
-                { "version": "1.9.0", "background": { "scripts": ["../../outside.js"] } }
+                { "version": "1.10.0", "background": { "scripts": ["../../outside.js"] } }
                 """);
 
             Assert.Throws<InvalidDataException>(() => FirefoxExtensionArchive.Create(root));
@@ -434,18 +434,19 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         try
         {
             Directory.CreateDirectory(extension);
-            File.WriteAllText(Path.Combine(extension, "manifest.json"), "{\"version\":\"1.9.0\"}");
+            File.WriteAllText(Path.Combine(extension, "manifest.json"), "{\"version\":\"1.10.0\"}");
 
             var info = FirefoxExtensionArchive.Inspect(root);
 
-            Assert.Equal("1.9.0", info.CurrentVersion);
+            Assert.Equal("1.10.0", info.CurrentVersion);
             Assert.True(info.IsUpdateAvailable("1.5.9"));
             Assert.True(info.IsUpdateAvailable("1.6.0"));
             Assert.True(info.IsUpdateAvailable("1.7.0"));
             Assert.True(info.IsUpdateAvailable("1.8.0"));
-            Assert.False(info.IsUpdateAvailable("1.9.0"));
-            Assert.True(info.IsUpdateAvailable("1.6"));
+            Assert.True(info.IsUpdateAvailable("1.9.0"));
             Assert.False(info.IsUpdateAvailable("1.10.0"));
+            Assert.True(info.IsUpdateAvailable("1.6"));
+            Assert.False(info.IsUpdateAvailable("1.11.0"));
             Assert.True(info.IsUpdateAvailable("unknown"));
         }
         finally

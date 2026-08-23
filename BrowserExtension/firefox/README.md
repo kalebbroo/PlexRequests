@@ -17,7 +17,9 @@ heartbeats continue. Inactive profiles still expire and administrators can revok
 
 Capture uploads keep 2,000 slots reserved for recoverable work. Permanently rejected pages are retained in a
 separate diagnostic window capped at 100 records and seven days, so obsolete parser output cannot eventually
-fill the durable queue and block every new page.
+fill the durable queue and block every new page. A page refused during temporary queue backpressure is retried
+while it remains open, and detail hydration is not completed until its upload is durably queued. Revisiting a
+terminal batch explicitly revives it instead of mistaking the failed record for a successful duplicate.
 
 When the paired server is distributing a newer extension, both the admin indexer health and the Firefox
 popup show the manifest-derived version and link to the current XPI. Reloading the same extension ID keeps

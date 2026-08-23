@@ -2,10 +2,12 @@
   "use strict";
 
   const parser = globalThis.PlexRequestsCaptureParser;
+  const captureQueue = globalThis.PlexRequestsCaptureQueue;
   let timer = null;
   let unsupportedTimer = null;
   let challengeTimer = null;
   let lastFingerprint = null;
+  let inFlightFingerprint = null;
   let lastObservation = null;
 
   async function sha256(value) {
@@ -61,11 +63,11 @@
       items: publicItems(parsed.items).sort((a, b) => a.externalId.localeCompare(b.externalId))
     });
     const fingerprint = await sha256(fingerprintSource);
-    if (fingerprint === lastFingerprint) return;
-    lastFingerprint = fingerprint;
+    if (fingerprint === lastFingerprint || fingerprint === inFlightFingerprint) return;
+    inFlightFingerprint = fingerprint;
 
     try {
-      await browser.runtime.sendMessage({
+      const result = await browser.runtime.sendMessage({
         type: "queue-capture",
         batch: {
           batchId: `firefox-v${parser.PARSER_VERSION}-${fingerprint}`,
@@ -77,14 +79,19 @@
           items: parsed.items
         }
       });
+      if (captureQueue.isDurablyQueued(result)) lastFingerprint = fingerprint;
+      else scheduleCapture(30_000);
     } catch {
-      // Navigating away can tear down the content script mid-message. The next page observation retries.
+      // Navigating away can tear down the content script mid-message. A page that remains open retries.
+      scheduleCapture(30_000);
+    } finally {
+      if (inFlightFingerprint === fingerprint) inFlightFingerprint = null;
     }
   }
 
-  function scheduleCapture() {
+  function scheduleCapture(delay = 1200) {
     clearTimeout(timer);
-    timer = setTimeout(() => void capture(), 1200);
+    timer = setTimeout(() => void capture(), delay);
   }
 
   scheduleCapture();

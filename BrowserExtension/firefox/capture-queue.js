@@ -32,5 +32,21 @@
     return (records || []).filter(record => record?.state !== "failed").length;
   }
 
-  return { failureTime, retentionPlan, pendingCount };
+  function admissionPlan(records, batchId, maximum = 2000) {
+    const all = records || [];
+    const existing = all.find(record => record?.batchId === batchId) || null;
+    if (existing) {
+      return { disposition: existing.state === "failed" ? "revive" : "duplicate" };
+    }
+    const capacity = Math.max(0, Math.floor(Number(maximum) || 0));
+    return {
+      disposition: pendingCount(all) >= capacity ? "full" : "queue"
+    };
+  }
+
+  function isDurablyQueued(result) {
+    return Boolean(result?.queued || result?.duplicate);
+  }
+
+  return { failureTime, retentionPlan, pendingCount, admissionPlan, isDurablyQueued };
 });
