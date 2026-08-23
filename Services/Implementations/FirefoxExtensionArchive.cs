@@ -9,6 +9,7 @@ public static class FirefoxExtensionArchive
     [
         "manifest.json",
         "background.js",
+        "capture-queue.js",
         "content.js",
         "hydration.js",
         "telemetry.js",
