@@ -235,6 +235,8 @@ the extension button on the 1337x or ext.to row to download and pair it. Pair ea
 connected simultaneously. Listing pages enqueue visible releases automatically. The extension resolves 1337x
 details in one inactive, rate-limited Firefox tab and resolves ext.to magnets through its session-bound request.
 It pauses and asks for normal user verification if either site presents another browser challenge.
+Failed or interrupted detail work remains durable and retries with capped backoff; no release is permanently
+abandoned after a fixed attempt count, and a challenge pauses only the affected indexer.
 
 The optional release catalog is disabled by default. Set `CATALOG_ENABLED=true` on both web and downloader
 to start shadow ingestion into a separate, rebuildable `catalog.db`. Shadow mode does not change which

@@ -17,5 +17,6 @@ dl { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; margin: 0 0
 dl div { padding: 8px; border-radius: 7px; background: #181d27; text-align: center; }
 dt { color: #9ba6b7; font-size: 10px; }
 dd { margin: 2px 0 0; font-size: 17px; font-weight: 700; }
+.recovery-note { margin: -5px 0 14px; color: #9ba6b7; font-size: 11px; }
 .toggle { display: flex; align-items: center; gap: 8px; color: #f6f7fb; }
 #message { min-height: 18px; color: #ef9a9a; margin: 12px 0 0; font-size: 12px; }
