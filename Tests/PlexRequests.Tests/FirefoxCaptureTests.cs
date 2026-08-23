@@ -384,7 +384,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
     }
 
     [Fact]
-    public void Downloadable_archive_rejects_a_missing_manifest_asset_before_sending_a_broken_xpi()
+    public void Downloadable_archive_rejects_a_missing_manifest_asset_before_sending_a_broken_zip()
     {
         var root = Path.Combine(Path.GetTempPath(), $"plexrequests-firefox-missing-{Guid.NewGuid():N}");
         var extension = Path.Combine(root, "BrowserExtension", "firefox");

@@ -514,8 +514,8 @@ app.MapGet("/api/admin/browser-capture/firefox-extension", (
     PlexRequestsHosted.Services.Implementations.FirefoxExtensionInfo extension) =>
     Results.File(
         PlexRequestsHosted.Services.Implementations.FirefoxExtensionArchive.Create(environment.ContentRootPath),
-        "application/x-xpinstall",
-        $"plexrequests-firefox-capture-v{extension.CurrentVersion}.xpi"))
+        "application/zip",
+        $"plexrequests-firefox-capture-v{extension.CurrentVersion}.zip"))
     .RequireAuthorization("AdminOnly");
 
 // Firefox capture uses a two-stage credential: an admin creates a short-lived one-time pairing code in
