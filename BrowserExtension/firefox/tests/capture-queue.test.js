@@ -56,3 +56,28 @@ test("zero retention safely removes all terminal failures without touching unkno
   assert.deepEqual(plan.discarded.map(record => record.batchId), ["failed"]);
   assert.equal(captureQueue.pendingCount(plan.retained), 2);
 });
+
+test("admission revives a revisited terminal batch instead of treating it as delivered", () => {
+  const failed = { batchId: "detail-a", state: "failed", failedAt: 900 };
+
+  const plan = captureQueue.admissionPlan([failed], "detail-a", 2);
+
+  assert.equal(plan.disposition, "revive");
+});
+
+test("admission distinguishes durable duplicates from temporary queue backpressure", () => {
+  const queued = { batchId: "queued-a", state: "queued" };
+  const records = [queued, { batchId: "failed-a", state: "failed", failedAt: 900 }];
+
+  assert.equal(captureQueue.admissionPlan(records, "queued-a", 1).disposition, "duplicate");
+  assert.equal(captureQueue.admissionPlan(records, "new-a", 1).disposition, "full");
+  assert.equal(captureQueue.admissionPlan(records, "new-a", 2).disposition, "queue");
+});
+
+test("only a durable queue write or an existing durable duplicate acknowledges detail work", () => {
+  assert.equal(captureQueue.isDurablyQueued({ queued: true }), true);
+  assert.equal(captureQueue.isDurablyQueued({ duplicate: true }), true);
+  assert.equal(captureQueue.isDurablyQueued({ full: true }), false);
+  assert.equal(captureQueue.isDurablyQueued({ disabled: true }), false);
+  assert.equal(captureQueue.isDurablyQueued(undefined), false);
+});

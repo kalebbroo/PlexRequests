@@ -127,15 +127,16 @@ async function retainedHydrationRecords() {
 
 async function queueRecord(batch) {
   const current = await browser.storage.local.get({ captureEnabled: true });
-  if (!current.captureEnabled) return { queued: false };
+  if (!current.captureEnabled) return { queued: false, disabled: true };
 
   if (batch.pageType === "listing") await enqueueHydrations(batch.items);
   const records = await retainedCaptureRecords();
-  if (records.some(item => item.batchId === batch.batchId)) {
+  const admission = captureQueue.admissionPlan(records, batch.batchId, MAX_QUEUE_ITEMS);
+  if (admission.disposition === "duplicate") {
     void drainHydrationQueue();
     return { queued: false, duplicate: true };
   }
-  if (captureQueue.pendingCount(records) >= MAX_QUEUE_ITEMS) {
+  if (admission.disposition === "full") {
     await browser.storage.local.set({
       lastError: `Capture queue is full (${MAX_QUEUE_ITEMS} pending pages). Pair or retry before browsing more pages.`
     });
@@ -146,12 +147,13 @@ async function queueRecord(batch) {
     attempts: 0,
     nextAttemptAt: 0,
     state: "queued",
+    failedAt: null,
     lastError: null
   });
   await updateBadge();
   void drainQueue();
   void drainHydrationQueue();
-  return { queued: true };
+  return { queued: true, revived: admission.disposition === "revive" };
 }
 
 async function enqueueHydrations(items) {
@@ -921,7 +923,16 @@ browser.runtime.onMessage.addListener((message, sender) => {
   switch (message && message.type) {
     case "queue-capture":
       return queueRecord(message.batch).then(async result => {
-        if (message.batch.pageType === "detail") await finishWorker(sender.tab && sender.tab.id, message.batch.items);
+        if (message.batch.pageType === "detail") {
+          if (captureQueue.isDurablyQueued(result)) {
+            await finishWorker(sender.tab && sender.tab.id, message.batch.items);
+          } else {
+            const reason = result.full
+              ? `Upload queue is full (${MAX_QUEUE_ITEMS} pending pages); the detail will retry after uploads drain.`
+              : "Detail capture is paused; the release remains queued for another attempt.";
+            await failWorker(sender.tab && sender.tab.id, reason);
+          }
+        }
         return result;
       });
     case "page-observation":
