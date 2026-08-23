@@ -3,7 +3,8 @@
 const elements = Object.fromEntries([
   "pairing", "connected", "server-url", "pairing-code", "device-name", "pair", "connection-label",
   "source", "accepted", "hydrated", "queued", "hydration-queued", "failed", "capture-enabled",
-  "resume-hydration", "retry", "repair", "message", "status-dot"
+  "resume-hydration", "retry", "repair", "message", "status-dot",
+  "update-notice", "update-title", "download-update"
 ].map(id => [id, document.getElementById(id)]));
 
 function showMessage(message, error = true) {
@@ -23,6 +24,10 @@ function render(status) {
   elements["connection-label"].textContent = status.connected ? "Connected" : "Disconnected";
   elements["status-dot"].style.background = status.connected ? "#4caf50" : "#ef5350";
   elements.source.textContent = status.source || status.serverUrl;
+  elements["update-notice"].hidden = !status.updateAvailable;
+  elements["update-title"].textContent = status.currentExtensionVersion
+    ? `Firefox capture ${status.currentExtensionVersion} is available`
+    : "Firefox capture update available";
   elements.accepted.textContent = status.acceptedItems || 0;
   elements.hydrated.textContent = status.hydratedItems || 0;
   elements.queued.textContent = status.queued || 0;
@@ -90,6 +95,13 @@ elements.repair.addEventListener("click", async () => {
 
 elements["capture-enabled"].addEventListener("change", async event => {
   render(await browser.runtime.sendMessage({ type: "set-enabled", enabled: event.target.checked }));
+});
+
+elements["download-update"].addEventListener("click", async () => {
+  const status = await browser.runtime.sendMessage({ type: "status" });
+  if (status.serverUrl) {
+    await browser.tabs.create({ url: `${status.serverUrl}/api/admin/browser-capture/firefox-extension` });
+  }
 });
 
 void load();

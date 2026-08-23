@@ -67,6 +67,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             catalog,
             Options.Create(new FirefoxCaptureOptions { Enabled = true }),
             catalogOptions,
+            new FirefoxExtensionInfo("1.6.0"),
             _clock,
             NullLogger<FirefoxCaptureService>.Instance);
     }
@@ -104,6 +105,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.NotEqual(paired.Token, storedDevice.TokenHash);
         Assert.Equal(64, storedPairing.CodeHash.Length);
         Assert.Equal(64, storedDevice.TokenHash.Length);
+        Assert.True((await _capture.GetAdminStatusAsync(37)).Devices.Single().UpdateAvailable);
     }
 
     [Fact]
@@ -145,6 +147,8 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(2, device.ItemsReceived);
         Assert.Equal(1, device.LastParserVersion);
         Assert.Equal("1.2.0", device.ExtensionVersion);
+        Assert.Equal("1.6.0", status.CurrentExtensionVersion);
+        Assert.True(device.UpdateAvailable);
     }
 
     [Fact]
@@ -188,6 +192,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(1, result.ReleasesInserted);
         var connection = await _capture.GetConnectionAsync(token);
         Assert.Equal("ext.to", connection!.Implementation);
+        Assert.Equal("1.6.0", connection.CurrentExtensionVersion);
         await using var catalog = await _catalogFactory.CreateDbContextAsync();
         var sighting = await catalog.Sightings.SingleAsync();
         Assert.Equal(38, sighting.IndexerId);
@@ -224,7 +229,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             PendingDetails = 37,
             AttentionDetails = 4,
             HydrationPausedUntil = pausedUntil,
-            ExtensionVersion = "1.4.0"
+            ExtensionVersion = "1.6.0"
         }));
 
         var status = await _capture.GetAdminStatusAsync(38);
@@ -237,7 +242,8 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         Assert.Equal(37, device.PendingDetails);
         Assert.Equal(4, device.AttentionDetails);
         Assert.Equal(pausedUntil, device.HydrationPausedUntil);
-        Assert.Equal("1.4.0", device.ExtensionVersion);
+        Assert.Equal("1.6.0", device.ExtensionVersion);
+        Assert.False(device.UpdateAvailable);
 
         var otherSource = await _capture.GetAdminStatusAsync(37);
         Assert.Empty(otherSource.Devices);
@@ -326,6 +332,31 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             Assert.Contains(archive.Entries, entry => entry.FullName == "hydration.js");
             Assert.Contains(archive.Entries, entry => entry.FullName == "sources.js");
             Assert.Contains(archive.Entries, entry => entry.FullName == "telemetry.js");
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Packaged_manifest_is_the_single_source_for_extension_version_health()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"plexrequests-firefox-version-{Guid.NewGuid():N}");
+        var extension = Path.Combine(root, "BrowserExtension", "firefox");
+        try
+        {
+            Directory.CreateDirectory(extension);
+            File.WriteAllText(Path.Combine(extension, "manifest.json"), "{\"version\":\"1.6.0\"}");
+
+            var info = FirefoxExtensionArchive.Inspect(root);
+
+            Assert.Equal("1.6.0", info.CurrentVersion);
+            Assert.True(info.IsUpdateAvailable("1.5.9"));
+            Assert.False(info.IsUpdateAvailable("1.6.0"));
+            Assert.False(info.IsUpdateAvailable("1.6"));
+            Assert.False(info.IsUpdateAvailable("1.10.0"));
+            Assert.True(info.IsUpdateAvailable("unknown"));
         }
         finally
         {

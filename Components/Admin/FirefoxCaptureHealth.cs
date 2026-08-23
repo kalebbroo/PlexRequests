@@ -22,6 +22,7 @@ internal static class FirefoxCaptureHealth
         null => FirefoxCaptureHealthState.NotPaired,
         { LastHeartbeatAt: null } => FirefoxCaptureHealthState.UpdateRequired,
         _ when device.LastHeartbeatAt < now.AddMinutes(-3) => FirefoxCaptureHealthState.Offline,
+        _ when device.UpdateAvailable => FirefoxCaptureHealthState.UpdateRequired,
         _ when !device.CaptureEnabled => FirefoxCaptureHealthState.CapturePaused,
         { FailedUploads: > 0 } or { AttentionDetails: > 0 } => FirefoxCaptureHealthState.NeedsAttention,
         _ when device.HydrationPausedUntil > now => FirefoxCaptureHealthState.ChallengePaused,

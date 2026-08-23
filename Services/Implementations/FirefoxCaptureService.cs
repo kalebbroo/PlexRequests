@@ -20,6 +20,7 @@ public sealed class FirefoxCaptureService(
     IReleaseCatalogService catalog,
     IOptions<FirefoxCaptureOptions> captureOptions,
     IOptions<Infrastructure.Catalog.CatalogOptions> catalogOptions,
+    FirefoxExtensionInfo extensionInfo,
     TimeProvider clock,
     ILogger<FirefoxCaptureService> logger) : IFirefoxCaptureService
 {
@@ -124,7 +125,8 @@ public sealed class FirefoxCaptureService(
             ServerTime = now,
             ExpiresAt = device.ExpiresAt,
             Implementation = indexer.Implementation,
-            Source = SourceName(indexer.Name)
+            Source = SourceName(indexer.Name),
+            CurrentExtensionVersion = extensionInfo.CurrentVersion
         };
     }
 
@@ -249,11 +251,13 @@ public sealed class FirefoxCaptureService(
             CatalogEnabled = catalogOptions.Value.Enabled,
             IndexerId = indexer.Id,
             IndexerName = indexer.Name,
+            CurrentExtensionVersion = extensionInfo.CurrentVersion,
             Devices = devices.Select(x => new FirefoxCaptureDeviceDto
             {
                 Id = x.Id,
                 Name = x.Name,
                 ExtensionVersion = x.ExtensionVersion,
+                UpdateAvailable = extensionInfo.IsUpdateAvailable(x.ExtensionVersion),
                 CreatedAt = x.CreatedAt,
                 ExpiresAt = x.ExpiresAt,
                 LastSeenAt = x.LastSeenAt,

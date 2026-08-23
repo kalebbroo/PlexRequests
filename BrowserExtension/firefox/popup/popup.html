@@ -23,6 +23,11 @@
     <section id="connected" hidden>
       <div class="status-line"><span id="status-dot"></span><strong id="connection-label">Connected</strong></div>
       <p id="source"></p>
+      <aside id="update-notice" hidden>
+        <strong id="update-title">Extension update available</strong>
+        <p>Download the current XPI, then reload this extension in place from <code>about:debugging</code>.</p>
+        <button id="download-update" class="secondary">Open extension download</button>
+      </aside>
       <dl>
         <div><dt>Listings captured</dt><dd id="accepted">0</dd></div>
         <div><dt>Details resolved</dt><dd id="hydrated">0</dd></div>

@@ -345,7 +345,11 @@ else
         if (device is null)
             return $"No active Firefox profile is paired. Open Firefox capture and pair the browser used for {indexer.Name}.";
         if (device.LastHeartbeatAt is null)
-            return "This pairing predates queue health reporting. Update the Firefox extension to receive live queue status.";
+            return $"Firefox {device.ExtensionVersion} predates queue health reporting; the server is distributing "
+                 + $"{FirefoxStatus(indexer)?.CurrentExtensionVersion}. Update it in place to preserve pairing data.";
+        if (device.UpdateAvailable)
+            return $"Firefox {device.ExtensionVersion} is outdated; the server is distributing "
+                 + $"{FirefoxStatus(indexer)?.CurrentExtensionVersion}. Update it in place to preserve pairings and queued work.";
         return $"Last queue report {Relative(device.LastHeartbeatAt)}. {device.QueuedUploads} uploads and "
              + $"{device.PendingDetails} details queued; {device.FailedUploads + device.AttentionDetails} need attention. "
              + $"Firefox has stored {coverage.Sightings} {indexer.Name} sightings.";
