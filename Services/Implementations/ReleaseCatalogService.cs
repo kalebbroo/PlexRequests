@@ -154,6 +154,49 @@ public sealed class ReleaseCatalogService(
         }
     }
 
+    public async Task<CatalogHydrationPageDto> GetPendingHydrationAsync(
+        int indexerId,
+        string source,
+        long afterId,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        if (!options.Value.Enabled || indexerId <= 0 || string.IsNullOrWhiteSpace(source))
+            return new CatalogHydrationPageDto { NextCursor = Math.Max(0, afterId) };
+
+        var cursor = Math.Max(0, afterId);
+        var pageSize = Math.Clamp(limit, 1, 250);
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var rows = await db.Sightings.AsNoTracking()
+            .Where(x => x.Id > cursor
+                && x.IndexerId == indexerId
+                && x.Source == source
+                && x.ReleaseId == null
+                && x.HydrationState == CatalogHydrationState.Pending
+                && x.SourceUrl != null)
+            .OrderBy(x => x.Id)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return new CatalogHydrationPageDto
+        {
+            NextCursor = rows.LastOrDefault()?.Id ?? cursor,
+            Items = rows.Select(x => new CatalogItemDto
+            {
+                ExternalId = x.ExternalId,
+                ReleaseName = x.ReleaseName,
+                SourceUrl = x.SourceUrl,
+                Category = x.Category,
+                Uploader = x.Uploader,
+                Seeders = x.Seeders,
+                Leechers = x.Leechers,
+                SizeBytes = x.SizeBytes,
+                PublishedAt = x.PublishedAt,
+                NeedsHydration = true
+            }).ToList()
+        };
+    }
+
     public async Task<CatalogStatsDto> GetStatsAsync(CancellationToken cancellationToken)
     {
         if (!options.Value.Enabled) return new CatalogStatsDto();

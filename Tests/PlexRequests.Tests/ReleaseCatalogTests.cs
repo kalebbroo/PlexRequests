@@ -99,6 +99,34 @@ public sealed class ReleaseCatalogTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Pending_hydration_pages_are_source_scoped_cursor_based_and_exclude_resolved_rows()
+    {
+        var first = Item("pending-one", null);
+        first.NeedsHydration = true;
+        first.SourceUrl = "https://1337x.to/torrent/1/one/";
+        var second = Item("pending-two", null);
+        second.NeedsHydration = true;
+        second.SourceUrl = "https://1337x.to/torrent/2/two/";
+        await _catalog.UpsertBatchAsync(Batch(7, "first", "one", first), CancellationToken.None);
+        await _catalog.UpsertBatchAsync(Batch(7, "second", "two", second), CancellationToken.None);
+        await _catalog.UpsertBatchAsync(
+            Batch(7, "resolved", "three", Item("resolved", Hex('7'))),
+            CancellationToken.None);
+
+        var pageOne = await _catalog.GetPendingHydrationAsync(
+            7, "source-7", 0, 1, CancellationToken.None);
+        var pageTwo = await _catalog.GetPendingHydrationAsync(
+            7, "source-7", pageOne.NextCursor, 10, CancellationToken.None);
+        var wrongSource = await _catalog.GetPendingHydrationAsync(
+            7, "another-source", 0, 10, CancellationToken.None);
+
+        Assert.Equal("pending-one", Assert.Single(pageOne.Items).ExternalId);
+        Assert.Equal("pending-two", Assert.Single(pageTwo.Items).ExternalId);
+        Assert.True(pageTwo.NextCursor > pageOne.NextCursor);
+        Assert.Empty(wrongSource.Items);
+    }
+
+    [Fact]
     public async Task A_later_summary_without_a_hash_does_not_detach_an_already_hydrated_sighting()
     {
         await _catalog.UpsertBatchAsync(

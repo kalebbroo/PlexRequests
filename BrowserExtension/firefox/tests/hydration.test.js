@@ -101,3 +101,16 @@ test("repeated and session-bound failures request attention without becoming ter
   assert.equal(interrupted.nextAttemptAt, 6000);
   assert.match(interrupted.lastError, /Firefox restarted/);
 });
+
+test("server backlog reconciliation respects queue capacity and safely wraps cursors", () => {
+  const records = [
+    { state: "queued" },
+    { state: "loading" },
+    { state: "complete" }
+  ];
+  assert.equal(hydration.backlogCapacity(records, 5, 250), 3);
+  assert.equal(hydration.backlogCapacity(records, 2, 250), 0);
+  assert.equal(hydration.nextBacklogCursor(10, { nextCursor: 25, items: [{}] }), 25);
+  assert.equal(hydration.nextBacklogCursor(25, { nextCursor: 25, items: [{}] }), 0);
+  assert.equal(hydration.nextBacklogCursor(25, { nextCursor: 40, items: [] }), 0);
+});

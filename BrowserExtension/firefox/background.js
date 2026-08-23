@@ -10,6 +10,7 @@ const HYDRATION_STORE_NAME = "hydrationQueue";
 const DRAIN_ALARM = "drain-capture-queue";
 const HYDRATION_ALARM = "drain-hydration-queue";
 const HEARTBEAT_ALARM = "report-capture-health";
+const BACKLOG_ALARM = "reconcile-server-backlog";
 const MAX_QUEUE_ITEMS = 2000;
 const MAX_HYDRATION_ITEMS = 2000;
 const HYDRATION_TIMEOUT_MS = 90_000;
@@ -18,6 +19,7 @@ const COMPLETED_HYDRATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 let drainPromise = null;
 let hydrationPromise = null;
 let heartbeatPromise = null;
+let backlogPromise = null;
 let hydrationTimer = null;
 
 function openDatabase() {
@@ -263,6 +265,7 @@ async function pair(serverUrl, pairingCode, deviceName) {
     hydrationLastError: null
   });
   void reportHeartbeats();
+  void reconcileBacklog();
   await drainQueue(true);
   void drainHydrationQueue(true);
   return paired;
@@ -353,6 +356,56 @@ async function reportHeartbeats() {
     }
   })().finally(() => { heartbeatPromise = null; });
   return heartbeatPromise;
+}
+
+async function reconcileBacklog() {
+  if (backlogPromise) return backlogPromise;
+  backlogPromise = (async () => {
+    const [config, state, details] = await Promise.all([
+      connectionConfig(),
+      browser.storage.local.get({ captureEnabled: true, backlogCursors: {} }),
+      allRecords(HYDRATION_STORE_NAME)
+    ]);
+    if (!state.captureEnabled || !config.serverUrl) return;
+
+    const backlogCursors = { ...(state.backlogCursors || {}) };
+    for (const [sourceKey, connection] of Object.entries(config.connections || {})) {
+      if (!connection?.token || !sources.byKey(sourceKey)?.durableBacklog) continue;
+      const capacity = hydration.backlogCapacity(details, MAX_HYDRATION_ITEMS, 250);
+      if (!capacity) break;
+
+      const cursor = Math.max(0, Number(backlogCursors[sourceKey]) || 0);
+      try {
+        const response = await apiFetch(
+          `/api/browser-capture/pending-details?after=${cursor}&limit=${Math.min(250, capacity)}`,
+          {},
+          sourceKey);
+        if (!response.ok) {
+          await updateConnection(sourceKey, {
+            connected: false,
+            lastError: response.status === 401
+              ? "Pairing expired or was revoked."
+              : `Backlog recovery returned HTTP ${response.status}.`
+          });
+          continue;
+        }
+
+        const page = await response.json();
+        const items = Array.isArray(page.items) ? page.items : [];
+        if (items.length) {
+          await enqueueHydrations(items);
+        }
+        // Wrap after reaching the end (or receiving a malformed cursor) so work cannot be stranded.
+        backlogCursors[sourceKey] = hydration.nextBacklogCursor(cursor, page);
+        await updateConnection(sourceKey, { connected: true, lastError: null });
+      } catch (error) {
+        await updateConnection(sourceKey, { connected: false, lastError: error.message });
+      }
+    }
+    await browser.storage.local.set({ backlogCursors });
+    void drainHydrationQueue();
+  })().finally(() => { backlogPromise = null; });
+  return backlogPromise;
 }
 
 async function safeError(response) {
@@ -819,7 +872,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
     case "forget-pairing":
       return clearWorker(true).then(() => browser.storage.local.remove([
         "token", "tokenExpiresAt", "source", "connected", "connections", "lastError",
-        "hydrationPausedUntil", "hydrationPauses", "hydrationLastError"
+        "hydrationPausedUntil", "hydrationPauses", "hydrationLastError", "backlogCursors"
       ]));
     default: return undefined;
   }
@@ -838,12 +891,14 @@ browser.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === DRAIN_ALARM) void drainQueue();
   if (alarm.name === HYDRATION_ALARM) void drainHydrationQueue();
   if (alarm.name === HEARTBEAT_ALARM) void reportHeartbeats();
+  if (alarm.name === BACKLOG_ALARM) void reconcileBacklog();
 });
 
 function createAlarms() {
   browser.alarms.create(DRAIN_ALARM, { periodInMinutes: 1 });
   browser.alarms.create(HYDRATION_ALARM, { periodInMinutes: 1 });
   browser.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 1 });
+  browser.alarms.create(BACKLOG_ALARM, { periodInMinutes: 5 });
 }
 
 browser.runtime.onInstalled.addListener(() => {
@@ -851,14 +906,17 @@ browser.runtime.onInstalled.addListener(() => {
   void updateBadge();
   void drainHydrationQueue();
   void reportHeartbeats();
+  void reconcileBacklog();
 });
 browser.runtime.onStartup.addListener(() => {
   createAlarms();
   void drainQueue();
   void drainHydrationQueue();
   void reportHeartbeats();
+  void reconcileBacklog();
 });
 createAlarms();
 void updateBadge();
 void drainHydrationQueue();
 void reportHeartbeats();
+void reconcileBacklog();

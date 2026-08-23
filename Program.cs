@@ -587,6 +587,27 @@ app.MapPost("/api/browser-capture/heartbeat", async (
     .WithMetadata(new RequestSizeLimitAttribute(4 * 1024))
     .RequireRateLimiting("firefox-capture-ingest");
 
+app.MapGet("/api/browser-capture/pending-details", async (
+    [FromQuery] long? after,
+    [FromQuery] int? limit,
+    PlexRequestsHosted.Services.Abstractions.IFirefoxCaptureService capture,
+    HttpContext context,
+    CancellationToken cancellationToken) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    var token = CaptureBearerToken(context);
+    if (token is null) return Results.Unauthorized();
+    var result = await capture.GetPendingDetailsAsync(
+        token,
+        Math.Max(0, after ?? 0),
+        Math.Clamp(limit ?? 250, 1, 250),
+        cancellationToken);
+    return result is null ? Results.Unauthorized() : Results.Ok(result);
+})
+    .AllowAnonymous()
+    .DisableAntiforgery()
+    .RequireRateLimiting("firefox-capture-ingest");
+
 app.MapPost("/api/browser-capture/batches", async (
     FirefoxCaptureBatchDto body,
     PlexRequestsHosted.Services.Abstractions.IFirefoxCaptureService capture,

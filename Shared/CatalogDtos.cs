@@ -47,6 +47,13 @@ public sealed class CatalogUpsertResultDto
     public int UnresolvedSightings { get; set; }
 }
 
+/// <summary>A cursor page of unresolved sightings that a source adapter can safely revisit.</summary>
+public sealed class CatalogHydrationPageDto
+{
+    public long NextCursor { get; set; }
+    public List<CatalogItemDto> Items { get; set; } = new();
+}
+
 public sealed class CatalogStatsDto
 {
     public bool Enabled { get; set; }

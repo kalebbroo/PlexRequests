@@ -155,6 +155,38 @@ public sealed class FirefoxCaptureService(
         return true;
     }
 
+    public async Task<CatalogHydrationPageDto?> GetPendingDetailsAsync(
+        string token,
+        long afterId,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        if (!captureOptions.Value.Enabled || !catalogOptions.Value.Enabled || string.IsNullOrWhiteSpace(token))
+            return null;
+        var now = UtcNow;
+        await using var db = await appFactory.CreateDbContextAsync(cancellationToken);
+        var device = await FindActiveDeviceAsync(db, token, now, cancellationToken);
+        if (device is null) return null;
+        device.LastSeenAt = now;
+        await db.SaveChangesAsync(cancellationToken);
+
+        // EXT.to magnets depend on short-lived credentials from the listing page. Replaying its stored
+        // detail URLs without those credentials would manufacture attention failures rather than recover work.
+        if (!device.Indexer!.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase))
+            return new CatalogHydrationPageDto { NextCursor = Math.Max(0, afterId) };
+
+        var page = await catalog.GetPendingHydrationAsync(
+            device.IndexerId,
+            SourceName(device.Indexer.Name),
+            afterId,
+            limit,
+            cancellationToken);
+        page.Items = page.Items
+            .Where(item => TryAllowedUri(item.SourceUrl, device.Indexer, out _))
+            .ToList();
+        return page;
+    }
+
     public async Task<FirefoxCaptureIngestResponseDto> IngestAsync(
         string token,
         FirefoxCaptureBatchDto batch,
