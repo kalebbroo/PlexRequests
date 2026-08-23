@@ -125,7 +125,7 @@ else
                     @if (IsFirefoxIndexer(context))
                     {
                         <span>Last capture @Relative(LastFirefoxCapture(context) ?? coverage.LastSeenAt)</span>
-                        <div class="text-muted small">@FirefoxItems(context) items in @FirefoxBatches(context) batches</div>
+                        <div class="text-muted small">@FirefoxActivity(context)</div>
                     }
                     else
                     {
@@ -145,7 +145,7 @@ else
                         <MudTooltip Text="@FirefoxHealthHelp(context, coverage)">
                             <MudChip T="string" Color="@FirefoxHealthColor(context)" Size="Size.Small"
                                      Icon="@FirefoxHealthIcon(context)">
-                                @FirefoxHealthLabel(context, coverage)
+                                @FirefoxHealthLabel(context)
                             </MudChip>
                         </MudTooltip>
                     }
@@ -312,28 +312,44 @@ else
 
     private FirefoxCaptureAdminStatusDto? FirefoxStatus(IndexerSettingDto indexer) =>
         _firefoxStatuses.GetValueOrDefault(indexer.Id);
-    private bool FirefoxPaired(IndexerSettingDto indexer) => FirefoxStatus(indexer)?.Devices.Any(device => device.IsActive) == true;
-    private bool FirefoxRecentlySeen(IndexerSettingDto indexer) => FirefoxStatus(indexer)?.Devices.Any(device =>
-        device.IsActive && device.LastSeenAt >= DateTime.UtcNow.AddMinutes(-5)) == true;
+    private FirefoxCaptureDeviceDto? FirefoxDevice(IndexerSettingDto indexer) => FirefoxStatus(indexer)?.Devices
+        .Where(device => device.IsActive)
+        .OrderByDescending(device => device.LastHeartbeatAt ?? device.LastSeenAt ?? device.CreatedAt)
+        .FirstOrDefault();
     private DateTime? LastFirefoxCapture(IndexerSettingDto indexer) => FirefoxStatus(indexer)?.Devices
         .OrderByDescending(device => device.LastCaptureAt)
         .FirstOrDefault()?.LastCaptureAt;
     private long FirefoxItems(IndexerSettingDto indexer) => FirefoxStatus(indexer)?.Devices.Sum(device => device.ItemsReceived) ?? 0;
     private long FirefoxBatches(IndexerSettingDto indexer) => FirefoxStatus(indexer)?.Devices.Sum(device => device.BatchesReceived) ?? 0;
+    private string FirefoxActivity(IndexerSettingDto indexer)
+    {
+        var device = FirefoxDevice(indexer);
+        if (device?.LastHeartbeatAt is null)
+            return $"{FirefoxItems(indexer)} items in {FirefoxBatches(indexer)} batches";
+        var queued = device.QueuedUploads + device.PendingDetails;
+        var attention = device.FailedUploads + device.AttentionDetails;
+        if (attention > 0) return $"{attention} need attention · {queued} queued";
+        if (queued > 0) return $"{queued} queued · {FirefoxItems(indexer)} items captured";
+        return $"Queue clear · {FirefoxItems(indexer)} items captured";
+    }
 
-    private Color FirefoxHealthColor(IndexerSettingDto indexer) => FirefoxRecentlySeen(indexer)
-        ? Color.Success
-        : FirefoxPaired(indexer) ? Color.Info : Color.Warning;
-    private string FirefoxHealthIcon(IndexerSettingDto indexer) => FirefoxRecentlySeen(indexer)
-        ? Icons.Material.Filled.Sync
-        : FirefoxPaired(indexer) ? Icons.Material.Filled.Extension : Icons.Material.Filled.ExtensionOff;
-    private string FirefoxHealthLabel(IndexerSettingDto indexer, IndexerCoverage coverage) => FirefoxRecentlySeen(indexer)
-        ? (coverage.Sightings > 0 ? "capturing" : "Firefox ready")
-        : FirefoxPaired(indexer) ? "Firefox paired" : "pair Firefox";
-    private string FirefoxHealthHelp(IndexerSettingDto indexer, IndexerCoverage coverage) => FirefoxPaired(indexer)
-        ? $"Firefox has stored {coverage.Sightings} distinct {indexer.Name} releases and was last seen {Relative(FirefoxStatus(indexer)?.Devices.Max(device => device.LastSeenAt))}. "
-          + "The direct HTTP scraper's state does not interrupt browser capture."
-        : $"No active Firefox profile is paired. Open Firefox capture and pair the browser used for {indexer.Name}.";
+    private FirefoxCaptureHealthState FirefoxHealthState(IndexerSettingDto indexer) =>
+        FirefoxCaptureHealth.State(FirefoxDevice(indexer), DateTime.UtcNow);
+    private Color FirefoxHealthColor(IndexerSettingDto indexer) => FirefoxCaptureHealth.Color(FirefoxHealthState(indexer));
+    private string FirefoxHealthIcon(IndexerSettingDto indexer) => FirefoxCaptureHealth.Icon(FirefoxHealthState(indexer));
+    private string FirefoxHealthLabel(IndexerSettingDto indexer) =>
+        FirefoxCaptureHealth.Label(FirefoxHealthState(indexer));
+    private string FirefoxHealthHelp(IndexerSettingDto indexer, IndexerCoverage coverage)
+    {
+        var device = FirefoxDevice(indexer);
+        if (device is null)
+            return $"No active Firefox profile is paired. Open Firefox capture and pair the browser used for {indexer.Name}.";
+        if (device.LastHeartbeatAt is null)
+            return "This pairing predates queue health reporting. Update the Firefox extension to receive live queue status.";
+        return $"Last queue report {Relative(device.LastHeartbeatAt)}. {device.QueuedUploads} uploads and "
+             + $"{device.PendingDetails} details queued; {device.FailedUploads + device.AttentionDetails} need attention. "
+             + $"Firefox has stored {coverage.Sightings} {indexer.Name} sightings.";
+    }
 
     private static string FormatBytes(long bytes) => bytes switch
     {

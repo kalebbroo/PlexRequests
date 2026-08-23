@@ -211,6 +211,51 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Heartbeat_persists_only_the_authenticated_sources_queue_health()
+    {
+        var token = await PairAsync(38);
+        var pausedUntil = _clock.GetUtcNow().UtcDateTime.AddMinutes(15);
+
+        Assert.True(await _capture.RecordHeartbeatAsync(token, new FirefoxCaptureHeartbeatDto
+        {
+            CaptureEnabled = true,
+            QueuedUploads = 2,
+            FailedUploads = 1,
+            PendingDetails = 37,
+            AttentionDetails = 4,
+            HydrationPausedUntil = pausedUntil,
+            ExtensionVersion = "1.4.0"
+        }));
+
+        var status = await _capture.GetAdminStatusAsync(38);
+        var device = Assert.Single(status.Devices);
+        Assert.Equal(_clock.GetUtcNow().UtcDateTime, device.LastHeartbeatAt);
+        Assert.Equal(device.LastHeartbeatAt, device.LastSeenAt);
+        Assert.True(device.CaptureEnabled);
+        Assert.Equal(2, device.QueuedUploads);
+        Assert.Equal(1, device.FailedUploads);
+        Assert.Equal(37, device.PendingDetails);
+        Assert.Equal(4, device.AttentionDetails);
+        Assert.Equal(pausedUntil, device.HydrationPausedUntil);
+        Assert.Equal("1.4.0", device.ExtensionVersion);
+
+        var otherSource = await _capture.GetAdminStatusAsync(37);
+        Assert.Empty(otherSource.Devices);
+    }
+
+    [Fact]
+    public async Task Heartbeat_rejects_impossible_counts_and_revoked_tokens()
+    {
+        var token = await PairAsync();
+        await Assert.ThrowsAsync<ArgumentException>(() => _capture.RecordHeartbeatAsync(token,
+            new FirefoxCaptureHeartbeatDto { QueuedUploads = -1 }));
+
+        var device = Assert.Single((await _capture.GetAdminStatusAsync(37)).Devices);
+        Assert.True(await _capture.RevokeDeviceAsync(device.Id));
+        Assert.False(await _capture.RecordHeartbeatAsync(token, new FirefoxCaptureHeartbeatDto()));
+    }
+
+    [Fact]
     public async Task Expired_pairing_codes_cannot_be_redeemed()
     {
         var pairing = await _capture.CreatePairingAsync(37);
@@ -241,7 +286,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         {
             foreach (var file in new[]
             {
-                "manifest.json", "background.js", "content.js", "hydration.js", "parser.js", "sources.js",
+                "manifest.json", "background.js", "content.js", "hydration.js", "parser.js", "sources.js", "telemetry.js",
                 "popup/popup.html", "popup/popup.css", "popup/popup.js", "icons/capture.svg", "README.md"
             })
             {
@@ -254,6 +299,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
             using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
             Assert.Contains(archive.Entries, entry => entry.FullName == "hydration.js");
             Assert.Contains(archive.Entries, entry => entry.FullName == "sources.js");
+            Assert.Contains(archive.Entries, entry => entry.FullName == "telemetry.js");
         }
         finally
         {

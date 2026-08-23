@@ -2,12 +2,14 @@
 
 const sources = globalThis.PlexRequestsCaptureSources;
 const hydration = globalThis.PlexRequestsHydration;
+const telemetry = globalThis.PlexRequestsCaptureTelemetry;
 const DATABASE_NAME = "plexrequests-browser-capture";
 const DATABASE_VERSION = 2;
 const CAPTURE_STORE_NAME = "captureQueue";
 const HYDRATION_STORE_NAME = "hydrationQueue";
 const DRAIN_ALARM = "drain-capture-queue";
 const HYDRATION_ALARM = "drain-hydration-queue";
+const HEARTBEAT_ALARM = "report-capture-health";
 const MAX_QUEUE_ITEMS = 2000;
 const MAX_HYDRATION_ITEMS = 2000;
 const HYDRATION_TIMEOUT_MS = 90_000;
@@ -15,6 +17,7 @@ const HYDRATION_CHALLENGE_PAUSE_MS = 15 * 60 * 1000;
 const COMPLETED_HYDRATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 let drainPromise = null;
 let hydrationPromise = null;
+let heartbeatPromise = null;
 let hydrationTimer = null;
 
 function openDatabase() {
@@ -259,6 +262,7 @@ async function pair(serverUrl, pairingCode, deviceName) {
     lastError: null,
     hydrationLastError: null
   });
+  void reportHeartbeats();
   await drainQueue(true);
   void drainHydrationQueue(true);
   return paired;
@@ -306,6 +310,49 @@ async function connectionStatus(checkServer = false) {
     connectionError: connectionList.find(connection => connection.lastError)?.lastError || null,
     ...(await queueStatus())
   };
+}
+
+async function reportHeartbeats() {
+  if (heartbeatPromise) return heartbeatPromise;
+  heartbeatPromise = (async () => {
+    const [captures, details, state, config] = await Promise.all([
+      allRecords(CAPTURE_STORE_NAME),
+      allRecords(HYDRATION_STORE_NAME),
+      browser.storage.local.get({
+        captureEnabled: true,
+        hydrationPausedUntil: null,
+        hydrationPauses: {}
+      }),
+      connectionConfig()
+    ]);
+    if (!config.serverUrl) return;
+
+    for (const [sourceKey, connection] of Object.entries(config.connections || {})) {
+      if (!connection?.token) continue;
+      const snapshot = telemetry.queueSnapshot(sourceKey, captures, details, state);
+      try {
+        const response = await apiFetch("/api/browser-capture/heartbeat", {
+          method: "POST",
+          body: JSON.stringify({
+            ...snapshot,
+            hydrationPausedUntil: snapshot.hydrationPausedUntil
+              ? new Date(snapshot.hydrationPausedUntil).toISOString()
+              : null,
+            extensionVersion: browser.runtime.getManifest().version
+          })
+        }, sourceKey);
+        await updateConnection(sourceKey, {
+          connected: response.ok,
+          lastError: response.ok ? null : response.status === 401
+            ? "Pairing expired or was revoked."
+            : `Health report returned HTTP ${response.status}.`
+        });
+      } catch (error) {
+        await updateConnection(sourceKey, { connected: false, lastError: error.message });
+      }
+    }
+  })().finally(() => { heartbeatPromise = null; });
+  return heartbeatPromise;
 }
 
 async function safeError(response) {
@@ -790,23 +837,28 @@ browser.tabs.onRemoved.addListener(tabId => {
 browser.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === DRAIN_ALARM) void drainQueue();
   if (alarm.name === HYDRATION_ALARM) void drainHydrationQueue();
+  if (alarm.name === HEARTBEAT_ALARM) void reportHeartbeats();
 });
 
 function createAlarms() {
   browser.alarms.create(DRAIN_ALARM, { periodInMinutes: 1 });
   browser.alarms.create(HYDRATION_ALARM, { periodInMinutes: 1 });
+  browser.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 1 });
 }
 
 browser.runtime.onInstalled.addListener(() => {
   createAlarms();
   void updateBadge();
   void drainHydrationQueue();
+  void reportHeartbeats();
 });
 browser.runtime.onStartup.addListener(() => {
   createAlarms();
   void drainQueue();
   void drainHydrationQueue();
+  void reportHeartbeats();
 });
 createAlarms();
 void updateBadge();
 void drainHydrationQueue();
+void reportHeartbeats();

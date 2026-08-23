@@ -562,6 +562,31 @@ app.MapGet("/api/browser-capture/status", async (
     .DisableAntiforgery()
     .RequireRateLimiting("firefox-capture-ingest");
 
+app.MapPost("/api/browser-capture/heartbeat", async (
+    FirefoxCaptureHeartbeatDto body,
+    PlexRequestsHosted.Services.Abstractions.IFirefoxCaptureService capture,
+    HttpContext context,
+    CancellationToken cancellationToken) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    var token = CaptureBearerToken(context);
+    if (token is null) return Results.Unauthorized();
+    try
+    {
+        return await capture.RecordHeartbeatAsync(token, body, cancellationToken)
+            ? Results.NoContent()
+            : Results.Unauthorized();
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+    .AllowAnonymous()
+    .DisableAntiforgery()
+    .WithMetadata(new RequestSizeLimitAttribute(4 * 1024))
+    .RequireRateLimiting("firefox-capture-ingest");
+
 app.MapPost("/api/browser-capture/batches", async (
     FirefoxCaptureBatchDto body,
     PlexRequestsHosted.Services.Abstractions.IFirefoxCaptureService capture,

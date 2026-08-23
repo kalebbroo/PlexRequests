@@ -16,6 +16,13 @@ public sealed class FirefoxCaptureDeviceEntity
     public DateTime ExpiresAt { get; set; }
     public DateTime? LastSeenAt { get; set; }
     public DateTime? LastCaptureAt { get; set; }
+    public DateTime? LastHeartbeatAt { get; set; }
+    public bool CaptureEnabled { get; set; }
+    public int QueuedUploads { get; set; }
+    public int FailedUploads { get; set; }
+    public int PendingDetails { get; set; }
+    public int AttentionDetails { get; set; }
+    public DateTime? HydrationPausedUntil { get; set; }
     public long BatchesReceived { get; set; }
     public long ItemsReceived { get; set; }
     public int? LastParserVersion { get; set; }
