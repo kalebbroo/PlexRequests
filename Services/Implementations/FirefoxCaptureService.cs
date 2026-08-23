@@ -117,29 +117,21 @@ public sealed class FirefoxCaptureService(
         var device = await FindActiveDeviceAsync(db, token, now, cancellationToken);
         if (device is null) return null;
         device.LastSeenAt = now;
+        RenewLeaseIfNeeded(device, now);
         await db.SaveChangesAsync(cancellationToken);
-        var indexer = device.Indexer!;
-        return new FirefoxCaptureConnectionDto
-        {
-            Connected = true,
-            ServerTime = now,
-            ExpiresAt = device.ExpiresAt,
-            Implementation = indexer.Implementation,
-            Source = SourceName(indexer.Name),
-            CurrentExtensionVersion = extensionInfo.CurrentVersion
-        };
+        return Connection(device, now);
     }
 
-    public async Task<bool> RecordHeartbeatAsync(
+    public async Task<FirefoxCaptureConnectionDto?> RecordHeartbeatAsync(
         string token,
         FirefoxCaptureHeartbeatDto heartbeat,
         CancellationToken cancellationToken = default)
     {
-        if (!captureOptions.Value.Enabled || string.IsNullOrWhiteSpace(token)) return false;
+        if (!captureOptions.Value.Enabled || string.IsNullOrWhiteSpace(token)) return null;
         var now = UtcNow;
         await using var db = await appFactory.CreateDbContextAsync(cancellationToken);
         var device = await FindActiveDeviceAsync(db, token, now, cancellationToken);
-        if (device is null) return false;
+        if (device is null) return null;
         ValidateHeartbeat(heartbeat, now);
 
         device.LastSeenAt = now;
@@ -153,8 +145,9 @@ public sealed class FirefoxCaptureService(
             ? heartbeat.HydrationPausedUntil
             : null;
         device.ExtensionVersion = Clean(heartbeat.ExtensionVersion, 32) ?? device.ExtensionVersion;
+        RenewLeaseIfNeeded(device, now);
         await db.SaveChangesAsync(cancellationToken);
-        return true;
+        return Connection(device, now);
     }
 
     public async Task<CatalogHydrationPageDto?> GetPendingDetailsAsync(
@@ -170,6 +163,7 @@ public sealed class FirefoxCaptureService(
         var device = await FindActiveDeviceAsync(db, token, now, cancellationToken);
         if (device is null) return null;
         device.LastSeenAt = now;
+        RenewLeaseIfNeeded(device, now);
         await db.SaveChangesAsync(cancellationToken);
 
         // EXT.to magnets depend on short-lived credentials from the listing page. Replaying its stored
@@ -217,6 +211,7 @@ public sealed class FirefoxCaptureService(
         device.LastParserVersion = batch.ParserVersion;
         device.ExtensionVersion = Clean(batch.ExtensionVersion, 32) ?? device.ExtensionVersion;
         device.LastPageUrl = Clean(batch.PageUrl, 2048);
+        RenewLeaseIfNeeded(device, now);
         if (!result.DuplicateBatch)
         {
             device.BatchesReceived++;
@@ -322,6 +317,28 @@ public sealed class FirefoxCaptureService(
                 && x.RevokedAt == null
                 && x.ExpiresAt > now,
                 cancellationToken);
+    }
+
+    private void RenewLeaseIfNeeded(FirefoxCaptureDeviceEntity device, DateTime now)
+    {
+        var lifetimeDays = Math.Clamp(captureOptions.Value.DeviceLifetimeDays, 1, 365);
+        var renewalWindowDays = Math.Clamp(captureOptions.Value.DeviceRenewalWindowDays, 1, lifetimeDays);
+        if (device.ExpiresAt <= now.AddDays(renewalWindowDays))
+            device.ExpiresAt = now.AddDays(lifetimeDays);
+    }
+
+    private FirefoxCaptureConnectionDto Connection(FirefoxCaptureDeviceEntity device, DateTime now)
+    {
+        var indexer = device.Indexer!;
+        return new FirefoxCaptureConnectionDto
+        {
+            Connected = true,
+            ServerTime = now,
+            ExpiresAt = device.ExpiresAt,
+            Implementation = indexer.Implementation,
+            Source = SourceName(indexer.Name),
+            CurrentExtensionVersion = extensionInfo.CurrentVersion
+        };
     }
 
     private void ValidateBatch(FirefoxCaptureBatchDto batch, IndexerEntity indexer)

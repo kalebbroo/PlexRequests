@@ -12,7 +12,8 @@ challenge appears, the worker pauses; complete the challenge in a normal tab for
 **Resume detail capture** in the extension. The extension never clicks or solves browser challenges itself.
 Once per minute it reports only source-scoped queue counts, capture/pause state, and its version so the admin
 screen can show whether work is flowing or needs attention. It never includes release names, page URLs, or
-browser session data in that health report.
+browser session data in that health report. A valid device lease renews automatically near expiry while these
+heartbeats continue. Inactive profiles still expire and administrators can revoke a device immediately.
 
 When the paired server is distributing a newer extension, both the admin indexer health and the Firefox
 popup show the manifest-derived version and link to the current XPI. Reloading the same extension ID keeps
