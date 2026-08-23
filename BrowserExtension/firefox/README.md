@@ -14,6 +14,10 @@ Once per minute it reports only source-scoped queue counts, capture/pause state,
 screen can show whether work is flowing or needs attention. It never includes release names, page URLs, or
 browser session data in that health report.
 
+When the paired server is distributing a newer extension, both the admin indexer health and the Firefox
+popup show the manifest-derived version and link to the current XPI. Reloading the same extension ID keeps
+its pairings and IndexedDB queues; the server never relies on a separately maintained version setting.
+
 For adapters whose detail URLs can be safely revisited, Firefox also reconciles the server's unresolved
 catalog backlog every five minutes. This rebuilds missing local detail work after an extension update,
 browser storage loss, or interrupted profile. The capability currently applies to 1337x. EXT.to remains

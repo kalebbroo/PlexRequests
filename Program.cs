@@ -266,6 +266,8 @@ builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IRecommen
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IIndexerAdminService, PlexRequestsHosted.Services.Implementations.IndexerAdminService>();
 builder.Services.Configure<PlexRequestsHosted.Infrastructure.Capture.FirefoxCaptureOptions>(
     builder.Configuration.GetSection(PlexRequestsHosted.Infrastructure.Capture.FirefoxCaptureOptions.Section));
+builder.Services.AddSingleton(
+    PlexRequestsHosted.Services.Implementations.FirefoxExtensionArchive.Inspect(builder.Environment.ContentRootPath));
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IFirefoxCaptureService,
     PlexRequestsHosted.Services.Implementations.FirefoxCaptureService>();
 // Optional, rebuildable release catalog. It is a singleton writer over short-lived contexts so concurrent
@@ -507,11 +509,13 @@ app.MapGet("/api/admin/catalog/stats", async (
     Results.Ok(await catalog.GetStatsAsync(cancellationToken)))
     .RequireAuthorization("AdminOnly");
 
-app.MapGet("/api/admin/browser-capture/firefox-extension", (IWebHostEnvironment environment) =>
+app.MapGet("/api/admin/browser-capture/firefox-extension", (
+    IWebHostEnvironment environment,
+    PlexRequestsHosted.Services.Implementations.FirefoxExtensionInfo extension) =>
     Results.File(
         PlexRequestsHosted.Services.Implementations.FirefoxExtensionArchive.Create(environment.ContentRootPath),
         "application/x-xpinstall",
-        "plexrequests-firefox-capture.xpi"))
+        $"plexrequests-firefox-capture-v{extension.CurrentVersion}.xpi"))
     .RequireAuthorization("AdminOnly");
 
 // Firefox capture uses a two-stage credential: an admin creates a short-lived one-time pairing code in

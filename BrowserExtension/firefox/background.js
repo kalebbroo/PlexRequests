@@ -289,9 +289,18 @@ async function connectionStatus(checkServer = false) {
       try {
         const response = await apiFetch("/api/browser-capture/status", {}, sourceKey);
         connection.connected = response.ok;
-        connection.lastError = response.ok ? null : response.status === 401
-          ? "Pairing expired or was revoked."
-          : `Server returned HTTP ${response.status}.`;
+        if (response.ok) {
+          const serverStatus = await response.json();
+          connection.currentExtensionVersion = serverStatus.currentExtensionVersion || null;
+          connection.updateAvailable = telemetry.isVersionOlder(
+            browser.runtime.getManifest().version,
+            connection.currentExtensionVersion);
+          connection.lastError = null;
+        } else {
+          connection.lastError = response.status === 401
+            ? "Pairing expired or was revoked."
+            : `Server returned HTTP ${response.status}.`;
+        }
       } catch (error) {
         connection.connected = false;
         connection.lastError = error.message;
@@ -311,6 +320,9 @@ async function connectionStatus(checkServer = false) {
     source: connectionList.map(connection => connection.source).filter(Boolean).join(" · "),
     tokenExpiresAt: connectionList.map(connection => connection.expiresAt).filter(Boolean).sort().at(-1) || null,
     connectionError: connectionList.find(connection => connection.lastError)?.lastError || null,
+    currentExtensionVersion: connectionList.map(connection => connection.currentExtensionVersion)
+      .filter(Boolean).sort().at(-1) || null,
+    updateAvailable: connectionList.some(connection => connection.updateAvailable),
     ...(await queueStatus())
   };
 }

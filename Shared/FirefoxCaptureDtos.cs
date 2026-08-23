@@ -56,6 +56,7 @@ public sealed class FirefoxCaptureConnectionDto
     public DateTime ExpiresAt { get; set; }
     public string Implementation { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
+    public string CurrentExtensionVersion { get; set; } = string.Empty;
 }
 
 /// <summary>
@@ -78,6 +79,7 @@ public sealed class FirefoxCaptureDeviceDto
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string ExtensionVersion { get; set; } = string.Empty;
+    public bool UpdateAvailable { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime ExpiresAt { get; set; }
     public DateTime? LastSeenAt { get; set; }
@@ -103,5 +105,6 @@ public sealed class FirefoxCaptureAdminStatusDto
     public bool CatalogEnabled { get; set; }
     public int IndexerId { get; set; }
     public string IndexerName { get; set; } = string.Empty;
+    public string CurrentExtensionVersion { get; set; } = string.Empty;
     public List<FirefoxCaptureDeviceDto> Devices { get; set; } = new();
 }

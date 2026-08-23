@@ -40,14 +40,15 @@
                         <div>
                             <MudText Typo="Typo.subtitle2">1. Install the Firefox extension</MudText>
                             <MudText Typo="Typo.caption" Color="Color.Tertiary">
-                                Development XPI · use about:debugging → This Firefox → Load Temporary Add-on.
+                                Current version @_status.CurrentExtensionVersion · use about:debugging → This Firefox →
+                                Load Temporary Add-on. Reload the same extension ID when updating to preserve its data.
                             </MudText>
                         </div>
                         <MudButton Href="/api/admin/browser-capture/firefox-extension"
                                    Target="_blank"
                                    Variant="Variant.Outlined"
                                    StartIcon="@Icons.Material.Filled.Download">
-                            Download XPI
+                            Download v@_status.CurrentExtensionVersion
                         </MudButton>
                     </div>
                 </MudPaper>
@@ -114,7 +115,8 @@
                                             }
                                         </div>
                                         <MudText Typo="Typo.caption" Color="Color.Tertiary">
-                                            Extension @device.ExtensionVersion · queue report @Relative(device.LastHeartbeatAt) ·
+                                            Extension @device.ExtensionVersion · current @_status.CurrentExtensionVersion ·
+                                            queue report @Relative(device.LastHeartbeatAt) ·
                                             last capture @Relative(device.LastCaptureAt)
                                         </MudText>
                                         <MudText Typo="Typo.caption" Color="Color.Tertiary">
@@ -147,10 +149,11 @@
                                                 }
                                             </div>
                                         }
-                                        else if (device.IsActive)
+                                        @if (device.IsActive && device.UpdateAvailable)
                                         {
                                             <MudText Typo="Typo.caption" Color="Color.Warning" Class="d-block mt-1">
-                                                Update this Firefox extension to the latest version for live queue health and recovery.
+                                                Download v@_status.CurrentExtensionVersion above and reload this extension in place.
+                                                Its existing source pairings and durable queues will be retained.
                                             </MudText>
                                         }
                                     </div>

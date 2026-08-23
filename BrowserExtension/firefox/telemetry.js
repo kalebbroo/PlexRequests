@@ -32,5 +32,22 @@
     };
   }
 
-  return { recordSource, queueSnapshot };
+  function isVersionOlder(installedVersion, currentVersion) {
+    const parts = value => {
+      const text = String(value || "").trim();
+      if (!/^\d+(?:\.\d+){0,3}$/.test(text)) return null;
+      return text.split(".").map(Number);
+    };
+    const installed = parts(installedVersion);
+    const current = parts(currentVersion);
+    if (!current) return false;
+    if (!installed) return true;
+    for (let index = 0; index < Math.max(installed.length, current.length); index++) {
+      const difference = (installed[index] || 0) - (current[index] || 0);
+      if (difference) return difference < 0;
+    }
+    return false;
+  }
+
+  return { recordSource, queueSnapshot, isVersionOlder };
 });

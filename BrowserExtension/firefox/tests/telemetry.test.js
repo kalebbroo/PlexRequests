@@ -47,3 +47,11 @@ test("source pause wins over a legacy global pause and expired pauses disappear"
   }, 7000);
   assert.equal(resumed.hydrationPausedUntil, null);
 });
+
+test("extension versions compare numerically and malformed installed versions require an update", () => {
+  assert.equal(telemetry.isVersionOlder("1.5.9", "1.6.0"), true);
+  assert.equal(telemetry.isVersionOlder("1.10.0", "1.6.0"), false);
+  assert.equal(telemetry.isVersionOlder("1.6", "1.6.0"), false);
+  assert.equal(telemetry.isVersionOlder("unknown", "1.6.0"), true);
+  assert.equal(telemetry.isVersionOlder("1.6.0", "invalid"), false);
+});
