@@ -98,10 +98,38 @@ test("deduplicates repeated EXT.to torrent links on grouped show pages", () => {
   assert.equal(parsed.pageType, "listing");
   assert.equal(parsed.items.length, 1);
   assert.equal(parsed.items[0].releaseName, "Show.S01E01.1080p.WEB-DL");
-  assert.equal(parsed.items[0].captureTorrentId, 987);
-  assert.equal(parsed.items[0].capturePageToken, "page-token");
-  assert.equal(parsed.items[0].captureSessionId, "csrf-session");
+  assert.equal(parsed.items[0].needsHydration, true);
+  assert.equal(Object.hasOwn(parsed.items[0], "capturePageToken"), false);
+  assert.equal(Object.hasOwn(parsed.items[0], "captureSessionId"), false);
 });
+
+test("parses an EXT.to detail after the sites View Hash control reveals the infohash", () => {
+  const infoHash = "ABCDEF0123456789ABCDEF0123456789ABCDEF01";
+  const values = {
+    "#torrent-hash-display": element(`Torrent Hash: ${infoHash}`),
+    ".box-info-heading h1": element("Example.Show.S03E04.1080p.WEB-DL")
+  };
+  const document = {
+    title: "Example Show | EXT.to",
+    body: { textContent: "Example Show torrent details" },
+    querySelector: selector => values[selector] || null,
+    querySelectorAll: () => []
+  };
+
+  const parsed = parser.parsePage(document, "https://ext.to/example-show-s03e04-10000002/");
+
+  assert.equal(parsed.pageType, "detail");
+  const item = assertSingle(parsed.items);
+  assert.equal(item.infoHash, infoHash);
+  assert.match(item.magnetUri, new RegExp(`^magnet:\\?xt=urn:btih:${infoHash}`));
+  assert.match(item.magnetUri, /&dn=Example.Show.S03E04.1080p.WEB-DL$/);
+  assert.equal(item.needsHydration, false);
+});
+
+function assertSingle(items) {
+  assert.equal(items.length, 1);
+  return items[0];
+}
 
 test("listing rows remain pending until a detail page supplies a magnet", () => {
   const values = {

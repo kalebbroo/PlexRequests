@@ -173,7 +173,7 @@ async function enqueueHydrations(items) {
   const refreshed = [...candidateMap.values()].filter(candidate => {
     const existing = retainedById.get(candidate.externalId);
     return existing && existing.state !== "complete"
-      && (candidate.capturePageToken || candidate.sourceUrl !== existing.sourceUrl);
+      && (candidate.method !== existing.method || candidate.sourceUrl !== existing.sourceUrl);
   }).map(candidate => ({ ...retainedById.get(candidate.externalId), ...candidate }));
 
   await withStore(HYDRATION_STORE_NAME, "readwrite", store => {
@@ -489,71 +489,6 @@ function publicCatalogItems(items) {
   return (items || []).map(({ captureTorrentId, capturePageToken, captureSessionId, ...item }) => item);
 }
 
-async function sha256Hex(value) {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function resolveExtMagnet(record) {
-  if (!record.captureTorrentId || !record.capturePageToken || !record.captureSessionId) {
-    throw new Error("EXT.to page credentials expired or were unavailable; revisit the listing to refresh them.");
-  }
-  const timestamp = Math.floor(Date.now() / 1000);
-  const hmac = await sha256Hex(`${record.captureTorrentId}|${timestamp}|${record.capturePageToken}`);
-  const endpoint = new URL("/ajax/getSearchMagnet.php", record.sourceUrl);
-  const response = await fetch(endpoint.toString(), {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Accept": "application/json",
-      "Content-Type": "application/x-www-form-urlencoded",
-      "X-Requested-With": "XMLHttpRequest"
-    },
-    body: new URLSearchParams({
-      torrent_id: String(record.captureTorrentId),
-      hash: "",
-      name: "",
-      timestamp: String(timestamp),
-      hmac,
-      sessid: record.captureSessionId
-    }).toString()
-  });
-  if (!response.ok) throw new Error(`EXT.to magnet lookup returned HTTP ${response.status}.`);
-  const body = await response.json();
-  if (!body.success || typeof body.url !== "string" || !body.url.startsWith("magnet:")) {
-    throw new Error("EXT.to did not return a usable magnet; revisit the listing after completing any challenge.");
-  }
-  const infoHash = body.url.match(/(?:^|[?&])xt=urn:btih:([a-z0-9]+)/i)?.[1] || null;
-  const item = {
-    externalId: record.externalId,
-    releaseName: record.releaseName,
-    sourceUrl: record.sourceUrl,
-    infoHash,
-    magnetUri: body.url,
-    category: record.category,
-    uploader: record.uploader,
-    seeders: record.seeders,
-    leechers: record.leechers,
-    sizeBytes: record.sizeBytes,
-    publishedAt: record.publishedAt,
-    needsHydration: false
-  };
-  const fingerprint = await sha256Hex(`ext.to:${record.externalId}:${infoHash || body.url}`);
-  const queued = await queueRecord({
-    batchId: `firefox-v2-${fingerprint}`,
-    sourceKey: "ext.to",
-    pageUrl: record.sourceUrl,
-    pageType: "detail",
-    parserVersion: 2,
-    capturedAt: new Date().toISOString(),
-    items: [item]
-  });
-  if (!queued.queued && !queued.duplicate) {
-    throw new Error("The upload queue is full; EXT.to detail resolution will retry after pending uploads drain.");
-  }
-  await completeHydrations([item]);
-}
-
 async function sendRecord(record) {
   const sourceKey = record.sourceKey || sources.fromUrl(record.pageUrl)?.key;
   try {
@@ -714,7 +649,8 @@ async function reviveStrandedHydrations(activeExternalId = null) {
   const now = Date.now();
   const changed = [];
   const normalized = records.map(record => {
-    const revivedFailed = hydration.reviveLegacyFailure(record, now);
+    const upgraded = hydration.upgradeLegacyExt(record, now);
+    const revivedFailed = hydration.reviveLegacyFailure(upgraded, now);
     const revived = hydration.reviveInterrupted(revivedFailed, activeExternalId, now);
     if (revived !== record) changed.push(revived);
     return revived;
@@ -839,18 +775,6 @@ async function drainHydrationQueue(force = false) {
     next.startedAt = Date.now();
     next.lastError = null;
     await updateRecord(HYDRATION_STORE_NAME, next);
-
-    if (next.sourceKey === "ext.to") {
-      try {
-        await resolveExtMagnet(next);
-        await browser.storage.local.set({ hydrationLastError: null });
-      } catch (error) {
-        await retryHydration(next.externalId, error.message);
-      }
-      await updateBadge();
-      scheduleHydration();
-      return;
-    }
 
     try {
       let tab = await existingTab(current.hydrationWorkerTabId);

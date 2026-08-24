@@ -8,7 +8,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createParser(sources) {
   "use strict";
 
-  const PARSER_VERSION = 2;
+  const PARSER_VERSION = 3;
 
   function cleanText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
@@ -56,6 +56,19 @@
   function infoHashFromMagnet(magnet) {
     const match = String(magnet || "").match(/(?:^|[?&])xt=urn:btih:([a-z0-9]+)/i);
     return match ? match[1] : null;
+  }
+
+  function extInfoHash(document) {
+    const text = cleanText(document.querySelector("#torrent-hash-display")?.textContent);
+    const labelled = text.match(/(?:btih|info[_ -]?hash|torrent[_ -]?hash|hash)[^a-f0-9]{0,20}([a-f0-9]{64}|[a-f0-9]{40}|[A-Z2-7]{32})\b/i);
+    const broad = labelled || text.match(/\b([a-f0-9]{64}|[a-f0-9]{40}|[A-Z2-7]{32})\b/i);
+    return broad ? broad[1].toUpperCase() : null;
+  }
+
+  function magnetFromHash(infoHash, releaseName) {
+    if (!infoHash) return null;
+    const name = cleanText(releaseName);
+    return `magnet:?xt=urn:btih:${infoHash}${name ? `&dn=${encodeURIComponent(name)}` : ""}`;
   }
 
   function firstText(element, selectors) {
@@ -142,15 +155,7 @@
     return part || fallback || null;
   }
 
-  function extPageCredentials(document) {
-    const scriptText = Array.from(document.querySelectorAll("script"))
-      .map(script => script.textContent || "").join("\n");
-    const token = scriptText.match(/searchPageToken\s*=\s*['\"]([^'\"]+)['\"]/i)?.[1] || null;
-    const sessionId = document.querySelector("meta[name='csrf-token']")?.getAttribute("content") || null;
-    return token && sessionId ? { token, sessionId } : null;
-  }
-
-  function parseExtListingLink(link, pageUrl, category, credentials = null) {
+  function parseExtListingLink(link, pageUrl, category) {
     const href = link && link.getAttribute("href");
     const id = externalId(href, pageUrl);
     const container = nearestListingContainer(link);
@@ -158,8 +163,6 @@
     if (!id || !releaseName) return null;
     const containerText = cleanText(container && container.textContent);
     const time = container?.querySelector?.("time[datetime]");
-    const torrentId = parseCount(container?.querySelector?.(".search-magnet-btn[data-id]")?.getAttribute("data-id"))
-      ?? parseCount(id.split(":").at(-1));
     return {
       externalId: id,
       releaseName,
@@ -171,10 +174,7 @@
       sizeBytes: parseSize(firstText(container, ["[data-size]", "[class*='size']"]) || containerText),
       publishedAt: time && time.getAttribute("datetime")
         || container?.querySelector?.("td:nth-child(4) span[title]")?.getAttribute("title") || null,
-      needsHydration: true,
-      captureTorrentId: torrentId,
-      capturePageToken: credentials?.token || null,
-      captureSessionId: credentials?.sessionId || null
+      needsHydration: true
     };
   }
 
@@ -205,11 +205,12 @@
   function parseDetail(document, pageUrl) {
     const source = sources.fromUrl(pageUrl);
     const magnetLink = document.querySelector("a[href^='magnet:']");
-    const magnet = magnetLink && magnetLink.getAttribute("href");
     const id = externalId(pageUrl, pageUrl);
     let releaseName = firstText(document, [".box-info-heading h1", ".torrent-detail-page h1", "main h1", "h1", "[data-title]"]);
     if (!releaseName) releaseName = cleanText(document.title)
       .replace(/\s*[|\-]\s*(?:1337x|ext\.to).*$/i, "");
+    const revealedHash = source?.key === "ext.to" ? extInfoHash(document) : null;
+    const magnet = magnetLink?.getAttribute("href") || magnetFromHash(revealedHash, releaseName);
     if (!source || !id || !releaseName || !magnet) return null;
 
     const imdbLink = document.querySelector("a[href*='imdb.com/title/tt']");
@@ -258,11 +259,10 @@
     }
 
     const category = inferCategory(pageUrl, document);
-    const extCredentials = source.key === "ext.to" ? extPageCredentials(document) : null;
     const items = source.key === "1337x"
       ? Array.from(document.querySelectorAll("table.table-list tbody tr")).map(row => parseListingRow(row, pageUrl, category))
       : Array.from(document.querySelectorAll("table.search-table tbody a.torrent-title-link, a.torrent-title-link"))
-        .map(link => parseExtListingLink(link, pageUrl, category, extCredentials));
+        .map(link => parseExtListingLink(link, pageUrl, category));
     const unique = deduplicate(items);
     return { sourceKey: source.key, pageType: unique.length ? "listing" : "unsupported", items: unique };
   }
@@ -274,6 +274,7 @@
     parseSize,
     externalId,
     infoHashFromMagnet,
+    extInfoHash,
     inferCategory,
     parseListingRow,
     parseExtListingLink,

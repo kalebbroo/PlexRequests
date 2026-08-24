@@ -292,7 +292,7 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Durable_backlog_is_authenticated_source_scoped_and_limited_to_recoverable_adapters()
+    public async Task Durable_backlog_is_authenticated_source_scoped_for_supported_adapters()
     {
         var token = await PairAsync();
         await _capture.IngestAsync(token, Batch("recoverable", "listing", Item()));
@@ -314,7 +314,8 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
         extBatch.PageUrl = "https://ext.to/browse/tv/";
         await _capture.IngestAsync(extToken, extBatch);
 
-        Assert.Empty((await _capture.GetPendingDetailsAsync(extToken, 0, 250))!.Items);
+        var extPending = Assert.Single((await _capture.GetPendingDetailsAsync(extToken, 0, 250))!.Items);
+        Assert.Equal("extto:torrent:10000002", extPending.ExternalId);
     }
 
     [Fact]

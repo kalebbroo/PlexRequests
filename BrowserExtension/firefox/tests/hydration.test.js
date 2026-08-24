@@ -24,6 +24,7 @@ test("accepts supported source detail URLs and retains their adapter key", () =>
   }, 5678);
   assert.equal(extCandidate.sourceKey, "ext.to");
   assert.equal(extCandidate.sourceUrl, "https://ext.to/example-show-s01e02-10000002/");
+  assert.equal(extCandidate.method, "detail-page-v1");
   assert.equal(hydration.detailCandidate({
     externalId: "bad",
     sourceUrl: "https://example.com/torrent/1/",
@@ -34,6 +35,35 @@ test("accepts supported source detail URLs and retains their adapter key", () =>
     sourceUrl: "https://1337x.to/search/example/1/",
     needsHydration: true
   }), null);
+});
+
+test("upgrades EXT.to failures from the obsolete listing AJAX strategy", () => {
+  const upgraded = hydration.upgradeLegacyExt({
+    externalId: "extto:torrent:10000002",
+    sourceKey: "ext.to",
+    sourceUrl: "https://ext.to/example-show-10000002/",
+    state: "queued",
+    attempts: 3,
+    needsAttention: true,
+    attentionAt: 4000,
+    nextAttemptAt: 999999,
+    lastError: "EXT.to magnet lookup returned HTTP 403.",
+    capturePageToken: "obsolete-page-token",
+    captureSessionId: "obsolete-session"
+  }, 5000);
+
+  assert.equal(upgraded.method, "detail-page-v1");
+  assert.equal(upgraded.state, "queued");
+  assert.equal(upgraded.attempts, 0);
+  assert.equal(upgraded.needsAttention, false);
+  assert.equal(upgraded.attentionAt, null);
+  assert.equal(upgraded.nextAttemptAt, 5000);
+  assert.equal(upgraded.lastError, null);
+  assert.equal(Object.hasOwn(upgraded, "capturePageToken"), false);
+  assert.equal(Object.hasOwn(upgraded, "captureSessionId"), false);
+
+  const completed = { ...upgraded, method: null, state: "complete", completedAt: 4500 };
+  assert.equal(hydration.upgradeLegacyExt(completed, 5000), completed);
 });
 
 test("selects the oldest due queued hydration without selecting future or failed work", () => {

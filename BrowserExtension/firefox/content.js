@@ -9,6 +9,43 @@
   let lastFingerprint = null;
   let inFlightFingerprint = null;
   let lastObservation = null;
+  let extRevealKey = null;
+  let extRevealObserver = null;
+
+  function revealExtHash(pageUrl) {
+    const source = sources.fromUrl(pageUrl);
+    if (source?.key !== "ext.to" || !sources.isDetailUrl(pageUrl, "ext.to")) return false;
+    if (parser.extInfoHash(document)) return false;
+
+    const display = document.querySelector("#torrent-hash-display");
+    const button = document.querySelector("#show-hash-btn[data-id]");
+    if (!display || !button) return false;
+    const key = `${pageUrl}:${button.getAttribute("data-id") || ""}`;
+    if (extRevealKey === key) return true;
+
+    extRevealKey = key;
+    extRevealObserver?.disconnect();
+    extRevealObserver = new MutationObserver(() => {
+      if (!parser.extInfoHash(document)) return;
+      extRevealObserver?.disconnect();
+      extRevealObserver = null;
+      clearTimeout(timeout);
+      scheduleCapture(0);
+    });
+    const timeout = setTimeout(() => {
+      if (extRevealKey === key && !parser.extInfoHash(document))
+        void observe("unsupported-detail", pageUrl);
+    }, 8_000);
+    extRevealObserver.observe(display, { childList: true, subtree: true, characterData: true });
+    try { button.click(); }
+    catch {
+      clearTimeout(timeout);
+      extRevealObserver.disconnect();
+      extRevealObserver = null;
+      return false;
+    }
+    return true;
+  }
 
   async function sha256(value) {
     const bytes = new TextEncoder().encode(value);
@@ -45,7 +82,8 @@
     clearTimeout(challengeTimer);
     challengeTimer = null;
     if (!parsed.items.length || !["listing", "detail"].includes(parsed.pageType)) {
-      if (/\/torrent\//i.test(pageUrl.pathname)) {
+      if (revealExtHash(pageUrl.toString())) return;
+      if (sources.isDetailUrl(pageUrl.toString())) {
         clearTimeout(unsupportedTimer);
         if (finalDetailCheck) await observe("unsupported-detail", pageUrl.toString());
         else unsupportedTimer = setTimeout(() => void capture(true), 8_000);
