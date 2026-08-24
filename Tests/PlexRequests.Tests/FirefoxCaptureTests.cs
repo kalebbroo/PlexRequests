@@ -318,6 +318,28 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Indexer_rename_does_not_orphan_the_devices_existing_hydration_backlog()
+    {
+        var token = await PairAsync();
+        await _capture.IngestAsync(token, Batch("before-rename", "listing", Item()));
+
+        await using (var app = await _appFactory.CreateDbContextAsync())
+        {
+            var indexer = await app.Indexers.SingleAsync(x => x.Id == 37);
+            indexer.Name = "Living Room 1337x";
+            await app.SaveChangesAsync();
+        }
+
+        var connection = await _capture.GetConnectionAsync(token);
+        var pending = await _capture.GetPendingDetailsAsync(token, 0, 250);
+
+        Assert.Equal("1337x (Firefox)", connection!.Source);
+        Assert.Equal("1337x:torrent:1", Assert.Single(pending!.Items).ExternalId);
+        await using var catalog = await _catalogFactory.CreateDbContextAsync();
+        Assert.Equal("1337x (Firefox)", (await catalog.Sightings.SingleAsync()).Source);
+    }
+
+    [Fact]
     public async Task Expired_pairing_codes_cannot_be_redeemed()
     {
         var pairing = await _capture.CreatePairingAsync(37);

@@ -103,7 +103,7 @@ public sealed class FirefoxCaptureService(
             ExpiresAt = device.ExpiresAt,
             IndexerId = device.IndexerId,
             Implementation = indexer.Implementation,
-            Source = SourceName(indexer.Name)
+            Source = SourceName(indexer)
         };
     }
 
@@ -173,7 +173,7 @@ public sealed class FirefoxCaptureService(
 
         var page = await catalog.GetPendingHydrationAsync(
             device.IndexerId,
-            SourceName(device.Indexer.Name),
+            SourceName(device.Indexer),
             afterId,
             limit,
             cancellationToken);
@@ -199,7 +199,7 @@ public sealed class FirefoxCaptureService(
         var result = await catalog.UpsertBatchAsync(new CatalogBatchDto
         {
             IndexerId = device.IndexerId,
-            Source = SourceName(device.Indexer!.Name),
+            Source = SourceName(device.Indexer!),
             BatchId = batch.BatchId.Trim(),
             AdvanceCheckpoint = false,
             ObservedAt = now,
@@ -336,7 +336,7 @@ public sealed class FirefoxCaptureService(
             ServerTime = now,
             ExpiresAt = device.ExpiresAt,
             Implementation = indexer.Implementation,
-            Source = SourceName(indexer.Name),
+            Source = SourceName(indexer),
             CurrentExtensionVersion = extensionInfo.CurrentVersion
         };
     }
@@ -438,7 +438,11 @@ public sealed class FirefoxCaptureService(
             || indexer.Implementation.Equals("ext.to", StringComparison.OrdinalIgnoreCase));
 
     private DateTime UtcNow => clock.GetUtcNow().UtcDateTime;
-    private static string SourceName(string indexerName) => Clean(indexerName, 110) + SourceSuffix;
+    // Catalog Source is an identity, not a display label. Indexer names are admin-editable; using one here
+    // orphaned every pending detail row as soon as the indexer was renamed because hydration looked for the
+    // new name while existing sightings retained the old one. Implementation is the stable adapter key and
+    // IndexerId still isolates two configured instances of the same adapter.
+    private static string SourceName(IndexerEntity indexer) => Clean(indexer.Implementation, 110) + SourceSuffix;
     private static string NormalizePairingCode(string? value) => new((value ?? string.Empty)
         .Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
