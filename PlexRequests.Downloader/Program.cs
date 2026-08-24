@@ -124,6 +124,9 @@ builder.Services.AddSingleton<IAcquisitionCandidateSource, YouTubeMusicDirectSou
 // Per-(indexer, query) result cache and the per-indexer request throttle the client sits on top of.
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IIndexerRateLimiter, IndexerRateLimiter>();
+// The server persists long-lived source cooldowns, while this immediately suppresses repeated refusals
+// during the downloader's two-minute indexer-settings cache window.
+builder.Services.AddSingleton<IndexerRuntimeCircuit>();
 // The single fetch seam every scraped indexer goes through: applies stored clearance credentials and turns
 // a refusal into a typed IndexerBlockedException instead of an empty result set.
 builder.Services.AddSingleton<IIndexerFetch, IndexerFetch>();

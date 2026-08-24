@@ -47,6 +47,7 @@ public class IndexerClient(
     IEnumerable<IAcquisitionCandidateSource> acquisitionSources,
     IIndexerSettingsProvider settings,
     IIndexerRateLimiter rateLimiter,
+    IndexerRuntimeCircuit runtimeCircuit,
     IMemoryCache cache,
     IPlexRequestsApiClient api,
     IOptions<CatalogWorkerOptions> catalogOptions,
@@ -74,6 +75,7 @@ public class IndexerClient(
         var now = DateTime.UtcNow;
         var applicable = settings.All
             .Where(i => IsEnabledFor(i, purpose, now))
+            .Where(i => runtimeCircuit.Allows(i.Id, now))
             .Where(i => i.Supports(job.MediaType))
             // Anime-only sources (Nyaa) are skipped unless the job was classified as anime, so a plain
             // movie/TV request never matches an anime release with a coincidentally overlapping title.
@@ -283,20 +285,26 @@ public class IndexerClient(
 
     private async Task ReportHealthAsync(List<ProviderSearchOutcome> outcomes, DateTime searchedAt, CancellationToken ct)
     {
+        var reports = outcomes.Where(o => o.IndexerId > 0).Select(o => new IndexerStatusReportDto
+        {
+            IndexerId = o.IndexerId,
+            Name = o.Provider,
+            Success = o.Success,
+            ResultCount = o.Count,
+            Error = o.Error,
+            LatencyMs = o.LatencyMs,
+            SearchedAt = searchedAt,
+            BlockReason = o.BlockReason
+        }).ToList();
+
+        // Apply typed refusals before the network round-trip. The durable web-side circuit remains the
+        // authority across restarts; this closes only the downloader's two-minute settings-cache window.
+        runtimeCircuit.Record(reports);
+
         // Best-effort: telemetry must never fail or delay an actual search.
         try
         {
-            await api.ReportIndexerStatusAsync(outcomes.Where(o => o.IndexerId > 0).Select(o => new IndexerStatusReportDto
-            {
-                IndexerId = o.IndexerId,
-                Name = o.Provider,
-                Success = o.Success,
-                ResultCount = o.Count,
-                Error = o.Error,
-                LatencyMs = o.LatencyMs,
-                SearchedAt = searchedAt,
-                BlockReason = o.BlockReason
-            }).ToList(), ct);
+            await api.ReportIndexerStatusAsync(reports, ct);
         }
         catch (Exception ex) { logger.LogDebug(ex, "Indexer status report skipped"); }
     }
