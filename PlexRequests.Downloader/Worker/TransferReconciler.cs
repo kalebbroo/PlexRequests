@@ -29,6 +29,7 @@ public class TransferReconciler(
     IAcquisitionBackendRegistry acquisitionBackends,
     ILibraryImporter importer,
     ITransferImportCoordinator importCoordinator,
+    IPostImportCleanup postImportCleanup,
     IOptions<WorkerOptions> workerOptions,
     ILogger<TransferReconciler> logger) : BackgroundService
 {
@@ -232,16 +233,7 @@ public class TransferReconciler(
         try { await api.RefreshLibraryAsync(job.MediaType, ct); }
         catch (Exception ex) { logger.LogDebug(ex, "Plex refresh trigger skipped"); }
 
-        // Keep source data where the backend supports it (torrent seeding); remove only its tracking entry.
-        if (acquisitionBackends.TryGet(t.Protocol, out var backend))
-        {
-            // The per-job monitor may be observing this same successful import. Remove only backend
-            // tracking here and retain source data; the monitor performs protocol-specific cleanup after
-            // it has observed the shared import result. This closes the reconcile-vs-monitor race where a
-            // direct backend could delete its payload milliseconds before the monitor resolved the path.
-            try { await backend.RemoveAsync(t.TransferId, removeData: false, ct); }
-            catch (Exception ex) { logger.LogDebug(ex, "Transfer removal after import skipped"); }
-        }
+        await postImportCleanup.RunAsync(t.Protocol, t.TransferId, result, ct);
 
         logger.LogInformation("Imported {Count} file(s) for job {JobId} from {Release}",
             result.Files.Count, job.Id, t.ReleaseName ?? t.TransferId);

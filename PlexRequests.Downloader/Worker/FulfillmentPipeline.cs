@@ -33,6 +33,7 @@ public class FulfillmentPipeline(
     IAcquisitionBackendRegistry acquisitionBackends,
     ILibraryImporter importer,
     ITransferImportCoordinator importCoordinator,
+    IPostImportCleanup postImportCleanup,
     IPlexRequestsApiClient api,
     IJobStateStore stateStore,
     IVpnGuard vpn,
@@ -445,9 +446,7 @@ public class FulfillmentPipeline(
                     progressSum += 100 - status.Progress; // count the just-imported torrent as fully done this tick
                     items[i] = it with { Imported = true };
                     await stateStore.SaveAsync(record with { Transfers = items.ToList() }, ct); // persist so a restart resumes
-                    try { await backend.RemoveAsync(it.TransferId,
-                        removeData: !backend.Capabilities.CanKeepSourceDataAfterRemoval, ct); }
-                    catch (Exception ex) { logger.LogDebug(ex, "Transfer removal after import skipped"); }
+                    await postImportCleanup.RunAsync(it.Protocol, it.TransferId, result, ct);
                 }
             }
 

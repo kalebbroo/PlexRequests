@@ -185,6 +185,7 @@ builder.Services.AddSingleton<IDirectAudioMediaEnricher, DirectAudioMediaEnriche
 builder.Services.AddSingleton<IAcquisitionBackend, TorrentAcquisitionBackend>();
 builder.Services.AddSingleton<IAcquisitionBackend, YouTubeMusicAcquisitionBackend>();
 builder.Services.AddSingleton<IAcquisitionBackendRegistry, AcquisitionBackendRegistry>();
+builder.Services.AddSingleton<IPostImportCleanup, PostImportCleanup>();
 
 // Library organizer: archive extraction, season-pack splitting, Plex-convention naming/transfer.
 builder.Services.AddSingleton<IArchiveExtractor, ArchiveExtractor>();
