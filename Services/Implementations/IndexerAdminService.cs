@@ -1,3 +1,4 @@
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.Enums;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
@@ -437,14 +438,8 @@ public class IndexerAdminService(AppDbContext db, IDataProtectionProvider dp, IL
         entity.MediaCapabilities.Add(new() { MediaType = MediaType.Music, Enabled = music, CategoriesCsv = music ? "3000" : null });
     }
 
-    internal static TimeSpan SearchFailureDelay(IndexerBlockReason reason, int consecutiveFailures) => reason switch
-    {
-        IndexerBlockReason.CloudflareChallenge => TimeSpan.FromHours(6),
-        IndexerBlockReason.IpBanned => TimeSpan.FromHours(12),
-        IndexerBlockReason.Forbidden => TimeSpan.FromHours(6),
-        IndexerBlockReason.RateLimited => TimeSpan.FromMinutes(30),
-        _ => TimeSpan.FromMinutes(Math.Min(60, Math.Pow(2, Math.Clamp(consecutiveFailures - 3, 0, 6))))
-    };
+    internal static TimeSpan SearchFailureDelay(IndexerBlockReason reason, int consecutiveFailures) =>
+        IndexerCircuitPolicy.FailureDelay(reason, consecutiveFailures);
 
     /// <summary>Compare endpoint URLs ignoring trailing slashes and case, so the legacy import can't
     /// re-add an endpoint that's already present under a cosmetically different URL.</summary>
