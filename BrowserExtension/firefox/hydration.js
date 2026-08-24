@@ -30,9 +30,7 @@
         leechers: item.leechers ?? null,
         sizeBytes: item.sizeBytes ?? null,
         publishedAt: item.publishedAt || null,
-        captureTorrentId: item.captureTorrentId || null,
-        capturePageToken: item.capturePageToken || null,
-        captureSessionId: item.captureSessionId || null,
+        method: "detail-page-v1",
         state: "queued",
         attempts: 0,
         needsAttention: false,
@@ -83,6 +81,25 @@
       startedAt: null,
       nextAttemptAt: now,
       lastError: record.lastError || "Recovered after Firefox restarted."
+    };
+  }
+
+  function upgradeLegacyExt(record, now = Date.now()) {
+    const sourceKey = record?.sourceKey || sources.fromUrl(record?.sourceUrl)?.key;
+    if (!record || record.state === "complete" || sourceKey !== "ext.to" || record.method === "detail-page-v1")
+      return record;
+    const { captureTorrentId, capturePageToken, captureSessionId, ...safeRecord } = record;
+    return {
+      ...safeRecord,
+      sourceKey,
+      method: "detail-page-v1",
+      state: "queued",
+      attempts: 0,
+      needsAttention: false,
+      attentionAt: null,
+      startedAt: null,
+      nextAttemptAt: now,
+      lastError: null
     };
   }
 
@@ -169,6 +186,7 @@
     needsAttention,
     reviveLegacyFailure,
     reviveInterrupted,
+    upgradeLegacyExt,
     navigationDelay,
     nextDue,
     activePauses,

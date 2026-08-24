@@ -16,7 +16,7 @@
     {
       key: "ext.to",
       displayName: "EXT.to",
-      durableBacklog: false,
+      durableBacklog: true,
       hosts: ["ext.to"],
       detailPath: /^\/(?!browse(?:\/|$)|search(?:\/|$)|ajax(?:\/|$)|cdn-cgi(?:\/|$))[^/]*-\d+\/?$/i
     }

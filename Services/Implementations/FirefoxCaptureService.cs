@@ -166,19 +166,14 @@ public sealed class FirefoxCaptureService(
         RenewLeaseIfNeeded(device, now);
         await db.SaveChangesAsync(cancellationToken);
 
-        // EXT.to magnets depend on short-lived credentials from the listing page. Replaying its stored
-        // detail URLs without those credentials would manufacture attention failures rather than recover work.
-        if (!device.Indexer!.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase))
-            return new CatalogHydrationPageDto { NextCursor = Math.Max(0, afterId) };
-
         var page = await catalog.GetPendingHydrationAsync(
             device.IndexerId,
-            SourceName(device.Indexer),
+            SourceName(device.Indexer!),
             afterId,
             limit,
             cancellationToken);
         page.Items = page.Items
-            .Where(item => TryAllowedUri(item.SourceUrl, device.Indexer, out _))
+            .Where(item => TryAllowedUri(item.SourceUrl, device.Indexer!, out _))
             .ToList();
         return page;
     }

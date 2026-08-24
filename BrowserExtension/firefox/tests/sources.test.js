@@ -11,5 +11,5 @@ test("routes supported hosts to isolated source adapters", () => {
   assert.equal(sources.isDetailUrl("https://ext.to/example-show-s01e02-10000002/", "ext.to"), true);
   assert.equal(sources.isDetailUrl("https://1337x.to/torrent/123/show", "ext.to"), false);
   assert.equal(sources.byKey("1337x").durableBacklog, true);
-  assert.equal(sources.byKey("ext.to").durableBacklog, false);
+  assert.equal(sources.byKey("ext.to").durableBacklog, true);
 });
