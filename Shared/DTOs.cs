@@ -78,6 +78,9 @@ public class MediaCardDto : BaseDto
     public int? Runtime { get; set; }
     public MediaType MediaType { get; set; }
     public List<string> Genres { get; set; } = new();
+    /// <summary>Catalog classification carried into request creation so an Anime route remains safe even
+    /// if metadata is temporarily unavailable when the request is later approved.</summary>
+    public bool? IsAnime { get; set; }
     public string? Quality { get; set; }
     // Detailed Plex media quality (resolution/codec/size/versions); null when not on Plex.
     public MediaQualityDto? MediaQuality { get; set; }
@@ -314,6 +317,9 @@ public class MediaRequestDto : BaseDto
     public string? ExternalSource { get; set; }
     public MediaRef? MediaRef { get; set; }
     public RequestScopeKind RequestScopeKind { get; set; }
+    public bool? IsAnime { get; set; }
+    /// <summary>Named library selected/resolved when this request entered fulfillment.</summary>
+    public string? LibraryDestinationId { get; set; }
 }
 
 public class MediaIssueDto
@@ -859,6 +865,8 @@ public class FulfillmentJobDto
     public List<string> Genres { get; set; } = new();
     /// <summary>Animation+Japanese-origin heuristic result, snapshotted at enqueue time (see <see cref="PlexRequestsHosted.Shared.AnimeClassifier"/>).</summary>
     public bool IsAnime { get; set; }
+    /// <summary>Immutable library target resolved when the job was enqueued.</summary>
+    public LibraryDestinationSnapshotDto? LibraryDestination { get; set; }
     public FulfillmentStatus Status { get; set; }
     public int Attempts { get; set; }
     public int Progress { get; set; }
@@ -1280,6 +1288,10 @@ public class LibraryOrganizationPreferencesDto
     /// First matching rule wins; no match falls back to MoviePath/TvPath + the default template.</summary>
     public List<LibraryRootRuleDto> LibraryRootRules { get; set; } = new();
 
+    /// <summary>Admin-owned, named and allowlisted Plex destinations. Empty means a legacy server/worker;
+    /// consumers synthesize the three defaults from MoviePath/TvPath/MusicPath.</summary>
+    public List<LibraryDestinationDto> LibraryDestinations { get; set; } = new();
+
     public TransferMode TransferMode { get; set; } = TransferMode.Hardlink;
     public bool ExtractArchives { get; set; } = true;
     public bool SplitSeasonPacks { get; set; } = true;
@@ -1309,9 +1321,42 @@ public class LibraryRootRuleDto
     public bool? RequireAnime { get; set; }
     /// <summary>Simple substring match against the request's genre list, e.g. "Documentary". Null = no genre condition.</summary>
     public string? GenreContains { get; set; }
+    /// <summary>Stable id of the named destination. Null keeps old serialized rules readable through their
+    /// RootPath/TemplateOverride fields until the settings service migrates them.</summary>
+    public string? DestinationId { get; set; }
+    /// <summary>Legacy inline target, retained for rolling upgrades and migrated to DestinationId on read.</summary>
     public string RootPath { get; set; } = string.Empty;
     /// <summary>Null = use the media type's default template (MovieTemplate/TvEpisodeTemplate).</summary>
     public string? TemplateOverride { get; set; }
+}
+
+/// <summary>An administrator-approved Plex library/root. Requesters can only ever choose an id from this
+/// list; filesystem paths never cross the public request boundary.</summary>
+public class LibraryDestinationDto
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Name { get; set; } = string.Empty;
+    public LibraryContentKind ContentKind { get; set; }
+    public string RootPath { get; set; } = string.Empty;
+    public string? PlexSectionId { get; set; }
+    public string? TemplateOverride { get; set; }
+    public bool IsDefault { get; set; }
+    public bool AllowUserSelection { get; set; }
+    public bool Enabled { get; set; } = true;
+}
+
+/// <summary>Immutable routing result embedded into a fulfillment job. Imports use this snapshot instead of
+/// re-evaluating mutable admin rules after a download has already started.</summary>
+public class LibraryDestinationSnapshotDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public LibraryContentKind ContentKind { get; set; }
+    public string RootPath { get; set; } = string.Empty;
+    public string? PlexSectionId { get; set; }
+    public string Template { get; set; } = string.Empty;
+    /// <summary>Series-only folder template used when a pack remains grouped. Null for movies/music.</summary>
+    public string? SeasonPackFolderTemplate { get; set; }
 }
 
 /// <summary>One file placed into the library by the organizer — the durable audit trail for a fulfillment job.</summary>

@@ -59,6 +59,16 @@ public class FulfillmentJobEntity
     [MaxLength(512)] public string? GenresCsv { get; set; }
     public bool IsAnime { get; set; }
 
+    // Immutable library routing snapshot. Rules may change while a download is in flight; imports must
+    // still land in the destination approved for this job.
+    [MaxLength(64)] public string? LibraryDestinationId { get; set; }
+    [MaxLength(128)] public string? LibraryDestinationName { get; set; }
+    public LibraryContentKind? LibraryDestinationKind { get; set; }
+    [MaxLength(1024)] public string? LibraryDestinationRootPath { get; set; }
+    [MaxLength(128)] public string? LibraryPlexSectionId { get; set; }
+    [MaxLength(512)] public string? LibraryDestinationTemplate { get; set; }
+    [MaxLength(512)] public string? LibrarySeasonPackFolderTemplate { get; set; }
+
     public FulfillmentStatus Status { get; set; } = FulfillmentStatus.Queued;
     public int Attempts { get; set; }
     public int Progress { get; set; } // 0-100

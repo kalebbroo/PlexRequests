@@ -20,6 +20,7 @@ namespace PlexRequestsHosted.Services.Implementations;
 public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
     IMusicDirectAcquisitionResolver directMusic, IQualityProfileService profiles,
     ICustomFormatService formats, ISeasonAvailabilityEvaluator seasonEvaluator,
+    ILibraryOrganizationPreferencesService libraryPreferences,
     ILogger<FulfillmentQueue> logger) : IFulfillmentQueue
 {
     private readonly AppDbContext _db = db;
@@ -28,6 +29,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
     private readonly IQualityProfileService _profiles = profiles;
     private readonly ICustomFormatService _formats = formats;
     private readonly ISeasonAvailabilityEvaluator _seasonEvaluator = seasonEvaluator;
+    private readonly ILibraryOrganizationPreferencesService _libraryPreferences = libraryPreferences;
     private readonly ILogger<FulfillmentQueue> _logger = logger;
 
     public async Task<bool> EnqueueAsync(MediaRequestDto request, bool force = false)
@@ -130,7 +132,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         string? imdbId = null;
         List<string>? genres = null;
         int? year = null;
-        bool isAnime = false;
+        bool isAnime = request.IsAnime == true || reqEntity?.IsAnime == true || request.MediaType == MediaType.Anime;
         MusicAcquisitionContextDto? music = null;
         try
         {
@@ -138,7 +140,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             imdbId = detail?.ImdbId;
             genres = detail?.Genres;
             year = detail?.Year;
-            isAnime = AnimeClassifier.IsAnime(detail?.Genres, detail?.Languages, detail?.Countries);
+            isAnime = isAnime || AnimeClassifier.IsAnime(detail?.Genres, detail?.Languages, detail?.Countries);
             if (request.MediaType == MediaType.Music)
             {
                 music = BuildMusicContext(mediaRef.Kind, request.Title, detail);
@@ -175,6 +177,19 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         // shared ranker lands, at which point it consumes the profile's full tier list instead.
         var resolvedQuality = await _profiles.GetCutoffQualityAsync(profileId);
 
+        // Resolve exactly once at the enqueue/approval boundary. The snapshot below remains authoritative
+        // even if an admin later reorders rules, edits a root, or disables the destination mid-download.
+        var libraryDestination = LibraryRouting.Resolve(
+            await _libraryPreferences.GetAsync(), request.MediaType, resolvedQuality, genres, isAnime,
+            isEpisode: mediaRef.Kind == MediaKind.Series,
+            preferredDestinationId: reqEntity?.LibraryDestinationId ?? request.LibraryDestinationId);
+        if (reqEntity is not null && !string.Equals(reqEntity.LibraryDestinationId, libraryDestination.Id,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            reqEntity.LibraryDestinationId = libraryDestination.Id;
+            await _db.SaveChangesAsync();
+        }
+
         var job = new FulfillmentJobEntity
         {
             MediaRequestId = request.Id,
@@ -197,6 +212,13 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             QualityProfileId = profileId,
             GenresCsv = genres is { Count: > 0 } ? string.Join(",", genres) : null,
             IsAnime = isAnime,
+            LibraryDestinationId = libraryDestination.Id,
+            LibraryDestinationName = libraryDestination.Name,
+            LibraryDestinationKind = libraryDestination.ContentKind,
+            LibraryDestinationRootPath = libraryDestination.RootPath,
+            LibraryPlexSectionId = libraryDestination.PlexSectionId,
+            LibraryDestinationTemplate = libraryDestination.Template,
+            LibrarySeasonPackFolderTemplate = libraryDestination.SeasonPackFolderTemplate,
             Status = FulfillmentStatus.Queued,
             CreatedAt = DateTime.UtcNow
         };
@@ -562,6 +584,13 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             QualityProfileId = request.QualityProfileId,
             GenresCsv = origin?.GenresCsv,
             IsAnime = origin?.IsAnime ?? false,
+            LibraryDestinationId = origin?.LibraryDestinationId,
+            LibraryDestinationName = origin?.LibraryDestinationName,
+            LibraryDestinationKind = origin?.LibraryDestinationKind,
+            LibraryDestinationRootPath = origin?.LibraryDestinationRootPath,
+            LibraryPlexSectionId = origin?.LibraryPlexSectionId,
+            LibraryDestinationTemplate = origin?.LibraryDestinationTemplate,
+            LibrarySeasonPackFolderTemplate = origin?.LibrarySeasonPackFolderTemplate,
             IsUpgrade = true,
             IsReplacement = mediaIssueId.HasValue,
             MediaIssueId = mediaIssueId,
@@ -867,6 +896,20 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             ? new List<string>()
             : j.GenresCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(),
         IsAnime = j.IsAnime,
+        LibraryDestination = !string.IsNullOrWhiteSpace(j.LibraryDestinationId)
+            && !string.IsNullOrWhiteSpace(j.LibraryDestinationRootPath)
+            && j.LibraryDestinationKind.HasValue
+            ? new LibraryDestinationSnapshotDto
+            {
+                Id = j.LibraryDestinationId,
+                Name = j.LibraryDestinationName ?? j.LibraryDestinationId,
+                ContentKind = j.LibraryDestinationKind.Value,
+                RootPath = j.LibraryDestinationRootPath,
+                PlexSectionId = j.LibraryPlexSectionId,
+                Template = j.LibraryDestinationTemplate ?? string.Empty,
+                SeasonPackFolderTemplate = j.LibrarySeasonPackFolderTemplate
+            }
+            : null,
         Status = j.Status,
         Attempts = j.Attempts,
         Progress = j.Progress,

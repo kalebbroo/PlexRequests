@@ -12,6 +12,9 @@ public class MediaRequestEntity
     public int MediaId { get; set; }   // TMDb id for movie/TV; 0 for sources without an int id (music)
     public MediaType MediaType { get; set; }
     public RequestScopeKind RequestScopeKind { get; set; } = RequestScopeKind.Title;
+    /// <summary>Durable catalog classification. Null means older row/metadata unavailable; true is enough
+    /// to keep Anime routing fail-safe through a later metadata outage.</summary>
+    public bool? IsAnime { get; set; }
 
     // Transitional provider id mirrors used by older worker/API versions. MediaIdentityId is authoritative;
     // these remain until every deployed consumer reads the canonical identity contract.
@@ -109,6 +112,10 @@ public class MediaRequestEntity
     /// safe on a deploy where profiles are already live, so it's a separate decision, not a side effect.
     /// </summary>
     public int? QualityProfileId { get; set; }
+
+    /// <summary>Stable named library destination resolved when this request enters fulfillment.</summary>
+    [MaxLength(64)]
+    public string? LibraryDestinationId { get; set; }
 
     /// <summary>The lowest quality tier actually imported, as a <see cref="QualityDefinitionEntity"/> id.
     /// The finer-grained counterpart to <see cref="AchievedQuality"/>, which only tracks resolution.</summary>

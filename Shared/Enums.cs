@@ -41,6 +41,16 @@ public enum MediaKind
     Track = 4
 }
 
+/// <summary>The Plex scanner/library shape accepted by a configured destination. This deliberately does
+/// not include Anime or Kids: those are routing classifications, while Plex destinations remain movies,
+/// series, or music.</summary>
+public enum LibraryContentKind
+{
+    Movie = 0,
+    Series = 1,
+    Music = 2
+}
+
 /// <summary>The durable intent of a request, independent of the metadata provider that identified it.</summary>
 public enum RequestScopeKind
 {

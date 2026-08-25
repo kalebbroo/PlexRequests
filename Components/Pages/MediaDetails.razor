@@ -796,7 +796,7 @@ else
         if (_media == null) return;
         
         PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(
-            _media.ResolveMediaRef(), qualityProfileId: _selectedProfileId);
+            _media.ResolveMediaRef(), qualityProfileId: _selectedProfileId, isAnimeIntent: _media.IsAnime);
         if (result.Success)
         {
             _media.RequestStatus = result.NewStatus ?? PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;
@@ -944,7 +944,8 @@ else
     private async Task RequestSelectedSeasons()
     {
         if (_media is null || _selectedSeasons.Count == 0) return;
-        var result = await MediaRequestService.RequestSeasonsAsync(_media.Id, _media.MediaType, _selectedSeasons.ToList(), _selectedProfileId);
+        var result = await MediaRequestService.RequestSeasonsAsync(_media.Id, _media.MediaType,
+            _selectedSeasons.ToList(), _selectedProfileId, _media.IsAnime);
         await AfterTvRequest(result, $"Requested {_selectedSeasons.Count} season(s) of {_media.Title}!");
         if (result.Success) _selectedSeasons.Clear();
     }
@@ -964,7 +965,8 @@ else
         var upgrade = SelectionIsUpgrade;
         var count = _selectedEpisodes.Count;
         var result = await MediaRequestService.RequestEpisodesAsync(
-            _media.Id, _media.MediaType, _selectedEpisodes.ToList(), _selectedProfileId, asUpgrade: upgrade);
+            _media.Id, _media.MediaType, _selectedEpisodes.ToList(), _selectedProfileId,
+            asUpgrade: upgrade, isAnimeIntent: _media.IsAnime);
         await AfterTvRequest(result, upgrade
             ? $"Looking for a better copy of {count} episode(s) of {_media.Title}."
             : $"Requested {count} episode(s) of {_media.Title}!");
@@ -974,7 +976,8 @@ else
     private async Task RequestEntireSeries()
     {
         if (_media is null) return;
-        var result = await MediaRequestService.RequestSeriesAsync(_media.Id, _media.MediaType, _selectedProfileId);
+        var result = await MediaRequestService.RequestSeriesAsync(_media.Id, _media.MediaType,
+            _selectedProfileId, _media.IsAnime);
         await AfterTvRequest(result, MediaRequestFeedback.Success(_media, result));
     }
 
@@ -991,7 +994,8 @@ else
 
     private async Task RequestSimilar(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
     {
-        var result = await MediaRequestService.RequestMediaAsync(media.ResolveMediaRef());
+        var result = await MediaRequestService.RequestMediaAsync(media.ResolveMediaRef(),
+            isAnimeIntent: media.IsAnime);
         if (result.Success)
         {
             media.RequestStatus = result.NewStatus ?? PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;

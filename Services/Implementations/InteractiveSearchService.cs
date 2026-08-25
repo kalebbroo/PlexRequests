@@ -213,6 +213,9 @@ public class InteractiveSearchService(
             j.CompletedAt = DateTime.UtcNow;
         }
 
+        var routingSnapshot = existing.OrderByDescending(j => j.Id)
+            .FirstOrDefault(j => !string.IsNullOrWhiteSpace(j.LibraryDestinationId));
+
         db.FulfillmentJobs.Add(new FulfillmentJobEntity
         {
             MediaRequestId = request.Id,
@@ -230,6 +233,13 @@ public class InteractiveSearchService(
             QualityProfileId = task.QualityProfileId,
             RequestedSeasonsCsv = task.Season?.ToString(),
             RequestedEpisodesCsv = task is { Season: int s, Episode: int e } ? $"S{s}E{e}" : null,
+            LibraryDestinationId = routingSnapshot?.LibraryDestinationId,
+            LibraryDestinationName = routingSnapshot?.LibraryDestinationName,
+            LibraryDestinationKind = routingSnapshot?.LibraryDestinationKind,
+            LibraryDestinationRootPath = routingSnapshot?.LibraryDestinationRootPath,
+            LibraryPlexSectionId = routingSnapshot?.LibraryPlexSectionId,
+            LibraryDestinationTemplate = routingSnapshot?.LibraryDestinationTemplate,
+            LibrarySeasonPackFolderTemplate = routingSnapshot?.LibrarySeasonPackFolderTemplate,
             Status = FulfillmentStatus.Queued,
             // These make the downloader skip searching and ranking entirely.
             IsManualGrab = true,
