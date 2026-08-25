@@ -369,7 +369,7 @@ public sealed class MusicImportTests
 
     private static LibraryOrganizer CreateOrganizer() => new(
         new NoArchives(), new NoSeasonPacks(), new NoEpisodes(), new PlexNamingService(),
-        new ReleaseParser(), NullLogger<LibraryOrganizer>.Instance);
+        new ReleaseParser(), new NoTrackInspector(), NullLogger<LibraryOrganizer>.Instance);
 
     private static EffectiveLibraryOrganization Preferences(string library, double minAudioFileSizeMb = 0) => new()
     {
@@ -447,6 +447,13 @@ public sealed class MusicImportTests
             Task.FromResult<IReadOnlyList<EpisodeDto>>(Array.Empty<EpisodeDto>());
         public Task<string?> GetEpisodeTitleAsync(int? tmdbId, int season, int episode, CancellationToken ct) =>
             Task.FromResult<string?>(null);
+    }
+
+    private sealed class NoTrackInspector : IMediaTrackInspector
+    {
+        public Task<MediaTrackSummaryDto> InspectAsync(string mediaPath,
+            IReadOnlyList<string> companionSubtitles, CancellationToken ct) =>
+            Task.FromResult(new MediaTrackSummaryDto());
     }
 
     private sealed class JsonHandler(params string[] json) : HttpMessageHandler

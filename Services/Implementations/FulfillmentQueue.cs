@@ -163,7 +163,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         var profileId = await _profiles.ResolveProfileIdAsync(
             request.MediaType, request.MediaId, genres,
             requesterChoiceId: reqEntity?.QualityProfileId,
-            userId: request.RequestedByUserId == 0 ? null : request.RequestedByUserId);
+            userId: request.RequestedByUserId == 0 ? null : request.RequestedByUserId,
+            isAnime: isAnime);
 
         // Persist the resolution back onto the request so the UI, the upgrade scan and any later re-enqueue
         // all agree on which profile governs it.
@@ -176,6 +177,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         // The job still carries a flat resolution floor: the downloader ranks against Quality until the
         // shared ranker lands, at which point it consumes the profile's full tier list instead.
         var resolvedQuality = await _profiles.GetCutoffQualityAsync(profileId);
+        var languagePolicy = MediaLanguagePolicy.FromProfile(await _profiles.GetProfileAsync(profileId));
 
         // Resolve exactly once at the enqueue/approval boundary. The snapshot below remains authoritative
         // even if an admin later reorders rules, edits a root, or disables the destination mid-download.
@@ -210,6 +212,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             SeasonTargetsJson = seasonTargets.Count > 0 ? JsonSerializer.Serialize(seasonTargets) : null,
             Quality = resolvedQuality,
             QualityProfileId = profileId,
+            MediaLanguagePolicyJson = MediaLanguagePolicy.IsActive(languagePolicy)
+                ? JsonSerializer.Serialize(languagePolicy)
+                : null,
             GenresCsv = genres is { Count: > 0 } ? string.Join(",", genres) : null,
             IsAnime = isAnime,
             LibraryDestinationId = libraryDestination.Id,
@@ -562,6 +567,13 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         var episodesCsv = episodes.Count > 0
             ? string.Join(",", episodes.Select(e => $"S{e.season}E{e.episode}"))
             : null;
+        var upgradePolicyJson = origin?.MediaLanguagePolicyJson;
+        if (string.IsNullOrWhiteSpace(upgradePolicyJson) && request.QualityProfileId is int upgradeProfileId)
+        {
+            var currentPolicy = MediaLanguagePolicy.FromProfile(await _profiles.GetProfileAsync(upgradeProfileId));
+            if (MediaLanguagePolicy.IsActive(currentPolicy))
+                upgradePolicyJson = JsonSerializer.Serialize(currentPolicy);
+        }
 
         var job = new FulfillmentJobEntity
         {
@@ -582,6 +594,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             RequestedEpisodesCsv = episodesCsv,
             Quality = target,
             QualityProfileId = request.QualityProfileId,
+            MediaLanguagePolicyJson = upgradePolicyJson,
             GenresCsv = origin?.GenresCsv,
             IsAnime = origin?.IsAnime ?? false,
             LibraryDestinationId = origin?.LibraryDestinationId,
@@ -887,6 +900,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             ? new List<SeasonTarget>()
             : (JsonSerializer.Deserialize<List<SeasonTarget>>(j.SeasonTargetsJson) ?? new List<SeasonTarget>()),
         Quality = j.Quality,
+        MediaLanguagePolicy = string.IsNullOrWhiteSpace(j.MediaLanguagePolicyJson)
+            ? null
+            : JsonSerializer.Deserialize<MediaLanguagePolicyDto>(j.MediaLanguagePolicyJson),
         EmptySearchCount = j.EmptySearchCount,
         IsManualGrab = j.IsManualGrab,
         ForcedMagnet = j.ForcedMagnet,

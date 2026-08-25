@@ -724,7 +724,8 @@ public class MediaRequestService(
             RequestedByUserId = userId,
             RequestAllSeasons = false,
             QualityProfileId = await _qualityProfiles.ResolveProfileIdAsync(
-                mediaRef.MediaType, 0, detail?.Genres, qualityProfileId, userId)
+                mediaRef.MediaType, 0, detail?.Genres, qualityProfileId, userId,
+                isAnime: resolvedAnime)
         };
         _db.MediaRequests.Add(entity);
         var saved = await _db.SaveChangesAsync() > 0;
@@ -801,7 +802,7 @@ public class MediaRequestService(
         // profile below needs them. Best-effort, same as the title — a metadata outage falls back to the
         // rules that don't need genres, not to no profile at all.
         List<string>? genres = null;
-        bool? resolvedAnime = isAnimeIntent;
+        bool? resolvedAnime = mediaType == MediaType.Anime ? true : isAnimeIntent;
         try
         {
             var details = await _metadata.GetDetailsAsync(mediaId, mediaType);
@@ -855,7 +856,7 @@ public class MediaRequestService(
             // requester's pick against what they may actually select, so an unauthorised id is ignored
             // rather than trusted.
             QualityProfileId = await _qualityProfiles.ResolveProfileIdAsync(mediaType, mediaId, genres,
-                qualityProfileId, userId)
+                qualityProfileId, userId, isAnime: resolvedAnime)
         };
         _db.MediaRequests.Add(entity);
         var saved = await _db.SaveChangesAsync() > 0;

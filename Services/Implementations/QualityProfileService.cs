@@ -29,7 +29,7 @@ public interface IQualityProfileService
     /// actually allowed it) -> the first matching assignment rule -> the default profile.
     /// </summary>
     Task<int> ResolveProfileIdAsync(MediaType mediaType, int tmdbId, IEnumerable<string>? genres,
-        int? requesterChoiceId, int? userId, string? library = null);
+        int? requesterChoiceId, int? userId, string? library = null, bool? isAnime = null);
 
     /// <summary>The cutoff tier's resolution, used as the downloader's quality floor.</summary>
     Task<Quality> GetCutoffQualityAsync(int profileId);
@@ -130,6 +130,12 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
         p.MaxSeasonPackSizeGb = dto.MaxSeasonPackSizeGb;
         p.MinSeeders = dto.MinSeeders;
         p.AllowedLanguagesCsv = string.IsNullOrWhiteSpace(dto.AllowedLanguagesCsv) ? null : dto.AllowedLanguagesCsv.Trim();
+        p.RequiredAudioLanguagesCsv = string.IsNullOrWhiteSpace(dto.RequiredAudioLanguagesCsv)
+            ? null : dto.RequiredAudioLanguagesCsv.Trim();
+        p.RequiredSubtitleLanguagesCsv = string.IsNullOrWhiteSpace(dto.RequiredSubtitleLanguagesCsv)
+            ? null : dto.RequiredSubtitleLanguagesCsv.Trim();
+        p.RequireForcedSubtitle = dto.RequireForcedSubtitle;
+        p.AllowUnknownTrackLanguage = dto.AllowUnknownTrackLanguage;
         p.MinCustomFormatScore = dto.MinCustomFormatScore;
         p.CutoffFormatScore = dto.CutoffFormatScore;
         if (dto.Items is { Count: > 0 }) p.ItemsJson = JsonSerializer.Serialize(dto.Items, Json);
@@ -179,7 +185,7 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
         return rules.Select(r => new ProfileAssignmentRuleDto
         {
             Id = r.Id, Name = r.Name, Order = r.Order, Enabled = r.Enabled,
-            MatchMediaType = r.MatchMediaType, MatchGenre = r.MatchGenre,
+            MatchMediaType = r.MatchMediaType, MatchAnime = r.MatchAnime, MatchGenre = r.MatchGenre,
             MatchTmdbId = r.MatchTmdbId, MatchLibrary = r.MatchLibrary,
             QualityProfileId = r.QualityProfileId,
             QualityProfileName = names.TryGetValue(r.QualityProfileId, out var n) ? n : "(missing)"
@@ -215,6 +221,7 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
 
         r.Name = string.IsNullOrWhiteSpace(dto.Name) ? r.Name : dto.Name.Trim();
         r.MatchMediaType = dto.MatchMediaType;
+        r.MatchAnime = dto.MatchAnime;
         r.MatchGenre = string.IsNullOrWhiteSpace(dto.MatchGenre) ? null : dto.MatchGenre.Trim();
         r.MatchTmdbId = dto.MatchTmdbId;
         r.MatchLibrary = string.IsNullOrWhiteSpace(dto.MatchLibrary) ? null : dto.MatchLibrary.Trim();
@@ -254,7 +261,7 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
     // ---- Resolution ---------------------------------------------------------------------------------
 
     public async Task<int> ResolveProfileIdAsync(MediaType mediaType, int tmdbId, IEnumerable<string>? genres,
-        int? requesterChoiceId, int? userId, string? library = null)
+        int? requesterChoiceId, int? userId, string? library = null, bool? isAnime = null)
     {
         var defaultId = await db.QualityProfiles.Where(p => p.IsDefault).Select(p => p.Id).FirstOrDefaultAsync();
         if (defaultId == 0)
@@ -274,7 +281,7 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
         var rules = await db.ProfileAssignmentRules.AsNoTracking().Where(r => r.Enabled)
             .OrderBy(r => r.Order).ThenBy(r => r.Id).ToListAsync();
         foreach (var rule in rules)
-            if (QualityProfileSeeder.Matches(rule, mediaType, tmdbId, genreList, library))
+            if (QualityProfileSeeder.Matches(rule, mediaType, tmdbId, genreList, library, isAnime))
                 return rule.QualityProfileId;
 
         // 3) Default.
@@ -300,7 +307,12 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
         CutoffQualityDefinitionId = p.CutoffQualityDefinitionId, UpgradeAllowed = p.UpgradeAllowed,
         MinCustomFormatScore = p.MinCustomFormatScore, CutoffFormatScore = p.CutoffFormatScore,
         MinSizeGb = p.MinSizeGb, MaxSizeGb = p.MaxSizeGb, MaxSeasonPackSizeGb = p.MaxSeasonPackSizeGb,
-        MinSeeders = p.MinSeeders, AllowedLanguagesCsv = p.AllowedLanguagesCsv, InUse = inUse,
+        MinSeeders = p.MinSeeders, AllowedLanguagesCsv = p.AllowedLanguagesCsv,
+        RequiredAudioLanguagesCsv = p.RequiredAudioLanguagesCsv,
+        RequiredSubtitleLanguagesCsv = p.RequiredSubtitleLanguagesCsv,
+        RequireForcedSubtitle = p.RequireForcedSubtitle,
+        AllowUnknownTrackLanguage = p.AllowUnknownTrackLanguage,
+        InUse = inUse,
         Items = JsonSerializer.Deserialize<List<QualityProfileItemDto>>(p.ItemsJson, Json) ?? new()
     };
 

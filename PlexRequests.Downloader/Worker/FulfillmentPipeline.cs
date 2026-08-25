@@ -405,7 +405,12 @@ public class FulfillmentPipeline(
                     await SafeReportProgress(job.Id, (int)Math.Round(progressSum / Math.Max(1, items.Count)), BuildTelemetry(importingId: transferKey));
                     var result = await importCoordinator.RunOnceAsync(it.Protocol, it.TransferId,
                         token => importer.ImportAsync(job, it, sourcePath, token), ct);
-                    if (!result.Success) { await FailTransferAsync(it, result.FailReason ?? "A download completed but import failed", BlocklistReason.ImportFailed); continue; }
+                    if (!result.Success)
+                    {
+                        await FailTransferAsync(it, result.FailReason ?? "A download completed but import failed",
+                            result.BlocklistReason ?? BlocklistReason.ImportFailed);
+                        continue;
+                    }
 
                     try
                     {
@@ -421,7 +426,8 @@ public class FulfillmentPipeline(
                             SizeBytes = f.SizeBytes,
                             ResolutionHeight = it.Resolution, // resolution the ranker chose for this torrent
                             ReleaseName = it.ReleaseName,
-                            SourceId = it.SourceId
+                            SourceId = it.SourceId,
+                            MediaTracks = f.MediaTracks
                         }).ToList();
                         var auditSaved = await api.ReportImportedFilesAsync(job.Id, files, ct);
                         if (!auditSaved && job.IsReplacement)

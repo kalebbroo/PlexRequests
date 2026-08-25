@@ -42,6 +42,9 @@ public class ImportedFileEntity
     /// <summary>Info hash of the torrent this came from, for failure blocklisting.</summary>
     [MaxLength(40)] public string? InfoHash { get; set; }
 
+    /// <summary>Serialized MediaTrackSummaryDto observed by MediaInfo before this file entered the library.</summary>
+    public string? MediaTracksJson { get; set; }
+
     public DateTime ImportedAt { get; set; } = DateTime.UtcNow;
 
     [ForeignKey(nameof(FulfillmentJobId))]

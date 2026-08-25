@@ -79,6 +79,35 @@ else
                     <MudText Typo="Typo.caption" Class="text-muted align-self-center">Blank = use the global download preferences.</MudText>
                 </div>
 
+                <MudPaper Class="pa-3 mb-3" Outlined="true">
+                    <MudText Typo="Typo.subtitle2">Audio and subtitle policy</MudText>
+                    <MudText Typo="Typo.caption" Class="text-muted d-block mb-2">
+                        Release-name tags help ranking, but strict profiles are proved from every selected
+                        file with MediaInfo before anything enters Plex. Use ISO codes such as <code>en</code> and <code>ja</code>.
+                    </MudText>
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick='@(() => ApplyLanguagePreset(p, "dual"))'>Dual audio (EN + JA)</MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick='@(() => ApplyLanguagePreset(p, "sub"))'>Japanese + English subs</MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick='@(() => ApplyLanguagePreset(p, "dub"))'>English dub</MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick='@(() => ApplyLanguagePreset(p, "any"))'>Any / original</MudButton>
+                    </div>
+                    <div class="d-flex flex-wrap gap-3 align-items-center">
+                        <MudTextField T="string" Label="Required audio" Value="p.RequiredAudioLanguagesCsv"
+                                      Placeholder="en,ja" Variant="Variant.Outlined" Style="min-width:190px;"
+                                      ValueChanged="@(v => SetLanguageValue(p, "required-audio", v))" />
+                        <MudTextField T="string" Label="Allowed audio (optional)" Value="p.AllowedLanguagesCsv"
+                                      Placeholder="en,ja" Variant="Variant.Outlined" Style="min-width:210px;"
+                                      ValueChanged="@(v => SetLanguageValue(p, "allowed-audio", v))" />
+                        <MudTextField T="string" Label="Required subtitles" Value="p.RequiredSubtitleLanguagesCsv"
+                                      Placeholder="en" Variant="Variant.Outlined" Style="min-width:190px;"
+                                      ValueChanged="@(v => SetLanguageValue(p, "required-subs", v))" />
+                        <MudSwitch T="bool" Label="Require forced subtitle" Value="p.RequireForcedSubtitle"
+                                   Color="Color.Primary" ValueChanged="@(v => SetForcedSubtitle(p, v))" />
+                        <MudSwitch T="bool" Label="Allow untagged tracks" Value="p.AllowUnknownTrackLanguage"
+                                   Color="Color.Primary" ValueChanged="@(v => SetUnknownLanguage(p, v))" />
+                    </div>
+                </MudPaper>
+
                 <MudTable Items="@p.Items.AsEnumerable().Reverse()" dense="true" Hover="true" Class="elevation-1">
                     <HeaderContent>
                         <MudTh>Quality tier</MudTh>
@@ -201,6 +230,62 @@ else
     {
         await Formats.SetScoreAsync(profile.Id, format.Id, score);
         await Load();
+    }
+
+    private async Task ApplyLanguagePreset(QualityProfileDto profile, string preset)
+    {
+        switch (preset)
+        {
+            case "dual":
+                profile.RequiredAudioLanguagesCsv = "en,ja";
+                profile.AllowedLanguagesCsv = null;
+                profile.RequiredSubtitleLanguagesCsv = null;
+                profile.RequireForcedSubtitle = false;
+                profile.AllowUnknownTrackLanguage = false;
+                break;
+            case "sub":
+                profile.RequiredAudioLanguagesCsv = "ja";
+                profile.AllowedLanguagesCsv = null;
+                profile.RequiredSubtitleLanguagesCsv = "en";
+                profile.RequireForcedSubtitle = false;
+                profile.AllowUnknownTrackLanguage = false;
+                break;
+            case "dub":
+                profile.RequiredAudioLanguagesCsv = "en";
+                profile.AllowedLanguagesCsv = null;
+                profile.RequiredSubtitleLanguagesCsv = null;
+                profile.RequireForcedSubtitle = false;
+                profile.AllowUnknownTrackLanguage = false;
+                break;
+            default:
+                profile.RequiredAudioLanguagesCsv = null;
+                profile.AllowedLanguagesCsv = null;
+                profile.RequiredSubtitleLanguagesCsv = null;
+                profile.RequireForcedSubtitle = false;
+                profile.AllowUnknownTrackLanguage = true;
+                break;
+        }
+        await Save(profile, "media language preset");
+    }
+
+    private async Task SetLanguageValue(QualityProfileDto profile, string field, string? value)
+    {
+        if (field == "required-audio") profile.RequiredAudioLanguagesCsv = value;
+        else if (field == "allowed-audio") profile.AllowedLanguagesCsv = value;
+        else profile.RequiredSubtitleLanguagesCsv = value;
+        await Save(profile, "media language policy");
+    }
+
+    private async Task SetForcedSubtitle(QualityProfileDto profile, bool value)
+    {
+        profile.RequireForcedSubtitle = value;
+        await Save(profile, "forced subtitle policy");
+    }
+
+    private async Task SetUnknownLanguage(QualityProfileDto profile, bool value)
+    {
+        profile.AllowUnknownTrackLanguage = value;
+        await Save(profile, "untagged track policy");
     }
 
     private async Task MakeDefault(QualityProfileDto p)

@@ -202,7 +202,19 @@ public class TransferReconciler(
         var result = await importCoordinator.RunOnceAsync(t.Protocol, t.TransferId,
             token => importer.ImportAsync(job, item, sourcePath, token), ct);
         if (!result.Success)
+        {
+            await SafeBlocklist(t, result.FailReason, clientError: false, ct: ct,
+                reasonOverride: result.BlocklistReason ?? BlocklistReason.ImportFailed);
+            if (acquisitionBackends.TryGet(t.Protocol, out var failedBackend))
+            {
+                try { await failedBackend.RemoveAsync(t.TransferId, removeData: true, ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogDebug(ex, "Cleanup of rejected transfer {TransferId} skipped", t.TransferId);
+                }
+            }
             return (TransferTrackingState.Failed, result.FailReason ?? "Import failed");
+        }
 
         try
         {
@@ -218,7 +230,8 @@ public class TransferReconciler(
                 SizeBytes = f.SizeBytes,
                 ResolutionHeight = t.Resolution,
                 ReleaseName = t.ReleaseName,
-                SourceId = t.SourceId
+                SourceId = t.SourceId,
+                MediaTracks = f.MediaTracks
             }).ToList(), ct);
             if (!auditSaved && job.IsReplacement)
                 return (TransferTrackingState.Finished, "Waiting: replacement import audit could not be persisted");
@@ -240,7 +253,8 @@ public class TransferReconciler(
         return (TransferTrackingState.Imported, null);
     }
 
-    private async Task SafeBlocklist(TrackedTransferDto t, string? reason, bool clientError, CancellationToken ct)
+    private async Task SafeBlocklist(TrackedTransferDto t, string? reason, bool clientError,
+        CancellationToken ct, BlocklistReason? reasonOverride = null)
     {
         // Blocklisting is what stops the job picking the same dead release on its next search. Best-effort:
         // failing to record it must not prevent the torrent being marked failed, or the job would keep
@@ -255,7 +269,7 @@ public class TransferReconciler(
                 ReleaseName = t.ReleaseName ?? string.Empty,
                 // Stalled covers both shapes the reconciler gives up on — no progress with no peers, and a
                 // magnet whose metadata never arrived. TorrentError is reserved for the client saying so.
-                Reason = clientError ? BlocklistReason.TorrentError : BlocklistReason.Stalled,
+                Reason = reasonOverride ?? (clientError ? BlocklistReason.TorrentError : BlocklistReason.Stalled),
                 Detail = reason,
                 Season = t.Season,
                 Episode = t.Episode,

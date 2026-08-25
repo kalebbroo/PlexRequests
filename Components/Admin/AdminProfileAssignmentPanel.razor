@@ -36,6 +36,7 @@ else
                 <MudTh Style="width:60px;">Order</MudTh>
                 <MudTh>Name</MudTh>
                 <MudTh>Media type</MudTh>
+                <MudTh>Content</MudTh>
                 <MudTh>Genre</MudTh>
                 <MudTh>TMDb id</MudTh>
                 <MudTh>Profile</MudTh>
@@ -61,7 +62,15 @@ else
                                ValueChanged="@(v => { context.MatchMediaType = v; return Save(context); })">
                         <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.Movie)">Movie</MudSelectItem>
                         <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.TvShow)">TV show</MudSelectItem>
-                        <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.Anime)">Anime</MudSelectItem>
+                        <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.Anime)">Anime TV (legacy)</MudSelectItem>
+                    </MudSelect>
+                </MudTd>
+                <MudTd DataLabel="Content">
+                    <MudSelect T="bool?" Value="context.MatchAnime" Clearable="true" Variant="Variant.Outlined"
+                               Margin="Margin.Dense" Style="min-width:130px;"
+                               ValueChanged="@(v => { context.MatchAnime = v; return Save(context); })">
+                        <MudSelectItem T="bool?" Value="@((bool?)true)">Anime only</MudSelectItem>
+                        <MudSelectItem T="bool?" Value="@((bool?)false)">Non-anime</MudSelectItem>
                     </MudSelect>
                 </MudTd>
                 <MudTd DataLabel="Genre">

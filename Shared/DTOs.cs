@@ -837,6 +837,10 @@ public class FulfillmentJobDto
     /// </summary>
     public QualityProfileDto? QualityProfile { get; set; }
 
+    /// <summary>Immutable, structured audio/subtitle requirements captured when the job is enqueued.
+    /// Null keeps jobs and profiles created before media-track enforcement fully backward compatible.</summary>
+    public MediaLanguagePolicyDto? MediaLanguagePolicy { get; set; }
+
     /// <summary>The quality-tier catalog, needed to resolve a release's (resolution, source) to a tier.</summary>
     public List<QualityDefinitionDto> QualityDefinitions { get; set; } = new();
 
@@ -942,8 +946,17 @@ public class QualityProfileDto
     public double? MaxSizeGb { get; set; }
     public double? MaxSeasonPackSizeGb { get; set; }
     public int? MinSeeders { get; set; }
-    /// <summary>Comma-separated language codes a release must offer. Null/empty = any.</summary>
+    /// <summary>Comma-separated audio language allowlist. Null/empty = any. Retains the original property
+    /// name so existing profile JSON/API clients remain readable.</summary>
     public string? AllowedLanguagesCsv { get; set; }
+    /// <summary>Every selected video file must contain all of these audio languages.</summary>
+    public string? RequiredAudioLanguagesCsv { get; set; }
+    /// <summary>Every selected video file must contain all of these subtitle languages.</summary>
+    public string? RequiredSubtitleLanguagesCsv { get; set; }
+    /// <summary>Require at least one forced subtitle track. False means no forced-track requirement.</summary>
+    public bool RequireForcedSubtitle { get; set; }
+    /// <summary>Whether an untagged audio/subtitle track is acceptable when this profile is strict.</summary>
+    public bool AllowUnknownTrackLanguage { get; set; } = true;
     /// <summary>True when a request or assignment rule references this profile, so deletion is blocked.</summary>
     public bool InUse { get; set; }
 }
@@ -964,6 +977,7 @@ public class ProfileAssignmentRuleDto
     public int Order { get; set; }
     public bool Enabled { get; set; }
     public MediaType? MatchMediaType { get; set; }
+    public bool? MatchAnime { get; set; }
     public string? MatchGenre { get; set; }
     public int? MatchTmdbId { get; set; }
     public string? MatchLibrary { get; set; }
@@ -972,7 +986,7 @@ public class ProfileAssignmentRuleDto
 
     /// <summary>No condition set, so this rule would match every title. Enabling it is rejected.</summary>
     public bool IsUnconditional =>
-        MatchMediaType is null && MatchTmdbId is null
+        MatchMediaType is null && MatchAnime is null && MatchTmdbId is null
         && string.IsNullOrWhiteSpace(MatchGenre) && string.IsNullOrWhiteSpace(MatchLibrary);
 }
 
@@ -1375,6 +1389,38 @@ public class ImportedFileDto
     public int ResolutionHeight { get; set; }
     public string? ReleaseName { get; set; }
     public string? SourceId { get; set; }
+    /// <summary>Actual embedded/sidecar media tracks observed before import. Present on inspected video rows.</summary>
+    public MediaTrackSummaryDto? MediaTracks { get; set; }
+}
+
+/// <summary>Strict language contract evaluated against actual files, never just a release name.</summary>
+public class MediaLanguagePolicyDto
+{
+    public List<string> RequiredAudioLanguages { get; set; } = new();
+    public List<string> AllowedAudioLanguages { get; set; } = new();
+    public List<string> RequiredSubtitleLanguages { get; set; } = new();
+    public bool RequireForcedSubtitle { get; set; }
+    public bool AllowUnknownTrackLanguage { get; set; } = true;
+}
+
+/// <summary>One audio or subtitle stream reported by MediaInfo (or a paired sidecar subtitle).</summary>
+public class MediaTrackDto
+{
+    public int? Index { get; set; }
+    public string Type { get; set; } = string.Empty;
+    public string? Codec { get; set; }
+    public string? Language { get; set; }
+    public string? Title { get; set; }
+    public bool IsDefault { get; set; }
+    public bool IsForced { get; set; }
+    public bool IsExternal { get; set; }
+}
+
+/// <summary>Machine-observed track inventory for one selected media file.</summary>
+public class MediaTrackSummaryDto
+{
+    public List<MediaTrackDto> Audio { get; set; } = new();
+    public List<MediaTrackDto> Subtitles { get; set; } = new();
 }
 
 // ---------------------------------------------------------------------------------------------
