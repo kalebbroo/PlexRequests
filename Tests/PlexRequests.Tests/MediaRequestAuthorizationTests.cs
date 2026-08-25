@@ -29,7 +29,7 @@ public sealed class MediaRequestAuthorizationTests
         var adminIdentity = await identities.ResolveAsync(adminRef);
         var memberIdentity = await identities.ResolveAsync(memberRef);
         var adminRequest = Request(admin.UserId, adminIdentity.Id, 101, "member", RequestStatus.Pending);
-        var memberRequest = Request(member.UserId, memberIdentity.Id, 202, "member", RequestStatus.Processing);
+        var memberRequest = Request(member.UserId, memberIdentity.Id, 202, "member", RequestStatus.Pending);
         var memberAvailable = Request(member.UserId, memberIdentity.Id, 203, "member", RequestStatus.Available);
         fixture.Db.MediaRequests.AddRange(adminRequest, memberRequest, memberAvailable);
         fixture.Db.Watchlist.AddRange(
@@ -40,16 +40,27 @@ public sealed class MediaRequestAuthorizationTests
         var adminService = fixture.Service(admin.UserId, "admin", identities);
         var adminStats = await adminService.GetMyStatsAsync();
         var adminPage = await adminService.GetRequestsAsync(new MediaFilterDto { PageNumber = 1, PageSize = 20 });
+        var approvalQueue = await adminService.GetAdminRequestsAsync(new MediaFilterDto
+        {
+            RequestStatus = RequestStatus.Pending,
+            PageNumber = 1,
+            PageSize = 20
+        });
         var adminStatuses = await adminService.GetMyRequestStatusesAsync([adminRef, memberRef]);
 
         Assert.Equal(1, adminStats.TotalRequests);
         Assert.Equal(adminRequest.Id, Assert.Single(adminPage.Items).Id);
+        Assert.Equal(2, approvalQueue.TotalCount);
+        Assert.Contains(approvalQueue.Items, x => x.Id == adminRequest.Id);
+        Assert.Contains(approvalQueue.Items, x => x.Id == memberRequest.Id);
         Assert.Equal(RequestStatus.Pending, Assert.Single(adminStatuses).Value);
         Assert.NotNull(await adminService.GetRequestByIdAsync(memberRequest.Id));
         Assert.True(await adminService.IsInWatchlistAsync(301, MediaType.Movie));
         Assert.False(await adminService.IsInWatchlistAsync(302, MediaType.Movie));
 
         var memberService = fixture.Service(member.UserId, "member", identities);
+        Assert.Empty((await memberService.GetAdminRequestsAsync(
+            new MediaFilterDto { PageNumber = 1, PageSize = 20 })).Items);
         Assert.Null(await memberService.GetRequestByIdAsync(adminRequest.Id));
         Assert.False(await memberService.CancelRequestAsync(adminRequest.Id));
         Assert.False(await memberService.CancelRequestAsync(memberAvailable.Id));

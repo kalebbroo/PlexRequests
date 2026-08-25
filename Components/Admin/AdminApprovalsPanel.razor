@@ -33,7 +33,7 @@ else if (_items.Count == 0)
 }
 else
 {
-    <MudTable Items="_paged" dense="true" Hover="true" Class="elevation-1">
+    <MudTable Items="_items" dense="true" Hover="true" Class="elevation-1">
         <HeaderContent>
             <MudTh>Type</MudTh>
             <MudTh>Poster</MudTh>
@@ -100,13 +100,12 @@ else
 @code {
     private bool _loading = true;
     private List<MediaRequestDto> _items = new();
-    private List<MediaRequestDto> _filtered = new();
-    private List<MediaRequestDto> _paged = new();
     private int _page = 1;
     private int _pageSize = 25;
     private int _pageCount = 1;
     private RequestStatus? _statusFilter = RequestStatus.Pending;
     private string _search = string.Empty;
+    private readonly SemaphoreSlim _loadGate = new(1, 1);
 
     private bool _denyOpen = false;
     private MediaRequestDto? _denyTarget;
@@ -140,59 +139,49 @@ else
 
     private async Task Load()
     {
-        _loading = true;
-        StateHasChanged();
+        await _loadGate.WaitAsync();
         try
         {
-            var result = await MediaRequestService.GetRequestsAsync(new MediaFilterDto { PageNumber = 1, PageSize = 200 });
+            _loading = true;
+            StateHasChanged();
+            var result = await MediaRequestService.GetAdminRequestsAsync(new MediaFilterDto
+            {
+                RequestStatus = _statusFilter,
+                SearchTerm = _search,
+                PageNumber = _page,
+                PageSize = _pageSize
+            });
             _items = result.Items;
-            ApplyFilters();
+            _pageCount = Math.Max(1, result.TotalPages);
         }
         finally
         {
             _loading = false;
             StateHasChanged();
+            _loadGate.Release();
         }
     }
 
-    private void ApplyFilters()
-    {
-        IEnumerable<MediaRequestDto> q = _items;
-        if (_statusFilter.HasValue)
-            q = q.Where(i => i.Status == _statusFilter.Value);
-        if (!string.IsNullOrWhiteSpace(_search))
-            q = q.Where(i => (i.Title ?? string.Empty).Contains(_search, StringComparison.OrdinalIgnoreCase));
-        _filtered = q.OrderByDescending(i => i.RequestedAt).ToList();
-        _pageCount = Math.Max(1, (int)Math.Ceiling(_filtered.Count / (double)_pageSize));
-        _page = 1;
-        UpdatePaged();
-    }
-
-    private void UpdatePaged()
-    {
-        _paged = _filtered.Skip((_page - 1) * _pageSize).Take(_pageSize).ToList();
-    }
-
-    private void OnPageChanged(int p)
+    private async Task OnPageChanged(int p)
     {
         _page = p;
-        UpdatePaged();
+        await Load();
     }
 
-    private void Refresh() => ApplyFilters();
+    private Task Refresh() => Load();
 
-    private void OnStatusChanged(RequestStatus? value)
+    private async Task OnStatusChanged(RequestStatus? value)
     {
         _statusFilter = value;
         _page = 1;
-        ApplyFilters();
+        await Load();
     }
 
-    private void OnSearchChanged(string value)
+    private async Task OnSearchChanged(string value)
     {
         _search = value ?? string.Empty;
         _page = 1;
-        ApplyFilters();
+        await Load();
     }
 
     private async Task Approve(MediaRequestDto r)
@@ -200,9 +189,9 @@ else
         var ok = await MediaRequestService.ApproveRequestAsync(r.Id);
         if (ok)
         {
-            r.Status = RequestStatus.Approved;
             await ToastService.ShowSuccessAsync($"Approved: {r.Title}");
-            ApplyFilters();
+            _page = 1;
+            await Load();
         }
         else
         {
@@ -223,10 +212,10 @@ else
         var ok = await MediaRequestService.DenyRequestAsync(_denyTarget.Id, _denyReason);
         if (ok)
         {
-            _denyTarget.Status = RequestStatus.Rejected;
             await ToastService.ShowInfoAsync($"Denied: {_denyTarget.Title}");
             _denyOpen = false;
-            ApplyFilters();
+            _page = 1;
+            await Load();
         }
         else
         {
@@ -239,9 +228,9 @@ else
         var ok = await MediaRequestService.MarkAvailableAsync(r.Id);
         if (ok)
         {
-            r.Status = RequestStatus.Available;
             await ToastService.ShowSuccessAsync($"Marked available: {r.Title}");
-            ApplyFilters();
+            _page = 1;
+            await Load();
         }
         else
         {

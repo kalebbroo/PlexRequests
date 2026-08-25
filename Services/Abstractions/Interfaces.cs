@@ -8,6 +8,8 @@ public interface IMediaRequestService
 {
     /// <summary>The signed-in user's requests. Administrator status does not broaden this personal view.</summary>
     Task<PagedResult<MediaRequestDto>> GetRequestsAsync(MediaFilterDto filter);
+    /// <summary>All users' requests for the administrator approval queue. Returns no rows for non-admins.</summary>
+    Task<PagedResult<MediaRequestDto>> GetAdminRequestsAsync(MediaFilterDto filter);
     Task<MediaRequestDto?> GetRequestByIdAsync(int id);
     // qualityProfileId is the requester's chosen profile; null means "decide for me" (assignment rules, then
     // the default). It's validated against what that user may actually select before it's honoured.

@@ -183,12 +183,38 @@ public class MediaRequestService(
     public async Task<PagedResult<MediaRequestDto>> GetRequestsAsync(MediaFilterDto filter)
     {
         var actor = await GetActorAsync();
-        var query = OwnedRequests(_db.MediaRequests.AsQueryable(), actor);
+        return await GetRequestsPageAsync(OwnedRequests(_db.MediaRequests.AsQueryable(), actor), filter);
+    }
+
+    public async Task<PagedResult<MediaRequestDto>> GetAdminRequestsAsync(MediaFilterDto filter)
+    {
+        var actor = await GetActorAsync();
+        if (!actor.IsAdmin)
+            return EmptyRequestPage(filter);
+        return await GetRequestsPageAsync(_db.MediaRequests.AsQueryable(), filter);
+    }
+
+    private async Task<PagedResult<MediaRequestDto>> GetRequestsPageAsync(
+        IQueryable<MediaRequestEntity> query,
+        MediaFilterDto filter)
+    {
+        var pageNumber = Math.Max(1, filter.PageNumber);
+        var pageSize = Math.Clamp(filter.PageSize, 1, 200);
+        if (filter.RequestStatus is RequestStatus status)
+            query = query.Where(r => r.Status == status);
+        if (filter.MediaType is MediaType mediaType)
+            query = query.Where(r => r.MediaType == mediaType);
+        if (!string.IsNullOrWhiteSpace(filter.SearchTerm))
+        {
+            var term = filter.SearchTerm.Trim();
+            query = query.Where(r => r.Title.Contains(term));
+        }
+
         query = query.OrderByDescending(r => r.RequestedAt);
         var total = await query.CountAsync();
         var entities = await query
-            .Skip((filter.PageNumber - 1) * filter.PageSize)
-            .Take(filter.PageSize)
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
             .ToListAsync();
 
         var items = new List<MediaRequestDto>(entities.Count);
@@ -221,8 +247,20 @@ public class MediaRequestService(
         {
             try { await _db.SaveChangesAsync(); } catch { /* non-fatal */ }
         }
-        return new PagedResult<MediaRequestDto> { Items = items, TotalCount = total, PageNumber = filter.PageNumber, PageSize = filter.PageSize };
+        return new PagedResult<MediaRequestDto>
+        {
+            Items = items,
+            TotalCount = total,
+            PageNumber = pageNumber,
+            PageSize = pageSize
+        };
     }
+
+    private static PagedResult<MediaRequestDto> EmptyRequestPage(MediaFilterDto filter) => new()
+    {
+        PageNumber = Math.Max(1, filter.PageNumber),
+        PageSize = Math.Clamp(filter.PageSize, 1, 200)
+    };
 
     public async Task<bool> IsInWatchlistAsync(int mediaId, MediaType mediaType)
     {
