@@ -277,7 +277,7 @@ public class MediaRequestService(
         // Keep this compatibility overload safe for older UI/API callers. A bare TV request means the
         // entire series everywhere else, so it must also inherit the administrator's monitoring default;
         // otherwise the initial aired episodes download but future episodes are silently forgotten.
-        var monitor = mediaType == MediaType.TvShow
+        var monitor = mediaType is MediaType.TvShow or MediaType.Anime
                       && (await _downloadPreferences.GetAsync()).AutoMonitorEntireSeriesRequests;
         return await CreateRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaId, mediaType,
             monitored: monitor, qualityProfileId: qualityProfileId);
@@ -590,7 +590,7 @@ public class MediaRequestService(
         var access = await _userAccess.GetAccessAsync(userId);
         if (!access.IsActive) return AccountUnavailable(access);
         var isAdmin = access.IsAdmin;
-        var monitor = mediaType == MediaType.TvShow
+        var monitor = mediaType is MediaType.TvShow or MediaType.Anime
                       && (await _downloadPreferences.GetAsync()).AutoMonitorEntireSeriesRequests;
         return await CreateRequestCoreAsync(userId, user.Username, isAdmin, mediaId, mediaType,
             allSeasons: true, seasons: null, episodes: null, monitored: monitor);
@@ -624,7 +624,7 @@ public class MediaRequestService(
         var episodes = requestScope == RequestScopeKind.Episodes
             ? scope?.Episodes.Select(x => (x.Season, x.Episode)).ToList()
             : null;
-        var monitor = mediaRef.MediaType == MediaType.TvShow && requestScope == RequestScopeKind.Series
+        var monitor = mediaRef.MediaType is MediaType.TvShow or MediaType.Anime && requestScope == RequestScopeKind.Series
                       && (await _downloadPreferences.GetAsync()).AutoMonitorEntireSeriesRequests;
         return await CreateRequestCoreAsync(userId, user.Username, isAdmin, tmdbId, mediaRef.MediaType,
             allSeasons: requestScope == RequestScopeKind.Series, seasons: seasons, episodes: episodes,
@@ -809,18 +809,18 @@ public class MediaRequestService(
             RequestedBy = username,
             RequestedByUserId = userId,
             // TV selection: episodes > seasons > whole series. Movies are always "all".
-            RequestAllSeasons = mediaType == MediaType.TvShow
+            RequestAllSeasons = mediaType is MediaType.TvShow or MediaType.Anime
                 ? (episodes is not { Count: > 0 } && seasons is not { Count: > 0 } && allSeasons)
                 : true,
-            RequestedSeasonsCsv = mediaType == MediaType.TvShow && seasons is { Count: > 0 }
+            RequestedSeasonsCsv = mediaType is MediaType.TvShow or MediaType.Anime && seasons is { Count: > 0 }
                 ? string.Join(",", seasons.Distinct().OrderBy(x => x))
                 : null,
-            RequestedEpisodesCsv = mediaType == MediaType.TvShow && episodes is { Count: > 0 }
+            RequestedEpisodesCsv = mediaType is MediaType.TvShow or MediaType.Anime && episodes is { Count: > 0 }
                 ? string.Join(",", episodes.Distinct().OrderBy(e => e.season).ThenBy(e => e.episode).Select(e => $"S{e.season}E{e.episode}"))
                 : null,
-            Monitored = mediaType == MediaType.TvShow && monitored,
-            MonitorMode = mediaType == MediaType.TvShow && monitored ? MonitorMode.AllEpisodes : MonitorMode.None,
-            MonitoredSince = mediaType == MediaType.TvShow && monitored ? DateTime.UtcNow : null,
+            Monitored = mediaType is MediaType.TvShow or MediaType.Anime && monitored,
+            MonitorMode = mediaType is MediaType.TvShow or MediaType.Anime && monitored ? MonitorMode.AllEpisodes : MonitorMode.None,
+            MonitoredSince = mediaType is MediaType.TvShow or MediaType.Anime && monitored ? DateTime.UtcNow : null,
             // Resolved here rather than left null for the queue to work out later: the request row is what
             // the whole system reads to decide what "good enough" means for this title, and a null there
             // meant the answer depended on when you asked. ResolveProfileIdAsync re-validates the
@@ -866,7 +866,7 @@ public class MediaRequestService(
     private async Task<(bool blocked, string? message)> CheckScopeConflictAsync(
         int userId, int mediaId, MediaType mediaType, bool allSeasons, List<int>? seasons, List<(int season, int episode)>? episodes)
     {
-        if (mediaType != MediaType.TvShow)
+        if (mediaType is not (MediaType.TvShow or MediaType.Anime))
         {
             var alreadyMine = await _db.MediaRequests.AnyAsync(r =>
                 r.MediaId == mediaId && r.MediaType == mediaType && r.RequestedByUserId == userId &&

@@ -323,7 +323,16 @@
 
             // Treat provider output as untrusted. The route is strict even if a provider returns
             // malformed or mixed cards, and a selected music kind cannot leak another music kind.
-            if (type.HasValue)
+            if (type == PlexRequestsHosted.Shared.Enums.MediaType.Anime)
+            {
+                // Anime is a catalog facet spanning two real shapes. Retain Movie/TvShow so details and
+                // requests cannot lose the distinction, while still rejecting non-animation provider rows.
+                results = results.Where(r =>
+                    r.MediaType is PlexRequestsHosted.Shared.Enums.MediaType.Movie or PlexRequestsHosted.Shared.Enums.MediaType.TvShow
+                    && r.Genres.Any(g => string.Equals(g, "Animation", StringComparison.OrdinalIgnoreCase)))
+                    .ToList();
+            }
+            else if (type.HasValue)
             {
                 results = results.Where(r => r.MediaType == type.Value).ToList();
             }
