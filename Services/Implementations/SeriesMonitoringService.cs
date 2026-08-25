@@ -31,7 +31,7 @@ public class SeriesMonitoringService(AppDbContext db, ILogger<SeriesMonitoringSe
         // The anchor is the broadest live request for the show — a whole-series request outranks a
         // season-scoped one, since that's what "monitor this show" naturally attaches to.
         var anchor = await db.MediaRequests
-            .Where(r => r.MediaId == showTmdbId && r.MediaType == MediaType.TvShow
+            .Where(r => r.MediaId == showTmdbId && (r.MediaType == MediaType.TvShow || r.MediaType == MediaType.Anime)
                         && r.Status != RequestStatus.Cancelled && r.Status != RequestStatus.Rejected)
             .OrderByDescending(r => r.MonitorMode != MonitorMode.None || r.Monitored)
             .ThenByDescending(r => r.RequestAllSeasons)
@@ -67,7 +67,7 @@ public class SeriesMonitoringService(AppDbContext db, ILogger<SeriesMonitoringSe
         if (mode == MonitorMode.None)
         {
             var anotherAnchor = await db.MediaRequests.AnyAsync(x => x.Id != r.Id
-                && x.MediaId == r.MediaId && x.MediaType == MediaType.TvShow
+                && x.MediaId == r.MediaId && (x.MediaType == MediaType.TvShow || x.MediaType == MediaType.Anime)
                 && x.MonitorMode != MonitorMode.None
                 && (x.Status == RequestStatus.Approved || x.Status == RequestStatus.Processing
                     || x.Status == RequestStatus.Available || x.Status == RequestStatus.PartiallyAvailable

@@ -59,7 +59,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
                                                                   && j.MediaType == request.MediaType);
         var otherActive = await otherActiveQuery.ToListAsync();
 
-        if (request.MediaType != MediaType.TvShow && otherActive.Count > 0)
+        if (request.MediaType is not (MediaType.TvShow or MediaType.Anime) && otherActive.Count > 0)
             return false; // no sub-scope for movies/other media — one in-flight job for the title is enough
 
         var seasonsCsv = request.RequestedSeasons.Count > 0 ? string.Join(",", request.RequestedSeasons) : null;
@@ -69,7 +69,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         // Never re-download content already on Plex: narrow a TV request to only the missing seasons/
         // episodes. If nothing is missing, don't enqueue at all — the reconciliation service marks the
         // request Available. (Movies fall through unchanged.) A forced re-download skips this entirely.
-        if (request.MediaType == MediaType.TvShow && !force)
+        if (request.MediaType is MediaType.TvShow or MediaType.Anime && !force)
         {
             var (s, e, targets, hasTarget) = await ComputeMissingTvTargetsAsync(request);
             if (!hasTarget) return false;   // everything already on Plex

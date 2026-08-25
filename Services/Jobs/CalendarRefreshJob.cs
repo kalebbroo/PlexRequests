@@ -32,7 +32,7 @@ public class CalendarRefreshJob(
 
         var prefs = await monitoring.GetAsync();
         var candidates = await db.MediaRequests
-            .Where(r => r.MediaType == MediaType.TvShow
+            .Where(r => (r.MediaType == MediaType.TvShow || r.MediaType == MediaType.Anime)
                         && (r.Status == RequestStatus.Approved || r.Status == RequestStatus.Processing
                             || r.Status == RequestStatus.Available || r.Status == RequestStatus.PartiallyAvailable
                             || r.Status == RequestStatus.Searching)

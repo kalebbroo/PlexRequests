@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Caching.Memory;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
@@ -57,6 +58,21 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
 
             var results = new List<MediaCardDto>();
 
+            // Anime is a catalog facet, not a file shape. TMDB has separate movie and TV namespaces and
+            // no Anime media type, so search both and keep the real Movie/TvShow identity on every card.
+            // That identity is what later guarantees movie imports use movie roots and episode imports use
+            // TV roots; relabelling both as MediaType.Anime made anime movies impossible to represent.
+            if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Anime)
+            {
+                var movieTask = _client.SearchMovieAsync(query, page: page, includeAdult: true);
+                var tvTask = _client.SearchTvShowAsync(query, page: page, includeAdult: true);
+                await Task.WhenAll(movieTask, tvTask);
+
+                var animeMovies = movieTask.Result.Results.Where(IsAnimeCandidate).Select(MapMovieToCard).ToList();
+                var animeTv = tvTask.Result.Results.Where(IsAnimeCandidate).Select(MapTvShowToCard).ToList();
+                return CacheSet(cacheKey, Interleave(animeMovies, animeTv, pageSize), SearchTtl);
+            }
+
             if (mediaType == null || mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
             {
                 var movieResults = await _client.SearchMovieAsync(query, page: page, includeAdult: true);
@@ -98,7 +114,7 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
                     result = MapMovieToDetail(movie);
                 }
             }
-            else if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
+            else if (mediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime)
             {
                 var tvShow = await _client.GetTvShowAsync(mediaId, TvShowMethods.Credits | TvShowMethods.Videos | TvShowMethods.Images | TvShowMethods.ExternalIds);
                 if (tvShow != null)
@@ -176,6 +192,10 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
 
             var results = new List<MediaCardDto>();
 
+            if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Anime)
+                return CacheSet(cacheKey, await DiscoverAnimeAsync(page, pageSize,
+                    DiscoverMovieSortBy.PopularityDesc, DiscoverTvShowSortBy.PopularityDesc), DiscoverTtl);
+
             if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
             {
                 var movies = await _client.DiscoverMoviesAsync().Query(page: page);
@@ -239,6 +259,32 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         return acc.Take(pageSize).ToList();
     }
 
+    // Slice each independent movie/TV stream by the UI's logical page size. Anime interleaves two streams;
+    // simply taking half of each TMDB page would permanently skip the unused half on every "Load more".
+    private static async Task<List<MediaCardDto>> SlicePagesAsync<T>(
+        int logicalPage, int take,
+        Func<int, Task<SearchContainer<T>>> fetchPage,
+        Func<T, MediaCardDto> map)
+    {
+        if (take <= 0) return new List<MediaCardDto>();
+
+        var offset = (Math.Max(1, logicalPage) - 1) * take;
+        var tmdbPage = offset / TmdbPageSize + 1;
+        var skip = offset % TmdbPageSize;
+        var rows = new List<T>();
+        var totalPages = int.MaxValue;
+
+        while (rows.Count < skip + take && tmdbPage <= totalPages)
+        {
+            var container = await fetchPage(tmdbPage++);
+            if (container?.Results is not { Count: > 0 } results) break;
+            totalPages = container.TotalPages > 0 ? container.TotalPages : tmdbPage - 1;
+            rows.AddRange(results);
+        }
+
+        return rows.Skip(skip).Take(take).Select(map).ToList();
+    }
+
     // Interleave movie + TV results so a mixed feed alternates types instead of grouping them.
     private static List<MediaCardDto> Interleave(List<MediaCardDto> a, List<MediaCardDto> b, int take)
     {
@@ -255,6 +301,12 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
     public Task<List<MediaCardDto>> GetTrendingAsync(PlexRequestsHosted.Shared.Enums.MediaType? mediaType = null, int page = 1, int pageSize = 20)
         => CachedAsync($"trending_{mediaType}_{page}_{pageSize}", async () =>
         {
+            // TMDB's trending endpoints cannot be filtered. The anime row therefore uses the equivalent
+            // popularity-ordered, language+genre-filtered discovery feed instead of leaking non-anime.
+            if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Anime)
+                return await DiscoverAnimeAsync(page, pageSize,
+                    DiscoverMovieSortBy.PopularityDesc, DiscoverTvShowSortBy.PopularityDesc);
+
             var movies = new List<MediaCardDto>();
             var tv = new List<MediaCardDto>();
             // For a mixed feed we pull ~half from each type so the interleave still fills pageSize.
@@ -275,6 +327,9 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
     public Task<List<MediaCardDto>> GetPopularAsync(PlexRequestsHosted.Shared.Enums.MediaType mediaType, int page = 1, int pageSize = 20)
         => CachedAsync($"popular_{mediaType}_{page}_{pageSize}", async () =>
         {
+            if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Anime)
+                return await DiscoverAnimeAsync(page, pageSize,
+                    DiscoverMovieSortBy.PopularityDesc, DiscoverTvShowSortBy.PopularityDesc);
             if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
             {
                 return await AccumulatePagesAsync(page, pageSize,
@@ -287,6 +342,9 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
     public Task<List<MediaCardDto>> GetTopRatedAsync(PlexRequestsHosted.Shared.Enums.MediaType mediaType, int page = 1, int pageSize = 20)
         => CachedAsync($"toprated_{mediaType}_{page}_{pageSize}", async () =>
         {
+            if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Anime)
+                return await DiscoverAnimeAsync(page, pageSize,
+                    DiscoverMovieSortBy.VoteAverageDesc, DiscoverTvShowSortBy.VoteAverageDesc);
             if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
             {
                 return await AccumulatePagesAsync(page, pageSize,
@@ -301,6 +359,9 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         {
             var genreId = GetGenreId(genre);
             if (genreId == 0) return new List<MediaCardDto>();
+            if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Anime)
+                return await DiscoverAnimeAsync(page, pageSize,
+                    DiscoverMovieSortBy.PopularityDesc, DiscoverTvShowSortBy.PopularityDesc, genreId);
             if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.Movie)
             {
                 return await AccumulatePagesAsync(page, pageSize,
@@ -317,6 +378,32 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
                     .Query(p),
                 MapTvShowToCard);
         });
+
+    private async Task<List<MediaCardDto>> DiscoverAnimeAsync(int page, int pageSize,
+        DiscoverMovieSortBy movieSort, DiscoverTvShowSortBy tvSort, int? additionalGenreId = null)
+    {
+        var movieTake = (pageSize + 1) / 2;
+        var tvTake = pageSize / 2;
+        var genres = additionalGenreId is > 0 and not 16 ? new[] { 16, additionalGenreId.Value } : new[] { 16 };
+
+        var movieTask = SlicePagesAsync(page, movieTake,
+            p => _client.DiscoverMoviesAsync()
+                .IncludeWithAllOfGenre(genres)
+                .WhereOriginalLanguageIs("ja")
+                .OrderBy(movieSort)
+                .Query(p),
+            MapMovieToCard);
+        var tvTask = SlicePagesAsync(page, tvTake,
+            p => _client.DiscoverTvShowsAsync()
+                .WhereGenresInclude(genres)
+                .WhereOriginalLanguageIs("ja")
+                .OrderBy(tvSort)
+                .Query(p),
+            MapTvShowToCard);
+
+        await Task.WhenAll(movieTask, tvTask);
+        return Interleave(movieTask.Result, tvTask.Result, pageSize);
+    }
 
     public Task<List<MediaCardDto>> GetSimilarAsync(int mediaId, PlexRequestsHosted.Shared.Enums.MediaType mediaType, int count = 12)
         => CachedAsync($"similar_{mediaType}_{mediaId}_{count}", async () =>
@@ -401,6 +488,19 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         };
     }
 
+    internal static bool IsAnimeCandidate(SearchMovie movie) =>
+        IsAnimeCandidate(movie.GenreIds, movie.OriginalLanguage, null);
+
+    internal static bool IsAnimeCandidate(SearchTv tvShow) =>
+        IsAnimeCandidate(tvShow.GenreIds, tvShow.OriginalLanguage, tvShow.OriginCountry);
+
+    internal static bool IsAnimeCandidate(IEnumerable<int>? genreIds, string? originalLanguage,
+        IEnumerable<string>? originCountries) =>
+        AnimeClassifier.IsAnime(
+            genreIds?.Select(GetGenreName),
+            string.IsNullOrWhiteSpace(originalLanguage) ? null : new[] { originalLanguage },
+            originCountries);
+
     private static MediaDetailDto MapMovieToDetail(Movie movie)
     {
         return new MediaDetailDto
@@ -481,7 +581,7 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
                 var movie = await _client.GetMovieAsync(mediaId, MovieMethods.ExternalIds);
                 return movie?.ExternalIds?.ImdbId;
             }
-            if (mediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
+            if (mediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime)
             {
                 var tv = await _client.GetTvShowAsync(mediaId, TvShowMethods.ExternalIds);
                 return tv?.ExternalIds?.ImdbId;
