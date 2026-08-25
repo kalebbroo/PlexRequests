@@ -29,6 +29,8 @@ public class ProfileAssignmentRuleEntity
 
     // ---- Conditions (null = any) -------------------------------------------------------------------
     public MediaType? MatchMediaType { get; set; }
+    /// <summary>Anime classification independent of Movie/TV scanner shape.</summary>
+    public bool? MatchAnime { get; set; }
     /// <summary>Case-insensitive match against the title's genre list.</summary>
     [MaxLength(128)] public string? MatchGenre { get; set; }
     /// <summary>Pin one specific title by its TMDb id.</summary>
@@ -43,6 +45,6 @@ public class ProfileAssignmentRuleEntity
 
     /// <summary>True when no condition is set, i.e. this rule would match every title. Rejected at save.</summary>
     public bool IsUnconditional =>
-        MatchMediaType is null && MatchTmdbId is null
+        MatchMediaType is null && MatchAnime is null && MatchTmdbId is null
         && string.IsNullOrWhiteSpace(MatchGenre) && string.IsNullOrWhiteSpace(MatchLibrary);
 }

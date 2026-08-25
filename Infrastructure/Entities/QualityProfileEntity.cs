@@ -63,9 +63,15 @@ public class QualityProfileEntity
     public double? MaxSeasonPackSizeGb { get; set; }
     public int? MinSeeders { get; set; }
 
-    /// <summary>Comma-separated ISO language codes the release must offer. Null/empty = any. Inert until
-    /// release-language parsing exists.</summary>
+    /// <summary>Comma-separated ISO audio language allowlist. Null/empty = any. The legacy column name is
+    /// retained so existing installations and API clients upgrade without losing their setting.</summary>
     [MaxLength(256)] public string? AllowedLanguagesCsv { get; set; }
+
+    /// <summary>Structured constraints proved from actual streams immediately before import.</summary>
+    [MaxLength(256)] public string? RequiredAudioLanguagesCsv { get; set; }
+    [MaxLength(256)] public string? RequiredSubtitleLanguagesCsv { get; set; }
+    public bool RequireForcedSubtitle { get; set; }
+    public bool AllowUnknownTrackLanguage { get; set; } = true;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

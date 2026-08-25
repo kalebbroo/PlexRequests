@@ -328,7 +328,9 @@ public enum BlocklistReason
     PathUnresolvable = 4,
     /// <summary>Downloaded the wrong thing.</summary>
     WrongContent = 5,
-    ManualBlock = 6
+    ManualBlock = 6,
+    /// <summary>Actual audio/subtitle streams failed the request's immutable media policy.</summary>
+    MediaPolicyMismatch = 7
 }
 
 /// <summary>Outcome of a single scheduled-job execution, recorded in the job-run history.</summary>

@@ -101,14 +101,14 @@ There are two enforcement stages:
 
 1. **Before download:** parsed release-title tokens and trusted release-group history rank/reject obvious
    mismatches. This saves bandwidth but is not proof; `Dual Audio`, `MULTI`, and `ENG SUB` are inconsistent.
-2. **Before import:** inspect every selected media file with `ffprobe` (or `mkvmerge -J`) and evaluate audio
-   and subtitle tracks separately. Only this stage can prove the requirement. Missing/undefined language tags
-   fail a strict profile. A mismatch is quarantined, the release is blocklisted for that request/profile, and
-   the job searches the next candidate; no file reaches any Plex root first.
+2. **Before import:** inspect every selected media file with MediaInfo (`ffprobe`/`mkvmerge -J` are equivalent
+   implementation options) and evaluate audio and subtitle tracks separately. Only this stage can prove the
+   requirement. Missing/undefined language tags fail a strict profile. A mismatch is blocklisted and removed
+   from transfer staging, and the job searches the next candidate; no file reaches any Plex root first.
 
-The inspection result and policy decision are stored in the import audit so an admin can see exactly which
-tracks caused acceptance or rejection. FFprobe exposes stream metadata and MKVToolNix exposes machine-readable
-track identification and BCP 47/ISO language tags:
+Accepted-file track inventories are stored in the import audit; rejected-file decisions and their exact reason
+are stored in the release blocklist. This lets an admin see why a release was accepted or rejected. FFprobe
+exposes stream metadata and MKVToolNix exposes machine-readable track identification and BCP 47/ISO language tags:
 <https://ffmpeg.org/ffprobe.html>, <https://mkvtoolnix.download/doc/mkvmerge.html>.
 
 ## Phase 4 — numbering and multi-episode files

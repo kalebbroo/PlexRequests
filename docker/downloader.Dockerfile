@@ -32,9 +32,10 @@ ADD --chmod=0755 --checksum=sha256:f0181635131bb01a120994bc0e18d80b3da81ca43fc36
 COPY --from=deno --chmod=0755 /out/deno /usr/local/bin/deno
 # cifs-utils / nfs-common: mount.cifs & mount.nfs helpers so the worker can mount admin-configured NAS
 # shares (Admin > Library > Network Drives) read-write to place library files. Needs CAP_SYS_ADMIN at runtime
-# (granted in docker-compose.yml); harmless if the feature is unused.
+# (granted in docker-compose.yml); harmless if the feature is unused. The headless MediaInfo CLI proves
+# strict audio/subtitle requirements from real streams before a file is allowed into any Plex root.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends cifs-utils nfs-common ca-certificates \
+    && apt-get install -y --no-install-recommends cifs-utils nfs-common ca-certificates mediainfo \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app .
 ENTRYPOINT ["dotnet", "PlexRequests.Downloader.dll"]

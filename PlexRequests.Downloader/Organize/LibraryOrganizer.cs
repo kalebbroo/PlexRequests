@@ -4,6 +4,7 @@ using PlexRequests.Downloader.Worker;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
+using PlexRequestsHosted.Shared;
 using System.Text.RegularExpressions;
 
 namespace PlexRequests.Downloader.Organize;
@@ -25,6 +26,7 @@ public class LibraryOrganizer(
     IEpisodeTitleProvider episodeTitles,
     IPlexNamingService naming,
     IReleaseParser parser,
+    IMediaTrackInspector trackInspector,
     ILogger<LibraryOrganizer> logger) : ILibraryOrganizer
 {
     public async Task<ImportResult> OrganizeAsync(FulfillmentJobDto job, TransferItem transfer, string sourcePath, EffectiveLibraryOrganization prefs, CancellationToken ct)
@@ -66,9 +68,10 @@ public class LibraryOrganizer(
             var contentRoot = stagingRoot ?? sourcePath;
             var records = job.MediaType switch
             {
-                MediaType.Movie => OrganizeMovie(job, mediaFiles, files, prefs),
+                MediaType.Movie => await OrganizeMovieAsync(job, mediaFiles, files, prefs, ct),
                 MediaType.Music => OrganizeMusic(job, contentRoot, mediaFiles, files, prefs),
-                _ => OrganizeTv(job, transfer, mediaFiles, files, prefs, await ExpectedEpisodeCountAsync(job, transfer, ct))
+                _ => await OrganizeTvAsync(job, transfer, mediaFiles, files, prefs,
+                    await ExpectedEpisodeCountAsync(job, transfer, ct), ct)
             };
 
             var primaryType = job.MediaType == MediaType.Music ? "audio" : "video";
@@ -82,6 +85,11 @@ public class LibraryOrganizer(
 
             logger.LogInformation("Organized \"{Title}\": {Count} file(s) placed", job.Title, records.Count);
             return ImportResult.Ok(records);
+        }
+        catch (MediaPolicyViolationException ex)
+        {
+            logger.LogWarning("Media policy rejected \"{Title}\": {Reason}", job.Title, ex.Message);
+            return ImportResult.Fail(ex.Message, BlocklistReason.MediaPolicyMismatch);
         }
         catch (Exception ex)
         {
@@ -107,14 +115,16 @@ public class LibraryOrganizer(
         return episodes.Count > 0 ? episodes.Count : null;
     }
 
-    private List<ImportedFileRecord> OrganizeMovie(FulfillmentJobDto job, List<string> videoFiles, List<string> allFiles, EffectiveLibraryOrganization prefs)
+    private async Task<List<ImportedFileRecord>> OrganizeMovieAsync(FulfillmentJobDto job,
+        List<string> videoFiles, List<string> allFiles, EffectiveLibraryOrganization prefs, CancellationToken ct)
     {
         var records = new List<ImportedFileRecord>();
         var best = videoFiles.OrderByDescending(f => SafeLength(f)).FirstOrDefault();
         if (best is null) return records;
 
+        var inspected = await InspectSelectionAsync(job, [best], allFiles, prefs, ct);
         var dest = naming.BuildMoviePath(prefs, job, Path.GetExtension(best));
-        TransferOne(best, dest, null, null, "video", records, prefs);
+        TransferOne(best, dest, null, null, "video", records, prefs, inspected.GetValueOrDefault(best));
         PairSubtitle(best, dest, allFiles, prefs, null, null, records);
         return records;
     }
@@ -239,7 +249,9 @@ public class LibraryOrganizer(
         return records;
     }
 
-    private List<ImportedFileRecord> OrganizeTv(FulfillmentJobDto job, TransferItem transfer, List<string> videoFiles, List<string> allFiles, EffectiveLibraryOrganization prefs, int? expectedEpisodeCount)
+    private async Task<List<ImportedFileRecord>> OrganizeTvAsync(FulfillmentJobDto job, TransferItem transfer,
+        List<string> videoFiles, List<string> allFiles, EffectiveLibraryOrganization prefs,
+        int? expectedEpisodeCount, CancellationToken ct)
     {
         var records = new List<ImportedFileRecord>();
 
@@ -250,9 +262,10 @@ public class LibraryOrganizer(
             var best = videoFiles.OrderByDescending(f => SafeLength(f)).FirstOrDefault();
             if (best is null || transfer.Season is not int s || transfer.Episode is not int e) return records;
 
+            var inspected = await InspectSelectionAsync(job, [best], allFiles, prefs, ct);
             var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, s, e, CancellationToken.None).GetAwaiter().GetResult();
             var dest = naming.BuildEpisodePath(prefs, job, s, e, title, Path.GetExtension(best));
-            TransferOne(best, dest, s, e, "video", records, prefs);
+            TransferOne(best, dest, s, e, "video", records, prefs, inspected.GetValueOrDefault(best));
             PairSubtitle(best, dest, allFiles, prefs, s, e, records);
             return records;
         }
@@ -282,22 +295,26 @@ public class LibraryOrganizer(
                             season, mapped.Count, before, string.Join(",", needed));
                     }
                 }
+                var inspected = await InspectSelectionAsync(job, mapped.Select(x => x.FilePath), allFiles, prefs, ct);
                 foreach (var (file, episode) in mapped)
                 {
                     var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, season, episode, CancellationToken.None).GetAwaiter().GetResult();
                     var dest = naming.BuildEpisodePath(prefs, job, season, episode, title, Path.GetExtension(file));
-                    TransferOne(file, dest, season, episode, "video", records, prefs);
+                    TransferOne(file, dest, season, episode, "video", records, prefs,
+                        inspected.GetValueOrDefault(file));
                     PairSubtitle(file, dest, allFiles, prefs, season, episode, records);
                 }
             }
             else
             {
+                var inspected = await InspectSelectionAsync(job, videoFiles, allFiles, prefs, ct);
                 var folder = naming.BuildSeasonPackFolder(prefs, job, season);
                 foreach (var file in videoFiles)
                 {
                     var name = NamingTemplateEngine.SanitizeComponent(Path.GetFileNameWithoutExtension(file)) + Path.GetExtension(file);
                     var dest = Path.Combine(folder, name);
-                    TransferOne(file, dest, season, null, "video", records, prefs);
+                    TransferOne(file, dest, season, null, "video", records, prefs,
+                        inspected.GetValueOrDefault(file));
                     PairSubtitle(file, dest, allFiles, prefs, season, null, records);
                 }
             }
@@ -308,6 +325,7 @@ public class LibraryOrganizer(
         // at enqueue time): fall back to parsing each file's own season+episode independently. Files that
         // don't parse cleanly are skipped — never guessed — same "no confident mapping, don't import it
         // under a wrong name" principle as the splitter above.
+        var mappedFiles = new List<(string File, int Season, int Episode)>();
         foreach (var file in videoFiles)
         {
             var parsed = parser.Parse(Path.GetFileName(file));
@@ -316,41 +334,95 @@ public class LibraryOrganizer(
                 logger.LogWarning("\"{Title}\": could not determine season/episode for \"{File}\" in a whole-series pack; skipped", job.Title, Path.GetFileName(file));
                 continue;
             }
-            var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, s, e, CancellationToken.None).GetAwaiter().GetResult();
+            mappedFiles.Add((file, s, e));
+        }
+        var wholeSeriesInspection = await InspectSelectionAsync(job, mappedFiles.Select(x => x.File),
+            allFiles, prefs, ct);
+        foreach (var (file, s, e) in mappedFiles)
+        {
+            var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, s, e, CancellationToken.None)
+                .GetAwaiter().GetResult();
             var dest = naming.BuildEpisodePath(prefs, job, s, e, title, Path.GetExtension(file));
-            TransferOne(file, dest, s, e, "video", records, prefs);
+            TransferOne(file, dest, s, e, "video", records, prefs, wholeSeriesInspection.GetValueOrDefault(file));
             PairSubtitle(file, dest, allFiles, prefs, s, e, records);
         }
         return records;
     }
 
-    private void TransferOne(string source, string dest, int? season, int? episode, string fileType, List<ImportedFileRecord> records, EffectiveLibraryOrganization prefs)
+    private void TransferOne(string source, string dest, int? season, int? episode, string fileType,
+        List<ImportedFileRecord> records, EffectiveLibraryOrganization prefs,
+        MediaTrackSummaryDto? mediaTracks = null)
     {
         var size = SafeLength(source);
         FileTransfer.Transfer(source, dest, prefs.TransferMode, prefs.DeleteSourceAfterImport, logger);
-        records.Add(new ImportedFileRecord(source, dest, fileType, season, episode, size));
+        records.Add(new ImportedFileRecord(source, dest, fileType, season, episode, size, mediaTracks));
+    }
+
+    private async Task<Dictionary<string, MediaTrackSummaryDto>> InspectSelectionAsync(FulfillmentJobDto job,
+        IEnumerable<string> selectedFiles, IReadOnlyList<string> allFiles, EffectiveLibraryOrganization prefs,
+        CancellationToken ct)
+    {
+        var results = new Dictionary<string, MediaTrackSummaryDto>(StringComparer.OrdinalIgnoreCase);
+        if (!MediaLanguagePolicy.IsActive(job.MediaLanguagePolicy)) return results;
+
+        foreach (var file in selectedFiles.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            MediaTrackSummaryDto tracks;
+            try
+            {
+                var companions = prefs.KeepSubtitles ? CompanionSubtitles(file, allFiles, prefs) : [];
+                tracks = await trackInspector.InspectAsync(file, companions, ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                throw new MediaPolicyViolationException(
+                    $"Could not verify media tracks for '{Path.GetFileName(file)}': {ex.Message}", ex);
+            }
+
+            var decision = MediaLanguagePolicy.Evaluate(job.MediaLanguagePolicy, tracks);
+            if (!decision.Accepted)
+                throw new MediaPolicyViolationException(
+                    $"'{Path.GetFileName(file)}' failed the '{job.QualityProfile?.Name ?? "selected"}' media policy: {decision.Reason}");
+            results[file] = tracks;
+        }
+        return results;
+    }
+
+    private static List<string> CompanionSubtitles(string video, IReadOnlyList<string> allFiles,
+        EffectiveLibraryOrganization prefs)
+    {
+        var directory = Path.GetDirectoryName(video) ?? string.Empty;
+        var stem = Path.GetFileNameWithoutExtension(video);
+        var subtitles = allFiles.Where(file =>
+                string.Equals(Path.GetDirectoryName(file) ?? string.Empty, directory,
+                    StringComparison.OrdinalIgnoreCase)
+                && prefs.SubtitleExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
+            .ToList();
+        var matches = subtitles.Where(file =>
+            {
+                var subtitleStem = Path.GetFileNameWithoutExtension(file);
+                return subtitleStem.Equals(stem, StringComparison.OrdinalIgnoreCase)
+                       || subtitleStem.StartsWith(stem + ".", StringComparison.OrdinalIgnoreCase);
+            }).ToList();
+        return matches.Count > 0 ? matches : subtitles.Count == 1 ? subtitles : [];
     }
 
     private void PairSubtitle(string videoSource, string videoDest, List<string> allFiles, EffectiveLibraryOrganization prefs, int? season, int? episode, List<ImportedFileRecord> records)
     {
         if (!prefs.KeepSubtitles) return;
 
-        var videoDir = Path.GetDirectoryName(videoSource) ?? string.Empty;
         var videoStem = Path.GetFileNameWithoutExtension(videoSource);
-        var subtitlesInDir = allFiles
-            .Where(f => string.Equals(Path.GetDirectoryName(f), videoDir, StringComparison.OrdinalIgnoreCase))
-            .Where(f => prefs.SubtitleExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
-            .ToList();
-
-        var match = subtitlesInDir.FirstOrDefault(f => Path.GetFileNameWithoutExtension(f).StartsWith(videoStem, StringComparison.OrdinalIgnoreCase))
-                    ?? (subtitlesInDir.Count == 1 ? subtitlesInDir[0] : null);
-        if (match is null) return;
-
-        var subStem = Path.GetFileNameWithoutExtension(match);
-        var infix = subStem.StartsWith(videoStem, StringComparison.OrdinalIgnoreCase) ? subStem[videoStem.Length..] : string.Empty;
-        var subDestName = Path.GetFileNameWithoutExtension(videoDest) + infix + Path.GetExtension(match);
-        var subDest = Path.Combine(Path.GetDirectoryName(videoDest) ?? string.Empty, subDestName);
-        TransferOne(match, subDest, season, episode, "subtitle", records, prefs);
+        foreach (var match in CompanionSubtitles(videoSource, allFiles, prefs))
+        {
+            var subStem = Path.GetFileNameWithoutExtension(match);
+            var infix = subStem.StartsWith(videoStem, StringComparison.OrdinalIgnoreCase)
+                ? subStem[videoStem.Length..]
+                : string.Empty;
+            var subDestName = Path.GetFileNameWithoutExtension(videoDest) + infix + Path.GetExtension(match);
+            var subDest = Path.Combine(Path.GetDirectoryName(videoDest) ?? string.Empty, subDestName);
+            TransferOne(match, subDest, season, episode, "subtitle", records, prefs);
+        }
     }
 
     private static Func<string, bool> IsVideo(EffectiveLibraryOrganization prefs) => f =>
@@ -412,4 +484,7 @@ public class LibraryOrganizer(
         try { return new FileInfo(file).Length; }
         catch { return 0; }
     }
+
+    private sealed class MediaPolicyViolationException(string message, Exception? inner = null)
+        : Exception(message, inner);
 }

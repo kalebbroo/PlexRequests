@@ -105,6 +105,10 @@ public class FulfillmentJobEntity
     /// </summary>
     public int? QualityProfileId { get; set; }
 
+    /// <summary>Serialized MediaLanguagePolicyDto captured at enqueue. Unlike the profile id, this remains
+    /// unchanged if an admin edits the profile while a transfer is in flight.</summary>
+    public string? MediaLanguagePolicyJson { get; set; }
+
     /// <summary>
     /// Searches that returned candidates but nothing acceptable. Distinct from <see cref="Attempts"/>, which
     /// counts every claim including re-searches of an already-deferred job — using that to decide when to

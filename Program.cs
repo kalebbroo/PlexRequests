@@ -1068,7 +1068,8 @@ app.MapPost("/api/fulfillment/{jobId:int}/imported-files", async (int jobId, Lis
                     : f.ReleaseName.Length > 512 ? f.ReleaseName[..512] : f.ReleaseName,
                 InfoHash = f.Protocol == AcquisitionProtocol.Torrent
                     ? PlexRequestsHosted.Shared.Releases.MagnetUtil.Normalize(f.SourceId)
-                    : null
+                    : null,
+                MediaTracksJson = f.MediaTracks is null ? null : JsonSerializer.Serialize(f.MediaTracks)
             });
             added++;
         }

@@ -341,9 +341,17 @@ public class QualityProfileSeeder(IDbContextFactory<AppDbContext> dbFactory, ILo
     }
 
     /// <summary>Rule matching — every non-null condition must match. Mirrors the legacy semantics exactly.</summary>
-    internal static bool Matches(ProfileAssignmentRuleEntity r, MediaType mediaType, int tmdbId, IReadOnlyCollection<string> genres, string? library = null)
+    internal static bool Matches(ProfileAssignmentRuleEntity r, MediaType mediaType, int tmdbId,
+        IReadOnlyCollection<string> genres, string? library = null, bool? isAnime = null)
     {
-        if (r.MatchMediaType.HasValue && r.MatchMediaType.Value != mediaType) return false;
+        if (r.MatchMediaType == MediaType.Anime)
+        {
+            // Rolling compatibility for old Anime-as-a-media-type rules: keep them series-only and make
+            // their classification requirement explicit when matching truthful TV-shaped anime requests.
+            if (mediaType is not (MediaType.TvShow or MediaType.Anime) || isAnime != true) return false;
+        }
+        else if (r.MatchMediaType.HasValue && r.MatchMediaType.Value != mediaType) return false;
+        if (r.MatchAnime.HasValue && (!isAnime.HasValue || r.MatchAnime.Value != isAnime.Value)) return false;
         if (r.MatchTmdbId.HasValue && r.MatchTmdbId.Value != tmdbId) return false;
         if (!string.IsNullOrWhiteSpace(r.MatchGenre)
             && !genres.Contains(r.MatchGenre, StringComparer.OrdinalIgnoreCase)) return false;

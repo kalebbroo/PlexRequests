@@ -4,6 +4,7 @@ using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.Media;
 using PlexRequestsHosted.Shared.Releases;
 
@@ -215,6 +216,11 @@ public class InteractiveSearchService(
 
         var routingSnapshot = existing.OrderByDescending(j => j.Id)
             .FirstOrDefault(j => !string.IsNullOrWhiteSpace(j.LibraryDestinationId));
+        var currentPolicy = task.QualityProfileId is int policyProfileId
+            ? MediaLanguagePolicy.FromProfile(await profiles.GetProfileAsync(policyProfileId))
+            : null;
+        var policyJson = routingSnapshot?.MediaLanguagePolicyJson
+            ?? (MediaLanguagePolicy.IsActive(currentPolicy) ? JsonSerializer.Serialize(currentPolicy) : null);
 
         db.FulfillmentJobs.Add(new FulfillmentJobEntity
         {
@@ -233,6 +239,7 @@ public class InteractiveSearchService(
             QualityProfileId = task.QualityProfileId,
             RequestedSeasonsCsv = task.Season?.ToString(),
             RequestedEpisodesCsv = task is { Season: int s, Episode: int e } ? $"S{s}E{e}" : null,
+            MediaLanguagePolicyJson = policyJson,
             LibraryDestinationId = routingSnapshot?.LibraryDestinationId,
             LibraryDestinationName = routingSnapshot?.LibraryDestinationName,
             LibraryDestinationKind = routingSnapshot?.LibraryDestinationKind,

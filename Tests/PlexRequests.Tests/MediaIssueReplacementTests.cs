@@ -244,7 +244,8 @@ public sealed class MediaIssueReplacementTests
     private sealed class FixedQualityProfiles : IQualityProfileService
     {
         public Task<int> ResolveProfileIdAsync(MediaType mediaType, int tmdbId, IEnumerable<string>? genres,
-            int? requesterChoiceId, int? userId, string? library = null) => Task.FromResult(3);
+            int? requesterChoiceId, int? userId, string? library = null, bool? isAnime = null) =>
+            Task.FromResult(3);
         public Task<Quality> GetCutoffQualityAsync(int profileId) => Task.FromResult(Quality.FullHD);
         public Task<List<QualityDefinitionDto>> GetDefinitionsAsync() => throw new NotSupportedException();
         public Task<List<QualityProfileDto>> GetProfilesAsync() => throw new NotSupportedException();
