@@ -1209,6 +1209,8 @@ public class MediaFilterDto
 {
     public string? SearchTerm { get; set; }
     public MediaType? MediaType { get; set; }
+    /// <summary>Optional request-status filter for request history and the administrator approval queue.</summary>
+    public RequestStatus? RequestStatus { get; set; }
     public List<string> Genres { get; set; } = new();
     public int? YearFrom { get; set; }
     public int? YearTo { get; set; }
