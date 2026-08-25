@@ -249,6 +249,8 @@ builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.UpgradeScanJob>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler>(sp => sp.GetRequiredService<PlexRequestsHosted.Services.Jobs.UpgradeScanJob>());
 // Backstop that requeues/parks jobs stranded by a dead downloader.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Background.FulfillmentReaperService>();
+// Repairs the narrow crash/enqueue gap where a request is durably Approved but has no job history at all.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.ApprovedRequestRepairJob>();
 // Keeps the DB-backed Plex availability index fresh (per-season episode presence + aged-out removals).
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Background.AvailabilityRefreshService>();
 // Safety net: auto-mark requests Available when their content appears on Plex by ANY means.
