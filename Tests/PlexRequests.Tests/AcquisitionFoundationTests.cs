@@ -46,9 +46,11 @@ public sealed class AcquisitionFoundationTests
             var transfer = Assert.Single(record.Transfers);
             Assert.Equal("abc123", transfer.TransferId);
             Assert.Equal(AcquisitionProtocol.Torrent, transfer.Protocol);
+            Assert.True(record.CoversAllTargets); // old state predates the field and must retain old semantics
 
             await store.SaveAsync(record with
             {
+                CoversAllTargets = false,
                 Transfers = new List<TransferItem>
                 {
                     transfer with { Protocol = AcquisitionProtocol.DirectAudio, TransferId = "video-id" }
@@ -56,6 +58,7 @@ public sealed class AcquisitionFoundationTests
             }, CancellationToken.None);
             var reloaded = Assert.Single(await store.GetAllAsync(CancellationToken.None));
             Assert.Equal(AcquisitionProtocol.DirectAudio, Assert.Single(reloaded.Transfers).Protocol);
+            Assert.False(reloaded.CoversAllTargets);
 
             // The deployed wire names stay compatible with older state files while the in-process model is generic.
             var json = await File.ReadAllTextAsync(path);

@@ -72,6 +72,7 @@ public class DownloadPlannerTests
 
         Assert.Equal(DownloadPlanKind.SeasonPack, result.Plan.Kind);
         Assert.Single(result.Plan.Items);
+        Assert.True(result.Plan.CoversAllTargets);
     }
 
     [Fact]
@@ -86,6 +87,7 @@ public class DownloadPlannerTests
 
         Assert.Equal(DownloadPlanKind.Episodes, result.Plan.Kind);
         Assert.Equal(2, result.Plan.Items.Count);
+        Assert.True(result.Plan.CoversAllTargets);
     }
 
     [Fact]
@@ -195,5 +197,6 @@ public class DownloadPlannerTests
 
         Assert.Equal(DownloadPlanKind.Episodes, result.Plan.Kind);
         Assert.Contains(result.Notes, n => n.Contains("complete partially"));
+        Assert.False(result.Plan.CoversAllTargets);
     }
 }

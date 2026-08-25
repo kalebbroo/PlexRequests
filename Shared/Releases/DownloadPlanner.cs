@@ -65,6 +65,7 @@ public class DownloadPlanner : IDownloadPlanner
         var p = context.Preferences;
         var items = new List<DownloadPlanItem>();
         bool anyEpisodes = false;
+        bool coversAllTargets = true;
 
         foreach (var target in targets)
         {
@@ -94,6 +95,7 @@ public class DownloadPlanner : IDownloadPlanner
             {
                 if (bestPack is not null) { items.Add(ToItem(bestPack) with { Season = target.Season, NeededEpisodes = PackNeeded(target) }); continue; }
                 notes.Add($"Season {target.Season}: no acceptable pack and episode fallback is disabled");
+                coversAllTargets = false;
                 continue;
             }
 
@@ -101,7 +103,11 @@ public class DownloadPlanner : IDownloadPlanner
             {
                 // No episode list to fan out to (a metadata miss) — a pack is the only option.
                 if (bestPack is not null) items.Add(ToItem(bestPack) with { Season = target.Season });
-                else notes.Add($"Season {target.Season}: no pack and no episode list to fan out to");
+                else
+                {
+                    notes.Add($"Season {target.Season}: no pack and no episode list to fan out to");
+                    coversAllTargets = false;
+                }
                 continue;
             }
 
@@ -109,6 +115,7 @@ public class DownloadPlanner : IDownloadPlanner
             {
                 if (bestPack is not null) { items.Add(ToItem(bestPack) with { Season = target.Season, NeededEpisodes = PackNeeded(target) }); continue; }
                 notes.Add($"Season {target.Season}: {missing.Count} episodes missing (over the {p.MaxEpisodesForFanout} fan-out cap) and no usable pack");
+                coversAllTargets = false;
                 continue;
             }
 
@@ -126,12 +133,19 @@ public class DownloadPlanner : IDownloadPlanner
                 items.AddRange(episodePicks);
                 notes.Add($"Season {target.Season}: fanning out to {episodePicks.Count} episode(s)");
                 if (gaps.Count > 0)
+                {
                     notes.Add($"Season {target.Season}: no release found for episode(s) {string.Join(",", gaps)} — this request will complete partially");
+                    coversAllTargets = false;
+                }
             }
+            else if (gaps.Count > 0) coversAllTargets = false;
         }
 
         if (items.Count == 0) return DownloadPlanResult.None(notes.ToArray());
-        return new DownloadPlanResult(new DownloadPlan(anyEpisodes ? DownloadPlanKind.Episodes : DownloadPlanKind.SeasonPack, items), notes);
+        return new DownloadPlanResult(new DownloadPlan(
+            anyEpisodes ? DownloadPlanKind.Episodes : DownloadPlanKind.SeasonPack,
+            items,
+            coversAllTargets), notes);
     }
 
     private static List<DownloadPlanItem> BuildEpisodePicks(List<RankedCandidate> acceptable, SeasonTarget target, IReadOnlyList<int> missing)
@@ -185,6 +199,7 @@ public class DownloadPlanner : IDownloadPlanner
     {
         var p = context.Preferences;
         var items = new List<DownloadPlanItem>();
+        bool coversAllTargets = true;
 
         foreach (var group in wanted.GroupBy(w => w.Season))
         {
@@ -218,13 +233,14 @@ public class DownloadPlanner : IDownloadPlanner
             }
             else
             {
+                coversAllTargets = false;
                 notes.Add($"Season {season}: no standalone release and no usable pack for episode(s) {string.Join(",", gaps)}");
             }
         }
 
         return items.Count == 0
             ? DownloadPlanResult.None(notes.ToArray())
-            : new DownloadPlanResult(new DownloadPlan(DownloadPlanKind.Episodes, items), notes);
+            : new DownloadPlanResult(new DownloadPlan(DownloadPlanKind.Episodes, items, coversAllTargets), notes);
     }
 
     // ---- Matching helpers ---------------------------------------------------------------------------
