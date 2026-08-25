@@ -456,6 +456,12 @@ public class DownloadPreferencesDto
 
     /// <summary>When a user requests an entire series, automatically monitor it for new episodes.</summary>
     public bool AutoMonitorEntireSeriesRequests { get; set; } = true;
+
+    /// <summary>Supplement live fulfillment searches with candidates from the durable release catalog.</summary>
+    public bool UseCatalogForSearch { get; set; }
+
+    /// <summary>Use the durable catalog as the primary source for wanted-episode monitoring.</summary>
+    public bool UseCatalogForMonitoring { get; set; }
 }
 
 public class UserDto : BaseDto

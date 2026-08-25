@@ -47,5 +47,11 @@ public class DownloadPreferencesEntity
     /// episodes are auto-downloaded. Admins can turn this off to require monitoring to be enabled manually.</summary>
     public bool AutoMonitorEntireSeriesRequests { get; set; } = true;
 
+    /// <summary>Supplement live fulfillment searches with candidates already captured in the local catalog.</summary>
+    public bool UseCatalogForSearch { get; set; }
+
+    /// <summary>Match wanted episodes from the local catalog instead of polling every upstream source.</summary>
+    public bool UseCatalogForMonitoring { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

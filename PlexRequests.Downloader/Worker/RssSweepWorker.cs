@@ -22,6 +22,7 @@ public class RssSweepWorker(
     IPlexRequestsApiClient api,
     IIndexerClient indexer,
     IIndexerSettingsProvider indexerSettings,
+    IDownloadPreferencesProvider downloadPreferences,
     IReleaseParser parser,
     IOptions<CatalogWorkerOptions> catalogOptions,
     ILogger<RssSweepWorker> logger) : BackgroundService
@@ -52,6 +53,7 @@ public class RssSweepWorker(
         if (wanted.Count == 0) return;
 
         await indexerSettings.RefreshAsync(ct);
+        await downloadPreferences.RefreshAsync(ct);
         var sources = indexerSettings.All.Where(i => i.Enabled && i.EnableIngestion && i.SupportsTv).ToList();
         if (sources.Count == 0) return;
 
@@ -82,7 +84,7 @@ public class RssSweepWorker(
             };
 
             IReadOnlyList<ReleaseCandidate> candidates;
-            if (catalogOptions.Value.Enabled && catalogOptions.Value.UseForMonitoring)
+            if (catalogOptions.Value.Enabled && downloadPreferences.Current.UseCatalogForMonitoring)
             {
                 // Catalog-only monitoring is the opt-in replacement for N wanted shows × M live sources.
                 // If the local API itself is unavailable, retain the established live path for this pass.
