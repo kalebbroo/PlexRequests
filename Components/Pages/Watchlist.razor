@@ -144,7 +144,8 @@
 
     private async Task RequestMedia(PlexRequestsHosted.Shared.DTOs.MediaCardDto media)
     {
-        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(media.ResolveMediaRef());
+        PlexRequestsHosted.Shared.DTOs.MediaRequestResult result = await MediaRequestService.RequestMediaAsync(
+            media.ResolveMediaRef(), isAnimeIntent: media.IsAnime);
         if (result.Success)
         {
             media.RequestStatus = result.NewStatus ?? PlexRequestsHosted.Shared.Enums.RequestStatus.Pending;

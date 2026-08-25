@@ -467,6 +467,7 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
             Rating = (decimal?)movie.VoteAverage,
             MediaType = PlexRequestsHosted.Shared.Enums.MediaType.Movie,
             Genres = movie.GenreIds?.Select(id => GetGenreName(id)).ToList() ?? new List<string>(),
+            IsAnime = IsAnimeCandidate(movie),
             TmdbId = movie.Id
         };
     }
@@ -484,6 +485,7 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
             Rating = (decimal?)tvShow.VoteAverage,
             MediaType = PlexRequestsHosted.Shared.Enums.MediaType.TvShow,
             Genres = tvShow.GenreIds?.Select(id => GetGenreName(id)).ToList() ?? new List<string>(),
+            IsAnime = IsAnimeCandidate(tvShow),
             TmdbId = tvShow.Id
         };
     }
@@ -525,6 +527,10 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
             // (that's TV-only), so production country is the closest available signal for them.
             Languages = string.IsNullOrEmpty(movie.OriginalLanguage) ? new List<string>() : new List<string> { movie.OriginalLanguage },
             Countries = movie.ProductionCountries?.Select(c => c.Iso_3166_1).Where(c => !string.IsNullOrEmpty(c)).ToList() ?? new List<string>(),
+            IsAnime = AnimeClassifier.IsAnime(
+                movie.Genres?.Select(g => g.Name),
+                string.IsNullOrEmpty(movie.OriginalLanguage) ? null : new[] { movie.OriginalLanguage },
+                movie.ProductionCountries?.Select(c => c.Iso_3166_1)),
             TmdbId = movie.Id,
             ImdbId = movie.ExternalIds?.ImdbId ?? movie.ImdbId
         };
@@ -558,6 +564,10 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
             TotalSeasons = tvShow.NumberOfSeasons,
             Languages = string.IsNullOrEmpty(tvShow.OriginalLanguage) ? new List<string>() : new List<string> { tvShow.OriginalLanguage },
             Countries = tvShow.OriginCountry ?? new List<string>(),
+            IsAnime = AnimeClassifier.IsAnime(
+                tvShow.Genres?.Select(g => g.Name),
+                string.IsNullOrEmpty(tvShow.OriginalLanguage) ? null : new[] { tvShow.OriginalLanguage },
+                tvShow.OriginCountry),
             Seasons = tvShow.Seasons?.Select(s => new SeasonDto
             {
                 SeasonNumber = s.SeasonNumber,

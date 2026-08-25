@@ -1,4 +1,5 @@
 @using System.Text.RegularExpressions
+@using PlexRequestsHosted.Shared
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
 @inject PlexRequestsHosted.Services.Implementations.ILibraryOrganizationPreferencesService Prefs
@@ -20,19 +21,67 @@
 else
 {
     <MudPaper Class="pa-4 mb-4" Elevation="1">
-        <MudText Typo="Typo.h6" Class="mb-3">Library roots</MudText>
-        <div class="d-flex gap-3 flex-wrap align-items-center">
-            <MudTextField @bind-Value="_p.MoviePath" Label="Movie library path" Variant="Variant.Outlined" dense="true" Style="min-width:320px;"
-                          Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="BrowseMoviePath" />
-            <MudTextField @bind-Value="_p.TvPath" Label="TV library path" Variant="Variant.Outlined" dense="true" Style="min-width:320px;"
-                          Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="BrowseTvPath" />
-            <MudTextField @bind-Value="_p.MusicPath" Label="Music library path" Variant="Variant.Outlined" dense="true" Style="min-width:320px;"
-                          Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="BrowseMusicPath" />
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <MudText Typo="Typo.h6">Library destinations</MudText>
+            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddDestination">Add destination</MudButton>
         </div>
-        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
-            Paths as seen by the downloader process/container, not the web app. Click the folder icon to browse
-            (the web app mirrors the same library/network-drive mounts read-only, so what you pick here is valid
-            for the downloader too) — or type a path manually.
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-3">
+            Add as many Plex libraries as needed. Each destination is restricted to one scanner shape, so a
+            movie can never be imported into a TV root. Paths are seen by the downloader; requesters only see
+            destinations you explicitly make selectable and never submit filesystem paths.
+        </MudText>
+        <div class="d-flex gap-3 flex-wrap align-items-center mb-4">
+            <MudSelect T="string" @bind-Value="DefaultMovieId" Label="Default movies" dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
+                @foreach (var destination in EnabledDestinations(LibraryContentKind.Movie))
+                {
+                    <MudSelectItem T="string" Value="@destination.Id">@destination.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="string" @bind-Value="DefaultSeriesId" Label="Default TV" dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
+                @foreach (var destination in EnabledDestinations(LibraryContentKind.Series))
+                {
+                    <MudSelectItem T="string" Value="@destination.Id">@destination.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="string" @bind-Value="DefaultMusicId" Label="Default music" dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
+                @foreach (var destination in EnabledDestinations(LibraryContentKind.Music))
+                {
+                    <MudSelectItem T="string" Value="@destination.Id">@destination.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </div>
+        @for (var i = 0; i < _p.LibraryDestinations.Count; i++)
+        {
+            var idx = i;
+            var destination = _p.LibraryDestinations[idx];
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <div class="d-flex gap-2 flex-wrap align-items-center">
+                    <MudTextField @bind-Value="destination.Name" Label="Name" dense="true" Variant="Variant.Outlined" Style="min-width:190px;" />
+                    <MudSelect T="LibraryContentKind" @bind-Value="destination.ContentKind" Label="Content type" dense="true"
+                               Variant="Variant.Outlined" Disabled="destination.IsDefault" Style="min-width:150px;">
+                        <MudSelectItem Value="LibraryContentKind.Movie">Movies</MudSelectItem>
+                        <MudSelectItem Value="LibraryContentKind.Series">TV / series</MudSelectItem>
+                        <MudSelectItem Value="LibraryContentKind.Music">Music</MudSelectItem>
+                    </MudSelect>
+                    <MudTextField @bind-Value="destination.RootPath" Label="Root path" dense="true" Variant="Variant.Outlined" Style="min-width:310px;"
+                                  Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="@(() => BrowseDestination(idx))" />
+                    <MudTextField @bind-Value="destination.PlexSectionId" Label="Plex section ID (optional)" dense="true" Variant="Variant.Outlined" Style="min-width:190px;" />
+                    <MudTextField @bind-Value="destination.TemplateOverride" Label="Naming override (optional)" dense="true" Variant="Variant.Outlined" Style="min-width:260px;" />
+                    <MudSwitch T="bool" @bind-Value="destination.Enabled" Color="Color.Primary" Label="Enabled" Disabled="destination.IsDefault" />
+                    <MudSwitch T="bool" @bind-Value="destination.AllowUserSelection" Color="Color.Primary" Label="Users may select" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Disabled="destination.IsDefault"
+                                   OnClick="@(() => RemoveDestination(idx))" />
+                </div>
+                @if (destination.IsDefault)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Primary">Default @ContentKindLabel(destination.ContentKind) destination</MudText>
+                }
+            </MudPaper>
+        }
+        <MudText Typo="Typo.caption" Color="Color.Tertiary">
+            For a NAS/network drive, configure it under <b>Admin → Library → Network Drives</b> and select a path
+            beneath <code>/mnt/nas/&lt;name&gt;</code>. Plex section IDs are carried with jobs for targeted scan and
+            verification support; leaving them empty keeps the current media-type refresh behavior.
         </MudText>
     </MudPaper>
 
@@ -70,16 +119,14 @@ else
             <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddRule">Add rule</MudButton>
         </div>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-2">
-            Optional: route content to an alternate library root (e.g. a separate Anime or 4K library) instead of the
-            default path above. First matching rule wins; unmatched content falls back to the roots/templates above.
+            Route content to a named destination (e.g. Anime Movies, Anime TV, Kids TV, or 4K Movies).
+            First matching rule wins; unmatched content uses the default destination for its content type.
             Anime is detected automatically (Animation genre + Japanese language/origin) — no manual tagging needed.
         </MudText>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-2">
-            <b>Root path</b> must be a path the downloader can write to. To send content to a NAS/network drive,
-            add it under <b>Admin → Library → Network Drives</b> — it's then mounted at <code>/mnt/nas/&lt;name&gt;</code>, so
-            use a path under that here (e.g. <code>/mnt/nas/media/Anime/Movies</code>). The folder icon browses
-            connected drives too. (Hardlink transfer can't cross onto a network drive — it falls back to copy
-            automatically for those targets.)
+            Rules can only target an enabled destination with the same scanner shape. Anime Movies and Anime TV
+            therefore need separate Movie and TV destinations. Hardlink transfer falls back to copy when the
+            selected destination is on another filesystem.
         </MudText>
         @if (_p.LibraryRootRules.Count == 0)
         {
@@ -103,8 +150,12 @@ else
                         <MudSelectItem T="bool?" Value="false">Non-anime only</MudSelectItem>
                     </MudSelect>
                     <MudTextField @bind-Value="rule.GenreContains" Label="Genre contains (optional)" Placeholder="e.g. Documentary" dense="true" Variant="Variant.Outlined" Style="min-width:200px;" />
-                    <MudTextField @bind-Value="rule.RootPath" Label="Root path" Placeholder="/mnt/network-library/Anime/Movies" dense="true" Variant="Variant.Outlined" Style="min-width:300px;"
-                                  Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="@(() => BrowseRule(idx))" />
+                    <MudSelect T="string" @bind-Value="rule.DestinationId" Label="Destination" dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
+                        @foreach (var destination in RuleDestinations(rule))
+                        {
+                            <MudSelectItem T="string" Value="@destination.Id">@destination.Name</MudSelectItem>
+                        }
+                    </MudSelect>
                     <MudTextField @bind-Value="rule.TemplateOverride" Label="Template override (optional)" dense="true" Variant="Variant.Outlined" Style="min-width:280px;" />
                     <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="@(() => RemoveRule(idx))" />
                 </div>
@@ -160,30 +211,21 @@ else
     private async Task Save()
     {
         if (_p is null) return;
+        if (!LibraryRouting.TryNormalizeAndValidate(_p, out var error))
+        {
+            await Toast.ShowErrorAsync(error ?? "Library destination settings are invalid.");
+            return;
+        }
         if (await Prefs.UpdateAsync(_p)) await Toast.ShowSuccessAsync("Library organization settings saved.");
         else await Toast.ShowErrorAsync("Save failed.");
     }
 
     private void Refresh() => StateHasChanged();
 
-    private async Task BrowseMoviePath()
+    private async Task BrowseDestination(int index)
     {
-        if (await BrowseAsync(_p!.MoviePath) is { } chosen) _p!.MoviePath = chosen;
-    }
-
-    private async Task BrowseTvPath()
-    {
-        if (await BrowseAsync(_p!.TvPath) is { } chosen) _p!.TvPath = chosen;
-    }
-
-    private async Task BrowseMusicPath()
-    {
-        if (await BrowseAsync(_p!.MusicPath) is { } chosen) _p!.MusicPath = chosen;
-    }
-
-    private async Task BrowseRule(int index)
-    {
-        if (await BrowseAsync(_p!.LibraryRootRules[index].RootPath) is { } chosen) _p!.LibraryRootRules[index].RootPath = chosen;
+        var destination = _p!.LibraryDestinations[index];
+        if (await BrowseAsync(destination.RootPath) is { } chosen) destination.RootPath = chosen;
     }
 
     private async Task<string?> BrowseAsync(string? startPath)
@@ -197,7 +239,11 @@ else
 
     private void AddRule()
     {
-        _p!.LibraryRootRules.Add(new LibraryRootRuleDto { MediaType = MediaType.TvShow });
+        _p!.LibraryRootRules.Add(new LibraryRootRuleDto
+        {
+            MediaType = MediaType.TvShow,
+            DestinationId = EnabledDestinations(LibraryContentKind.Series).FirstOrDefault()?.Id
+        });
         StateHasChanged();
     }
 
@@ -206,6 +252,75 @@ else
         _p!.LibraryRootRules.RemoveAt(index);
         StateHasChanged();
     }
+
+    private void AddDestination()
+    {
+        _p!.LibraryDestinations.Add(new LibraryDestinationDto
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = "New TV library",
+            ContentKind = LibraryContentKind.Series,
+            Enabled = true
+        });
+        StateHasChanged();
+    }
+
+    private async Task RemoveDestination(int index)
+    {
+        var destination = _p!.LibraryDestinations[index];
+        if (destination.IsDefault)
+        {
+            await Toast.ShowErrorAsync("Choose another default before removing this destination.");
+            return;
+        }
+        if (_p.LibraryRootRules.Any(r => string.Equals(r.DestinationId, destination.Id, StringComparison.OrdinalIgnoreCase)))
+        {
+            await Toast.ShowErrorAsync("Remove or retarget routing rules that use this destination first.");
+            return;
+        }
+        _p.LibraryDestinations.RemoveAt(index);
+        StateHasChanged();
+    }
+
+    private IEnumerable<LibraryDestinationDto> EnabledDestinations(LibraryContentKind kind) =>
+        _p!.LibraryDestinations.Where(d => d.ContentKind == kind && d.Enabled);
+
+    private IEnumerable<LibraryDestinationDto> RuleDestinations(LibraryRootRuleDto rule) =>
+        EnabledDestinations(LibraryRouting.ContentKind(rule.MediaType));
+
+    private string DefaultMovieId
+    {
+        get => DefaultId(LibraryContentKind.Movie);
+        set => SetDefault(LibraryContentKind.Movie, value);
+    }
+
+    private string DefaultSeriesId
+    {
+        get => DefaultId(LibraryContentKind.Series);
+        set => SetDefault(LibraryContentKind.Series, value);
+    }
+
+    private string DefaultMusicId
+    {
+        get => DefaultId(LibraryContentKind.Music);
+        set => SetDefault(LibraryContentKind.Music, value);
+    }
+
+    private string DefaultId(LibraryContentKind kind) =>
+        _p?.LibraryDestinations.FirstOrDefault(d => d.ContentKind == kind && d.IsDefault)?.Id ?? string.Empty;
+
+    private void SetDefault(LibraryContentKind kind, string id)
+    {
+        foreach (var destination in _p!.LibraryDestinations.Where(d => d.ContentKind == kind))
+            destination.IsDefault = destination.Id.Equals(id, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ContentKindLabel(LibraryContentKind kind) => kind switch
+    {
+        LibraryContentKind.Movie => "movie",
+        LibraryContentKind.Series => "TV",
+        _ => "music"
+    };
 
     // Preview-only rendering — a simplified stand-in for the downloader's real NamingTemplateEngine,
     // just to show admins roughly what a sample title would resolve to before saving.

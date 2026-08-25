@@ -220,7 +220,8 @@
 
     private async Task Request(MediaCardDto media)
     {
-        var result = await MediaRequestService.RequestMediaAsync(media.ResolveMediaRef());
+        var result = await MediaRequestService.RequestMediaAsync(media.ResolveMediaRef(),
+            isAnimeIntent: media.IsAnime);
         if (result.Success)
         {
             media.RequestStatus = result.NewStatus ?? RequestStatus.Pending;

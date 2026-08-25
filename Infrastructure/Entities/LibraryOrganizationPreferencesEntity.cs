@@ -28,6 +28,10 @@ public class LibraryOrganizationPreferencesEntity
     /// <summary>Serialized List&lt;LibraryRootRuleDto&gt;. Null/empty = no routing rules.</summary>
     public string? LibraryRootRulesJson { get; set; }
 
+    /// <summary>Serialized List&lt;LibraryDestinationDto&gt;. Null on databases that still use only the three
+    /// legacy root paths; the service upgrades those paths into deterministic named defaults.</summary>
+    public string? LibraryDestinationsJson { get; set; }
+
     public TransferMode TransferMode { get; set; } = TransferMode.Hardlink;
     public bool ExtractArchives { get; set; } = true;
     public bool SplitSeasonPacks { get; set; } = true;

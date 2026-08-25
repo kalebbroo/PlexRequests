@@ -101,6 +101,8 @@ public sealed class ApprovedRequestRepairJob(
             ? MediaRef.FromExternal(request.ExternalSource ?? "external", request.ExternalId,
                 request.MediaType, request.RequestScopeKind.ToMediaKind(request.MediaType))
             : MediaRef.FromTmdb(request.MediaId, request.MediaType),
-        RequestScopeKind = request.RequestScopeKind
+        RequestScopeKind = request.RequestScopeKind,
+        IsAnime = request.IsAnime,
+        LibraryDestinationId = request.LibraryDestinationId
     };
 }

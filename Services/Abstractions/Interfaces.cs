@@ -13,16 +13,22 @@ public interface IMediaRequestService
     Task<MediaRequestDto?> GetRequestByIdAsync(int id);
     // qualityProfileId is the requester's chosen profile; null means "decide for me" (assignment rules, then
     // the default). It's validated against what that user may actually select before it's honoured.
-    Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null);
-    Task<MediaRequestResult> RequestMediaAsync(MediaRef mediaRef, MediaRequestScope? scope = null, int? qualityProfileId = null);
-    Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons, int? qualityProfileId = null);
+    Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null,
+        bool? isAnimeIntent = null);
+    Task<MediaRequestResult> RequestMediaAsync(MediaRef mediaRef, MediaRequestScope? scope = null,
+        int? qualityProfileId = null, bool? isAnimeIntent = null);
+    Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons,
+        int? qualityProfileId = null, bool? isAnimeIntent = null);
     /// <summary>
     /// Request specific episodes. <paramref name="asUpgrade"/> asks for a better copy of episodes already on
     /// Plex: it bypasses the already-available guard and force-enqueues, which is the only way to ask for a
     /// higher-quality version of something you already have.
     /// </summary>
-    Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes, int? qualityProfileId = null, bool asUpgrade = false);
-    Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null);
+    Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType,
+        List<(int season, int episode)> episodes, int? qualityProfileId = null, bool asUpgrade = false,
+        bool? isAnimeIntent = null);
+    Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null,
+        bool? isAnimeIntent = null);
     Task<MediaRequestResult> CreateMonitoredEpisodesAsync(int anchorRequestId, IReadOnlyList<(int season, int episode)> episodes);
     // Compatibility entry point retained while music callers move to RequestMediaAsync(MediaRef, scope).
     Task<MediaRequestResult> RequestMusicAsync(string externalId, string source, string title, string? posterUrl = null);

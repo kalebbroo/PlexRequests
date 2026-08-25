@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Api;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 
@@ -22,6 +23,7 @@ public class EffectiveLibraryOrganization
     public string SeasonPackFolderTemplate { get; init; } = "{ShowTitle} ({Year})/Season {Season:00}";
     public string MusicTrackTemplate { get; init; } = "{Artist}/{Album} ({Year})/{Disc:00}-{Track:00} - {TrackTitle}{Ext}";
     public IReadOnlyList<LibraryRootRuleDto> RootRules { get; init; } = Array.Empty<LibraryRootRuleDto>();
+    public IReadOnlyList<LibraryDestinationDto> Destinations { get; init; } = Array.Empty<LibraryDestinationDto>();
     public TransferMode TransferMode { get; init; } = TransferMode.Hardlink;
     public bool ExtractArchives { get; init; } = true;
     public bool SplitSeasonPacks { get; init; } = true;
@@ -33,41 +35,45 @@ public class EffectiveLibraryOrganization
     public double MinAudioFileSizeMb { get; init; } = 1;
     public bool DeleteSourceAfterImport { get; init; } = false;
 
-    /// <summary>Resolve the effective (root, template) for a job: first matching routing rule wins,
-    /// else the media type's default root/template.</summary>
+    /// <summary>Resolve a legacy job that predates immutable destination snapshots.</summary>
     public (string Root, string Template) Resolve(MediaType mediaType, Quality? quality, IReadOnlyList<string>? genres, bool isAnime, bool isEpisode)
     {
-        foreach (var rule in RootRules)
+        var dto = new LibraryOrganizationPreferencesDto
         {
-            if (rule.MediaType != mediaType) continue;
-            if (rule.MinQuality is Quality mq && quality is Quality q && (int)q < (int)mq) continue;
-            if (rule.RequireAnime is bool requireAnime && requireAnime != isAnime) continue;
-            if (!string.IsNullOrWhiteSpace(rule.GenreContains) &&
-                (genres is null || !genres.Any(g => g.Contains(rule.GenreContains, StringComparison.OrdinalIgnoreCase))))
-                continue;
-
-            var template = !string.IsNullOrWhiteSpace(rule.TemplateOverride)
-                ? rule.TemplateOverride!
-                : DefaultTemplate(mediaType, isEpisode);
-            return (rule.RootPath, template);
-        }
-
-        var defaultRoot = mediaType switch
-        {
-            MediaType.Movie => MoviePath,
-            MediaType.Music => MusicPath,
-            _ => TvPath
+            MoviePath = MoviePath,
+            TvPath = TvPath,
+            MusicPath = MusicPath,
+            MovieTemplate = MovieTemplate,
+            TvEpisodeTemplate = TvEpisodeTemplate,
+            SeasonPackFolderTemplate = SeasonPackFolderTemplate,
+            MusicTrackTemplate = MusicTrackTemplate,
+            LibraryRootRules = RootRules.ToList(),
+            LibraryDestinations = Destinations.ToList()
         };
-        return (defaultRoot, DefaultTemplate(mediaType, isEpisode));
+        var resolved = LibraryRouting.Resolve(dto, mediaType, quality, genres, isAnime, isEpisode);
+        return (resolved.RootPath, resolved.Template);
     }
 
-    private string DefaultTemplate(MediaType mediaType, bool isEpisode) =>
-        mediaType switch
+    /// <summary>Use the job's immutable destination when present; validate its scanner shape before any
+    /// path is built. Falling back is only for jobs created by an older web version.</summary>
+    public (string Root, string Template) Resolve(FulfillmentJobDto job, MediaType mediaType, bool isEpisode)
+    {
+        if (job.LibraryDestination is not null)
         {
-            MediaType.Movie => MovieTemplate,
-            MediaType.Music => MusicTrackTemplate,
-            _ => isEpisode ? TvEpisodeTemplate : SeasonPackFolderTemplate
-        };
+            var expected = LibraryRouting.ContentKind(mediaType);
+            if (job.LibraryDestination.ContentKind != expected)
+                throw new InvalidOperationException(
+                    $"Library destination '{job.LibraryDestination.Name}' accepts {job.LibraryDestination.ContentKind}, not {expected}.");
+            if (string.IsNullOrWhiteSpace(job.LibraryDestination.RootPath)
+                || string.IsNullOrWhiteSpace(job.LibraryDestination.Template))
+                throw new InvalidOperationException("The job's library destination snapshot is incomplete.");
+            var template = !isEpisode && expected == LibraryContentKind.Series
+                ? job.LibraryDestination.SeasonPackFolderTemplate ?? job.LibraryDestination.Template
+                : job.LibraryDestination.Template;
+            return (job.LibraryDestination.RootPath, template);
+        }
+        return Resolve(mediaType, job.Quality, job.Genres, job.IsAnime, isEpisode);
+    }
 }
 
 public interface ILibraryOrganizationProvider
@@ -149,7 +155,8 @@ public class LibraryOrganizationPreferencesProvider : ILibraryOrganizationProvid
         TvEpisodeTemplate = d.TvEpisodeTemplate,
         SeasonPackFolderTemplate = d.SeasonPackFolderTemplate,
         MusicTrackTemplate = d.MusicTrackTemplate,
-        RootRules = d.LibraryRootRules,
+        RootRules = d.LibraryRootRules ?? new List<LibraryRootRuleDto>(),
+        Destinations = d.LibraryDestinations ?? new List<LibraryDestinationDto>(),
         TransferMode = d.TransferMode,
         ExtractArchives = d.ExtractArchives,
         SplitSeasonPacks = d.SplitSeasonPacks,

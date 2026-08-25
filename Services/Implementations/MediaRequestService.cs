@@ -5,6 +5,7 @@ using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequestsHosted.Services.Implementations;
@@ -269,7 +270,8 @@ public class MediaRequestService(
             .AnyAsync(w => w.MediaId == mediaId && w.MediaType == mediaType);
     }
 
-    public async Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null)
+    public async Task<MediaRequestResult> RequestMediaAsync(int mediaId, MediaType mediaType,
+        int? qualityProfileId = null, bool? isAnimeIntent = null)
     {
         var actor = await GetActorAsync();
         if (string.IsNullOrWhiteSpace(actor.Username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
@@ -280,11 +282,11 @@ public class MediaRequestService(
         var monitor = mediaType is MediaType.TvShow or MediaType.Anime
                       && (await _downloadPreferences.GetAsync()).AutoMonitorEntireSeriesRequests;
         return await CreateRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaId, mediaType,
-            monitored: monitor, qualityProfileId: qualityProfileId);
+            monitored: monitor, qualityProfileId: qualityProfileId, isAnimeIntent: isAnimeIntent);
     }
 
     public async Task<MediaRequestResult> RequestMediaAsync(MediaRef mediaRef, MediaRequestScope? scope = null,
-        int? qualityProfileId = null)
+        int? qualityProfileId = null, bool? isAnimeIntent = null)
     {
         if (!mediaRef.IsValid) return new MediaRequestResult { Success = false, ErrorMessage = "Invalid media identity" };
         var module = _mediaModules.Get(mediaRef.MediaType);
@@ -300,30 +302,38 @@ public class MediaRequestService(
         if (requestedScope == RequestScopeKind.Episodes && scope?.Episodes.Count is not > 0)
             return new MediaRequestResult { Success = false, ErrorMessage = "No episodes selected" };
         if (!mediaRef.TryGetTmdbId(out var tmdbId))
-            return await CreateProviderRequestForCurrentUserAsync(mediaRef, requestedScope, qualityProfileId);
+            return await CreateProviderRequestForCurrentUserAsync(mediaRef, requestedScope, qualityProfileId,
+                isAnimeIntent: isAnimeIntent);
 
         return requestedScope switch
         {
-            RequestScopeKind.Seasons => await RequestSeasonsAsync(tmdbId, mediaRef.MediaType, scope!.Seasons, qualityProfileId),
+            RequestScopeKind.Seasons => await RequestSeasonsAsync(tmdbId, mediaRef.MediaType, scope!.Seasons,
+                qualityProfileId, isAnimeIntent),
             RequestScopeKind.Episodes => await RequestEpisodesAsync(tmdbId, mediaRef.MediaType,
-                scope!.Episodes.Select(x => (x.Season, x.Episode)).ToList(), qualityProfileId),
-            RequestScopeKind.Series => await RequestSeriesAsync(tmdbId, mediaRef.MediaType, qualityProfileId),
-            _ => await RequestMediaAsync(tmdbId, mediaRef.MediaType, qualityProfileId)
+                scope!.Episodes.Select(x => (x.Season, x.Episode)).ToList(), qualityProfileId,
+                isAnimeIntent: isAnimeIntent),
+            RequestScopeKind.Series => await RequestSeriesAsync(tmdbId, mediaRef.MediaType, qualityProfileId,
+                isAnimeIntent),
+            _ => await RequestMediaAsync(tmdbId, mediaRef.MediaType, qualityProfileId, isAnimeIntent)
         };
     }
 
     /// <summary>Request specific seasons of a TV show (empty list ⇒ the whole series).</summary>
-    public async Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons, int? qualityProfileId = null)
+    public async Task<MediaRequestResult> RequestSeasonsAsync(int mediaId, MediaType mediaType, List<int> seasons,
+        int? qualityProfileId = null, bool? isAnimeIntent = null)
     {
         var actor = await GetActorAsync();
         if (string.IsNullOrWhiteSpace(actor.Username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
         if (actor.UserId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
         var allSeasons = seasons is not { Count: > 0 };
-        return await CreateRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaId, mediaType, allSeasons, seasons, qualityProfileId: qualityProfileId);
+        return await CreateRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaId,
+            mediaType, allSeasons, seasons, qualityProfileId: qualityProfileId, isAnimeIntent: isAnimeIntent);
     }
 
     /// <summary>Request specific episodes of a TV show, e.g. [(1,1),(1,2),(2,5)].</summary>
-    public async Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType, List<(int season, int episode)> episodes, int? qualityProfileId = null, bool asUpgrade = false)
+    public async Task<MediaRequestResult> RequestEpisodesAsync(int mediaId, MediaType mediaType,
+        List<(int season, int episode)> episodes, int? qualityProfileId = null, bool asUpgrade = false,
+        bool? isAnimeIntent = null)
     {
         var actor = await GetActorAsync();
         if (string.IsNullOrWhiteSpace(actor.Username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
@@ -335,7 +345,9 @@ public class MediaRequestService(
                 return new MediaRequestResult { Success = false, ErrorMessage = "Your account is not allowed to request this media type." };
             return await QueueEpisodeUpgradeAsync(actor.UserId.Value, mediaId, mediaType, episodes, qualityProfileId);
         }
-        return await CreateRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaId, mediaType, allSeasons: false, seasons: null, episodes: episodes, qualityProfileId: qualityProfileId, asUpgrade: asUpgrade);
+        return await CreateRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaId,
+            mediaType, allSeasons: false, seasons: null, episodes: episodes, qualityProfileId: qualityProfileId,
+            asUpgrade: asUpgrade, isAnimeIntent: isAnimeIntent);
     }
 
     /// <summary>
@@ -573,13 +585,16 @@ public class MediaRequestService(
     /// <summary>Request an entire series. Whether it's then monitored for new episodes as they air is an
     /// admin-configured default (<see cref="DownloadPreferencesDto.AutoMonitorEntireSeriesRequests"/>), not
     /// a per-request user choice.</summary>
-    public async Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType, int? qualityProfileId = null)
+    public async Task<MediaRequestResult> RequestSeriesAsync(int mediaId, MediaType mediaType,
+        int? qualityProfileId = null, bool? isAnimeIntent = null)
     {
         var actor = await GetActorAsync();
         if (string.IsNullOrWhiteSpace(actor.Username)) return new MediaRequestResult { Success = false, ErrorMessage = "Not authenticated" };
         if (actor.UserId is null) return new MediaRequestResult { Success = false, ErrorMessage = "User not found" };
         var monitor = (await _downloadPreferences.GetAsync()).AutoMonitorEntireSeriesRequests;
-        return await CreateRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaId, mediaType, allSeasons: true, seasons: null, episodes: null, monitored: monitor, qualityProfileId: qualityProfileId);
+        return await CreateRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaId,
+            mediaType, allSeasons: true, seasons: null, episodes: null, monitored: monitor,
+            qualityProfileId: qualityProfileId, isAnimeIntent: isAnimeIntent);
     }
 
     /// <summary>Create a request on behalf of an explicit user (used by the Discord bridge, which has no cookie session).</summary>
@@ -647,7 +662,8 @@ public class MediaRequestService(
         RequestScopeKind requestScope,
         int? qualityProfileId,
         string? fallbackTitle = null,
-        string? fallbackPoster = null)
+        string? fallbackPoster = null,
+        bool? isAnimeIntent = null)
     {
         var identity = await _mediaIdentities.ResolveAsync(mediaRef);
         var duplicate = await _db.MediaRequests.AnyAsync(r =>
@@ -668,6 +684,9 @@ public class MediaRequestService(
         MediaDetailDto? detail = null;
         try { detail = await _metadata.GetDetailsAsync(mediaRef); }
         catch { /* durable identity still makes a later metadata/enqueue retry possible */ }
+        var resolvedAnime = detail is null
+            ? isAnimeIntent
+            : isAnimeIntent == true || AnimeClassifier.IsAnime(detail.Genres, detail.Languages, detail.Countries);
 
         if (mediaRef.MediaType == MediaType.Music && detail is not null)
         {
@@ -691,6 +710,7 @@ public class MediaRequestService(
             MediaId = 0,
             MediaType = mediaRef.MediaType,
             RequestScopeKind = requestScope,
+            IsAnime = resolvedAnime,
             ExternalId = mediaRef.Id,
             ExternalSource = mediaRef.Provider,
             Title = string.IsNullOrWhiteSpace(detail?.Title)
@@ -735,7 +755,8 @@ public class MediaRequestService(
         RequestScopeKind requestScope,
         int? qualityProfileId,
         string? fallbackTitle = null,
-        string? fallbackPoster = null)
+        string? fallbackPoster = null,
+        bool? isAnimeIntent = null)
     {
         var actor = await GetActorAsync();
         if (string.IsNullOrWhiteSpace(actor.Username))
@@ -743,10 +764,13 @@ public class MediaRequestService(
         return actor.UserId is null
             ? new MediaRequestResult { Success = false, ErrorMessage = "User not found" }
             : await CreateProviderRequestCoreAsync(actor.UserId.Value, actor.Username, actor.IsAdmin, mediaRef,
-                requestScope, qualityProfileId, fallbackTitle, fallbackPoster);
+                requestScope, qualityProfileId, fallbackTitle, fallbackPoster, isAnimeIntent);
     }
 
-    private async Task<MediaRequestResult> CreateRequestCoreAsync(int userId, string username, bool isAdmin, int mediaId, MediaType mediaType, bool allSeasons = true, List<int>? seasons = null, List<(int season, int episode)>? episodes = null, bool monitored = false, int? qualityProfileId = null, bool asUpgrade = false)
+    private async Task<MediaRequestResult> CreateRequestCoreAsync(int userId, string username, bool isAdmin,
+        int mediaId, MediaType mediaType, bool allSeasons = true, List<int>? seasons = null,
+        List<(int season, int episode)>? episodes = null, bool monitored = false,
+        int? qualityProfileId = null, bool asUpgrade = false, bool? isAnimeIntent = null)
     {
         // Per-user duplicate check: a second user requesting the same title joins it rather than
         // being blocked. Only the same user re-requesting an already-covered scope is rejected — for TV
@@ -777,6 +801,7 @@ public class MediaRequestService(
         // profile below needs them. Best-effort, same as the title — a metadata outage falls back to the
         // rules that don't need genres, not to no profile at all.
         List<string>? genres = null;
+        bool? resolvedAnime = isAnimeIntent;
         try
         {
             var details = await _metadata.GetDetailsAsync(mediaId, mediaType);
@@ -785,6 +810,8 @@ public class MediaRequestService(
                 title = string.IsNullOrWhiteSpace(details.Title) ? title : details.Title;
                 poster = details.PosterUrl;
                 genres = details.Genres;
+                resolvedAnime = isAnimeIntent == true
+                                || AnimeClassifier.IsAnime(details.Genres, details.Languages, details.Countries);
             }
         }
         catch { /* best-effort */ }
@@ -801,6 +828,7 @@ public class MediaRequestService(
             MediaId = mediaId,
             MediaType = mediaType,
             RequestScopeKind = requestScope,
+            IsAnime = resolvedAnime,
             Title = title,
             PosterUrl = poster,
             Status = autoApprove ? RequestStatus.Approved : RequestStatus.Pending,
@@ -1023,6 +1051,8 @@ public class MediaRequestService(
                 r.MediaType, r.RequestScopeKind.ToMediaKind(r.MediaType))
             : PlexRequestsHosted.Shared.Media.MediaRef.FromTmdb(r.MediaId, r.MediaType),
         RequestScopeKind = r.RequestScopeKind,
+        IsAnime = r.IsAnime,
+        LibraryDestinationId = r.LibraryDestinationId,
         RequestedByUserId = r.RequestedByUserId ?? 0,
         RequestedByUsername = r.RequestedBy ?? string.Empty,
         RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv)

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 
 namespace PlexRequestsHosted.Services.Implementations;
@@ -24,6 +25,7 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
 
     public async Task<bool> UpdateAsync(LibraryOrganizationPreferencesDto prefs)
     {
+        if (!LibraryRouting.TryNormalizeAndValidate(prefs, out _)) return false;
         var e = await GetOrCreateAsync();
         e.MoviePath = prefs.MoviePath?.Trim() ?? string.Empty;
         e.TvPath = prefs.TvPath?.Trim() ?? string.Empty;
@@ -33,6 +35,7 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
         e.SeasonPackFolderTemplate = string.IsNullOrWhiteSpace(prefs.SeasonPackFolderTemplate) ? e.SeasonPackFolderTemplate : prefs.SeasonPackFolderTemplate.Trim();
         e.MusicTrackTemplate = string.IsNullOrWhiteSpace(prefs.MusicTrackTemplate) ? e.MusicTrackTemplate : prefs.MusicTrackTemplate.Trim();
         e.LibraryRootRulesJson = prefs.LibraryRootRules is { Count: > 0 } ? JsonSerializer.Serialize(prefs.LibraryRootRules) : null;
+        e.LibraryDestinationsJson = JsonSerializer.Serialize(prefs.LibraryDestinations);
         e.TransferMode = prefs.TransferMode;
         e.ExtractArchives = prefs.ExtractArchives;
         e.SplitSeasonPacks = prefs.SplitSeasonPacks;
@@ -58,8 +61,10 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
         return e;
     }
 
-    private static LibraryOrganizationPreferencesDto ToDto(LibraryOrganizationPreferencesEntity e) => new()
+    private static LibraryOrganizationPreferencesDto ToDto(LibraryOrganizationPreferencesEntity e)
     {
+        var dto = new LibraryOrganizationPreferencesDto
+        {
         MoviePath = e.MoviePath,
         TvPath = e.TvPath,
         MusicPath = e.MusicPath,
@@ -70,6 +75,9 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
         LibraryRootRules = string.IsNullOrWhiteSpace(e.LibraryRootRulesJson)
             ? new List<LibraryRootRuleDto>()
             : (JsonSerializer.Deserialize<List<LibraryRootRuleDto>>(e.LibraryRootRulesJson) ?? new List<LibraryRootRuleDto>()),
+        LibraryDestinations = string.IsNullOrWhiteSpace(e.LibraryDestinationsJson)
+            ? new List<LibraryDestinationDto>()
+            : (JsonSerializer.Deserialize<List<LibraryDestinationDto>>(e.LibraryDestinationsJson) ?? new List<LibraryDestinationDto>()),
         TransferMode = e.TransferMode,
         ExtractArchives = e.ExtractArchives,
         SplitSeasonPacks = e.SplitSeasonPacks,
@@ -80,5 +88,8 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
         MinVideoFileSizeMb = e.MinVideoFileSizeMb,
         MinAudioFileSizeMb = e.MinAudioFileSizeMb,
         DeleteSourceAfterImport = e.DeleteSourceAfterImport
-    };
+        };
+        LibraryRouting.EnsureDestinationModel(dto);
+        return dto;
+    }
 }
