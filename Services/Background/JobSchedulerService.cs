@@ -41,6 +41,7 @@ public class JobSchedulerService(
         (JobType.MissingSearch, "Search for missing releases", 30 * 60, 30 * 60),
         (JobType.QualityUpgradeScan, "Scan for quality upgrades", 6 * 60 * 60, 30 * 60),
         (JobType.StaleClaimReaper, "Recover stalled downloads", 5 * 60, 10 * 60),
+        (JobType.ApprovedRequestRepair, "Repair missing approval jobs", 5 * 60, 10 * 60),
         (JobType.AvailabilityRefresh, "Rescan the Plex library index", 30 * 60, 60 * 60),
         (JobType.AvailabilityReconcile, "Match requests against Plex", 30 * 60, 30 * 60),
         // Replaces the old blind 6-hourly series poll. CalendarRefresh keeps air dates current; AirDateMonitor

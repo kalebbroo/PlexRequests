@@ -184,7 +184,11 @@ public enum JobType
 
     /// <summary>Re-derive quality tier and custom-format score for already-imported files from their stored
     /// release names, so a scoring-rule change applies to the existing library and not just to new grabs.</summary>
-    RecomputeFormatScores = 9
+    RecomputeFormatScores = 9,
+
+    /// <summary>Repair Approved requests whose approval was persisted but whose first fulfillment job was
+    /// never created, for example after an enqueue failure or an interrupted legacy deployment.</summary>
+    ApprovedRequestRepair = 10
 }
 
 /// <summary>
