@@ -243,9 +243,11 @@ abandoned after a fixed attempt count, and a challenge pauses only the affected 
 The optional release catalog is disabled by default. Set `CATALOG_ENABLED=true` on both web and downloader
 to start shadow ingestion into a separate, rebuildable `catalog.db`. Shadow mode does not change which
 release is downloaded; it exists so ingestion coverage can be measured safely before catalog-first matching.
-After validating coverage in **Admin → Downloads → Indexers**, set `CATALOG_USE_FOR_SEARCH=true` to let
-catalog candidates supplement live searches. Set `CATALOG_USE_FOR_MONITORING=true` only after that to make
-new-episode monitoring use the local catalog instead of issuing a live search per wanted show.
+After validating coverage in **Admin → Downloads → Indexers**, enable **Use catalog in fulfillment
+searches** there to let catalog candidates supplement live searches. Enable catalog monitoring only after
+that to make new-episode monitoring use the local catalog instead of issuing a live search per wanted show.
+The equivalent `CATALOG_USE_FOR_SEARCH` and `CATALOG_USE_FOR_MONITORING` variables remain offline defaults
+until the downloader has fetched the persisted admin settings.
 The **Search catalog** action on that admin page can inspect hydrated releases by title, media type, and
 indexer while still in shadow mode; it never exposes magnets or infohashes to the browser UI.
 

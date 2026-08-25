@@ -2,6 +2,7 @@
 @inject PlexRequestsHosted.Services.Abstractions.IIndexerAdminService Indexers
 @inject PlexRequestsHosted.Services.Abstractions.IReleaseCatalogService Catalog
 @inject PlexRequestsHosted.Services.Abstractions.IFirefoxCaptureService FirefoxCapture
+@inject PlexRequestsHosted.Services.Implementations.IDownloadPreferencesService DownloadPreferences
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 @inject IDialogService Dialogs
 
@@ -46,6 +47,21 @@
                 <MudChip T="string" Size="Size.Small">@FormatBytes(_catalog.DatabaseSizeBytes)</MudChip>
             </div>
         </div>
+        <MudDivider Class="my-3" />
+        <div class="d-flex flex-wrap gap-4 align-items-center">
+            <MudSwitch T="bool" Value="@(_preferences?.UseCatalogForSearch ?? false)"
+                       ValueChanged="SetCatalogSearch" Color="Color.Primary"
+                       Disabled="@(_savingCatalog || _catalog.Releases == 0)"
+                       Label="Use catalog in fulfillment searches" />
+            <MudSwitch T="bool" Value="@(_preferences?.UseCatalogForMonitoring ?? false)"
+                       ValueChanged="SetCatalogMonitoring" Color="Color.Primary"
+                       Disabled="@(_savingCatalog || _catalog.Releases == 0)"
+                       Label="Use catalog for new-episode monitoring" />
+        </div>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary">
+            Search assist supplements live indexers. Catalog monitoring avoids repeated upstream searches and
+            falls back to them if the local catalog API is unavailable. Changes reach the downloader within two minutes.
+        </MudText>
         @if (_catalog.Sources.Any(source => source.Sightings > 0))
         {
             <MudStack Row="true" Spacing="1" Class="mt-3 flex-wrap">
@@ -234,6 +250,8 @@ else
     private bool _loading = true;
     private List<IndexerSettingDto> _items = new();
     private CatalogStatsDto? _catalog;
+    private DownloadPreferencesDto? _preferences;
+    private bool _savingCatalog;
     private Dictionary<int, FirefoxCaptureAdminStatusDto> _firefoxStatuses = new();
 
     protected override async Task OnInitializedAsync() => await Load();
@@ -245,6 +263,9 @@ else
         {
             _items = await Indexers.GetAllAsync();
             _catalog = await Catalog.GetStatsAsync(CancellationToken.None);
+            _preferences = await DownloadPreferences.GetAsync();
+            _catalog.UseForSearch = _preferences.UseCatalogForSearch;
+            _catalog.UseForMonitoring = _preferences.UseCatalogForMonitoring;
             _firefoxStatuses = new();
             foreach (var firefoxIndexer in _items.Where(IsFirefoxIndexer))
                 _firefoxStatuses[firefoxIndexer.Id] = await FirefoxCapture.GetAdminStatusAsync(
@@ -260,6 +281,35 @@ else
             await Toast.ShowSuccessAsync($"{row.Name} {(enabled ? "enabled" : "disabled")}.");
         else
             await Toast.ShowErrorAsync("Update failed.");
+    }
+
+    private Task SetCatalogSearch(bool enabled) => SaveCatalogMode(enabled, null);
+    private Task SetCatalogMonitoring(bool enabled) => SaveCatalogMode(null, enabled);
+
+    private async Task SaveCatalogMode(bool? search, bool? monitoring)
+    {
+        if (_preferences is null || _catalog is null) return;
+        var oldSearch = _preferences.UseCatalogForSearch;
+        var oldMonitoring = _preferences.UseCatalogForMonitoring;
+        if (search is bool searchValue) _preferences.UseCatalogForSearch = searchValue;
+        if (monitoring is bool monitoringValue) _preferences.UseCatalogForMonitoring = monitoringValue;
+        _savingCatalog = true;
+        try
+        {
+            if (await DownloadPreferences.UpdateAsync(_preferences))
+            {
+                _catalog.UseForSearch = _preferences.UseCatalogForSearch;
+                _catalog.UseForMonitoring = _preferences.UseCatalogForMonitoring;
+                await Toast.ShowSuccessAsync("Catalog rollout mode updated.");
+            }
+            else
+            {
+                _preferences.UseCatalogForSearch = oldSearch;
+                _preferences.UseCatalogForMonitoring = oldMonitoring;
+                await Toast.ShowErrorAsync("Catalog mode update failed.");
+            }
+        }
+        finally { _savingCatalog = false; StateHasChanged(); }
     }
 
     private static string Relative(DateTime? utc)

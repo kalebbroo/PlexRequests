@@ -50,6 +50,7 @@ public class IndexerClient(
     IndexerRuntimeCircuit runtimeCircuit,
     IMemoryCache cache,
     IPlexRequestsApiClient api,
+    IDownloadPreferencesProvider downloadPreferences,
     IOptions<CatalogWorkerOptions> catalogOptions,
     ILogger<IndexerClient> logger) : IIndexerClient
 {
@@ -66,7 +67,8 @@ public class IndexerClient(
         IndexerSearchPurpose purpose = IndexerSearchPurpose.Automatic)
     {
         await settings.RefreshAsync(ct); // pick up admin changes (throttled internally)
-        var catalogCandidates = catalogOptions.Value.Enabled && catalogOptions.Value.UseForSearch
+        await downloadPreferences.RefreshAsync(ct);
+        var catalogCandidates = catalogOptions.Value.Enabled && downloadPreferences.Current.UseCatalogForSearch
             ? await SearchCatalogWithBudgetAsync(job, ct)
             : Array.Empty<ReleaseCandidate>();
         var directResults = await SearchAcquisitionSourcesAsync(job, ct);

@@ -26,6 +26,8 @@ public class EffectiveDownloadPreferences
     public bool EnforceQualityFloor { get; init; } = true;
     public double MinTitleSimilarity { get; init; } = 0.5;
     public int RelaxFloorAfterEmptySearches { get; init; } = 3;
+    public bool UseCatalogForSearch { get; init; }
+    public bool UseCatalogForMonitoring { get; init; }
 
     /// <summary>Project back to the DTO shape the shared evaluator consumes.</summary>
     public DownloadPreferencesDto ToDto() => new()
@@ -42,7 +44,9 @@ public class EffectiveDownloadPreferences
         PreferHigherQualitySource = PreferHigherQualitySource,
         EnforceQualityFloor = EnforceQualityFloor,
         MinTitleSimilarity = MinTitleSimilarity,
-        RelaxFloorAfterEmptySearches = RelaxFloorAfterEmptySearches
+        RelaxFloorAfterEmptySearches = RelaxFloorAfterEmptySearches,
+        UseCatalogForSearch = UseCatalogForSearch,
+        UseCatalogForMonitoring = UseCatalogForMonitoring
     };
 }
 
@@ -68,6 +72,7 @@ public class DownloadPreferencesProvider : IDownloadPreferencesProvider
     public DownloadPreferencesProvider(
         IServiceProvider services,
         IOptions<QualityOptions> quality,
+        IOptions<CatalogWorkerOptions> catalog,
         ILogger<DownloadPreferencesProvider> logger)
     {
         _services = services;
@@ -78,7 +83,9 @@ public class DownloadPreferencesProvider : IDownloadPreferencesProvider
         {
             MinSeeders = q.MinSeeders,
             MaxSizeGb = q.MaxSizeGb,
-            PreferredGroups = q.PreferredGroups ?? Array.Empty<string>()
+            PreferredGroups = q.PreferredGroups ?? Array.Empty<string>(),
+            UseCatalogForSearch = catalog.Value.UseForSearch,
+            UseCatalogForMonitoring = catalog.Value.UseForMonitoring
         };
         _current = _fallback;
     }
@@ -133,6 +140,8 @@ public class DownloadPreferencesProvider : IDownloadPreferencesProvider
         PreferHigherQualitySource = d.PreferHigherQualitySource,
         EnforceQualityFloor = d.EnforceQualityFloor,
         MinTitleSimilarity = d.MinTitleSimilarity,
-        RelaxFloorAfterEmptySearches = d.RelaxFloorAfterEmptySearches
+        RelaxFloorAfterEmptySearches = d.RelaxFloorAfterEmptySearches,
+        UseCatalogForSearch = d.UseCatalogForSearch,
+        UseCatalogForMonitoring = d.UseCatalogForMonitoring
     };
 }

@@ -38,6 +38,8 @@ public class DownloadPreferencesService(AppDbContext db) : IDownloadPreferencesS
         e.MinTitleSimilarity = Math.Clamp(prefs.MinTitleSimilarity, 0, 1);
         e.RelaxFloorAfterEmptySearches = Math.Clamp(prefs.RelaxFloorAfterEmptySearches, 1, 20);
         e.AutoMonitorEntireSeriesRequests = prefs.AutoMonitorEntireSeriesRequests;
+        e.UseCatalogForSearch = prefs.UseCatalogForSearch;
+        e.UseCatalogForMonitoring = prefs.UseCatalogForMonitoring;
         e.UpdatedAt = DateTime.UtcNow;
         return await db.SaveChangesAsync() > 0;
     }
@@ -67,6 +69,8 @@ public class DownloadPreferencesService(AppDbContext db) : IDownloadPreferencesS
         EnforceQualityFloor = e.EnforceQualityFloor,
         MinTitleSimilarity = e.MinTitleSimilarity,
         RelaxFloorAfterEmptySearches = e.RelaxFloorAfterEmptySearches,
-        AutoMonitorEntireSeriesRequests = e.AutoMonitorEntireSeriesRequests
+        AutoMonitorEntireSeriesRequests = e.AutoMonitorEntireSeriesRequests,
+        UseCatalogForSearch = e.UseCatalogForSearch,
+        UseCatalogForMonitoring = e.UseCatalogForMonitoring
     };
 }

@@ -144,9 +144,11 @@ separate. The batch receipt, items, and cursor commit in one transaction, so res
 duplicate rows or advance past uncommitted data. Structured adapters currently cover Nyaa RSS, EZTV, YTS,
 and every configured Torznab endpoint; successful results from other providers are written through as well.
 
-Set `CATALOG_ENABLED=true` to enable shadow ingestion. Then stage `CATALOG_USE_FOR_SEARCH=true` and finally
-`CATALOG_USE_FOR_MONITORING=true`; the latter replaces the per-wanted-show upstream sweep with local catalog
-matching while retaining live fulfillment fallback.
+Set `CATALOG_ENABLED=true` to enable shadow ingestion. Then stage **Use catalog in fulfillment searches**
+and finally **Use catalog for new-episode monitoring** from Admin → Downloads → Indexers; the latter
+replaces the per-wanted-show upstream sweep with local catalog matching while retaining live fulfillment
+fallback. The matching environment variables remain offline defaults until the downloader fetches the
+persisted admin settings.
 
 To add more trackers, add another focused `IIndexerProvider`; discovery, parsing, health, and acquisition
 remain behind the same native modular boundaries.
@@ -259,8 +261,8 @@ requests page shows these states; a failed request is re-approvable to re-enqueu
 | `FULFILLMENT_ENABLED` | `Fulfillment:Enabled` | Enqueue jobs on approve. Off ⇒ approvals are manual-only. |
 | `FULFILLMENT_API_KEY` | `Fulfillment:ApiKey` | Shared secret for the worker API. Unset ⇒ endpoints reject all calls. |
 | `CATALOG_ENABLED` | `Catalog:Enabled` | Create and ingest the optional rebuildable release catalog. |
-| `CATALOG_USE_FOR_SEARCH` | `Catalog:UseForSearch` | Include catalog candidates in normal search. |
-| `CATALOG_USE_FOR_MONITORING` | `Catalog:UseForMonitoring` | Use catalog-only wanted-episode monitoring, with live fallback if the catalog API is unavailable. |
+| `CATALOG_USE_FOR_SEARCH` | `Catalog:UseForSearch` | Offline default for catalog search assist; normally changed from the admin Indexers panel. |
+| `CATALOG_USE_FOR_MONITORING` | `Catalog:UseForMonitoring` | Offline default for catalog wanted-episode monitoring; normally changed from the admin Indexers panel. |
 | `CATALOG_POLL_MINUTES` | `Catalog:PollIntervalMinutes` | Structured feed cadence; default 15 minutes. |
 
 Both are mapped from `.env` by `LoadDotEnvFrom` in `Program.cs`.
