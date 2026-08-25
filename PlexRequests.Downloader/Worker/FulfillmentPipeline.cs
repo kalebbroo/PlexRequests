@@ -159,7 +159,7 @@ public class FulfillmentPipeline(
                 Resolution = t.Resolution
             }).ToList(), ct);
 
-            var record = new ActiveJobRecord(job, transfers);
+            var record = new ActiveJobRecord(job, transfers, plan.CoversAllTargets);
             await stateStore.SaveAsync(record, ct);
             await SafeReportProgress(job.Id, 0);
             await MonitorAndImportAllAsync(record, ct);
@@ -480,7 +480,7 @@ public class FulfillmentPipeline(
                 await SafeMarkUpgradeExhausted(job.Id);
             }
         }
-        else if (importedCount == items.Count)
+        else if (importedCount == items.Count && record.CoversAllTargets)
         {
             if (job.MediaType != MediaType.Music || await WaitForPlexVerificationAsync(job, ct))
                 await SafeMarkFulfilled(job.MediaRequestId);
@@ -490,8 +490,10 @@ public class FulfillmentPipeline(
         }
         else if (importedCount > 0)
         {
-            await SafePartiallyComplete(job.MediaRequestId,
-                $"{importedCount}/{items.Count} downloads imported; the rest failed: {string.Join("; ", failReasons.Distinct())}");
+            var reason = !record.CoversAllTargets && importedCount == items.Count
+                ? $"{importedCount} available download(s) imported, but no release covered every requested season/episode"
+                : $"{importedCount}/{items.Count} downloads imported; the rest failed: {string.Join("; ", failReasons.Distinct())}";
+            await SafePartiallyComplete(job.MediaRequestId, reason);
         }
         else
         {

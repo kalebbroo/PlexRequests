@@ -26,9 +26,12 @@ public record DownloadPlanItem(ReleaseCandidate Candidate, int? Season, int? Epi
 /// <summary>
 /// The downloader's decision for a job: which releases to add. May be a single release (movie / pack)
 /// or several (season packs, or individual episodes when no acceptable pack exists).
+/// <paramref name="CoversAllTargets"/> is false when the planner deliberately downloads the subset that
+/// is currently findable. The pipeline must preserve that distinction instead of reporting the whole
+/// request Available merely because every selected transfer imported successfully.
 /// </summary>
-public record DownloadPlan(DownloadPlanKind Kind, IReadOnlyList<DownloadPlanItem> Items)
+public record DownloadPlan(DownloadPlanKind Kind, IReadOnlyList<DownloadPlanItem> Items, bool CoversAllTargets = true)
 {
-    public static readonly DownloadPlan None = new(DownloadPlanKind.None, Array.Empty<DownloadPlanItem>());
+    public static readonly DownloadPlan None = new(DownloadPlanKind.None, Array.Empty<DownloadPlanItem>(), false);
     public bool IsEmpty => Kind == DownloadPlanKind.None || Items.Count == 0;
 }

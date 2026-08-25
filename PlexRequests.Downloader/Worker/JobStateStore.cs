@@ -26,7 +26,9 @@ public record TransferItem(
 /// name is deliberately retained so deployments resume existing active-jobs.json files without data loss.</summary>
 public record ActiveJobRecord(
     FulfillmentJobDto Job,
-    [property: System.Text.Json.Serialization.JsonPropertyName("Torrents")] List<TransferItem> Transfers);
+    [property: System.Text.Json.Serialization.JsonPropertyName("Torrents")] List<TransferItem> Transfers,
+    // Optional/defaulted so active-jobs.json written by older releases resumes as a complete plan.
+    bool CoversAllTargets = true);
 
 public interface IJobStateStore
 {
