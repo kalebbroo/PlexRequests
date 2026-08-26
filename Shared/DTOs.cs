@@ -1131,6 +1131,10 @@ public class IndexerConfigDto
         _ => string.IsNullOrWhiteSpace(TvCategoriesCsv) ? "5000" : TvCategoriesCsv
     };
 
+    /// <summary>Anime is a durable classification layered over its real Movie/TV scanner shape. Indexer
+    /// capabilities and categories must use that classification rather than the Plex library shape.</summary>
+    public string CategoriesFor(FulfillmentJobDto job) => CategoriesFor(SearchMediaType(job));
+
     public bool Supports(MediaType mediaType) => MediaCapabilities.Count > 0
         ? MediaCapabilities.Any(x => x.MediaType == mediaType && x.Enabled)
         : mediaType switch
@@ -1140,6 +1144,13 @@ public class IndexerConfigDto
             MediaType.Anime => SupportsAnime,
             _ => false
         };
+
+    public bool Supports(FulfillmentJobDto job) => Supports(SearchMediaType(job));
+
+    public static MediaType SearchMediaType(FulfillmentJobDto job) =>
+        job.MediaType != MediaType.Music && (job.IsAnime || job.MediaType == MediaType.Anime)
+            ? MediaType.Anime
+            : job.MediaType;
 
     private static string DefaultCategories(MediaType mediaType) => mediaType switch
     {
@@ -1670,6 +1681,9 @@ public class SearchTaskDto
     public SearchTaskKind Kind { get; set; }
     public int? MediaRequestId { get; set; }
     public MediaType MediaType { get; set; }
+    /// <summary>Durable catalog classification. Anime keeps its Movie/TV media shape but searches anime
+    /// indexer capabilities and categories.</summary>
+    public bool IsAnime { get; set; }
     public int MediaId { get; set; }
     public MediaRef? Media { get; set; }
     public RequestScopeKind RequestScope { get; set; }
