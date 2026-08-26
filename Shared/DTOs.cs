@@ -335,6 +335,11 @@ public class MediaIssueDto
     public string? Detail { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
+    public string? EpisodeTitle { get; set; }
+    public int? ImportedFileId { get; set; }
+    public string? AffectedFilePath { get; set; }
+    public string? AffectedReleaseName { get; set; }
+    public int AffectedResolution { get; set; }
     public bool ReplacementRequested { get; set; }
     public int? ReplacementJobId { get; set; }
     public FulfillmentStatus? ReplacementJobStatus { get; set; }
@@ -358,6 +363,7 @@ public sealed class MediaIssueReportDto
     public string? Detail { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
+    public string? EpisodeTitle { get; set; }
     public bool RequestReplacement { get; set; }
 }
 
@@ -603,6 +609,7 @@ public sealed class AdminUserIssueActivityDto
     public string? Detail { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
+    public string? EpisodeTitle { get; set; }
     public IssueStatus Status { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ResolvedAt { get; set; }

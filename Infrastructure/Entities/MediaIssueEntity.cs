@@ -30,6 +30,11 @@ public class MediaIssueEntity
 
     public int? SeasonNumber { get; set; }      // optional, TV
     public int? EpisodeNumber { get; set; }     // optional, TV
+    /// <summary>Episode title as shown when the user submitted the report.</summary>
+    [MaxLength(512)] public string? EpisodeTitle { get; set; }
+    /// <summary>The exact imported video audit row present when the episode was reported. Nullable for
+    /// legacy/external files, but when present replacement approval must prefer this file over a later copy.</summary>
+    public int? ImportedFileId { get; set; }
 
     public bool ReplacementRequested { get; set; }
     public int? ReplacementJobId { get; set; }

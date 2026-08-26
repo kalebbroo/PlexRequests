@@ -387,7 +387,8 @@
 .episode-list { padding: 4px 10px 10px 40px; display: flex; flex-direction: column; gap: 2px; border-top: 1px solid rgba(255,255,255,0.06); }
 .episode-loading { display: flex; align-items: center; gap: 8px; padding: 8px 0; color: var(--text-secondary); }
 .episode-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 0.9rem; }
-.episode-row.is-available { opacity: 0.55; }
+.episode-row.is-available { background: color-mix(in srgb, var(--mud-palette-success) 5%, transparent); }
+.episode-report { margin-left: auto; }
 .episode-num { font-weight: 700; color: var(--text-secondary); min-width: 34px; }
 .episode-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .season-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
