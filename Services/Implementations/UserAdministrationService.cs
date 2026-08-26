@@ -117,7 +117,8 @@ public sealed class UserAdministrationService(
             {
                 Id = x.Id, Title = x.Title, PosterUrl = x.PosterUrl, MediaType = x.MediaType,
                 Reason = x.Reason, Detail = x.Detail, SeasonNumber = x.SeasonNumber,
-                EpisodeNumber = x.EpisodeNumber, Status = x.Status, CreatedAt = x.CreatedAt,
+                EpisodeNumber = x.EpisodeNumber, EpisodeTitle = x.EpisodeTitle,
+                Status = x.Status, CreatedAt = x.CreatedAt,
                 ResolvedAt = x.ResolvedAt
             }).ToListAsync();
 

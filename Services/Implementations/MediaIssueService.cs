@@ -37,6 +37,7 @@ public class MediaIssueService(
     private static readonly HashSet<string> Reasons = new(StringComparer.OrdinalIgnoreCase)
     {
         "Wrong episode", "Bad quality", "Playback broken", "Wrong version",
+        "Audio / language problem", "Audio out of sync", "Subtitle problem",
         "Missing subtitles", "Corrupt / incomplete", "Other"
     };
 
@@ -58,6 +59,8 @@ public class MediaIssueService(
         if ((report.SeasonNumber is not null || report.EpisodeNumber is not null) &&
             (report.SeasonNumber is null or < 0 || report.EpisodeNumber is null or < 1))
             return Failed("Choose a valid season and episode.");
+        if (!isTv && (report.SeasonNumber is not null || report.EpisodeNumber is not null))
+            return Failed("Episode details can only be attached to a TV or anime report.");
 
         var userId = currentUserId;
         var duplicate = await db.MediaIssues.AsNoTracking().AnyAsync(i =>
@@ -66,6 +69,21 @@ public class MediaIssueService(
             i.EpisodeNumber == report.EpisodeNumber &&
             (i.Status == IssueStatus.Open || i.Status == IssueStatus.ReplacementQueued));
         if (duplicate) return Failed("You already have an active report for this item.");
+
+        int? importedFileId = null;
+        if (isTv && report.SeasonNumber is int reportedSeason && report.EpisodeNumber is int reportedEpisode)
+        {
+            importedFileId = await (from file in db.ImportedFiles.AsNoTracking()
+                join job in db.FulfillmentJobs.AsNoTracking() on file.FulfillmentJobId equals job.Id
+                join request in db.MediaRequests.AsNoTracking() on job.MediaRequestId equals request.Id
+                where request.MediaId == report.MediaId && request.MediaType == report.MediaType
+                      && file.FileType == "video"
+                      && ((file.SeasonNumber == reportedSeason && file.EpisodeNumber == reportedEpisode)
+                          || file.EpisodeCoverage.Any(c => c.SeasonNumber == reportedSeason
+                                                          && c.EpisodeNumber == reportedEpisode))
+                orderby file.ImportedAt descending, file.Id descending
+                select (int?)file.Id).FirstOrDefaultAsync();
+        }
 
         var submittedReason = report.Reason?.Trim() ?? string.Empty;
         var reason = Reasons.Contains(submittedReason) ? submittedReason : "Other";
@@ -81,6 +99,8 @@ public class MediaIssueService(
             Detail = Trim(report.Detail, 2048),
             SeasonNumber = report.SeasonNumber,
             EpisodeNumber = report.EpisodeNumber,
+            EpisodeTitle = Trim(report.EpisodeTitle, 512),
+            ImportedFileId = importedFileId,
             ReplacementRequested = report.RequestReplacement,
             Status = IssueStatus.Open,
             CreatedAt = DateTime.UtcNow
@@ -110,8 +130,13 @@ public class MediaIssueService(
         var jobIds = issues.Where(i => i.ReplacementJobId.HasValue).Select(i => i.ReplacementJobId!.Value).ToList();
         var jobs = await db.FulfillmentJobs.AsNoTracking().Where(j => jobIds.Contains(j.Id))
             .ToDictionaryAsync(j => j.Id);
+        var fileIds = issues.Where(i => i.ImportedFileId.HasValue).Select(i => i.ImportedFileId!.Value)
+            .Distinct().ToList();
+        var files = await db.ImportedFiles.AsNoTracking().Where(f => fileIds.Contains(f.Id))
+            .ToDictionaryAsync(f => f.Id);
         return issues.Select(i => ToDto(i,
-            i.ReplacementJobId is int id && jobs.TryGetValue(id, out var job) ? job : null)).ToList();
+            i.ReplacementJobId is int id && jobs.TryGetValue(id, out var job) ? job : null,
+            i.ImportedFileId is int fileId && files.TryGetValue(fileId, out var file) ? file : null)).ToList();
     }
 
     public async Task<int> GetOpenCountAsync()
@@ -164,7 +189,9 @@ public class MediaIssueService(
             orderby file.ImportedAt descending
             select new { File = file, Job = job, Request = reqEntity }).ToListAsync();
 
-        var current = candidates.FirstOrDefault();
+        var current = issue.ImportedFileId is int importedFileId
+            ? candidates.FirstOrDefault(x => x.File.Id == importedFileId) ?? candidates.FirstOrDefault()
+            : candidates.FirstOrDefault();
         if (current is null)
             return Failed(isTv
                 ? "The existing episode has no import audit record, so Plex Requests cannot safely identify and replace its file."
@@ -183,6 +210,12 @@ public class MediaIssueService(
                  || f.EpisodeCoverage.Any(c => c.SeasonNumber == issue.SeasonNumber
                                                && c.EpisodeNumber == issue.EpisodeNumber)))
             .ToListAsync();
+        // Pin approval to the physical video that existed when the user reported the problem. Include its
+        // companion audit rows, but never sweep up a newer copy of the same logical episode that arrived
+        // after the report was submitted.
+        oldFiles = oldFiles.Where(f => f.Id == current.File.Id ||
+            (f.FileType != "video" && f.FulfillmentJobId == current.File.FulfillmentJobId &&
+             string.Equals(f.TransferId, current.File.TransferId, StringComparison.OrdinalIgnoreCase))).ToList();
         var replacePaths = oldFiles.Select(f => f.DestinationPath).Where(p => !string.IsNullOrWhiteSpace(p))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (!oldFiles.Any(f => f.FileType == "video") || replacePaths.Count == 0)
@@ -267,7 +300,8 @@ public class MediaIssueService(
     }
     private static MediaIssueResultDto Failed(string message) => new() { ErrorMessage = message };
 
-    private static MediaIssueDto ToDto(MediaIssueEntity issue, FulfillmentJobEntity? job) => new()
+    private static MediaIssueDto ToDto(MediaIssueEntity issue, FulfillmentJobEntity? job,
+        ImportedFileEntity? file) => new()
     {
         Id = issue.Id,
         MediaId = issue.MediaId,
@@ -280,6 +314,11 @@ public class MediaIssueService(
         Detail = issue.Detail,
         SeasonNumber = issue.SeasonNumber,
         EpisodeNumber = issue.EpisodeNumber,
+        EpisodeTitle = issue.EpisodeTitle,
+        ImportedFileId = issue.ImportedFileId,
+        AffectedFilePath = file?.DestinationPath,
+        AffectedReleaseName = file?.ReleaseName,
+        AffectedResolution = file?.ResolutionHeight ?? 0,
         ReplacementRequested = issue.ReplacementRequested,
         ReplacementJobId = issue.ReplacementJobId,
         ReplacementJobStatus = job?.Status,

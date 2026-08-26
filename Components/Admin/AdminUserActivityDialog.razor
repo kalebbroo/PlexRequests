@@ -172,7 +172,12 @@
         return item.Scope switch { RequestScopeKind.Series => "Full series", RequestScopeKind.ArtistCatalog => "Artist catalog", _ => item.Scope.ToString() };
     }
     private static string IssueTarget(AdminUserIssueActivityDto issue) => issue.SeasonNumber is int season
-        ? issue.EpisodeNumber is int episode ? $"S{season}E{episode}" : $"Season {season}" : MediaLabel(issue.MediaType);
+        ? issue.EpisodeNumber is int episode
+            ? $"S{season:D2}E{episode:D2}{EpisodeTitleSuffix(issue)}"
+            : $"Season {season}"
+        : MediaLabel(issue.MediaType);
+    private static string EpisodeTitleSuffix(AdminUserIssueActivityDto issue) =>
+        string.IsNullOrWhiteSpace(issue.EpisodeTitle) ? string.Empty : $" · {issue.EpisodeTitle}";
     private static string RequestLabel(RequestStatus status) => status == RequestStatus.PartiallyAvailable ? "Partial" : status.ToString();
     private static Color RequestColor(RequestStatus status) => status switch
     {

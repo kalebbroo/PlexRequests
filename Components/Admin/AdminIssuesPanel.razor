@@ -40,7 +40,11 @@ else
                     <div>
                         <div class="fw-bold">@context.Title</div>
                         <div class="text-muted small">@(context.MediaType == MediaType.Movie ? "Movie" : context.MediaType == MediaType.TvShow ? "TV" : context.MediaType.ToString())
-                            @if (context.SeasonNumber is int s) { <text> · S@(s)@(context.EpisodeNumber is int e ? $"E{e}" : "")</text> }</div>
+                            @if (context.SeasonNumber is int s) { <text> · S@(s.ToString("D2"))@(context.EpisodeNumber is int e ? $"E{e:D2}" : "")</text> }</div>
+                        @if (!string.IsNullOrWhiteSpace(context.EpisodeTitle))
+                        {
+                            <div class="small">@context.EpisodeTitle</div>
+                        }
                         @if (context.ReplacementRequested)
                         {
                             <div class="small text-primary">Replacement requested</div>
@@ -49,7 +53,19 @@ else
                 </div>
             </MudTd>
             <MudTd>@context.Reason</MudTd>
-            <MudTd Style="max-width:280px;white-space:normal;">@context.Detail</MudTd>
+            <MudTd Style="max-width:320px;white-space:normal;">
+                @context.Detail
+                @if (!string.IsNullOrWhiteSpace(context.AffectedReleaseName))
+                {
+                    <div class="small text-muted mt-1"><strong>Reported copy:</strong> @context.AffectedReleaseName@(context.AffectedResolution > 0 ? $" · {context.AffectedResolution}p" : "")</div>
+                }
+                @if (!string.IsNullOrWhiteSpace(context.AffectedFilePath))
+                {
+                    <MudTooltip Text="@context.AffectedFilePath">
+                        <div class="small text-muted text-truncate" style="max-width:300px;">@context.AffectedFilePath</div>
+                    </MudTooltip>
+                }
+            </MudTd>
             <MudTd>@context.ReportedBy</MudTd>
             <MudTd>@context.CreatedAt.ToLocalTime().ToString("g")</MudTd>
             <MudTd>

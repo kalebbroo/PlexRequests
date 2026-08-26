@@ -142,7 +142,7 @@ else
                                 {
                                     <span class="meta-item">@_media.Year</span>
                                 }
-                                @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow && _media.TotalSeasons > 0)
+                                @if ((_media.MediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime) && _media.TotalSeasons > 0)
                                 {
                                     <span class="meta-item">@_media.TotalSeasons Seasons</span>
                                 }
@@ -235,7 +235,7 @@ else
                                 <div class="genres">
                                     <span class="label">Genres:</span>
                                     @{
-                                        var genreTypeLabel = _media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow ? "tvshow" : "movie";
+                                        var genreTypeLabel = (_media.MediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime) ? "tvshow" : "movie";
                                     }
                                     @foreach (String genre in _media.Genres)
                                     {
@@ -337,13 +337,13 @@ else
                             </div>
                         </MudTabPanel>
                     }
-                    @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
+                    @if (_media.MediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime)
                     {
                         <MudTabPanel Text="Seasons">
                             <div class="episodes-section">
                                 @if (_media.Seasons?.Any() == true)
                                 {
-                                    <MudText Typo="Typo.body2" Class="mb-3">Expand a season to pick individual episodes, tick whole seasons, or request the entire series. Titles already on Plex are greyed out.</MudText>
+                                    <MudText Typo="Typo.body2" Class="mb-3">Expand a season to request or upgrade individual episodes. Episodes already on Plex include a report button for file-specific playback, audio, subtitle, or content problems.</MudText>
                                     <div class="seasons-list">
                                         @foreach (var season in _media.Seasons.Where(s => s.SeasonNumber > 0).OrderBy(s => s.SeasonNumber))
                                         {
@@ -408,6 +408,15 @@ else
                                                                     else if (!ep.HasAired)
                                                                     {
                                                                         <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Text">@(ep.AirDate?.ToString("MMM d, yyyy") ?? "Unaired")</MudChip>
+                                                                    }
+                                                                    @if (ep.IsAvailable)
+                                                                    {
+                                                                        <MudTooltip Text="@($"Report a problem with S{ep.SeasonNumber:D2}E{ep.EpisodeNumber:D2}")">
+                                                                            <MudIconButton Icon="@Icons.Material.Filled.ReportProblem" Size="Size.Small"
+                                                                                           Color="Color.Warning" Class="episode-report"
+                                                                                           OnClick="@(() => OpenEpisodeReport(ep))"
+                                                                                           aria-label="@($"Report a problem with episode {ep.EpisodeNumber}")" />
+                                                                        </MudTooltip>
                                                                     }
                                                                 </div>
                                                             }
@@ -555,30 +564,52 @@ else
             <MudSelectItem Value="@("Bad quality")">Bad quality / low resolution</MudSelectItem>
             <MudSelectItem Value="@("Playback broken")">Won't play / playback error</MudSelectItem>
             <MudSelectItem Value="@("Wrong version")">Wrong version / cut / language</MudSelectItem>
-            <MudSelectItem Value="@("Missing subtitles")">Missing or bad subtitles</MudSelectItem>
+            <MudSelectItem Value="@("Audio / language problem")">Wrong or missing audio / language</MudSelectItem>
+            <MudSelectItem Value="@("Audio out of sync")">Audio is out of sync</MudSelectItem>
+            <MudSelectItem Value="@("Subtitle problem")">Missing, wrong, or out-of-sync subtitles</MudSelectItem>
             <MudSelectItem Value="@("Corrupt / incomplete")">Corrupt or incomplete file</MudSelectItem>
             <MudSelectItem Value="@("Other")">Other</MudSelectItem>
         </MudSelect>
         @if (_media?.MediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime)
         {
-            <div class="d-flex gap-3 mb-3" style="flex-wrap:wrap;">
-                <MudSelect T="int?" Value="_reportSeason" ValueChanged="ReportSeasonChanged" Label="Season"
-                           Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:140px;flex:1;">
-                    @foreach (var season in _media.Seasons?.Where(s => s.SeasonNumber > 0) ?? Enumerable.Empty<PlexRequestsHosted.Shared.DTOs.SeasonDto>())
-                    {
-                        <MudSelectItem T="int?" Value="@((int?)season.SeasonNumber)">Season @season.SeasonNumber</MudSelectItem>
-                    }
-                </MudSelect>
-                <MudSelect T="int?" @bind-Value="_reportEpisode" Label="Episode" Disabled="@(_reportSeason is null || _reportEpisodesLoading)"
-                           Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:180px;flex:1;">
-                    @foreach (var episode in _reportEpisodes)
-                    {
-                        <MudSelectItem T="int?" Value="@((int?)episode.EpisodeNumber)">
-                            E@(episode.EpisodeNumber)@(string.IsNullOrWhiteSpace(episode.Name) ? "" : $" · {episode.Name}")@(episode.IsAvailable ? " · On Plex" : "")
-                        </MudSelectItem>
-                    }
-                </MudSelect>
-            </div>
+            @if (_media.Seasons?.Any() == true)
+            {
+                <div class="d-flex gap-3 mb-3" style="flex-wrap:wrap;">
+                    <MudSelect T="int?" Value="_reportSeason" ValueChanged="ReportSeasonChanged" Label="Season"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:140px;flex:1;">
+                        @foreach (var season in _media.Seasons.Where(s => s.SeasonNumber >= 0))
+                        {
+                            <MudSelectItem T="int?" Value="@((int?)season.SeasonNumber)">@(season.SeasonNumber == 0 ? "Specials" : $"Season {season.SeasonNumber}")</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect T="int?" Value="_reportEpisode" ValueChanged="ReportEpisodeChanged" Label="Episode" Disabled="@(_reportSeason is null || _reportEpisodesLoading)"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:180px;flex:1;">
+                        @foreach (var episode in _reportEpisodes)
+                        {
+                            <MudSelectItem T="int?" Value="@((int?)episode.EpisodeNumber)">
+                                E@(episode.EpisodeNumber)@(string.IsNullOrWhiteSpace(episode.Name) ? "" : $" · {episode.Name}")@(episode.IsAvailable ? " · On Plex" : "")
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+                </div>
+            }
+            else
+            {
+                <MudAlert Severity="Severity.Warning" dense="true" Class="mb-2">Episode metadata is unavailable. Enter the Plex season and episode numbers shown in the player.</MudAlert>
+                <div class="d-flex gap-3 mb-3" style="flex-wrap:wrap;">
+                    <MudNumericField T="int?" @bind-Value="_reportSeason" Label="Season" Min="0"
+                                     Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:140px;flex:1;" />
+                    <MudNumericField T="int?" Value="_reportEpisode" ValueChanged="ReportEpisodeChanged" Label="Episode" Min="1"
+                                     Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:140px;flex:1;" />
+                </div>
+            }
+            @if (_reportSeason is int reportSeason && _reportEpisode is int reportEpisode)
+            {
+                <MudAlert Severity="Severity.Info" dense="true" Class="mb-3">
+                    Reporting S@(reportSeason.ToString("D2"))E@(reportEpisode.ToString("D2"))@(!string.IsNullOrWhiteSpace(_reportEpisodeTitle) ? $" · {_reportEpisodeTitle}" : "").
+                    The report will be tied to this episode's current imported file when an audit record is available.
+                </MudAlert>
+            }
         }
         <MudTextField @bind-Value="_reportDetail" Label="What did you see? (optional)" HelperText="Example: this plays episode 8 again instead of episode 9."
                       Variant="Variant.Outlined" Lines="3" Class="mb-3" />
@@ -708,7 +739,7 @@ else
                 if (version != _loadVersion) return;
                 _inWatchlist = inWatchlist;
             }
-            if (media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.TvShow)
+            if (media.MediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime)
             {
                 var availableSeasons = (await PlexApiService.GetAvailableSeasonsAsync(media.Id)).ToHashSet();
                 if (version != _loadVersion) return;
@@ -840,6 +871,7 @@ else
     private bool _reporterIsAdmin;
     private int? _reportSeason;
     private int? _reportEpisode;
+    private string? _reportEpisodeTitle;
     private bool _reportEpisodesLoading;
     private List<PlexRequestsHosted.Shared.DTOs.EpisodeDto> _reportEpisodes = new();
 
@@ -855,7 +887,21 @@ else
         _reportReplacement = true;
         _reportSeason = null;
         _reportEpisode = null;
+        _reportEpisodeTitle = null;
         _reportEpisodes.Clear();
+        _reporterIsAdmin = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User.IsInRole("Admin");
+        _reportOpen = true;
+    }
+
+    private async Task OpenEpisodeReport(PlexRequestsHosted.Shared.DTOs.EpisodeDto episode)
+    {
+        _reportReason = "Playback broken";
+        _reportDetail = string.Empty;
+        _reportReplacement = true;
+        _reportSeason = episode.SeasonNumber;
+        _reportEpisode = episode.EpisodeNumber;
+        _reportEpisodeTitle = episode.Name;
+        _reportEpisodes = _episodes.GetValueOrDefault(episode.SeasonNumber)?.ToList() ?? [episode];
         _reporterIsAdmin = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User.IsInRole("Admin");
         _reportOpen = true;
     }
@@ -864,11 +910,20 @@ else
     {
         _reportSeason = season;
         _reportEpisode = null;
+        _reportEpisodeTitle = null;
         _reportEpisodes.Clear();
         if (_media is null || season is null) return;
         _reportEpisodesLoading = true;
         try { _reportEpisodes = await PlexApiService.GetSeasonEpisodesAsync(_media.Id, season.Value); }
         finally { _reportEpisodesLoading = false; }
+    }
+
+    private void ReportEpisodeChanged(int? episode)
+    {
+        _reportEpisode = episode;
+        _reportEpisodeTitle = episode is int number
+            ? _reportEpisodes.FirstOrDefault(x => x.EpisodeNumber == number)?.Name
+            : null;
     }
 
     private async Task SubmitReport()
@@ -887,6 +942,7 @@ else
                 Detail = _reportDetail,
                 SeasonNumber = _reportSeason,
                 EpisodeNumber = _reportEpisode,
+                EpisodeTitle = _reportEpisodeTitle,
                 RequestReplacement = _reportReplacement
             });
             if (result.Success)

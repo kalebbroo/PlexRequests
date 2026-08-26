@@ -50,7 +50,7 @@ public sealed class MediaIssueReplacementTests
         db.FulfillmentJobs.Add(oldJob);
         await db.SaveChangesAsync();
         const string badHash = "0123456789abcdef0123456789abcdef01234567";
-        db.ImportedFiles.Add(new ImportedFileEntity
+        var importedFile = new ImportedFileEntity
         {
             FulfillmentJobId = oldJob.Id,
             TransferId = badHash,
@@ -68,7 +68,8 @@ public sealed class MediaIssueReplacementTests
                 new() { SeasonNumber = 9, EpisodeNumber = 9 },
                 new() { SeasonNumber = 9, EpisodeNumber = 10 }
             ]
-        });
+        };
+        db.ImportedFiles.Add(importedFile);
         await db.SaveChangesAsync();
 
         var queue = new CapturingQueue { ReplacementJobId = 42 };
@@ -88,6 +89,7 @@ public sealed class MediaIssueReplacementTests
             Detail = "Episode 8 plays instead.",
             SeasonNumber = 9,
             EpisodeNumber = 10,
+            EpisodeTitle = "Mort: Ragnarick",
             RequestReplacement = true
         });
 
@@ -96,12 +98,87 @@ public sealed class MediaIssueReplacementTests
         var issue = await db.MediaIssues.SingleAsync();
         Assert.Equal(IssueStatus.ReplacementQueued, issue.Status);
         Assert.Equal(42, issue.ReplacementJobId);
+        Assert.Equal("Mort: Ragnarick", issue.EpisodeTitle);
+        Assert.Equal(importedFile.Id, issue.ImportedFileId);
         Assert.Equal([(9, 9), (9, 10)], queue.Episodes);
         Assert.Equal(Quality.FullHD, queue.Floor);
         Assert.Contains("S09E09-E10.mkv", Assert.Single(queue.ReplacePaths));
         var blocked = await db.ReleaseBlocklist.SingleAsync();
         Assert.Equal(badHash, blocked.InfoHash);
         Assert.Equal(BlocklistReason.WrongContent, blocked.Reason);
+        var adminIssue = Assert.Single(await service.GetIssuesAsync());
+        Assert.Equal("Mort: Ragnarick", adminIssue.EpisodeTitle);
+        Assert.Equal(importedFile.DestinationPath, adminIssue.AffectedFilePath);
+        Assert.Equal(importedFile.ReleaseName, adminIssue.AffectedReleaseName);
+        Assert.Equal(1080, adminIssue.AffectedResolution);
+    }
+
+    [Fact]
+    public async Task Later_admin_approval_stays_pinned_to_the_copy_the_user_reported()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity
+        {
+            MediaId = 9001, MediaType = MediaType.Anime, RequestScopeKind = RequestScopeKind.Series,
+            Title = "Anime", Status = RequestStatus.Available
+        };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var job = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
+            RequestScopeKind = RequestScopeKind.Series, Title = request.Title, Status = FulfillmentStatus.Completed
+        };
+        db.FulfillmentJobs.Add(job);
+        await db.SaveChangesAsync();
+        var reportedCopy = new ImportedFileEntity
+        {
+            FulfillmentJobId = job.Id, TransferId = "old-source", InfoHash = "1111111111111111111111111111111111111111",
+            DestinationPath = "/library/Anime/Season 01/Anime - s01e03.mkv", SourcePath = "/downloads/old.mkv",
+            FileType = "video", SeasonNumber = 1, EpisodeNumber = 3, ReleaseName = "Anime.S01E03.OLD",
+            ImportedAt = DateTime.UtcNow.AddMinutes(-10)
+        };
+        db.ImportedFiles.Add(reportedCopy);
+        await db.SaveChangesAsync();
+
+        var memberQueue = new CapturingQueue { ReplacementJobId = 77 };
+        var memberService = new MediaIssueService(db, new TestAuthProvider(5, admin: false), memberQueue,
+            new FixedQualityProfiles(), new ReleaseBlocklistService(db, NullLogger<ReleaseBlocklistService>.Instance));
+        var report = await memberService.ReportIssueAsync(new MediaIssueReportDto
+        {
+            MediaId = request.MediaId, MediaType = request.MediaType, Title = request.Title,
+            SeasonNumber = 1, EpisodeNumber = 3, EpisodeTitle = "The Broken Episode",
+            Reason = "Audio / language problem", RequestReplacement = true
+        });
+        Assert.True(report.Success);
+        Assert.False(report.ReplacementQueued);
+
+        // A different copy arrives before an admin reviews the report. It must not silently become the
+        // replacement target for a complaint made about the older file.
+        db.ImportedFiles.Add(new ImportedFileEntity
+        {
+            FulfillmentJobId = job.Id, TransferId = "new-source", InfoHash = "2222222222222222222222222222222222222222",
+            DestinationPath = "/library/Anime/Season 01/Anime - s01e03-new.mkv", SourcePath = "/downloads/new.mkv",
+            FileType = "video", SeasonNumber = 1, EpisodeNumber = 3, ReleaseName = "Anime.S01E03.NEW",
+            ImportedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var adminQueue = new CapturingQueue { ReplacementJobId = 88 };
+        var adminService = new MediaIssueService(db, new TestAuthProvider(1, admin: true), adminQueue,
+            new FixedQualityProfiles(), new ReleaseBlocklistService(db, NullLogger<ReleaseBlocklistService>.Instance));
+        var approved = await adminService.RequestRedownloadAsync(report.IssueId!.Value);
+
+        Assert.True(approved.Success);
+        Assert.True(approved.ReplacementQueued);
+        Assert.Equal(reportedCopy.Id, (await db.MediaIssues.SingleAsync()).ImportedFileId);
+        Assert.Equal(reportedCopy.DestinationPath, Assert.Single(adminQueue.ReplacePaths));
+        var blocked = Assert.Single(await db.ReleaseBlocklist.ToListAsync());
+        Assert.Equal(reportedCopy.InfoHash, blocked.InfoHash);
     }
 
     [Fact]
