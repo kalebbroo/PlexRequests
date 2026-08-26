@@ -3,6 +3,7 @@
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
 @inject PlexRequestsHosted.Services.Implementations.ILibraryOrganizationPreferencesService Prefs
+@inject PlexRequestsHosted.Services.Implementations.ITmdbEpisodeGroupImportService EpisodeGroups
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 @inject MudBlazor.IDialogService DialogService
 
@@ -105,11 +106,14 @@ else
             var profile = _p.SeriesEpisodeOrderProfiles[idx];
             <MudPaper Class="pa-3 mb-3" Outlined="true">
                 <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
-                    <MudNumericField T="int" @bind-Value="profile.TmdbId" Label="TMDb series ID" Min="1"
+                    <MudNumericField T="int" @bind-Value="profile.TmdbId"
+                                     @bind-Value:after="@(() => SeriesIdentityEdited(profile))"
+                                     Label="TMDb series ID" Min="1"
                                      Variant="Variant.Outlined" dense="true" Style="max-width:170px;" />
                     <MudTextField @bind-Value="profile.SeriesTitle" Label="Series name" Variant="Variant.Outlined"
                                   dense="true" Style="min-width:240px;" />
-                    <MudSelect T="EpisodeOrderType" @bind-Value="profile.SourceOrder" Label="Release order"
+                    <MudSelect T="EpisodeOrderType" @bind-Value="profile.SourceOrder"
+                               @bind-Value:after="@(() => OrderEdited(profile))" Label="Release order"
                                Variant="Variant.Outlined" dense="true" Style="min-width:180px;">
                         <MudSelectItem Value="EpisodeOrderType.Absolute">Absolute</MudSelectItem>
                         <MudSelectItem Value="EpisodeOrderType.Dvd">DVD</MudSelectItem>
@@ -123,7 +127,45 @@ else
                 </div>
                 @if (profile.SourceOrder != EpisodeOrderType.Aired)
                 {
-                    <MudTextField @bind-Value="profile.MappingsText" Label="Episode translations" Lines="6"
+                    <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                                   StartIcon="@Icons.Material.Filled.CloudDownload"
+                                   Disabled="@(profile.TmdbId <= 0 || IsLoadingGroups(profile))"
+                                   OnClick="@(() => LoadEpisodeGroups(profile))">
+                            @(IsLoadingGroups(profile) ? "Loading…" : "Load TMDb groups")
+                        </MudButton>
+                        @if (_episodeGroups.TryGetValue(profile, out var groups))
+                        {
+                            <MudSelect T="string" Value="@SelectedGroup(profile)"
+                                       ValueChanged="@(value => SelectGroup(profile, value))"
+                                       Label="TMDb episode group" Variant="Variant.Outlined" dense="true"
+                                       Style="min-width:320px;">
+                                @foreach (var group in groups)
+                                {
+                                    <MudSelectItem T="string" Value="@group.Id">
+                                        @group.Name · @group.TypeName · @group.EpisodeCount episodes
+                                    </MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                                       Disabled="@(string.IsNullOrWhiteSpace(SelectedGroup(profile)) || IsImportingGroup(profile))"
+                                       OnClick="@(() => PreviewAndImportEpisodeGroup(profile))">
+                                @(IsImportingGroup(profile) ? "Importing…" : "Preview & import")
+                            </MudButton>
+                        }
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(profile.SourceEpisodeGroupName))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Primary" Class="mb-2">
+                            Imported from TMDb group <b>@profile.SourceEpisodeGroupName</b>
+                            @if (profile.ImportedAt is DateTime importedAt)
+                            {
+                                <span> on @importedAt.ToLocalTime().ToString("g")</span>
+                            }
+                        </MudText>
+                    }
+                    <MudTextField @bind-Value="profile.MappingsText" @bind-Value:after="@(() => MappingEdited(profile))"
+                                  Label="Episode translations" Lines="6"
                                   Variant="Variant.Outlined" FullWidth="true"
                                   Placeholder="A1 -> S01E01&#10;A13 -> S02E01&#10;S01E14 -> S02E02" />
                     <MudText Typo="Typo.caption" Color="Color.Tertiary">
@@ -248,6 +290,10 @@ else
 @code {
     private bool _loading = true;
     private LibraryOrganizationPreferencesDto? _p;
+    private readonly Dictionary<SeriesEpisodeOrderProfileDto, List<TmdbEpisodeGroupSummaryDto>> _episodeGroups = new();
+    private readonly Dictionary<SeriesEpisodeOrderProfileDto, string> _selectedEpisodeGroups = new();
+    private readonly HashSet<SeriesEpisodeOrderProfileDto> _groupsLoading = new();
+    private readonly HashSet<SeriesEpisodeOrderProfileDto> _groupsImporting = new();
 
     protected override async Task OnInitializedAsync() => await Load();
 
@@ -330,8 +376,106 @@ else
 
     private void RemoveEpisodeOrderProfile(int index)
     {
-        _p!.SeriesEpisodeOrderProfiles.RemoveAt(index);
+        var profile = _p!.SeriesEpisodeOrderProfiles[index];
+        _episodeGroups.Remove(profile);
+        _selectedEpisodeGroups.Remove(profile);
+        _groupsLoading.Remove(profile);
+        _groupsImporting.Remove(profile);
+        _p.SeriesEpisodeOrderProfiles.RemoveAt(index);
         StateHasChanged();
+    }
+
+    private bool IsLoadingGroups(SeriesEpisodeOrderProfileDto profile) => _groupsLoading.Contains(profile);
+    private bool IsImportingGroup(SeriesEpisodeOrderProfileDto profile) => _groupsImporting.Contains(profile);
+    private string? SelectedGroup(SeriesEpisodeOrderProfileDto profile) =>
+        _selectedEpisodeGroups.GetValueOrDefault(profile);
+    private void SelectGroup(SeriesEpisodeOrderProfileDto profile, string value) =>
+        _selectedEpisodeGroups[profile] = value;
+
+    private async Task LoadEpisodeGroups(SeriesEpisodeOrderProfileDto profile)
+    {
+        if (profile.TmdbId <= 0) return;
+        _groupsLoading.Add(profile);
+        StateHasChanged();
+        try
+        {
+            var groups = await EpisodeGroups.GetGroupsAsync(profile.TmdbId);
+            _episodeGroups[profile] = groups;
+            if (groups.Count == 0)
+                await Toast.ShowErrorAsync("TMDb has no episode groups for this series.");
+            else
+            {
+                _selectedEpisodeGroups[profile] = !string.IsNullOrWhiteSpace(profile.SourceEpisodeGroupId)
+                    && groups.Any(x => x.Id == profile.SourceEpisodeGroupId)
+                    ? profile.SourceEpisodeGroupId
+                    : groups.First().Id;
+                await Toast.ShowSuccessAsync($"Loaded {groups.Count} TMDb episode group(s).");
+            }
+        }
+        catch (Exception ex)
+        {
+            await Toast.ShowErrorAsync(ex.Message);
+        }
+        finally
+        {
+            _groupsLoading.Remove(profile);
+            StateHasChanged();
+        }
+    }
+
+    private async Task PreviewAndImportEpisodeGroup(SeriesEpisodeOrderProfileDto profile)
+    {
+        var selectedGroup = SelectedGroup(profile);
+        if (string.IsNullOrWhiteSpace(selectedGroup)) return;
+        _groupsImporting.Add(profile);
+        StateHasChanged();
+        try
+        {
+            var preview = await EpisodeGroups.BuildPreviewAsync(profile.TmdbId, profile.SeriesTitle,
+                selectedGroup);
+            var message = $"Import {preview.MappedEpisodeCount} validated episode mapping(s) from "
+                + $"\"{preview.Profile.SourceEpisodeGroupName}\"?"
+                + (preview.Warning is null ? string.Empty : $" {preview.Warning}")
+                + (string.IsNullOrWhiteSpace(profile.MappingsText)
+                    ? string.Empty
+                    : " This replaces the mappings currently in the editor; settings are not persisted until you click Save.");
+            var confirmed = await DialogService.ShowMessageBox("Import TMDb episode group", message,
+                yesText: "Import", cancelText: "Cancel");
+            if (confirmed != true) return;
+
+            profile.SourceOrder = preview.Profile.SourceOrder;
+            profile.SourceEpisodeGroupId = preview.Profile.SourceEpisodeGroupId;
+            profile.SourceEpisodeGroupName = preview.Profile.SourceEpisodeGroupName;
+            profile.ImportedAt = preview.Profile.ImportedAt;
+            profile.MappingsText = preview.Profile.MappingsText;
+            profile.Enabled = true;
+            await Toast.ShowSuccessAsync($"Imported {preview.MappedEpisodeCount} validated episode mapping(s). Click Save to persist them.");
+        }
+        catch (Exception ex)
+        {
+            await Toast.ShowErrorAsync(ex.Message);
+        }
+        finally
+        {
+            _groupsImporting.Remove(profile);
+            StateHasChanged();
+        }
+    }
+
+    private void MappingEdited(SeriesEpisodeOrderProfileDto profile)
+    {
+        profile.SourceEpisodeGroupId = null;
+        profile.SourceEpisodeGroupName = null;
+        profile.ImportedAt = null;
+    }
+
+    private void OrderEdited(SeriesEpisodeOrderProfileDto profile) => MappingEdited(profile);
+
+    private void SeriesIdentityEdited(SeriesEpisodeOrderProfileDto profile)
+    {
+        MappingEdited(profile);
+        _episodeGroups.Remove(profile);
+        _selectedEpisodeGroups.Remove(profile);
     }
 
     private void RemoveRule(int index)

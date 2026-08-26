@@ -1336,8 +1336,32 @@ public class SeriesEpisodeOrderProfileDto
     public int TmdbId { get; set; }
     public string SeriesTitle { get; set; } = string.Empty;
     public EpisodeOrderType SourceOrder { get; set; } = EpisodeOrderType.Absolute;
+    /// <summary>TMDb episode-group provenance when the map was imported rather than authored manually.</summary>
+    public string? SourceEpisodeGroupId { get; set; }
+    public string? SourceEpisodeGroupName { get; set; }
+    public DateTime? ImportedAt { get; set; }
     public string MappingsText { get; set; } = string.Empty;
     public bool Enabled { get; set; } = true;
+}
+
+public class TmdbEpisodeGroupSummaryDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public int TmdbType { get; set; }
+    public string TypeName { get; set; } = string.Empty;
+    public int EpisodeCount { get; set; }
+    public int GroupCount { get; set; }
+}
+
+public class EpisodeGroupImportPreviewDto
+{
+    public SeriesEpisodeOrderProfileDto Profile { get; set; } = new();
+    public int SourceEpisodeCount { get; set; }
+    public int MappedEpisodeCount { get; set; }
+    public int SkippedSpecialCount { get; set; }
+    public string? Warning { get; set; }
 }
 
 /// <summary>One routing rule: media type (+ optional quality/genre condition) -> an alternate library root

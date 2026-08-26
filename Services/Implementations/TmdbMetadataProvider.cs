@@ -454,6 +454,50 @@ public class TmdbMetadataProvider : IMediaMetadataProvider
         }
     }
 
+    public async Task<List<TmdbEpisodeGroupSummaryDto>> GetEpisodeGroupSummariesAsync(int showId,
+        CancellationToken ct = default)
+    {
+        var cacheKey = $"episode_groups_{showId}";
+        if (CacheGetOrNull<List<TmdbEpisodeGroupSummaryDto>>(cacheKey) is { } cached) return cached;
+        var show = await _client.GetTvShowAsync(showId, TvShowMethods.EpisodeGroups,
+            cancellationToken: ct);
+        var groups = (show?.EpisodeGroups?.Results ?? [])
+            .Where(x => !string.IsNullOrWhiteSpace(x.Id))
+            .OrderBy(x => (int)x.Type).ThenBy(x => x.Name)
+            .Select(x => new TmdbEpisodeGroupSummaryDto
+            {
+                Id = x.Id,
+                Name = x.Name ?? "Unnamed group",
+                Description = x.Description,
+                TmdbType = (int)x.Type,
+                TypeName = EpisodeGroupTypeName((int)x.Type),
+                EpisodeCount = x.EpisodeCount,
+                GroupCount = x.GroupCount
+            }).ToList();
+        return CacheSet(cacheKey, groups, DetailTtl);
+    }
+
+    public async Task<TvGroupCollection?> GetEpisodeGroupDetailsAsync(string groupId,
+        CancellationToken ct = default)
+    {
+        var cacheKey = $"episode_group_{groupId}";
+        if (CacheGetOrNull<TvGroupCollection>(cacheKey) is { } cached) return cached;
+        var details = await _client.GetTvEpisodeGroupsAsync(groupId, cancellationToken: ct);
+        return details is null ? null : CacheSet(cacheKey, details, DetailTtl);
+    }
+
+    internal static string EpisodeGroupTypeName(int type) => type switch
+    {
+        1 => "Original air date",
+        2 => "Absolute",
+        3 => "DVD",
+        4 => "Digital",
+        5 => "Story arc",
+        6 => "Production",
+        7 => "TV",
+        _ => "Custom"
+    };
+
     private static MediaCardDto MapMovieToCard(SearchMovie movie)
     {
         return new MediaCardDto
