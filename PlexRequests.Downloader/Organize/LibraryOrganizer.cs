@@ -130,7 +130,7 @@ public class LibraryOrganizer(
         var inspected = await InspectSelectionAsync(job, [best], allFiles, prefs, ct);
         var dest = naming.BuildMoviePath(prefs, job, Path.GetExtension(best));
         TransferOne(best, dest, null, null, "video", records, prefs, inspected.GetValueOrDefault(best));
-        PairSubtitle(best, dest, allFiles, prefs, null, null, records);
+        PairSubtitle(job, best, dest, allFiles, prefs, null, null, records);
         return records;
     }
 
@@ -284,7 +284,7 @@ public class LibraryOrganizer(
             var dest = naming.BuildEpisodePath(prefs, job, s, e, title, Path.GetExtension(best));
             var coverage = Coverage(s, [e]);
             TransferOne(best, dest, s, e, "video", records, prefs, inspected.GetValueOrDefault(best), coverage);
-            PairSubtitle(best, dest, allFiles, prefs, s, e, records, coverage);
+            PairSubtitle(job, best, dest, allFiles, prefs, s, e, records, coverage);
             return records;
         }
 
@@ -357,7 +357,7 @@ public class LibraryOrganizer(
                 var coverage = mapping.Coverage;
                 TransferOne(file, dest, season, first, "video", records, prefs,
                     inspected.GetValueOrDefault(file), coverage);
-                PairSubtitle(file, dest, allFiles, prefs, season, first, records, coverage);
+                PairSubtitle(job, file, dest, allFiles, prefs, season, first, records, coverage);
             }
             return records;
         }
@@ -398,7 +398,7 @@ public class LibraryOrganizer(
                     : naming.BuildEpisodeRangePath(prefs, job, canonicalSeason, first, episodes[^1], Path.GetExtension(file));
                 TransferOne(file, dest, canonicalSeason, first, "video", records, prefs,
                     inspection.GetValueOrDefault(file), mapping.Coverage);
-                PairSubtitle(file, dest, allFiles, prefs, canonicalSeason, first, records, mapping.Coverage);
+                PairSubtitle(job, file, dest, allFiles, prefs, canonicalSeason, first, records, mapping.Coverage);
             }
             return records;
         }
@@ -443,7 +443,7 @@ public class LibraryOrganizer(
             var coverage = Coverage(mapping.Season, mapping.Episodes);
             TransferOne(file, dest, mapping.Season, first, "video", records, prefs,
                 wholeSeriesInspection.GetValueOrDefault(file), coverage);
-            PairSubtitle(file, dest, allFiles, prefs, mapping.Season, first, records, coverage);
+            PairSubtitle(job, file, dest, allFiles, prefs, mapping.Season, first, records, coverage);
         }
         return records;
     }
@@ -534,7 +534,7 @@ public class LibraryOrganizer(
             MediaTrackSummaryDto tracks;
             try
             {
-                var companions = prefs.KeepSubtitles ? CompanionSubtitles(file, allFiles, prefs) : [];
+                var companions = ShouldKeepSubtitles(job, prefs) ? CompanionSubtitles(file, allFiles, prefs) : [];
                 tracks = await trackInspector.InspectAsync(file, companions, ct);
             }
             catch (OperationCanceledException) { throw; }
@@ -572,11 +572,11 @@ public class LibraryOrganizer(
         return matches.Count > 0 ? matches : subtitles.Count == 1 ? subtitles : [];
     }
 
-    private void PairSubtitle(string videoSource, string videoDest, List<string> allFiles,
+    private void PairSubtitle(FulfillmentJobDto job, string videoSource, string videoDest, List<string> allFiles,
         EffectiveLibraryOrganization prefs, int? season, int? episode, List<ImportedFileRecord> records,
         IReadOnlyList<EpisodeRef>? episodeCoverage = null)
     {
-        if (!prefs.KeepSubtitles) return;
+        if (!ShouldKeepSubtitles(job, prefs)) return;
 
         var videoStem = Path.GetFileNameWithoutExtension(videoSource);
         foreach (var match in CompanionSubtitles(videoSource, allFiles, prefs))
@@ -591,6 +591,10 @@ public class LibraryOrganizer(
                 episodeCoverage: episodeCoverage);
         }
     }
+
+    private static bool ShouldKeepSubtitles(FulfillmentJobDto job, EffectiveLibraryOrganization prefs) =>
+        prefs.KeepSubtitles || job.MediaLanguagePolicy is
+            { RequiredSubtitleLanguages.Count: > 0 } or { RequireForcedSubtitle: true };
 
     private static List<EpisodeRef> Coverage(int season, IEnumerable<int> episodes) => episodes
         .Distinct().OrderBy(x => x).Select(x => new EpisodeRef { Season = season, Episode = x }).ToList();
