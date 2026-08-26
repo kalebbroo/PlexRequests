@@ -1,6 +1,7 @@
 @page "/requests"
 @attribute [Authorize]
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
+@inject PlexRequestsHosted.Services.Implementations.IMediaIssueService IssueService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
 @inject PlexRequestsHosted.Services.Abstractions.INotificationBroker Broker
 @inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthProvider
@@ -18,7 +19,7 @@
                 @if (_stats != null)
                 {
                     <MudText Typo="Typo.body1" Color="Color.Tertiary">
-                        Track and manage your media requests
+                        Track your media requests and reported playback problems
                     </MudText>
                 }
             </div>
@@ -45,6 +46,11 @@
                         <MudIcon Icon="@Icons.Material.Filled.Folder" Color="Color.Primary" />
                         <div class="stat-value">@_stats.TotalRequests</div>
                         <div class="stat-label">Total</div>
+                    </div>
+                    <div class="stat-card">
+                        <MudIcon Icon="@Icons.Material.Filled.ReportProblem" Color="Color.Warning" />
+                        <div class="stat-value">@(_myIssues?.Count ?? 0)</div>
+                        <div class="stat-label">Reported Issues</div>
                     </div>
                 </div>
             }
@@ -221,6 +227,77 @@
                 </MudButton>
             </div>
         }
+
+        <section class="issues-section">
+            <div class="issues-heading">
+                <div>
+                    <h2>Reported Issues</h2>
+                    <MudText Typo="Typo.body2" Color="Color.Tertiary">Track admin review and replacement progress for problems you reported.</MudText>
+                </div>
+                <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Refresh"
+                           OnClick="LoadData" Disabled="_isLoading">Refresh</MudButton>
+            </div>
+
+            @if (_myIssues is null)
+            {
+                <div class="loading-container"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+            }
+            else if (_myIssues.Count == 0)
+            {
+                <div class="issues-empty">
+                    <MudIcon Icon="@Icons.Material.Outlined.ReportProblem" Size="Size.Large" />
+                    <span>You have not reported any media problems.</span>
+                </div>
+            }
+            else
+            {
+                <div class="issues-list">
+                    @foreach (var issue in _myIssues)
+                    {
+                        <article class="issue-card">
+                            <div class="issue-poster">
+                                <img src="@(issue.PosterUrl ?? "/img/poster-placeholder.svg")" alt="" loading="lazy"
+                                     onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
+                            </div>
+                            <div class="issue-content">
+                                <div class="issue-title-row">
+                                    <div>
+                                        <h3>@issue.Title</h3>
+                                        <div class="issue-target">@IssueTarget(issue)</div>
+                                    </div>
+                                    <MudChip T="string" Size="Size.Small" Color="@IssueColor(issue)" Variant="Variant.Filled">
+                                        @IssueStatusText(issue)
+                                    </MudChip>
+                                </div>
+                                <div class="issue-reason">@issue.Reason</div>
+                                @if (!string.IsNullOrWhiteSpace(issue.Detail))
+                                {
+                                    <div class="issue-detail">@issue.Detail</div>
+                                }
+                                <div class="issue-timeline">
+                                    <span>Reported @issue.CreatedAt.ToLocalTime().ToString("MMM d, yyyy 'at' h:mm tt")</span>
+                                    @if (issue.ResolvedAt is DateTime resolved)
+                                    {
+                                        <span>Closed @resolved.ToLocalTime().ToString("MMM d, yyyy")</span>
+                                    }
+                                </div>
+                                @if (issue.Status == PlexRequestsHosted.Shared.Enums.IssueStatus.ReplacementQueued)
+                                {
+                                    <MudProgressLinear Value="@issue.ReplacementProgress" Color="Color.Info" Class="mt-2" />
+                                    <div class="issue-progress">@ReplacementProgressText(issue)</div>
+                                }
+                            </div>
+                            <div class="request-actions">
+                                <MudTooltip Text="View media details">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Info" Color="Color.Default"
+                                                   OnClick="@(() => ViewIssueDetails(issue))" />
+                                </MudTooltip>
+                            </div>
+                        </article>
+                    }
+                </div>
+            }
+        </section>
     </MudContainer>
 </div>
 
@@ -228,6 +305,7 @@
     private List<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>? _allRequests;
     private List<PlexRequestsHosted.Shared.DTOs.MediaRequestDto>? _filteredRequests;
     private PlexRequestsHosted.Shared.DTOs.UserStatsDto? _stats;
+    private List<PlexRequestsHosted.Shared.DTOs.MediaIssueDto>? _myIssues;
     private String _statusFilter = "all";
     private Boolean _isLoading = true;
     private Boolean _isLoadingMore = false;
@@ -266,6 +344,13 @@
                         await ToastService.ShowWarningAsync(n.Message); break;
                     case PlexRequestsHosted.Shared.Enums.NotificationType.RequestAvailable:
                         await ToastService.ShowSuccessAsync(n.Message); break;
+                    case PlexRequestsHosted.Shared.Enums.NotificationType.MediaIssueApproved:
+                        await ToastService.ShowInfoAsync(n.Message); break;
+                    case PlexRequestsHosted.Shared.Enums.NotificationType.RequestReplaced:
+                    case PlexRequestsHosted.Shared.Enums.NotificationType.MediaIssueResolved:
+                        await ToastService.ShowSuccessAsync(n.Message); break;
+                    case PlexRequestsHosted.Shared.Enums.NotificationType.MediaIssueDismissed:
+                        await ToastService.ShowWarningAsync(n.Message); break;
                 }
                 await LoadData();
             });
@@ -294,6 +379,7 @@
                 PageSize = 20
             });
             _allRequests = page.Items;
+            _myIssues = await IssueService.GetMyIssuesAsync();
             _hasMore = page.HasNext;
             ApplyFilter();
         }
@@ -388,6 +474,48 @@
         // This would navigate to Plex or open the media player
         Navigation.NavigateTo($"/media/{request.MediaType.ToString().ToLower()}/{request.MediaId}");
     }
+
+    private void ViewIssueDetails(PlexRequestsHosted.Shared.DTOs.MediaIssueDto issue) =>
+        Navigation.NavigateTo($"/media/{issue.MediaType.ToString().ToLowerInvariant()}/{issue.MediaId}");
+
+    private static string IssueTarget(PlexRequestsHosted.Shared.DTOs.MediaIssueDto issue)
+    {
+        if (issue.SeasonNumber is not int season) return issue.MediaType.ToString();
+        if (issue.EpisodeNumber is not int episode) return season == 0 ? "Specials" : $"Season {season}";
+        var title = string.IsNullOrWhiteSpace(issue.EpisodeTitle) ? string.Empty : $" · {issue.EpisodeTitle}";
+        return $"S{season:D2}E{episode:D2}{title}";
+    }
+
+    private static string IssueStatusText(PlexRequestsHosted.Shared.DTOs.MediaIssueDto issue) => issue.Status switch
+    {
+        PlexRequestsHosted.Shared.Enums.IssueStatus.Open when issue.ReplacementRequested => "Waiting for approval",
+        PlexRequestsHosted.Shared.Enums.IssueStatus.Open => "Under review",
+        PlexRequestsHosted.Shared.Enums.IssueStatus.ReplacementQueued when issue.ReplacementJobStatus == PlexRequestsHosted.Shared.Enums.FulfillmentStatus.Deferred => "Searching again",
+        PlexRequestsHosted.Shared.Enums.IssueStatus.ReplacementQueued when issue.ReplacementJobStatus == PlexRequestsHosted.Shared.Enums.FulfillmentStatus.Downloading => "Replacing",
+        PlexRequestsHosted.Shared.Enums.IssueStatus.ReplacementQueued => "Replacement queued",
+        PlexRequestsHosted.Shared.Enums.IssueStatus.Resolved when issue.ReplacementRequested => "Replacement complete",
+        PlexRequestsHosted.Shared.Enums.IssueStatus.Resolved => "Resolved",
+        PlexRequestsHosted.Shared.Enums.IssueStatus.Dismissed => "Closed",
+        _ => issue.Status.ToString()
+    };
+
+    private static Color IssueColor(PlexRequestsHosted.Shared.DTOs.MediaIssueDto issue) => issue.Status switch
+    {
+        PlexRequestsHosted.Shared.Enums.IssueStatus.Open => Color.Warning,
+        PlexRequestsHosted.Shared.Enums.IssueStatus.ReplacementQueued => Color.Info,
+        PlexRequestsHosted.Shared.Enums.IssueStatus.Resolved => Color.Success,
+        _ => Color.Default
+    };
+
+    private static string ReplacementProgressText(PlexRequestsHosted.Shared.DTOs.MediaIssueDto issue) => issue.ReplacementJobStatus switch
+    {
+        PlexRequestsHosted.Shared.Enums.FulfillmentStatus.Downloading => $"Replacement is {issue.ReplacementProgress}% downloaded.",
+        PlexRequestsHosted.Shared.Enums.FulfillmentStatus.Deferred => issue.ReplacementNextRetryAt is DateTime retry
+            ? $"No suitable copy was found yet. The next search is scheduled for {retry.ToLocalTime():g}."
+            : "No suitable copy was found yet. Searching will continue automatically.",
+        PlexRequestsHosted.Shared.Enums.FulfillmentStatus.Failed => "The replacement needs administrator attention.",
+        _ => "The replacement is queued and will start automatically."
+    };
 
     private async Task<Boolean> ConfirmAction(String message)
     {

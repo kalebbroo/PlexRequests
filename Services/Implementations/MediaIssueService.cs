@@ -14,6 +14,8 @@ namespace PlexRequestsHosted.Services.Implementations;
 public interface IMediaIssueService
 {
     Task<MediaIssueResultDto> ReportIssueAsync(MediaIssueReportDto report);
+    /// <summary>The signed-in user's own issue history. Administrator status never broadens this view.</summary>
+    Task<List<MediaIssueDto>> GetMyIssuesAsync(int take = 100);
     Task<List<MediaIssueDto>> GetIssuesAsync(bool openOnly = true);
     Task<int> GetOpenCountAsync();
     Task<bool> ResolveIssueAsync(int issueId);
@@ -32,7 +34,9 @@ public class MediaIssueService(
     IFulfillmentQueue fulfillment,
     IQualityProfileService qualityProfiles,
     IReleaseBlocklistService blocklist,
-    IUserAccessService? userAccess = null) : IMediaIssueService
+    IUserAccessService? userAccess = null,
+    INotificationService? notifications = null,
+    ILogger<MediaIssueService>? logger = null) : IMediaIssueService
 {
     private static readonly HashSet<string> Reasons = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -107,6 +111,7 @@ public class MediaIssueService(
         };
         db.MediaIssues.Add(issue);
         await db.SaveChangesAsync();
+        await SafeNotify(() => notifications!.MediaIssueReportedAsync(ToDto(issue, null, null)));
 
         if (report.RequestReplacement && await IsAdminAsync(user))
         {
@@ -139,6 +144,29 @@ public class MediaIssueService(
             i.ImportedFileId is int fileId && files.TryGetValue(fileId, out var file) ? file : null)).ToList();
     }
 
+    public async Task<List<MediaIssueDto>> GetMyIssuesAsync(int take = 100)
+    {
+        var user = await CurrentUserAsync();
+        if (user.Identity?.IsAuthenticated != true || UserId(user) is not int userId) return new();
+        if (userAccess is not null && !(await userAccess.GetAccessAsync(userId)).IsActive) return new();
+
+        take = Math.Clamp(take, 1, 250);
+        var issues = await db.MediaIssues.AsNoTracking()
+            .Where(i => i.ReportedByUserId == userId)
+            .OrderByDescending(i => i.CreatedAt).ThenByDescending(i => i.Id)
+            .Take(take).ToListAsync();
+        var jobIds = issues.Where(i => i.ReplacementJobId.HasValue).Select(i => i.ReplacementJobId!.Value)
+            .Distinct().ToList();
+        var jobs = await db.FulfillmentJobs.AsNoTracking().Where(j => jobIds.Contains(j.Id))
+            .ToDictionaryAsync(j => j.Id);
+
+        // Deliberately omit ImportedFileEntity here. Library paths and release internals belong to admin
+        // triage; users receive their target and lifecycle state only.
+        return issues.Select(i => ToDto(i,
+            i.ReplacementJobId is int id && jobs.TryGetValue(id, out var job) ? job : null, null,
+            includeOperationalDetails: false)).ToList();
+    }
+
     public async Task<int> GetOpenCountAsync()
     {
         if (!await IsAdminAsync()) return 0;
@@ -158,7 +186,11 @@ public class MediaIssueService(
         issue.Status = status;
         issue.ResolvedAt = DateTime.UtcNow;
         issue.ResolvedBy = Trim(user.Identity?.Name, 128);
-        return await db.SaveChangesAsync() > 0;
+        var changed = await db.SaveChangesAsync() > 0;
+        if (changed)
+            await SafeNotify(() => notifications!.MediaIssueClosedAsync(ToDto(issue, null, null),
+                status == IssueStatus.Dismissed));
+        return changed;
     }
 
     public async Task<MediaIssueResultDto> RequestRedownloadAsync(int issueId)
@@ -276,6 +308,7 @@ public class MediaIssueService(
         issue.ResolvedAt = null;
         issue.ResolvedBy = null;
         await db.SaveChangesAsync();
+        await SafeNotify(() => notifications!.MediaIssueApprovedAsync(ToDto(issue, job: null, file: null)));
         return new MediaIssueResultDto { Success = true, IssueId = issue.Id, ReplacementQueued = true };
     }
 
@@ -300,8 +333,20 @@ public class MediaIssueService(
     }
     private static MediaIssueResultDto Failed(string message) => new() { ErrorMessage = message };
 
+    private async Task SafeNotify(Func<Task> send)
+    {
+        if (notifications is null) return;
+        try { await send(); }
+        catch (Exception ex)
+        {
+            // The issue transition is already durable. Keep notification transport failures observable
+            // without rolling the user's report or an administrator action back.
+            logger?.LogWarning(ex, "Could not deliver media issue lifecycle notification");
+        }
+    }
+
     private static MediaIssueDto ToDto(MediaIssueEntity issue, FulfillmentJobEntity? job,
-        ImportedFileEntity? file) => new()
+        ImportedFileEntity? file, bool includeOperationalDetails = true) => new()
     {
         Id = issue.Id,
         MediaId = issue.MediaId,
@@ -315,17 +360,17 @@ public class MediaIssueService(
         SeasonNumber = issue.SeasonNumber,
         EpisodeNumber = issue.EpisodeNumber,
         EpisodeTitle = issue.EpisodeTitle,
-        ImportedFileId = issue.ImportedFileId,
+        ImportedFileId = includeOperationalDetails ? issue.ImportedFileId : null,
         AffectedFilePath = file?.DestinationPath,
         AffectedReleaseName = file?.ReleaseName,
         AffectedResolution = file?.ResolutionHeight ?? 0,
         ReplacementRequested = issue.ReplacementRequested,
-        ReplacementJobId = issue.ReplacementJobId,
+        ReplacementJobId = includeOperationalDetails ? issue.ReplacementJobId : null,
         ReplacementJobStatus = job?.Status,
         ReplacementProgress = job?.Progress ?? 0,
-        ReplacementAttempts = job?.Attempts ?? 0,
-        ReplacementNextRetryAt = job?.NextRetryAt,
-        ReplacementLastError = job?.LastError,
+        ReplacementAttempts = includeOperationalDetails ? job?.Attempts ?? 0 : 0,
+        ReplacementNextRetryAt = includeOperationalDetails ? job?.NextRetryAt : null,
+        ReplacementLastError = includeOperationalDetails ? job?.LastError : null,
         Status = issue.Status,
         CreatedAt = issue.CreatedAt,
         ResolvedAt = issue.ResolvedAt

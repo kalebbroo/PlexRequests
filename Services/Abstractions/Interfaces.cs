@@ -71,7 +71,10 @@ public interface INotificationService
     Task RequestSearchStalledAsync(MediaRequestDto request, int attempts);
     /// <summary>An available title was automatically upgraded to a better-quality release. Notify the requester.</summary>
     Task RequestUpgradedAsync(MediaRequestDto request, Quality newQuality);
-    Task RequestReplacedAsync(MediaRequestDto request, string target);
+    Task RequestReplacedAsync(MediaRequestDto request, string target, int? issueReporterUserId = null);
+    Task MediaIssueReportedAsync(MediaIssueDto issue);
+    Task MediaIssueApprovedAsync(MediaIssueDto issue);
+    Task MediaIssueClosedAsync(MediaIssueDto issue, bool dismissed);
 
     // Persistence-backed reads for the notification bell (survive page refresh/restart).
     Task<List<NotificationDto>> GetForUserAsync(int userId, int take = 20);

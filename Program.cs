@@ -1298,11 +1298,13 @@ app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpConte
         try { await plex.RebuildAvailabilityIndexAsync(); } catch { /* best-effort */ }
         if (job.IsReplacement)
         {
+            int? issueReporterUserId = null;
             if (job.MediaIssueId is int issueId)
             {
                 var issue = await db.MediaIssues.FirstOrDefaultAsync(i => i.Id == issueId);
                 if (issue is not null)
                 {
+                    issueReporterUserId = issue.ReportedByUserId;
                     issue.Status = IssueStatus.Resolved;
                     issue.ResolvedAt = DateTime.UtcNow;
                     issue.ResolvedBy = "Automatic replacement";
@@ -1311,7 +1313,7 @@ app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpConte
             }
             var target = job.RequestedEpisodesCsv?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .FirstOrDefault() ?? "title";
-            await notify.RequestReplacedAsync(ToRequestDto(req), target);
+            await notify.RequestReplacedAsync(ToRequestDto(req), target, issueReporterUserId);
         }
         else
         {

@@ -94,12 +94,35 @@ public class NotificationService(
         await WriteOutboxAsync(request, BridgeEventType.Upgraded, $"Upgraded to {newQuality.Label()}");
     }
 
-    public async Task RequestReplacedAsync(MediaRequestDto request, string target)
+    public async Task RequestReplacedAsync(MediaRequestDto request, string target, int? issueReporterUserId = null)
     {
-        await NotifyUserAsync(request.RequestedByUserId, NotificationType.RequestReplaced,
-            "Reported file replaced", $"A new copy of \"{request.Title}\" {target} is ready.", request.Id);
+        foreach (var userId in new[] { request.RequestedByUserId, issueReporterUserId ?? 0 }.Where(x => x > 0).Distinct())
+            await NotifyUserAsync(userId, NotificationType.RequestReplaced,
+                "Reported file replaced", $"A new copy of \"{request.Title}\" {target} is ready.", request.Id);
         await WriteOutboxAsync(request, BridgeEventType.Upgraded, $"Issue replacement completed for {target}");
     }
+
+    public Task MediaIssueReportedAsync(MediaIssueDto issue) =>
+        NotifyAdminsAsync(NotificationType.MediaIssueReported, "Media problem reported",
+            $"{issue.ReportedBy ?? "A user"} reported {IssueTarget(issue)} on \"{issue.Title}\": {issue.Reason}", null);
+
+    public Task MediaIssueApprovedAsync(MediaIssueDto issue) => issue.ReportedByUserId is int userId
+        ? NotifyUserAsync(userId, NotificationType.MediaIssueApproved, "Replacement approved",
+            $"A replacement for \"{issue.Title}\" {IssueTarget(issue)} was approved and queued.", null)
+        : Task.CompletedTask;
+
+    public Task MediaIssueClosedAsync(MediaIssueDto issue, bool dismissed) => issue.ReportedByUserId is int userId
+        ? NotifyUserAsync(userId,
+            dismissed ? NotificationType.MediaIssueDismissed : NotificationType.MediaIssueResolved,
+            dismissed ? "Report closed" : "Report resolved",
+            dismissed
+                ? $"Your report for \"{issue.Title}\" {IssueTarget(issue)} was reviewed and closed."
+                : $"Your report for \"{issue.Title}\" {IssueTarget(issue)} was marked resolved.", null)
+        : Task.CompletedTask;
+
+    private static string IssueTarget(MediaIssueDto issue) => issue.SeasonNumber is int season && issue.EpisodeNumber is int episode
+        ? $"episode S{season:D2}E{episode:D2}"
+        : "the title";
 
     private async Task WriteOutboxAsync(MediaRequestDto request, BridgeEventType type, string? detail = null)
     {
