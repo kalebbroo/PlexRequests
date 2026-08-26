@@ -316,6 +316,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             .Take(max)
             .ToListAsync();
 
+        await SnapshotMissingEpisodeOrderProfilesAsync(jobs);
         var now = DateTime.UtcNow;
         foreach (var j in jobs)
         {
@@ -332,6 +333,34 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         var dtos = jobs.Select(Map).ToList();
         await AttachRankingContextAsync(dtos, jobs);
         return dtos;
+    }
+
+    /// <summary>
+    /// Jobs created before episode-order profiles existed have no immutable snapshot. Resolve that missing
+    /// context at the last safe boundary, immediately before the job's first/new claim. Existing snapshots
+    /// remain authoritative, including when an administrator later edits or removes the global profile.
+    /// </summary>
+    private async Task SnapshotMissingEpisodeOrderProfilesAsync(IReadOnlyList<FulfillmentJobEntity> jobs)
+    {
+        var legacySeries = jobs.Where(j => j.MediaType is MediaType.TvShow or MediaType.Anime
+                                           && string.IsNullOrWhiteSpace(j.EpisodeOrderProfileJson))
+            .ToList();
+        if (legacySeries.Count == 0) return;
+
+        var settings = await _libraryPreferences.GetAsync();
+        var hydrated = 0;
+        foreach (var job in legacySeries)
+        {
+            // Before provider-neutral identities, MediaId was the TMDb id. External identities must not be
+            // mistaken for TMDb ids simply because their legacy numeric mirror happens to collide.
+            var tmdbId = job.TmdbId ?? (string.IsNullOrWhiteSpace(job.ExternalId) ? job.MediaId : null);
+            if (EpisodeOrderMapping.Resolve(settings.SeriesEpisodeOrderProfiles, tmdbId) is not { } profile)
+                continue;
+            job.EpisodeOrderProfileJson = JsonSerializer.Serialize(profile);
+            hydrated++;
+        }
+        if (hydrated > 0)
+            _logger.LogInformation("Snapshotted episode-order profiles onto {Count} legacy queued job(s)", hydrated);
     }
 
     /// <summary>
