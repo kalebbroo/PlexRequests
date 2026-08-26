@@ -29,6 +29,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
     public DbSet<FulfillmentJobEntity> FulfillmentJobs => Set<FulfillmentJobEntity>();
     public DbSet<ImportedFileEntity> ImportedFiles => Set<ImportedFileEntity>();
+    public DbSet<ImportedEpisodeCoverageEntity> ImportedEpisodeCoverage => Set<ImportedEpisodeCoverageEntity>();
     public DbSet<FulfillmentTransferEntity> FulfillmentTransfers => Set<FulfillmentTransferEntity>();
     public DbSet<BridgeOutboxEntity> BridgeOutbox => Set<BridgeOutboxEntity>();
     public DbSet<ScheduledJobEntity> ScheduledJobs => Set<ScheduledJobEntity>();
@@ -305,6 +306,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasOne(x => x.FulfillmentJob)
                 .WithMany()
                 .HasForeignKey(x => x.FulfillmentJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ImportedEpisodeCoverageEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => new { x.ImportedFileId, x.SeasonNumber, x.EpisodeNumber }).IsUnique();
+            b.HasIndex(x => new { x.SeasonNumber, x.EpisodeNumber });
+            b.HasOne(x => x.ImportedFile)
+                .WithMany(x => x.EpisodeCoverage)
+                .HasForeignKey(x => x.ImportedFileId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

@@ -108,9 +108,16 @@ public class UpgradeScanJob(
 
         var jobIds = await db.FulfillmentJobs.Where(j => j.MediaRequestId == req.Id)
             .Select(j => j.Id).ToListAsync(ct);
-        var videoFiles = await db.ImportedFiles
+        var videoFiles = await db.ImportedFiles.Include(f => f.EpisodeCoverage)
             .Where(f => jobIds.Contains(f.FulfillmentJobId) && f.FileType == "video")
             .ToListAsync(ct);
+
+        static IReadOnlyList<(int Season, int Episode)> CoverageOf(ImportedFileEntity file) =>
+            file.EpisodeCoverage.Count > 0
+                ? file.EpisodeCoverage.Select(x => (x.SeasonNumber, x.EpisodeNumber)).Distinct().ToList()
+                : file.SeasonNumber is int season && file.EpisodeNumber is int episode
+                    ? [(season, episode)]
+                    : [];
 
         // Files with no parsed resolution (imported before ResolutionHeight was tracked, or a parse miss)
         // can't be judged from our own records. Ask Plex — same fallback RecomputeAchievedQualityAsync uses
@@ -119,7 +126,7 @@ public class UpgradeScanJob(
         // that's precisely how 720p House of the Dragon episodes sat un-upgraded despite plenty of 1080p
         // releases being available.
         Dictionary<(int Season, int Episode), int>? plexHeights = null;
-        if (videoFiles.Any(f => f.ResolutionHeight <= 0 && f.SeasonNumber is not null && f.EpisodeNumber is not null))
+        if (videoFiles.Any(f => f.ResolutionHeight <= 0 && CoverageOf(f).Count > 0))
         {
             plexHeights = await queue.GetPlexEpisodeHeightsAsync(new MediaRequestDto
             {
@@ -130,9 +137,11 @@ public class UpgradeScanJob(
         int EffectiveHeight(ImportedFileEntity f)
         {
             if (f.ResolutionHeight > 0) return f.ResolutionHeight;
-            if (plexHeights is not null && f.SeasonNumber is not null && f.EpisodeNumber is not null
-                && plexHeights.TryGetValue((f.SeasonNumber.Value, f.EpisodeNumber.Value), out var h))
-                return h;
+            if (plexHeights is not null)
+            {
+                var observed = CoverageOf(f).Select(x => plexHeights.GetValueOrDefault(x)).Where(x => x > 0).ToList();
+                if (observed.Count > 0) return observed.Min();
+            }
             return 0;
         }
 
@@ -158,9 +167,7 @@ public class UpgradeScanJob(
             return false;
         }
 
-        var episodes = belowTarget
-            .Where(f => f.SeasonNumber is not null && f.EpisodeNumber is not null)
-            .Select(f => (f.SeasonNumber!.Value, f.EpisodeNumber!.Value))
+        var episodes = belowTarget.SelectMany(CoverageOf)
             .Distinct().ToList();
         var replacePaths = belowTarget.Select(f => f.DestinationPath)
             .Where(p => !string.IsNullOrWhiteSpace(p)).Distinct().ToList();

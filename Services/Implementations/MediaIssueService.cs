@@ -158,7 +158,9 @@ public class MediaIssueService(
             join job in db.FulfillmentJobs.AsNoTracking() on file.FulfillmentJobId equals job.Id
             join reqEntity in db.MediaRequests.AsNoTracking() on job.MediaRequestId equals reqEntity.Id
             where reqEntity.MediaId == issue.MediaId && reqEntity.MediaType == issue.MediaType && file.FileType == "video"
-                  && (!isTv || (file.SeasonNumber == issue.SeasonNumber && file.EpisodeNumber == issue.EpisodeNumber))
+                  && (!isTv || (file.SeasonNumber == issue.SeasonNumber && file.EpisodeNumber == issue.EpisodeNumber)
+                      || file.EpisodeCoverage.Any(c => c.SeasonNumber == issue.SeasonNumber
+                                                      && c.EpisodeNumber == issue.EpisodeNumber))
             orderby file.ImportedAt descending
             select new { File = file, Job = job, Request = reqEntity }).ToListAsync();
 
@@ -175,9 +177,11 @@ public class MediaIssueService(
 
         var requestJobIds = await db.FulfillmentJobs.AsNoTracking()
             .Where(j => j.MediaRequestId == current.Request.Id).Select(j => j.Id).ToListAsync();
-        var oldFiles = await db.ImportedFiles.AsNoTracking()
+        var oldFiles = await db.ImportedFiles.AsNoTracking().Include(f => f.EpisodeCoverage)
             .Where(f => requestJobIds.Contains(f.FulfillmentJobId) &&
-                (!isTv || (f.SeasonNumber == issue.SeasonNumber && f.EpisodeNumber == issue.EpisodeNumber)))
+                (!isTv || (f.SeasonNumber == issue.SeasonNumber && f.EpisodeNumber == issue.EpisodeNumber)
+                 || f.EpisodeCoverage.Any(c => c.SeasonNumber == issue.SeasonNumber
+                                               && c.EpisodeNumber == issue.EpisodeNumber)))
             .ToListAsync();
         var replacePaths = oldFiles.Select(f => f.DestinationPath).Where(p => !string.IsNullOrWhiteSpace(p))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -215,9 +219,19 @@ public class MediaIssueService(
 
         var request = ToRequestDto(current.Request);
         request.QualityProfileId = profileId;
-        var episodes = isTv
-            ? new List<(int season, int episode)> { (issue.SeasonNumber!.Value, issue.EpisodeNumber!.Value) }
-            : new List<(int season, int episode)>();
+        var episodes = new List<(int season, int episode)>();
+        if (isTv)
+        {
+            episodes.AddRange(oldFiles.Where(f => f.FileType == "video")
+                .SelectMany(f => f.EpisodeCoverage.Count > 0
+                    ? f.EpisodeCoverage.Select(c => (c.SeasonNumber, c.EpisodeNumber))
+                    : f.SeasonNumber is int season && f.EpisodeNumber is int episode
+                        ? [(season, episode)]
+                        : Array.Empty<(int, int)>())
+                .Distinct().OrderBy(x => x.Item1).ThenBy(x => x.Item2));
+            if (episodes.Count == 0)
+                episodes.Add((issue.SeasonNumber!.Value, issue.EpisodeNumber!.Value));
+        }
         var jobId = await fulfillment.EnqueueReplacementAsync(request, floor, replacePaths, episodes, issue.Id);
         if (jobId is null) return Failed("Another download or replacement started before this one could be queued.");
 

@@ -368,19 +368,24 @@ public class MediaRequestService(
                               join request in _db.MediaRequests.AsNoTracking() on job.MediaRequestId equals request.Id
                               where request.MediaId == mediaId && request.MediaType == mediaType
                                     && file.FileType == "video"
-                                    && file.SeasonNumber != null && file.EpisodeNumber != null
                               select new
                               {
+                                  FileId = file.Id,
                                   RequestId = request.Id,
                                   request.Status,
                                   file.SeasonNumber,
                                   file.EpisodeNumber,
                                   file.DestinationPath,
-                                  file.ImportedAt
+                                  file.ImportedAt,
+                                  Coverage = file.EpisodeCoverage
+                                      .Select(c => new { Season = c.SeasonNumber, Episode = c.EpisodeNumber })
+                                      .ToList()
                               }).ToListAsync();
 
         var matching = imported
-            .Where(x => wanted.Contains((x.SeasonNumber!.Value, x.EpisodeNumber!.Value)))
+            .Where(x => (x.SeasonNumber is int season && x.EpisodeNumber is int episode
+                         && wanted.Contains((season, episode)))
+                        || x.Coverage.Any(c => wanted.Contains((c.Season, c.Episode))))
             .ToList();
 
         // Prefer an Available request that owns the most selected episodes. It remains Available while its
@@ -420,7 +425,18 @@ public class MediaRequestService(
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var queued = await _fulfillment.EnqueueUpgradeAsync(ToDto(anchor), target, replacePaths, wanted.ToList());
+        // Replacing one logical episode of a combined file replaces the physical file. Expand the job to
+        // every episode that file covers so an E02-only upgrade can never delete the sibling E01 it shared.
+        var replacementEpisodes = wanted.ToHashSet();
+        foreach (var file in matching)
+        {
+            if (file.Coverage.Count > 0)
+                replacementEpisodes.UnionWith(file.Coverage.Select(c => (c.Season, c.Episode)));
+            else if (file.SeasonNumber is int season && file.EpisodeNumber is int episode)
+                replacementEpisodes.Add((season, episode));
+        }
+        var queued = await _fulfillment.EnqueueUpgradeAsync(ToDto(anchor), target, replacePaths,
+            replacementEpisodes.OrderBy(x => x.Item1).ThenBy(x => x.Item2).ToList());
         if (!queued)
             return new MediaRequestResult { Success = false, ErrorMessage = "An upgrade for this request is already running." };
 

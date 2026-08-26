@@ -91,6 +91,11 @@ public class LibraryOrganizer(
             logger.LogWarning("Media policy rejected \"{Title}\": {Reason}", job.Title, ex.Message);
             return ImportResult.Fail(ex.Message, BlocklistReason.MediaPolicyMismatch);
         }
+        catch (EpisodeMappingException ex)
+        {
+            logger.LogWarning("Episode mapping rejected \"{Title}\": {Reason}", job.Title, ex.Message);
+            return ImportResult.Fail(ex.Message, BlocklistReason.EpisodeMappingAmbiguous);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Organize failed for \"{Title}\" from {Source}", job.Title, sourcePath);
@@ -265,97 +270,131 @@ public class LibraryOrganizer(
             var inspected = await InspectSelectionAsync(job, [best], allFiles, prefs, ct);
             var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, s, e, CancellationToken.None).GetAwaiter().GetResult();
             var dest = naming.BuildEpisodePath(prefs, job, s, e, title, Path.GetExtension(best));
-            TransferOne(best, dest, s, e, "video", records, prefs, inspected.GetValueOrDefault(best));
-            PairSubtitle(best, dest, allFiles, prefs, s, e, records);
+            var coverage = Coverage(s, [e]);
+            TransferOne(best, dest, s, e, "video", records, prefs, inspected.GetValueOrDefault(best), coverage);
+            PairSubtitle(best, dest, allFiles, prefs, s, e, records, coverage);
             return records;
         }
 
         if (transfer.Season is int season)
         {
-            if (prefs.SplitSeasonPacks)
+            var map = splitter.Map(videoFiles, season, expectedEpisodeCount);
+            if (!map.IsUnambiguous)
+                throw new EpisodeMappingException(DescribeMappingFailure(season, map));
+
+            var mapped = map.Mappings.ToList();
+            // If this pack was chosen to satisfy only specific episodes (an episode-level request, or a
+            // partially-missing season), keep physical files whose declared coverage intersects the target.
+            // Then prove the union covers every target; a numbering mismatch can never fall back to importing
+            // the whole pack under guessed identities.
+            if (transfer.NeededEpisodes is { Count: > 0 } needed)
             {
-                var mapped = splitter.Map(videoFiles, season, expectedEpisodeCount);
-                // If this pack was chosen to satisfy only specific episodes (an episode-level request, or a
-                // partially-missing season), import just those — don't re-place episodes Plex already has.
-                if (transfer.NeededEpisodes is { Count: > 0 } needed)
-                {
-                    var keep = needed.ToHashSet();
-                    var before = mapped.Count;
-                    var restricted = mapped.Where(m => keep.Contains(m.Episode)).ToList();
-                    // Safety valve: if the requested episodes don't match any mapped file (TMDB vs the pack's
-                    // internal numbering disagree — common for kids'/preschool shows), import everything the
-                    // pack contains rather than nothing, so the content still lands.
-                    if (restricted.Count == 0 && before > 0)
-                        logger.LogWarning("Season pack S{Season}: none of the requested episode(s) {Needed} matched the pack's {Total} mapped file(s) (numbering mismatch?) — importing the whole pack",
-                            season, string.Join(",", needed), before);
-                    else
-                    {
-                        mapped = restricted;
-                        logger.LogInformation("Season pack S{Season}: importing {Kept} of {Total} mapped episode(s) (restricted to requested episode(s) {Needed})",
-                            season, mapped.Count, before, string.Join(",", needed));
-                    }
-                }
-                var inspected = await InspectSelectionAsync(job, mapped.Select(x => x.FilePath), allFiles, prefs, ct);
-                foreach (var (file, episode) in mapped)
-                {
-                    var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, season, episode, CancellationToken.None).GetAwaiter().GetResult();
-                    var dest = naming.BuildEpisodePath(prefs, job, season, episode, title, Path.GetExtension(file));
-                    TransferOne(file, dest, season, episode, "video", records, prefs,
-                        inspected.GetValueOrDefault(file));
-                    PairSubtitle(file, dest, allFiles, prefs, season, episode, records);
-                }
+                var wanted = needed.Distinct().ToHashSet();
+                var before = mapped.Count;
+                mapped = mapped.Where(m => m.Episodes.Any(wanted.Contains)).ToList();
+                var covered = mapped.SelectMany(m => m.Episodes).ToHashSet();
+                var missing = wanted.Where(x => !covered.Contains(x)).OrderBy(x => x).ToList();
+                if (missing.Count > 0)
+                    throw new EpisodeMappingException(
+                        $"Season pack S{season:D2} cannot prove coverage for requested episode(s) {string.Join(",", missing)}; no files were imported.");
+                logger.LogInformation(
+                    "Season pack S{Season}: importing {Kept} of {Total} mapped file(s) covering requested episode(s) {Needed}",
+                    season, mapped.Count, before, string.Join(",", wanted.OrderBy(x => x)));
             }
-            else
+
+            if (mapped.Count == 0)
+                throw new EpisodeMappingException($"Season pack S{season:D2} contained no confidently mapped episode files.");
+
+            var inspected = await InspectSelectionAsync(job, mapped.Select(x => x.FilePath), allFiles, prefs, ct);
+            foreach (var mapping in mapped)
             {
-                var inspected = await InspectSelectionAsync(job, videoFiles, allFiles, prefs, ct);
-                var folder = naming.BuildSeasonPackFolder(prefs, job, season);
-                foreach (var file in videoFiles)
+                var file = mapping.FilePath;
+                var episodes = mapping.Episodes.Distinct().OrderBy(x => x).ToList();
+                var first = episodes[0];
+                string dest;
+                if (prefs.SplitSeasonPacks)
                 {
-                    var name = NamingTemplateEngine.SanitizeComponent(Path.GetFileNameWithoutExtension(file)) + Path.GetExtension(file);
-                    var dest = Path.Combine(folder, name);
-                    TransferOne(file, dest, season, null, "video", records, prefs,
-                        inspected.GetValueOrDefault(file));
-                    PairSubtitle(file, dest, allFiles, prefs, season, null, records);
+                    if (episodes.Count == 1)
+                    {
+                        var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, season, first,
+                            CancellationToken.None).GetAwaiter().GetResult();
+                        dest = naming.BuildEpisodePath(prefs, job, season, first, title, Path.GetExtension(file));
+                    }
+                    else
+                        dest = naming.BuildEpisodeRangePath(prefs, job, season, first, episodes[^1],
+                            Path.GetExtension(file));
                 }
+                else
+                {
+                    var folder = naming.BuildSeasonPackFolder(prefs, job, season);
+                    var name = NamingTemplateEngine.SanitizeComponent(Path.GetFileNameWithoutExtension(file)) + Path.GetExtension(file);
+                    dest = Path.Combine(folder, name);
+                }
+
+                var coverage = Coverage(season, episodes);
+                TransferOne(file, dest, season, first, "video", records, prefs,
+                    inspected.GetValueOrDefault(file), coverage);
+                PairSubtitle(file, dest, allFiles, prefs, season, first, records, coverage);
             }
             return records;
         }
 
         // Whole-series / multi-season pack with no single target season (e.g. metadata was unavailable
-        // at enqueue time): fall back to parsing each file's own season+episode independently. Files that
-        // don't parse cleanly are skipped — never guessed — same "no confident mapping, don't import it
-        // under a wrong name" principle as the splitter above.
-        var mappedFiles = new List<(string File, int Season, int Episode)>();
+        // at enqueue time): parse each file's own season+episode coverage independently. One unmapped or
+        // overlapping file rejects the import — never guess or silently import a partial series.
+        var mappedFiles = new List<EpisodeFileMapping>();
+        var unmappedFiles = new List<string>();
         foreach (var file in videoFiles)
         {
             var parsed = parser.Parse(Path.GetFileName(file));
-            if (parsed.Season is not int s || parsed.Episode is not int e)
+            var episodes = parsed.EpisodeNumbers.Distinct().OrderBy(x => x).ToList();
+            if (parsed.Season is not int s || !IsContiguous(episodes))
             {
-                logger.LogWarning("\"{Title}\": could not determine season/episode for \"{File}\" in a whole-series pack; skipped", job.Title, Path.GetFileName(file));
+                unmappedFiles.Add(file);
                 continue;
             }
-            mappedFiles.Add((file, s, e));
+            mappedFiles.Add(new EpisodeFileMapping(file, s, episodes));
         }
-        var wholeSeriesInspection = await InspectSelectionAsync(job, mappedFiles.Select(x => x.File),
+        var conflicts = mappedFiles.SelectMany(m => m.Episodes.Select(e => (m.Season, Episode: e)))
+            .GroupBy(x => x).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+        if (unmappedFiles.Count > 0 || conflicts.Count > 0)
+            throw new EpisodeMappingException(
+                $"Whole-series pack mapping is ambiguous: {unmappedFiles.Count} unmapped file(s), {conflicts.Count} overlapping episode(s); no files were imported.");
+        if (mappedFiles.Count == 0)
+            throw new EpisodeMappingException("Whole-series pack contained no confidently mapped episode files.");
+
+        var wholeSeriesInspection = await InspectSelectionAsync(job, mappedFiles.Select(x => x.FilePath),
             allFiles, prefs, ct);
-        foreach (var (file, s, e) in mappedFiles)
+        foreach (var mapping in mappedFiles)
         {
-            var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, s, e, CancellationToken.None)
-                .GetAwaiter().GetResult();
-            var dest = naming.BuildEpisodePath(prefs, job, s, e, title, Path.GetExtension(file));
-            TransferOne(file, dest, s, e, "video", records, prefs, wholeSeriesInspection.GetValueOrDefault(file));
-            PairSubtitle(file, dest, allFiles, prefs, s, e, records);
+            var file = mapping.FilePath;
+            var first = mapping.Episodes[0];
+            string dest;
+            if (mapping.Episodes.Count == 1)
+            {
+                var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, mapping.Season, first,
+                    CancellationToken.None).GetAwaiter().GetResult();
+                dest = naming.BuildEpisodePath(prefs, job, mapping.Season, first, title, Path.GetExtension(file));
+            }
+            else
+                dest = naming.BuildEpisodeRangePath(prefs, job, mapping.Season, first,
+                    mapping.Episodes[^1], Path.GetExtension(file));
+            var coverage = Coverage(mapping.Season, mapping.Episodes);
+            TransferOne(file, dest, mapping.Season, first, "video", records, prefs,
+                wholeSeriesInspection.GetValueOrDefault(file), coverage);
+            PairSubtitle(file, dest, allFiles, prefs, mapping.Season, first, records, coverage);
         }
         return records;
     }
 
     private void TransferOne(string source, string dest, int? season, int? episode, string fileType,
         List<ImportedFileRecord> records, EffectiveLibraryOrganization prefs,
-        MediaTrackSummaryDto? mediaTracks = null)
+        MediaTrackSummaryDto? mediaTracks = null, IReadOnlyList<EpisodeRef>? episodeCoverage = null)
     {
         var size = SafeLength(source);
         FileTransfer.Transfer(source, dest, prefs.TransferMode, prefs.DeleteSourceAfterImport, logger);
-        records.Add(new ImportedFileRecord(source, dest, fileType, season, episode, size, mediaTracks));
+        records.Add(new ImportedFileRecord(source, dest, fileType, season, episode, size, mediaTracks,
+            episodeCoverage));
     }
 
     private async Task<Dictionary<string, MediaTrackSummaryDto>> InspectSelectionAsync(FulfillmentJobDto job,
@@ -408,7 +447,9 @@ public class LibraryOrganizer(
         return matches.Count > 0 ? matches : subtitles.Count == 1 ? subtitles : [];
     }
 
-    private void PairSubtitle(string videoSource, string videoDest, List<string> allFiles, EffectiveLibraryOrganization prefs, int? season, int? episode, List<ImportedFileRecord> records)
+    private void PairSubtitle(string videoSource, string videoDest, List<string> allFiles,
+        EffectiveLibraryOrganization prefs, int? season, int? episode, List<ImportedFileRecord> records,
+        IReadOnlyList<EpisodeRef>? episodeCoverage = null)
     {
         if (!prefs.KeepSubtitles) return;
 
@@ -421,8 +462,25 @@ public class LibraryOrganizer(
                 : string.Empty;
             var subDestName = Path.GetFileNameWithoutExtension(videoDest) + infix + Path.GetExtension(match);
             var subDest = Path.Combine(Path.GetDirectoryName(videoDest) ?? string.Empty, subDestName);
-            TransferOne(match, subDest, season, episode, "subtitle", records, prefs);
+            TransferOne(match, subDest, season, episode, "subtitle", records, prefs,
+                episodeCoverage: episodeCoverage);
         }
+    }
+
+    private static List<EpisodeRef> Coverage(int season, IEnumerable<int> episodes) => episodes
+        .Distinct().OrderBy(x => x).Select(x => new EpisodeRef { Season = season, Episode = x }).ToList();
+
+    private static bool IsContiguous(IReadOnlyList<int> episodes) => episodes.Count > 0
+        && episodes.SequenceEqual(Enumerable.Range(episodes[0], episodes.Count));
+
+    private static string DescribeMappingFailure(int season, SeasonPackMapResult map)
+    {
+        var details = new List<string>();
+        if (map.UnmappedFiles.Count > 0)
+            details.Add($"{map.UnmappedFiles.Count} file(s) had no valid explicit episode identity");
+        if (map.ConflictingEpisodes.Count > 0)
+            details.Add($"episode(s) {string.Join(",", map.ConflictingEpisodes)} were claimed by multiple files");
+        return $"Season pack S{season:D2} mapping is ambiguous ({string.Join("; ", details)}); no files were imported.";
     }
 
     private static Func<string, bool> IsVideo(EffectiveLibraryOrganization prefs) => f =>
@@ -487,4 +545,6 @@ public class LibraryOrganizer(
 
     private sealed class MediaPolicyViolationException(string message, Exception? inner = null)
         : Exception(message, inner);
+
+    private sealed class EpisodeMappingException(string message) : Exception(message);
 }

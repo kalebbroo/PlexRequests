@@ -50,8 +50,11 @@ public record ParsedRelease
     public int? Season { get; init; }           // season number when detectable (start season for a range)
     public int? SeasonEnd { get; init; }        // end season for a multi-season range pack (e.g. S01-S05), else null
     public int? Episode { get; init; }          // episode number for a single-episode release
-    // Episode span when the name declares a range (S01E01-E06, "Part 1"). Lets a partial pack be told
-    // apart from a full season, which is what the pack-completeness check needs.
+    /// <summary>Every episode explicitly represented by one file/release name. A range is expanded, while
+    /// chained forms such as S01E01E03 retain their non-contiguous coverage.</summary>
+    public IReadOnlyList<int> EpisodeNumbers { get; init; } = Array.Empty<int>();
+    // Episode span when the name declares a range (S01E01-E06). Lets a partial pack be told apart from a
+    // full season; EpisodeNumbers remains authoritative when the declared episodes are non-contiguous.
     public int? EpisodeStart { get; init; }
     public int? EpisodeEnd { get; init; }
     public bool IsSeasonPack { get; init; }     // whole-season / complete-series / multi-season release

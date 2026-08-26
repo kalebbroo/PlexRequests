@@ -13,6 +13,10 @@ public interface IPlexNamingService
     /// <summary>Full destination path for a single TV episode file.</summary>
     string BuildEpisodePath(EffectiveLibraryOrganization prefs, FulfillmentJobDto job, int season, int episode, string? episodeTitle, string ext);
 
+    /// <summary>Full destination path for one physical file covering a contiguous episode range.</summary>
+    string BuildEpisodeRangePath(EffectiveLibraryOrganization prefs, FulfillmentJobDto job, int season,
+        int episodeStart, int episodeEnd, string ext);
+
     /// <summary>Destination folder for a season pack that isn't being split into per-episode files.</summary>
     string BuildSeasonPackFolder(EffectiveLibraryOrganization prefs, FulfillmentJobDto job, int season);
 
@@ -37,6 +41,39 @@ public class PlexNamingService : IPlexNamingService
             Title: job.Title, ShowTitle: job.Title, Year: job.Year, Season: season, Episode: episode,
             EpisodeTitle: episodeTitle, Quality: QualityLabel(job.Quality), Ext: NormalizeExt(ext));
         return Combine(root, NamingTemplateEngine.Render(template, ctx));
+    }
+
+    public string BuildEpisodeRangePath(EffectiveLibraryOrganization prefs, FulfillmentJobDto job, int season,
+        int episodeStart, int episodeEnd, string ext)
+    {
+        if (episodeEnd <= episodeStart)
+            return BuildEpisodePath(prefs, job, season, episodeStart, null, ext);
+
+        // Existing installations can have arbitrary episode templates that know only {Episode}. Render the
+        // start normally, then extend a conventional SxxEyy or NxYY token in the filename. If a custom
+        // template contains neither form, append an authoritative Plex token rather than producing a path
+        // that the scanner could mistake for a single episode.
+        var startPath = BuildEpisodePath(prefs, job, season, episodeStart, null, ext);
+        var directory = Path.GetDirectoryName(startPath) ?? string.Empty;
+        var extension = Path.GetExtension(startPath);
+        var stem = Path.GetFileNameWithoutExtension(startPath);
+
+        var sxe = new System.Text.RegularExpressions.Regex(
+            $@"(?i)(s0*{season}e0*{episodeStart})(?!\d)",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        if (sxe.IsMatch(stem))
+            stem = sxe.Replace(stem, $"$1-e{episodeEnd:D2}", 1);
+        else
+        {
+            var nx = new System.Text.RegularExpressions.Regex(
+                $@"(?i)(?<!\d)(0*{season}x0*{episodeStart})(?!\d)",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            stem = nx.IsMatch(stem)
+                ? nx.Replace(stem, $"$1-{season:D2}x{episodeEnd:D2}", 1)
+                : $"{stem} - s{season:D2}e{episodeStart:D2}-e{episodeEnd:D2}";
+        }
+
+        return Path.Combine(directory, stem + extension);
     }
 
     public string BuildSeasonPackFolder(EffectiveLibraryOrganization prefs, FulfillmentJobDto job, int season)

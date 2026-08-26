@@ -231,7 +231,8 @@ public class TransferReconciler(
                 ResolutionHeight = t.Resolution,
                 ReleaseName = t.ReleaseName,
                 SourceId = t.SourceId,
-                MediaTracks = f.MediaTracks
+                MediaTracks = f.MediaTracks,
+                EpisodeCoverage = f.EpisodeCoverage?.ToList() ?? new()
             }).ToList(), ct);
             if (!auditSaved && job.IsReplacement)
                 return (TransferTrackingState.Finished, "Waiting: replacement import audit could not be persisted");

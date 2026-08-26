@@ -49,4 +49,19 @@ public class ImportedFileEntity
 
     [ForeignKey(nameof(FulfillmentJobId))]
     public FulfillmentJobEntity? FulfillmentJob { get; set; }
+
+    public List<ImportedEpisodeCoverageEntity> EpisodeCoverage { get; set; } = new();
+}
+
+/// <summary>One logical Plex episode represented by an imported physical file. This is intentionally a
+/// child table: a combined kids/anime file is one file but can satisfy several episode identities.</summary>
+public class ImportedEpisodeCoverageEntity
+{
+    public int Id { get; set; }
+    public int ImportedFileId { get; set; }
+    public int SeasonNumber { get; set; }
+    public int EpisodeNumber { get; set; }
+
+    [ForeignKey(nameof(ImportedFileId))]
+    public ImportedFileEntity? ImportedFile { get; set; }
 }
