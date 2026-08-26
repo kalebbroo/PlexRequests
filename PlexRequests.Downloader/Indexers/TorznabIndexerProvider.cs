@@ -1,8 +1,10 @@
 using System.Xml.Linq;
 using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Configuration;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Indexers;
@@ -171,6 +173,14 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
 
         var text = $"&q={Uri.EscapeDataString(job.Title)}";
         yield return Base("tvsearch", cat) + text; // unscoped — catches complete-series/multi-season packs
+        if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
+        {
+            // Torznab season/episode parameters describe aired order. Alternate-order releases need the
+            // source notation in a generic text query or an aggregator can silently filter them out.
+            foreach (var query in AcquisitionQuery.BuildScoped(job).Skip(1))
+                yield return Base("search", cat) + $"&q={Uri.EscapeDataString(query)}";
+            yield break;
+        }
         var seasons = job.RequestedSeasons
             .Concat(job.SeasonTargets.Select(t => t.Season))
             .Concat(job.RequestedEpisodes.Select(e => e.Season))

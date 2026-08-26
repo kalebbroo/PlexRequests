@@ -30,20 +30,10 @@ public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parse
     public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(IndexerConfigDto indexer, FulfillmentJobDto job, CancellationToken ct)
     {
         var category = CategoryFor(job);
-        var terms = AcquisitionQuery.Build(job);
-
         // Each search only sees page 1, so for a season-scoped TV job a title-only query can miss the
-        // wanted season entirely (a busy show's newest uploads push older seasons' packs off the page).
-        // Add a "title season N" query per requested season (bounded) so those packs surface too.
-        var termsList = new List<string> { terms };
-        if (job.MediaType is MediaType.TvShow or MediaType.Anime)
-        {
-            var seasons = job.RequestedSeasons
-                .Concat(job.SeasonTargets.Select(t => t.Season))
-                .Concat(job.RequestedEpisodes.Select(e => e.Season))
-                .Distinct().OrderBy(s => s).Take(4);
-            termsList.AddRange(seasons.Select(s => $"{job.Title} season {s}"));
-        }
+        // wanted scope entirely. The shared builder also translates Plex numbering back to the absolute,
+        // DVD, digital, or custom numbering used by an alternate-order release.
+        var termsList = AcquisitionQuery.BuildScoped(job);
 
         var rowsByPath = new Dictionary<string, RowInfo>();
         foreach (var t in termsList)

@@ -81,6 +81,39 @@ public static partial class EpisodeOrderMapping
         return false;
     }
 
+    /// <summary>Resolves Plex's canonical aired numbering back to the numbering used in release names.</summary>
+    public static bool TryTranslateCanonicalToSource(SeriesEpisodeOrderProfileDto? profile,
+        int canonicalSeason, int canonicalEpisode, out EpisodeRef source)
+    {
+        if (!IsActive(profile))
+        {
+            source = new EpisodeRef { Season = canonicalSeason, Episode = canonicalEpisode };
+            return true;
+        }
+        if (TryParse(profile!, out var map, out _))
+        {
+            foreach (var pair in map)
+            {
+                if (pair.Value.Season != canonicalSeason || pair.Value.Episode != canonicalEpisode) continue;
+                source = new EpisodeRef { Season = pair.Key.Season, Episode = pair.Key.Episode };
+                return true;
+            }
+        }
+        source = new EpisodeRef();
+        return false;
+    }
+
+    /// <summary>Returns release-numbered episodes whose canonical targets belong to the requested seasons.</summary>
+    public static IReadOnlyList<EpisodeRef> SourcesForCanonicalSeasons(
+        SeriesEpisodeOrderProfileDto profile, IEnumerable<int> canonicalSeasons)
+    {
+        if (!TryParse(profile, out var map, out _)) return [];
+        var wanted = canonicalSeasons.ToHashSet();
+        return map.Where(x => wanted.Contains(x.Value.Season))
+            .Select(x => new EpisodeRef { Season = x.Key.Season, Episode = x.Key.Episode })
+            .OrderBy(x => x.Season).ThenBy(x => x.Episode).ToList();
+    }
+
     public static IReadOnlyList<EpisodeRef> SourceSeasonCoverage(SeriesEpisodeOrderProfileDto profile, int? sourceSeason)
     {
         if (!TryParse(profile, out var map, out _)) return [];
