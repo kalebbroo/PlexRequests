@@ -118,7 +118,15 @@ public enum NotificationType
     /// <summary>An already-available title was auto-upgraded to a better-quality release matching preferences.</summary>
     RequestUpgraded = 9,
     /// <summary>A reported bad/wrong file was safely replaced after the new copy imported.</summary>
-    RequestReplaced = 10
+    RequestReplaced = 10,
+    /// <summary>A user submitted a media problem for administrator review.</summary>
+    MediaIssueReported = 11,
+    /// <summary>An administrator approved the user's requested replacement.</summary>
+    MediaIssueApproved = 12,
+    /// <summary>An administrator resolved a report without an automatic replacement completion.</summary>
+    MediaIssueResolved = 13,
+    /// <summary>An administrator closed a report without taking replacement action.</summary>
+    MediaIssueDismissed = 14
 }
 
 public enum BridgeEventType

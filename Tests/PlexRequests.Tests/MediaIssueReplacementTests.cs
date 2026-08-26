@@ -224,6 +224,72 @@ public sealed class MediaIssueReplacementTests
     }
 
     [Fact]
+    public async Task Personal_issue_history_is_owner_scoped_and_hides_operational_details_even_for_admins()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        var request = new MediaRequestEntity
+        {
+            MediaId = 100, MediaType = MediaType.Anime, Title = "Tracked Anime",
+            Status = RequestStatus.Available
+        };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var job = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
+            Title = request.Title, Status = FulfillmentStatus.Downloading, Progress = 64,
+            Attempts = 3, LastError = "/downloads/private/path failed", NextRetryAt = DateTime.UtcNow.AddMinutes(5),
+            IsReplacement = true
+        };
+        db.FulfillmentJobs.Add(job);
+        await db.SaveChangesAsync();
+        var file = new ImportedFileEntity
+        {
+            FulfillmentJobId = job.Id, SourcePath = "/downloads/private/source.mkv",
+            DestinationPath = "/library/private/Anime/S01E02.mkv", FileType = "video",
+            SeasonNumber = 1, EpisodeNumber = 2, ReleaseName = "Private.Release.Name"
+        };
+        db.ImportedFiles.Add(file);
+        await db.SaveChangesAsync();
+        db.MediaIssues.AddRange(
+            new MediaIssueEntity
+            {
+                MediaId = request.MediaId, MediaType = request.MediaType, Title = request.Title,
+                ReportedByUserId = 42, ReportedBy = "admin-member", Reason = "Subtitle problem",
+                SeasonNumber = 1, EpisodeNumber = 2, ImportedFileId = file.Id,
+                ReplacementJobId = job.Id, ReplacementRequested = true,
+                Status = IssueStatus.ReplacementQueued
+            },
+            new MediaIssueEntity
+            {
+                MediaId = 200, MediaType = MediaType.Movie, Title = "Someone Else's Movie",
+                ReportedByUserId = 99, Reason = "Playback broken", Status = IssueStatus.Open
+            });
+        await db.SaveChangesAsync();
+
+        // The Admin role must not broaden a personal-history query to every user's reports.
+        var service = new MediaIssueService(db, new TestAuthProvider(42, admin: true), new CapturingQueue(),
+            new FixedQualityProfiles(), new ReleaseBlocklistService(db, NullLogger<ReleaseBlocklistService>.Instance));
+        var visible = Assert.Single(await service.GetMyIssuesAsync());
+
+        Assert.Equal("Tracked Anime", visible.Title);
+        Assert.Equal(FulfillmentStatus.Downloading, visible.ReplacementJobStatus);
+        Assert.Equal(64, visible.ReplacementProgress);
+        Assert.Null(visible.ImportedFileId);
+        Assert.Null(visible.ReplacementJobId);
+        Assert.Null(visible.AffectedFilePath);
+        Assert.Null(visible.AffectedReleaseName);
+        Assert.Null(visible.ReplacementLastError);
+        Assert.Null(visible.ReplacementNextRetryAt);
+        Assert.Equal(0, visible.ReplacementAttempts);
+    }
+
+    [Fact]
     public async Task Stale_replacement_is_deferred_for_another_search_instead_of_cancelled()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

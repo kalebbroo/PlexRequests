@@ -179,6 +179,60 @@
     padding: 2rem 0;
 }
 
+.issues-section {
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--divider);
+}
+
+.issues-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+.issues-heading h2 { margin: 0 0 0.25rem; font-size: 1.5rem; }
+.issues-list { display: flex; flex-direction: column; gap: 1rem; }
+
+.issue-card {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem;
+    border-radius: 8px;
+    background: var(--surface-bg);
+}
+
+.issue-poster {
+    width: 64px;
+    height: 96px;
+    border-radius: 4px;
+    overflow: hidden;
+    flex: 0 0 auto;
+}
+
+.issue-poster img { width: 100%; height: 100%; object-fit: cover; }
+.issue-content { flex: 1; min-width: 0; }
+.issue-title-row { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
+.issue-title-row h3 { margin: 0; font-size: 1.05rem; }
+.issue-target, .issue-detail, .issue-timeline, .issue-progress { color: var(--text-secondary); font-size: 0.85rem; }
+.issue-reason { margin-top: 0.6rem; font-weight: 600; }
+.issue-detail { margin-top: 0.25rem; white-space: pre-wrap; }
+.issue-timeline { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.7rem; }
+.issue-progress { margin-top: 0.35rem; }
+
+.issues-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 2rem;
+    border-radius: 8px;
+    background: var(--surface-bg);
+    color: var(--text-secondary);
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .stats-cards {
@@ -203,6 +257,9 @@
         flex-direction: row;
         justify-content: center;
     }
+
+    .issue-card { align-items: flex-start; }
+    .issue-title-row { flex-direction: column; gap: 0.5rem; }
 }
 
 @media (max-width: 480px) {
@@ -215,4 +272,7 @@
         flex-direction: column;
         gap: 0.5rem;
     }
+
+    .issues-heading { align-items: center; }
+    .issue-poster { width: 52px; height: 78px; }
 }

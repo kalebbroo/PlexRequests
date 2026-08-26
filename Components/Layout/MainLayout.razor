@@ -350,6 +350,10 @@
         NotificationType.RequestAvailable => Icons.Material.Filled.PlayCircle,
         NotificationType.RequestRejected => Icons.Material.Filled.Cancel,
         NotificationType.RequestCreated => Icons.Material.Filled.AddCircle,
+        NotificationType.MediaIssueReported => Icons.Material.Filled.ReportProblem,
+        NotificationType.MediaIssueApproved => Icons.Material.Filled.Downloading,
+        NotificationType.RequestReplaced or NotificationType.MediaIssueResolved => Icons.Material.Filled.TaskAlt,
+        NotificationType.MediaIssueDismissed => Icons.Material.Filled.RemoveCircleOutline,
         NotificationType.Error => Icons.Material.Filled.ErrorOutline,
         NotificationType.Warning => Icons.Material.Filled.WarningAmber,
         NotificationType.Success => Icons.Material.Filled.CheckCircle,
@@ -358,9 +362,10 @@
 
     private static Color GetNotificationColor(NotificationType type) => type switch
     {
-        NotificationType.RequestApproved or NotificationType.RequestAvailable or NotificationType.Success => Color.Success,
+        NotificationType.RequestApproved or NotificationType.RequestAvailable or NotificationType.RequestReplaced
+            or NotificationType.MediaIssueResolved or NotificationType.Success => Color.Success,
         NotificationType.RequestRejected or NotificationType.Error => Color.Error,
-        NotificationType.Warning => Color.Warning,
+        NotificationType.MediaIssueDismissed or NotificationType.Warning => Color.Warning,
         _ => Color.Info
     };
 
