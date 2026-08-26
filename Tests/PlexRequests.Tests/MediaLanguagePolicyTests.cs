@@ -45,6 +45,17 @@ public sealed class MediaLanguagePolicyTests
         Assert.True(MediaLanguagePolicy.Evaluate(policy, Tracks(audio: ["ja"], subtitles: ["eng"])).Accepted);
     }
 
+    [Theory]
+    [InlineData("rus", "ru")]
+    [InlineData("nld", "nl")]
+    [InlineData("tam", "ta")]
+    [InlineData("tel", "te")]
+    public void MediaInfo_language_codes_normalize_to_profile_codes(string observed, string expected)
+    {
+        Assert.Equal(expected, MediaLanguagePolicy.Normalize(observed));
+        Assert.Equal(expected, MediaLanguagePolicy.NormalizeExplicitLanguage(observed));
+    }
+
     [Fact]
     public void ForcedSubtitleRequirement_UsesObservedDisposition()
     {

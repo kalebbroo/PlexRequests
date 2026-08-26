@@ -216,10 +216,16 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
 
         if (context.Profile?.AllowedLanguagesCsv is { Length: > 0 } allowedCsv && parsed.Languages.Count > 0)
         {
-            var allowedLanguages = allowedCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (allowedLanguages.Length > 0 && !parsed.Languages.Any(l => allowedLanguages.Contains(l, StringComparer.OrdinalIgnoreCase)))
+            var allowedLanguages = MediaLanguagePolicy.ParseCsv(allowedCsv).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // Release names are hints, not proof. Normalize explicit language names/codes so "Japanese"
+            // matches "ja", but do not reject ambiguous "dual"/"multi" tags. MediaInfo still enforces
+            // the complete allowlist against the actual audio streams before any library write.
+            var explicitLanguages = parsed.Languages.Select(MediaLanguagePolicy.NormalizeExplicitLanguage)
+                .Where(x => x is not null).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (allowedLanguages.Count > 0 && explicitLanguages.Count > 0
+                && !explicitLanguages.Any(allowedLanguages.Contains))
                 rejections.Add(new Rejection(RejectionReason.LanguageNotAllowed,
-                    $"languages [{string.Join(", ", parsed.Languages)}] aren't in the profile's allowed set"));
+                    $"explicit language hint(s) [{string.Join(", ", explicitLanguages)}] aren't in the profile's allowed set"));
         }
 
         var score = Score(c, parsed, resolution, rank, isPack, context, idMatch, titleRecall, formatScore);

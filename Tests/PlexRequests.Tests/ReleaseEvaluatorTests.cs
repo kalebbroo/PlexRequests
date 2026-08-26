@@ -27,6 +27,25 @@ public class ReleaseEvaluatorTests
         Assert.Equal(TestData.TierId(defs, Quality.FullHD, ReleaseSource.WebDl), r.QualityDefinitionId);
     }
 
+    [Theory]
+    [InlineData("Severance.S02E07.1080p.WEB-DL.English", "en", false)]
+    [InlineData("Severance.S02E07.1080p.WEB-DL.Japanese", "ja", false)]
+    [InlineData("Severance.S02E07.1080p.WEB-DL.Japanese", "en", true)]
+    [InlineData("Severance.S02E07.1080p.WEB-DL.Dual.Audio", "en,ja", false)]
+    [InlineData("Severance.S02E07.1080p.WEB-DL.MULTi", "en,ja", false)]
+    public void Release_language_hints_are_normalized_without_treating_ambiguous_tags_as_proof(
+        string releaseName, string allowed, bool rejected)
+    {
+        var defs = TestData.Definitions();
+        var profile = TestData.Profile(defs);
+        profile.AllowedLanguagesCsv = allowed;
+
+        var ranked = _eval.Evaluate(TestData.Release(releaseName), TestData.Job(),
+            TestData.Context(profile, defs: defs));
+
+        Assert.Equal(rejected, Rejected(ranked, RejectionReason.LanguageNotAllowed));
+    }
+
     // The headline behaviour of this phase: quality is judged against the profile's allowed tier list,
     // not just a pixel-height floor.
     [Fact]
