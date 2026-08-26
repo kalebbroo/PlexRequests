@@ -350,6 +350,7 @@ builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.INotifica
 // Metadata providers (modular; the router picks one per media type with a keyless fallback).
 // Singleton so its TMDbClient (and internal HttpClient) is built once, not per scope.
 builder.Services.AddSingleton<TmdbMetadataProvider>();
+builder.Services.AddScoped<ITmdbEpisodeGroupImportService, TmdbEpisodeGroupImportService>();
 builder.Services.AddScoped<TraktMetadataProvider>();
 builder.Services.AddScoped<SeedMetadataProvider>();
 builder.Services.AddScoped<TvdbMetadataProvider>();
