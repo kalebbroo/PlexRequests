@@ -98,6 +98,37 @@ public sealed class EpisodeOrderQueryTests
     }
 
     [Fact]
+    public void Reassigning_profile_identity_clears_every_stale_mapping_provenance_field()
+    {
+        var profile = Profile(EpisodeOrderType.Absolute, "A13 -> S02E01");
+        profile.SourceEpisodeGroupId = "old-group";
+        profile.SourceEpisodeGroupName = "Old order";
+        profile.ImportedAt = DateTime.UtcNow;
+
+        EpisodeOrderMapping.AssignSeries(profile, 456, "Different Show");
+
+        Assert.Equal(456, profile.TmdbId);
+        Assert.Equal("Different Show", profile.SeriesTitle);
+        Assert.Empty(profile.MappingsText);
+        Assert.Null(profile.SourceEpisodeGroupId);
+        Assert.Null(profile.SourceEpisodeGroupName);
+        Assert.Null(profile.ImportedAt);
+    }
+
+    [Fact]
+    public void Renaming_the_same_profile_identity_preserves_its_validated_mapping()
+    {
+        var profile = Profile(EpisodeOrderType.Absolute, "A13 -> S02E01");
+        profile.SourceEpisodeGroupId = "validated-group";
+
+        EpisodeOrderMapping.AssignSeries(profile, profile.TmdbId, "Corrected title");
+
+        Assert.Equal("Corrected title", profile.SeriesTitle);
+        Assert.Equal("A13 -> S02E01", profile.MappingsText);
+        Assert.Equal("validated-group", profile.SourceEpisodeGroupId);
+    }
+
+    [Fact]
     public async Task Nyaa_searches_absolute_scope_and_deduplicates_overlapping_feed_rows()
     {
         const string hash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
