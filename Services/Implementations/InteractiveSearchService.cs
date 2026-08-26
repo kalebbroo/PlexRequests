@@ -294,6 +294,7 @@ public class InteractiveSearchService(
             Kind = task.Kind,
             MediaRequestId = task.MediaRequestId,
             MediaType = task.MediaType,
+            IsAnime = task.MediaType == MediaType.Anime,
             MediaId = task.MediaId,
             Media = !string.IsNullOrWhiteSpace(task.ExternalId)
                 ? MediaRef.FromExternal(task.ExternalSource ?? "external", task.ExternalId,
@@ -311,6 +312,18 @@ public class InteractiveSearchService(
             IndexerId = task.IndexerId,
             IncludeRejected = task.IncludeRejected
         };
+
+        if (task.MediaRequestId is int classificationRequestId)
+        {
+            var requestAnime = await db.MediaRequests.AsNoTracking()
+                .Where(r => r.Id == classificationRequestId)
+                .Select(r => r.IsAnime)
+                .FirstOrDefaultAsync();
+            var jobAnime = await db.FulfillmentJobs.AsNoTracking()
+                .Where(j => j.MediaRequestId == classificationRequestId && j.IsAnime)
+                .AnyAsync();
+            dto.IsAnime = dto.IsAnime || requestAnime == true || jobAnime;
+        }
 
         if (task.MediaType == MediaType.Music && await db.MusicSettings.AsNoTracking()
                 .Where(x => x.IsSingleton).Select(x => x.DirectDownloadsEnabled).FirstOrDefaultAsync())

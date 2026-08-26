@@ -29,13 +29,7 @@ public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parse
 
     public async Task<IReadOnlyList<ReleaseCandidate>> SearchAsync(IndexerConfigDto indexer, FulfillmentJobDto job, CancellationToken ct)
     {
-        var category = job.MediaType switch
-        {
-            MediaType.Movie => "Movies",
-            MediaType.Anime => "Anime",
-            MediaType.Music => "Music",
-            _ => "TV"
-        };
+        var category = CategoryFor(job);
         var terms = AcquisitionQuery.Build(job);
 
         // Each search only sees page 1, so for a season-scoped TV job a title-only query can miss the
@@ -97,6 +91,15 @@ public partial class X1337xIndexerProvider(HttpClient http, IReleaseParser parse
 
         return candidates;
     }
+
+    internal static string CategoryFor(FulfillmentJobDto job) => job switch
+    {
+        { IsAnime: true } => "Anime",
+        { MediaType: MediaType.Anime } => "Anime",
+        { MediaType: MediaType.Movie } => "Movies",
+        { MediaType: MediaType.Music } => "Music",
+        _ => "TV"
+    };
 
     // Opening a detail page per row is the expensive part, so keep the concurrency against one host modest.
     private const int MaxParallelDetailFetches = 4;

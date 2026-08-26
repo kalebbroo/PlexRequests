@@ -120,12 +120,13 @@ public class InteractiveSearchWorker(
     }
 
     /// <summary>Shape the task as a job so it goes through the identical search and evaluation path.</summary>
-    private static FulfillmentJobDto ToJob(SearchTaskDto t) => new()
+    internal static FulfillmentJobDto ToJob(SearchTaskDto t) => new()
     {
         Id = 0,
         MediaRequestId = t.MediaRequestId ?? 0,
         MediaId = t.MediaId,
         MediaType = t.MediaType,
+        IsAnime = t.IsAnime,
         Media = t.Media,
         RequestScope = t.RequestScope,
         Music = t.Music,

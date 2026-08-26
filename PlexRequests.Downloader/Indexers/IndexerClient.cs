@@ -78,10 +78,10 @@ public class IndexerClient(
         var applicable = settings.All
             .Where(i => IsEnabledFor(i, purpose, now))
             .Where(i => runtimeCircuit.Allows(i.Id, now))
-            .Where(i => i.Supports(job.MediaType))
+            .Where(i => i.Supports(job))
             // Anime-only sources (Nyaa) are skipped unless the job was classified as anime, so a plain
             // movie/TV request never matches an anime release with a coincidentally overlapping title.
-            .Where(i => !i.AnimeOnly || job.IsAnime)
+            .Where(i => !i.AnimeOnly || IndexerConfigDto.SearchMediaType(job) == MediaType.Anime)
             .Where(i => _byKey.ContainsKey(i.Implementation))
             .ToList();
 
@@ -91,8 +91,8 @@ public class IndexerClient(
         if (applicable.Count == 0)
         {
             if (catalogCandidates.Count == 0 && directCandidates.Count == 0)
-                logger.LogWarning("No enabled indexer supports media type {Type} for \"{Title}\" (anime={IsAnime})",
-                    job.MediaType, job.Title, job.IsAnime);
+                logger.LogWarning("No enabled indexer supports search type {Type} for \"{Title}\" (library shape={Shape}, anime={IsAnime})",
+                    IndexerConfigDto.SearchMediaType(job), job.Title, job.MediaType, job.IsAnime);
             return new IndexerSearchResult(Deduplicate(catalogCandidates.Concat(directCandidates)),
                 directResults.Select(x => x.Outcome).ToList());
         }

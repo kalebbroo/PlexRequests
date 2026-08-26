@@ -126,11 +126,11 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
         var sep = endpointUrl.Contains('?') ? "&" : "?";
         // Categories come from the row now. They were hardcoded to the Torznab standards, which are simply
         // wrong for trackers that use their own numbering — those returned nothing and looked "empty".
-        var cat = indexer.CategoriesFor(job.MediaType);
+        var cat = indexer.CategoriesFor(job);
         string Base(string t, string c) =>
             $"{endpointUrl.TrimEnd('/')}{sep}apikey={Uri.EscapeDataString(indexer.ApiKey ?? string.Empty)}&t={t}&cat={c}";
 
-        if (job.MediaType == MediaType.Movie)
+        if (job.MediaType == MediaType.Movie && !job.IsAnime)
         {
             // An id search beats fuzzy text wherever the indexer supports it; the text query still runs
             // as a second net (imdbid support varies per tracker and the aggregator merges either way).
@@ -139,6 +139,15 @@ public class TorznabIndexerProvider(HttpClient http, IIndexerFetch fetch, ILogge
             var q = Base("movie", cat) + $"&q={Uri.EscapeDataString(job.Title)}";
             if (job.Year is int y) q += $"&year={y}";
             yield return q;
+            yield break;
+        }
+
+        // Anime movies retain a Movie Plex/library shape, but Torznab's movie capability generally does
+        // not search TV/Anime categories. A category-scoped generic search reaches 5070-style anime rows
+        // without pretending the title is an ordinary movie or attaching season parameters.
+        if (job.IsAnime && job.MediaType == MediaType.Movie)
+        {
+            yield return Base("search", cat) + $"&q={Uri.EscapeDataString(job.Title)}";
             yield break;
         }
 
