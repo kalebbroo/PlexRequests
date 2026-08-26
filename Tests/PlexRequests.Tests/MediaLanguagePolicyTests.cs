@@ -149,14 +149,43 @@ public sealed class MediaLanguagePolicyTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public async Task Required_sidecar_is_verified_and_imported_even_when_general_retention_is_off()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "source.mkv");
+            var subtitle = Path.Combine(root, "source.en.srt");
+            await File.WriteAllBytesAsync(source, [1, 2, 3, 4]);
+            await File.WriteAllTextAsync(subtitle, "subtitle");
+            var library = Path.Combine(root, "library");
+            var inspector = new SidecarInspector();
+            var job = MovieJob(library);
+            job.MediaLanguagePolicy!.RequiredSubtitleLanguages = ["en"];
+            var preferences = Preferences(keepSubtitles: false);
+
+            var result = await CreateOrganizer(inspector).OrganizeAsync(job,
+                new TransferItem("transfer", null, null, false), root, preferences, CancellationToken.None);
+
+            Assert.True(result.Success, result.FailReason);
+            Assert.Equal([subtitle], inspector.Companions);
+            var importedSubtitle = Assert.Single(result.Files, x => x.FileType == "subtitle");
+            Assert.True(File.Exists(importedSubtitle.DestinationPath));
+            Assert.EndsWith(".en.srt", importedSubtitle.DestinationPath, StringComparison.OrdinalIgnoreCase);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     private static LibraryOrganizer CreateOrganizer(IMediaTrackInspector inspector) => new(
         new NoArchives(), new NoSeasonPacks(), new NoEpisodes(), new PlexNamingService(),
         new ReleaseParser(), inspector, NullLogger<LibraryOrganizer>.Instance);
 
-    private static EffectiveLibraryOrganization Preferences() => new()
+    private static EffectiveLibraryOrganization Preferences(bool keepSubtitles = true) => new()
     {
         TransferMode = TransferMode.Copy,
-        MinVideoFileSizeMb = 0
+        MinVideoFileSizeMb = 0,
+        KeepSubtitles = keepSubtitles
     };
 
     private static FulfillmentJobDto MovieJob(string library) => new()
@@ -205,6 +234,24 @@ public sealed class MediaLanguagePolicyTests
         {
             Calls++;
             return Task.FromResult(tracks);
+        }
+    }
+
+    private sealed class SidecarInspector : IMediaTrackInspector
+    {
+        public IReadOnlyList<string> Companions { get; private set; } = [];
+
+        public Task<MediaTrackSummaryDto> InspectAsync(string mediaPath,
+            IReadOnlyList<string> companionSubtitles, CancellationToken ct)
+        {
+            Companions = companionSubtitles;
+            const string json = """
+                {"media":{"track":[
+                  {"@type":"Audio","Format":"AAC","Language":"eng"},
+                  {"@type":"Audio","Format":"AAC","Language":"jpn"}
+                ]}}
+                """;
+            return Task.FromResult(MediaInfoTrackInspector.ParseOutput(json, companionSubtitles));
         }
     }
 
