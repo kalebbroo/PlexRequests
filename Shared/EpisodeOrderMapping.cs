@@ -16,6 +16,25 @@ public static partial class EpisodeOrderMapping
             ? profiles.FirstOrDefault(x => x.Enabled && x.TmdbId == tmdbId)
             : null;
 
+    /// <summary>Assigns a profile to a series without allowing mappings from the previous identity to leak.</summary>
+    public static void AssignSeries(SeriesEpisodeOrderProfileDto profile, int tmdbId, string? seriesTitle = null)
+    {
+        if (profile.TmdbId == tmdbId)
+        {
+            if (!string.IsNullOrWhiteSpace(seriesTitle)) profile.SeriesTitle = seriesTitle.Trim();
+            return;
+        }
+
+        profile.TmdbId = tmdbId;
+        profile.SeriesTitle = !string.IsNullOrWhiteSpace(seriesTitle)
+            ? seriesTitle.Trim()
+            : tmdbId > 0 ? $"TMDb {tmdbId}" : string.Empty;
+        profile.SourceEpisodeGroupId = null;
+        profile.SourceEpisodeGroupName = null;
+        profile.ImportedAt = null;
+        profile.MappingsText = string.Empty;
+    }
+
     public static bool TryParse(SeriesEpisodeOrderProfileDto profile,
         out IReadOnlyDictionary<(int Season, int Episode), EpisodeRef> mappings, out string? error)
     {

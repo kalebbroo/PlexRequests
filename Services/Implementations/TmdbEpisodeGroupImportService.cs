@@ -8,6 +8,7 @@ namespace PlexRequestsHosted.Services.Implementations;
 
 public interface ITmdbEpisodeGroupImportService
 {
+    Task<List<MediaCardDto>> SearchSeriesAsync(string query, CancellationToken ct = default);
     Task<List<TmdbEpisodeGroupSummaryDto>> GetGroupsAsync(int tmdbId, CancellationToken ct = default);
     Task<EpisodeGroupImportPreviewDto> BuildPreviewAsync(int tmdbId, string seriesTitle, string groupId,
         CancellationToken ct = default);
@@ -20,6 +21,15 @@ public sealed class TmdbEpisodeGroupImportService(
     IMetadataProviderFactory providers,
     ILogger<TmdbEpisodeGroupImportService> logger) : ITmdbEpisodeGroupImportService
 {
+    public async Task<List<MediaCardDto>> SearchSeriesAsync(string query, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(query) || query.Trim().Length < 2) return [];
+        ct.ThrowIfCancellationRequested();
+        var results = await Provider().SearchAsync(query.Trim(), MediaType.TvShow, page: 1, pageSize: 12);
+        ct.ThrowIfCancellationRequested();
+        return results.Where(x => x.MediaType == MediaType.TvShow && x.Id > 0).Take(12).ToList();
+    }
+
     public async Task<List<TmdbEpisodeGroupSummaryDto>> GetGroupsAsync(int tmdbId,
         CancellationToken ct = default)
     {

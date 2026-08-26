@@ -106,8 +106,33 @@ else
             var profile = _p.SeriesEpisodeOrderProfiles[idx];
             <MudPaper Class="pa-3 mb-3" Outlined="true">
                 <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
-                    <MudNumericField T="int" @bind-Value="profile.TmdbId"
-                                     @bind-Value:after="@(() => SeriesIdentityEdited(profile))"
+                    <MudTextField T="string" Value="@SeriesSearch(profile)"
+                                  ValueChanged="@(value => SetSeriesSearch(profile, value))"
+                                  Label="Find a TMDb series" Placeholder="Search by series title"
+                                  Variant="Variant.Outlined" dense="true" Style="min-width:280px;" />
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Search"
+                               Disabled="@(SeriesSearch(profile).Trim().Length < 2 || IsSearchingSeries(profile))"
+                               OnClick="@(() => SearchSeries(profile))">
+                        @(IsSearchingSeries(profile) ? "Searching…" : "Search")
+                    </MudButton>
+                    @if (_seriesResults.TryGetValue(profile, out var seriesResults) && seriesResults.Count > 0)
+                    {
+                        <MudSelect T="int" Value="@profile.TmdbId"
+                                   ValueChanged="@(value => SelectSeriesResult(profile, value))"
+                                   Label="Matching series" Variant="Variant.Outlined" dense="true"
+                                   Style="min-width:320px;">
+                            @foreach (var result in seriesResults)
+                            {
+                                <MudSelectItem T="int" Value="@result.Id">
+                                    @result.Title @(result.Year is int year ? $"({year})" : null) · TMDb @result.Id
+                                </MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
+                </div>
+                <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
+                    <MudNumericField T="int" Value="@profile.TmdbId"
+                                     ValueChanged="@(value => ChangeSeriesIdentity(profile, value))"
                                      Label="TMDb series ID" Min="1"
                                      Variant="Variant.Outlined" dense="true" Style="max-width:170px;" />
                     <MudTextField @bind-Value="profile.SeriesTitle" Label="Series name" Variant="Variant.Outlined"
@@ -294,6 +319,9 @@ else
     private readonly Dictionary<SeriesEpisodeOrderProfileDto, string> _selectedEpisodeGroups = new();
     private readonly HashSet<SeriesEpisodeOrderProfileDto> _groupsLoading = new();
     private readonly HashSet<SeriesEpisodeOrderProfileDto> _groupsImporting = new();
+    private readonly Dictionary<SeriesEpisodeOrderProfileDto, string> _seriesSearches = new();
+    private readonly Dictionary<SeriesEpisodeOrderProfileDto, List<MediaCardDto>> _seriesResults = new();
+    private readonly HashSet<SeriesEpisodeOrderProfileDto> _seriesSearching = new();
 
     protected override async Task OnInitializedAsync() => await Load();
 
@@ -381,6 +409,9 @@ else
         _selectedEpisodeGroups.Remove(profile);
         _groupsLoading.Remove(profile);
         _groupsImporting.Remove(profile);
+        _seriesSearches.Remove(profile);
+        _seriesResults.Remove(profile);
+        _seriesSearching.Remove(profile);
         _p.SeriesEpisodeOrderProfiles.RemoveAt(index);
         StateHasChanged();
     }
@@ -391,6 +422,61 @@ else
         _selectedEpisodeGroups.GetValueOrDefault(profile);
     private void SelectGroup(SeriesEpisodeOrderProfileDto profile, string value) =>
         _selectedEpisodeGroups[profile] = value;
+
+    private string SeriesSearch(SeriesEpisodeOrderProfileDto profile) =>
+        _seriesSearches.GetValueOrDefault(profile) ?? string.Empty;
+    private void SetSeriesSearch(SeriesEpisodeOrderProfileDto profile, string value) =>
+        _seriesSearches[profile] = value;
+    private bool IsSearchingSeries(SeriesEpisodeOrderProfileDto profile) => _seriesSearching.Contains(profile);
+
+    private async Task SearchSeries(SeriesEpisodeOrderProfileDto profile)
+    {
+        var query = SeriesSearch(profile).Trim();
+        if (query.Length < 2) return;
+        _seriesSearching.Add(profile);
+        StateHasChanged();
+        try
+        {
+            var results = await EpisodeGroups.SearchSeriesAsync(query);
+            _seriesResults[profile] = results;
+            if (results.Count == 0) await Toast.ShowErrorAsync("No matching TMDb series found.");
+        }
+        catch (Exception ex)
+        {
+            await Toast.ShowErrorAsync($"TMDb series search failed: {ex.Message}");
+        }
+        finally
+        {
+            _seriesSearching.Remove(profile);
+            StateHasChanged();
+        }
+    }
+
+    private async Task SelectSeriesResult(SeriesEpisodeOrderProfileDto profile, int tmdbId)
+    {
+        var result = _seriesResults.GetValueOrDefault(profile)?.FirstOrDefault(x => x.Id == tmdbId);
+        if (result is null || !await ChangeSeriesIdentity(profile, result.Id, result.Title)) return;
+        _seriesSearches[profile] = result.Title;
+        await LoadEpisodeGroups(profile);
+    }
+
+    private async Task<bool> ChangeSeriesIdentity(SeriesEpisodeOrderProfileDto profile, int tmdbId,
+        string? title = null)
+    {
+        if (profile.TmdbId != tmdbId && !string.IsNullOrWhiteSpace(profile.MappingsText))
+        {
+            var confirmed = await DialogService.ShowMessageBox("Change episode-order series",
+                "Changing the TMDb series clears the current episode mappings so they cannot be applied to the wrong show.",
+                yesText: "Change series", cancelText: "Cancel");
+            if (confirmed != true) return false;
+        }
+
+        EpisodeOrderMapping.AssignSeries(profile, tmdbId, title);
+        _episodeGroups.Remove(profile);
+        _selectedEpisodeGroups.Remove(profile);
+        StateHasChanged();
+        return true;
+    }
 
     private async Task LoadEpisodeGroups(SeriesEpisodeOrderProfileDto profile)
     {
@@ -470,13 +556,6 @@ else
     }
 
     private void OrderEdited(SeriesEpisodeOrderProfileDto profile) => MappingEdited(profile);
-
-    private void SeriesIdentityEdited(SeriesEpisodeOrderProfileDto profile)
-    {
-        MappingEdited(profile);
-        _episodeGroups.Remove(profile);
-        _selectedEpisodeGroups.Remove(profile);
-    }
 
     private void RemoveRule(int index)
     {
