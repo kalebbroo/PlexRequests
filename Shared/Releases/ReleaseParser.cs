@@ -127,6 +127,21 @@ public partial class ReleaseParser : IReleaseParser
             var endSeasonMatches = !range.Groups[3].Success || int.Parse(range.Groups[3].Value) == s;
             if (endSeasonMatches && b > a)
                 return (s, null, null, Enumerable.Range(a, b - a + 1).ToList(), true, false, a, b);
+            return (null, null, null, [], false, false, null, null);
+        }
+
+        // Kids/animation releases often use the alternate 1x01-02 or 1x01-1x02 convention.
+        var alternateRange = Regex.Match(name,
+            @"\b(\d{1,2})x(\d{1,3})[\s._-]*-[\s._-]*(?:(\d{1,2})x)?(\d{1,3})\b", RxOpts);
+        if (alternateRange.Success)
+        {
+            int s = int.Parse(alternateRange.Groups[1].Value);
+            int a = int.Parse(alternateRange.Groups[2].Value), b = int.Parse(alternateRange.Groups[4].Value);
+            var endSeasonMatches = !alternateRange.Groups[3].Success
+                                   || int.Parse(alternateRange.Groups[3].Value) == s;
+            if (endSeasonMatches && b > a)
+                return (s, null, null, Enumerable.Range(a, b - a + 1).ToList(), true, false, a, b);
+            return (null, null, null, [], false, false, null, null);
         }
 
         // One physical file can declare multiple non-contiguous episodes (S01E01E03) as well as the
@@ -154,6 +169,18 @@ public partial class ReleaseParser : IReleaseParser
         {
             var value = int.Parse(alt.Groups[2].Value);
             return (int.Parse(alt.Groups[1].Value), null, value, [value], false, false, null, null);
+        }
+
+        // A combined absolute-order file can cover a contiguous episode pair/range.
+        var absoluteRange = Regex.Match(name,
+            @"(?:^|[\s._])-[\s._]*(\d{1,3})(?:v\d+)?[\s._]*-[\s._]*(\d{1,3})(?:v\d+)?(?=[\s._\[\(]|$)",
+            RxOpts);
+        if (absoluteRange.Success)
+        {
+            int a = int.Parse(absoluteRange.Groups[1].Value), b = int.Parse(absoluteRange.Groups[2].Value);
+            if (a > 0 && b > a)
+                return (0, null, null, Enumerable.Range(a, b - a + 1).ToList(), true, false, a, b);
+            return (null, null, null, [], false, false, null, null);
         }
 
         // Anime absolute order: "Show - 13" / "Show - 13v2". Season zero is a deliberate source-order
@@ -279,7 +306,7 @@ public partial class ReleaseParser : IReleaseParser
         // word boundary around it).
         var normalized = Regex.Replace(name, @"[._]+", " ");
         var m = TitleBoundary.Match(normalized);
-        var absolute = Regex.Match(normalized, @"\s+-\s+\d{1,3}(?:v\d+)?(?=\s|$)", RxOpts);
+        var absolute = Regex.Match(normalized, @"\s+-\s+\d{1,3}(?:v\d+)?(?=[\s-]|$)", RxOpts);
         var boundary = new[] { m.Success ? m.Index : int.MaxValue, absolute.Success ? absolute.Index : int.MaxValue }.Min();
         var head = boundary == int.MaxValue ? normalized : normalized[..boundary];
         head = Regex.Replace(head, @"\s+", " ").Trim();
