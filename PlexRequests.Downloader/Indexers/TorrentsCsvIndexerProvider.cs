@@ -37,18 +37,7 @@ public class TorrentsCsvIndexerProvider(HttpClient http, IOptions<IndexerOptions
     {
         if (!_opts.TorrentsCsvEnabled || string.IsNullOrWhiteSpace(job.Title)) return Array.Empty<ReleaseCandidate>();
 
-        var queries = new List<string>
-        {
-            AcquisitionQuery.Build(job)
-        };
-        if (job.MediaType is MediaType.TvShow or MediaType.Anime)
-        {
-            var seasons = job.RequestedSeasons
-                .Concat(job.SeasonTargets.Select(t => t.Season))
-                .Concat(job.RequestedEpisodes.Select(e => e.Season))
-                .Distinct().OrderBy(s => s).Take(4);
-            queries.AddRange(seasons.Select(s => $"{job.Title} season {s}"));
-        }
+        var queries = AcquisitionQuery.BuildScoped(job);
 
         var byHash = new Dictionary<string, ReleaseCandidate>(StringComparer.OrdinalIgnoreCase);
         foreach (var q in queries)

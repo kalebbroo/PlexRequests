@@ -50,18 +50,7 @@ public class PirateBayIndexerProvider(HttpClient http, IOptions<IndexerOptions> 
 
         // Each query returns at most ~100 rows, so add a per-season query for season-scoped TV jobs
         // (same pattern as the 1337x provider) to surface packs a busy show pushes out of the first page.
-        var queries = new List<string>
-        {
-            AcquisitionQuery.Build(job)
-        };
-        if (job.MediaType is MediaType.TvShow or MediaType.Anime)
-        {
-            var seasons = job.RequestedSeasons
-                .Concat(job.SeasonTargets.Select(t => t.Season))
-                .Concat(job.RequestedEpisodes.Select(e => e.Season))
-                .Distinct().OrderBy(s => s).Take(4);
-            queries.AddRange(seasons.Select(s => $"{job.Title} season {s}"));
-        }
+        var queries = AcquisitionQuery.BuildScoped(job);
 
         var byHash = new Dictionary<string, ReleaseCandidate>(StringComparer.OrdinalIgnoreCase);
         foreach (var q in queries)

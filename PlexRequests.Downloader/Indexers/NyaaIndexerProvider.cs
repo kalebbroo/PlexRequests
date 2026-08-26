@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Configuration;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequests.Downloader.Indexers;
@@ -42,19 +43,25 @@ public class NyaaIndexerProvider(
     {
         if (!_opts.NyaaEnabled || string.IsNullOrWhiteSpace(job.Title)) return Array.Empty<ReleaseCandidate>();
 
-        // c=1_2 = "Anime - English-translated"; sorted by seeders desc.
-        var url = $"/?page=rss&q={Uri.EscapeDataString(job.Title)}&c={_opts.NyaaCategory}&f=0&s=seeders&o=desc";
-        var xml = await _fetch.GetStringAsync(_http, indexer, url, ct);
-
-        try
+        // c=1_2 = "Anime - English-translated"; sorted by seeders desc. RSS is page-limited, so include
+        // source-numbered scopes to keep older absolute/DVD episodes from being crowded off the title feed.
+        var byHash = new Dictionary<string, ReleaseCandidate>(StringComparer.OrdinalIgnoreCase);
+        foreach (var query in AcquisitionQuery.BuildScoped(job))
         {
-            return ParseItems(xml, indexer, int.MaxValue).Select(x => x.Candidate).ToList();
+            var url = $"/?page=rss&q={Uri.EscapeDataString(query)}&c={_opts.NyaaCategory}&f=0&s=seeders&o=desc";
+            var xml = await _fetch.GetStringAsync(_http, indexer, url, ct);
+            try
+            {
+                foreach (var item in ParseItems(xml, indexer, int.MaxValue))
+                    byHash.TryAdd(item.ExternalId, item.Candidate);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Nyaa RSS parse failed for \"{Query}\"", query);
+                throw new InvalidDataException("Nyaa returned an invalid RSS document.", ex);
+            }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "Nyaa RSS parse failed for \"{Title}\"", job.Title);
-            throw new InvalidDataException("Nyaa returned an invalid RSS document.", ex);
-        }
+        return byHash.Values.ToList();
     }
 
     public async Task<ReleaseFeedPage> FetchAsync(
