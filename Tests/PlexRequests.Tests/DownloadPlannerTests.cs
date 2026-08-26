@@ -135,6 +135,32 @@ public class DownloadPlannerTests
     }
 
     [Fact]
+    public void One_absolute_pack_spanning_canonical_seasons_is_downloaded_once()
+    {
+        var job = TestData.Job(title: "Severance", seasonTargets:
+        [
+            TestData.Season(1, 1),
+            TestData.Season(2, 1)
+        ]);
+        job.EpisodeOrderProfile = new SeriesEpisodeOrderProfileDto
+        {
+            TmdbId = 95396,
+            SourceOrder = EpisodeOrderType.Absolute,
+            MappingsText = "A13 -> S01E01\nA14 -> S02E01"
+        };
+
+        var result = Plan([TestData.Release("Severance.COMPLETE.1080p.WEB-DL")], job);
+
+        var item = Assert.Single(result.Plan.Items);
+        Assert.True(item.IsPack);
+        Assert.Null(item.Season);
+        Assert.Null(item.NeededEpisodes);
+        Assert.Equal([(1, 1), (2, 1)], item.NeededEpisodeRefs!
+            .Select(x => (x.Season, x.Episode)).ToList());
+        Assert.Contains(result.Notes, x => x.Contains("one physical pack transfer"));
+    }
+
+    [Fact]
     public void A_complete_series_pack_satisfies_any_requested_season()
     {
         var job = TestData.Job(seasonTargets: new() { TestData.Season(3, 1, 2) });

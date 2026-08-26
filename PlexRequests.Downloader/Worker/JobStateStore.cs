@@ -6,8 +6,8 @@ using PlexRequestsHosted.Shared.DTOs;
 namespace PlexRequests.Downloader.Worker;
 
 /// <summary>One protocol-neutral transfer backing a job: its backend id, the season/episode it covers, and whether it imported.
-/// <paramref name="NeededEpisodes"/> (when set) restricts a season pack to just those episode numbers — used
-/// to skip unwanted files in the download client and to filter what gets imported into Plex.</summary>
+/// <paramref name="NeededEpisodes"/> is the legacy single-season restriction; <paramref name="NeededEpisodeRefs"/>
+/// is the canonical cross-season import contract.</summary>
 public record TransferItem(
     [property: System.Text.Json.Serialization.JsonPropertyName("TorrentId")] string TransferId,
     int? Season,
@@ -20,7 +20,8 @@ public record TransferItem(
     int? IndexerId = null,
     string? ReleaseName = null,
     PlexRequestsHosted.Shared.Enums.AcquisitionProtocol Protocol = PlexRequestsHosted.Shared.Enums.AcquisitionProtocol.Torrent,
-    string? SourceId = null);
+    string? SourceId = null,
+    IReadOnlyList<EpisodeRef>? NeededEpisodeRefs = null);
 
 /// <summary>An in-flight download: the claimed job plus its one-or-more transfers. The legacy JSON property
 /// name is deliberately retained so deployments resume existing active-jobs.json files without data loss.</summary>

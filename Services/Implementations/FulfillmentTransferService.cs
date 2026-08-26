@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
@@ -61,6 +62,7 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
                 row.SourceId ??= t.SourceId;
                 row.Source ??= Trim(t.Source, 128);
                 row.IndexerId ??= t.IndexerId;
+                row.NeededEpisodeRefsJson ??= SerializeEpisodeRefs(t.NeededEpisodeRefs);
                 continue;
             }
 
@@ -77,6 +79,7 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
                 Episode = t.Episode,
                 IsPack = t.IsPack,
                 NeededEpisodesCsv = t.NeededEpisodes is { Count: > 0 } n ? string.Join(",", n) : null,
+                NeededEpisodeRefsJson = SerializeEpisodeRefs(t.NeededEpisodeRefs),
                 Resolution = t.Resolution,
                 State = TransferTrackingState.Active,
                 AddedAt = DateTime.UtcNow
@@ -235,6 +238,7 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
             ? new()
             : t.NeededEpisodesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(x => int.TryParse(x, out var n) ? n : -1).Where(n => n >= 0).ToList(),
+        NeededEpisodeRefs = DeserializeEpisodeRefs(t.NeededEpisodeRefsJson),
         Resolution = t.Resolution,
         State = t.State,
         Progress = t.Progress,
@@ -247,6 +251,25 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
         TrackerStatus = t.TrackerStatus,
         FailReason = t.FailReason
     };
+
+    private static string? SerializeEpisodeRefs(IReadOnlyList<EpisodeRef>? refs) =>
+        refs is { Count: > 0 }
+            ? JsonSerializer.Serialize(refs.DistinctBy(x => (x.Season, x.Episode))
+                .OrderBy(x => x.Season).ThenBy(x => x.Episode))
+            : null;
+
+    private static List<EpisodeRef> DeserializeEpisodeRefs(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new();
+        try
+        {
+            return (JsonSerializer.Deserialize<List<EpisodeRef>>(json) ?? new())
+                .Where(x => x.Season >= 0 && x.Episode > 0)
+                .DistinctBy(x => (x.Season, x.Episode))
+                .OrderBy(x => x.Season).ThenBy(x => x.Episode).ToList();
+        }
+        catch (JsonException) { return new(); }
+    }
 
     private sealed class TransferKeyComparer : IEqualityComparer<(AcquisitionProtocol Protocol, string TransferId)>
     {

@@ -305,24 +305,24 @@ public class LibraryOrganizer(
             // A translated source pack can span several Plex seasons. This transfer was selected for one
             // canonical season, so do not leak adjacent-season files into the library.
             mapped = mapped.Where(x => x.Coverage.All(e => e.Season == season)).ToList();
-            // If this pack was chosen to satisfy only specific episodes (an episode-level request, or a
-            // partially-missing season), keep physical files whose declared coverage intersects the target.
-            // Then prove the union covers every target; a numbering mismatch can never fall back to importing
-            // the whole pack under guessed identities.
-            if (transfer.NeededEpisodes is { Count: > 0 } needed)
+            // Keep only the canonical targets this transfer was selected to satisfy, then prove their union
+            // before the first library write. The new target set also handles cross-season packs; this branch
+            // retains compatibility with in-flight single-season state written by older workers.
+            var canonicalTargets = CanonicalTargets(transfer);
+            if (canonicalTargets.Count > 0)
             {
-                var wanted = needed.Distinct().ToHashSet();
                 var before = mapped.Count;
-                mapped = mapped.Where(m => m.Coverage.Any(x => x.Season == season && wanted.Contains(x.Episode))).ToList();
-                var covered = mapped.SelectMany(m => m.Coverage).Where(x => x.Season == season)
-                    .Select(x => x.Episode).ToHashSet();
-                var missing = wanted.Where(x => !covered.Contains(x)).OrderBy(x => x).ToList();
+                mapped = RestrictToCanonicalTargets(mapped, canonicalTargets);
+                var covered = mapped.SelectMany(m => m.Coverage)
+                    .Select(x => (x.Season, x.Episode)).ToHashSet();
+                var missing = canonicalTargets.Where(x => !covered.Contains(x))
+                    .OrderBy(x => x.Season).ThenBy(x => x.Episode).ToList();
                 if (missing.Count > 0)
                     throw new EpisodeMappingException(
-                        $"Season pack S{season:D2} cannot prove coverage for requested episode(s) {string.Join(",", missing)}; no files were imported.");
+                        $"Season pack cannot prove coverage for requested episode(s) {DescribeTargets(missing)}; no files were imported.");
                 logger.LogInformation(
-                    "Season pack S{Season}: importing {Kept} of {Total} mapped file(s) covering requested episode(s) {Needed}",
-                    season, mapped.Count, before, string.Join(",", wanted.OrderBy(x => x)));
+                    "Season pack S{Season}: importing {Kept} of {Total} mapped file(s) covering canonical episode(s) {Needed}",
+                    season, mapped.Count, before, DescribeTargets(canonicalTargets));
             }
 
             if (mapped.Count == 0)
@@ -368,6 +368,22 @@ public class LibraryOrganizer(
         if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
         {
             var translated = MapTranslatedFiles(job, videoFiles);
+            var canonicalTargets = CanonicalTargets(transfer);
+            if (canonicalTargets.Count > 0)
+            {
+                var before = translated.Count;
+                translated = RestrictToCanonicalTargets(translated, canonicalTargets);
+                var covered = translated.SelectMany(x => x.Coverage)
+                    .Select(x => (x.Season, x.Episode)).ToHashSet();
+                var missing = canonicalTargets.Where(x => !covered.Contains(x))
+                    .OrderBy(x => x.Season).ThenBy(x => x.Episode).ToList();
+                if (missing.Count > 0)
+                    throw new EpisodeMappingException(
+                        $"Cross-season pack cannot prove coverage for requested episode(s) {DescribeTargets(missing)}; no files were imported.");
+                logger.LogInformation(
+                    "Cross-season pack: importing {Kept} of {Total} mapped file(s) covering canonical episode(s) {Needed}",
+                    translated.Count, before, DescribeTargets(canonicalTargets));
+            }
             var inspection = await InspectSelectionAsync(job, translated.Select(x => x.FilePath), allFiles, prefs, ct);
             foreach (var mapping in translated)
             {
@@ -433,6 +449,24 @@ public class LibraryOrganizer(
     }
 
     private sealed record CanonicalFileMapping(string FilePath, IReadOnlyList<EpisodeRef> Coverage);
+
+    private static HashSet<(int Season, int Episode)> CanonicalTargets(TransferItem transfer)
+    {
+        if (transfer.NeededEpisodeRefs is { Count: > 0 })
+            return transfer.NeededEpisodeRefs.Where(x => x.Season >= 0 && x.Episode > 0)
+                .Select(x => (x.Season, x.Episode)).ToHashSet();
+        return transfer.Season is int season && transfer.NeededEpisodes is { Count: > 0 }
+            ? transfer.NeededEpisodes.Where(x => x > 0).Select(x => (season, x)).ToHashSet()
+            : new();
+    }
+
+    private static List<CanonicalFileMapping> RestrictToCanonicalTargets(
+        IEnumerable<CanonicalFileMapping> mappings, HashSet<(int Season, int Episode)> targets) =>
+        mappings.Where(m => m.Coverage.Any(x => targets.Contains((x.Season, x.Episode)))).ToList();
+
+    private static string DescribeTargets(IEnumerable<(int Season, int Episode)> targets) =>
+        string.Join(",", targets.OrderBy(x => x.Season).ThenBy(x => x.Episode)
+            .Select(x => $"S{x.Season:D2}E{x.Episode:D2}"));
 
     private List<CanonicalFileMapping> MapTranslatedFiles(FulfillmentJobDto job, IReadOnlyList<string> videoFiles)
     {

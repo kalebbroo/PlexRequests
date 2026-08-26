@@ -1,3 +1,5 @@
+using PlexRequestsHosted.Shared.DTOs;
+
 namespace PlexRequestsHosted.Shared.Releases;
 
 public enum DownloadPlanKind
@@ -10,14 +12,15 @@ public enum DownloadPlanKind
 
 /// <summary>
 /// One selected release plus the season/episode it covers (for state tracking and imports).
-/// <paramref name="NeededEpisodes"/> is set only when a season pack was chosen to satisfy a specific
-/// subset of episodes (episode-level request, or a partially-missing season): it lists the episode
-/// numbers we actually want, so the download client can skip the pack's other files and the importer
-/// can avoid re-importing episodes already on Plex. Null means "take the whole thing" (movie, single
-/// episode, or a pack covering a fully-missing season).
+/// <paramref name="NeededEpisodes"/> is the legacy single-season target list. <see cref="NeededEpisodeRefs"/>
+/// is the canonical target contract and can span Plex seasons, which is required when one absolute/DVD/
+/// digital-order pack satisfies several aired-order seasons. The worker uses it both to trim the transfer
+/// and to prove exactly what may be imported.
 /// </summary>
 public record DownloadPlanItem(ReleaseCandidate Candidate, int? Season, int? Episode, bool IsPack, IReadOnlyList<int>? NeededEpisodes = null)
 {
+    public IReadOnlyList<EpisodeRef>? NeededEpisodeRefs { get; init; }
+
     /// <summary>Vertical resolution (pixel height) of the chosen release, per the ranker. 0 = unknown.
     /// Carried through to the imported-file audit rows so achieved quality / cutoff can be evaluated.</summary>
     public int Resolution { get; init; }

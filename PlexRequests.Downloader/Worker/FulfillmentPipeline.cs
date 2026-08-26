@@ -125,7 +125,8 @@ public class FulfillmentPipeline(
                     IndexerId: item.Candidate.IndexerId > 0 ? item.Candidate.IndexerId : null,
                     ReleaseName: item.Candidate.ReleaseName,
                     Protocol: resource.Protocol,
-                    SourceId: resource.SourceId));
+                    SourceId: resource.SourceId,
+                    NeededEpisodeRefs: item.NeededEpisodeRefs));
             }
 
             if (transfers.Count == 0)
@@ -157,6 +158,7 @@ public class FulfillmentPipeline(
                 Episode = t.Episode,
                 IsPack = t.IsPack,
                 NeededEpisodes = t.NeededEpisodes?.ToList() ?? new(),
+                NeededEpisodeRefs = t.NeededEpisodeRefs?.ToList() ?? new(),
                 Resolution = t.Resolution
             }).ToList(), ct);
 
@@ -349,47 +351,49 @@ public class FulfillmentPipeline(
                     continue;
                 }
 
-                // Pack trimmed to specific episodes: once Deluge has resolved the file list, deselect the
-                // files we don't need so only the wanted episodes download. Best-effort and done once; the
-                // importer also filters to NeededEpisodes, so this is purely a bandwidth/disk optimization.
+                // Pack trimmed to canonical episode targets: once the backend has resolved the file list,
+                // deselect files we do not need. A single alternative-order pack may span several Plex
+                // seasons, so matching only an integer episode inside it.Season is not sufficient.
+                var canonicalTargets = CanonicalTargets(it);
                 if (backend.Capabilities.SupportsFileSelection &&
-                    it is { IsPack: true, NeededEpisodes: { Count: > 0 } needed } &&
+                    it.IsPack && canonicalTargets.Count > 0 &&
                     !trimmed.Contains(transferKey) && status.Files.Count > 0)
                 {
                     trimmed.Add(transferKey);
-                    var keepSet = needed.ToHashSet();
-                    var declaredCoverage = new HashSet<int>();
+                    var declaredCoverage = new HashSet<(int Season, int Episode)>();
                     var keep = status.Files.Select(f =>
                     {
                         var parsed = parser.Parse(Path.GetFileName(f));
                         var episodes = parsed.EpisodeNumbers;
                         if (episodes.Count == 0) return true; // subtitles/extras remain available to the importer
-                        var canonical = new List<int>();
+                        var canonical = new List<(int Season, int Episode)>();
                         if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile) && parsed.Season is int sourceSeason)
                         {
                             foreach (var sourceEpisode in episodes)
-                                if (EpisodeOrderMapping.TryTranslate(job.EpisodeOrderProfile, sourceSeason, sourceEpisode, out var target)
-                                    && target.Season == it.Season)
-                                    canonical.Add(target.Episode);
+                                if (EpisodeOrderMapping.TryTranslate(job.EpisodeOrderProfile, sourceSeason,
+                                        sourceEpisode, out var target))
+                                    canonical.Add((target.Season, target.Episode));
                         }
-                        else canonical.AddRange(episodes);
-                        var selected = canonical.Any(keepSet.Contains);
+                        else if ((parsed.Season ?? it.Season) is int canonicalSeason)
+                            canonical.AddRange(episodes.Select(x => (canonicalSeason, x)));
+                        var selected = canonical.Any(canonicalTargets.Contains);
                         if (selected) declaredCoverage.UnionWith(canonical);
                         return selected;
                     }).ToList();
                     // A physical file may cover several episodes, so count the declared logical coverage,
                     // not selected files. When the union cannot prove every wanted episode, leave all files
-                    // selected for inspection but retain NeededEpisodes; the organizer will reject the pack
+                    // selected for inspection but retain the canonical targets; the organizer will reject the pack
                     // rather than silently relaxing the request (the old kids-show numbering failure mode).
-                    var missingCoverage = keepSet.Where(x => !declaredCoverage.Contains(x)).OrderBy(x => x).ToList();
+                    var missingCoverage = canonicalTargets.Where(x => !declaredCoverage.Contains(x))
+                        .OrderBy(x => x.Season).ThenBy(x => x.Episode).ToList();
                     if (missingCoverage.Count > 0)
                     {
                         logger.LogWarning("Job {JobId} torrent {TorrentId}: file identities cannot prove requested episode(s) {Missing} — keeping all files for inspection without relaxing the import contract",
-                            job.Id, it.TransferId, string.Join(",", missingCoverage));
+                            job.Id, it.TransferId, DescribeTargets(missingCoverage));
                     }
                     else if (keep.Any(k => !k) && await backend.SetWantedFilesAsync(it.TransferId, keep, ct))
-                        logger.LogInformation("Job {JobId} torrent {TorrentId}: season pack trimmed to episode(s) {Needed} — downloading {Kept}/{Total} file(s)",
-                            job.Id, it.TransferId, string.Join(",", needed), keep.Count(k => k), keep.Count);
+                        logger.LogInformation("Job {JobId} torrent {TorrentId}: pack trimmed to canonical episode(s) {Needed} — downloading {Kept}/{Total} file(s)",
+                            job.Id, it.TransferId, DescribeTargets(canonicalTargets), keep.Count(k => k), keep.Count);
                 }
 
                 progressSum += status.Progress;
@@ -624,12 +628,29 @@ public class FulfillmentPipeline(
 
         var item = new DownloadPlanItem(candidate, season == 0 ? null : season, episode?.Episode, isPack)
         {
-            NeededEpisodes = isPack && target is { MissingEpisodes.Count: > 0 } ? target.MissingEpisodes : null
+            NeededEpisodes = isPack && target is { MissingEpisodes.Count: > 0 } ? target.MissingEpisodes : null,
+            NeededEpisodeRefs = isPack && target is { MissingEpisodes.Count: > 0 }
+                ? target.MissingEpisodes.Select(x => new EpisodeRef { Season = target.Season, Episode = x }).ToList()
+                : null
         };
         return new DownloadPlan(isPack ? DownloadPlanKind.SeasonPack : DownloadPlanKind.Episodes, new[] { item });
     }
 
     private static string TransferKey(TransferItem transfer) => $"{(int)transfer.Protocol}:{transfer.TransferId}";
+
+    internal static HashSet<(int Season, int Episode)> CanonicalTargets(TransferItem transfer)
+    {
+        if (transfer.NeededEpisodeRefs is { Count: > 0 })
+            return transfer.NeededEpisodeRefs.Where(x => x.Season >= 0 && x.Episode > 0)
+                .Select(x => (x.Season, x.Episode)).ToHashSet();
+        return transfer.Season is int season && transfer.NeededEpisodes is { Count: > 0 }
+            ? transfer.NeededEpisodes.Where(x => x > 0).Select(x => (season, x)).ToHashSet()
+            : new();
+    }
+
+    private static string DescribeTargets(IEnumerable<(int Season, int Episode)> targets) =>
+        string.Join(",", targets.OrderBy(x => x.Season).ThenBy(x => x.Episode)
+            .Select(x => $"S{x.Season:D2}E{x.Episode:D2}"));
 
     private async Task SafeBlocklist(int jobId, BlocklistRequestDto request)
     {

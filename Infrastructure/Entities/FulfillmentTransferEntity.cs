@@ -38,6 +38,8 @@ public class FulfillmentTransferEntity
     public bool IsPack { get; set; }
     /// <summary>For a pack restricted to specific episodes, which ones we actually want.</summary>
     [MaxLength(512)] public string? NeededEpisodesCsv { get; set; }
+    /// <summary>Canonical cross-season episode targets serialized as JSON.</summary>
+    public string? NeededEpisodeRefsJson { get; set; }
     public int Resolution { get; set; }
 
     // --- Last observed state, written by the reconciler --------------------------------------------

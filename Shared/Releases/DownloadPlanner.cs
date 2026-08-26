@@ -87,13 +87,13 @@ public class DownloadPlanner : IDownloadPlanner
             if (wantPack && bestPack is not null)
             {
                 notes.Add($"Season {target.Season}: taking pack \"{bestPack.Candidate.ReleaseName}\" ({bestPack.Resolution}p, score {bestPack.Score:F0})");
-                items.Add(ToItem(bestPack) with { Season = target.Season, NeededEpisodes = PackNeeded(target) });
+                items.Add(ToPackItem(bestPack, target.Season, PackNeeded(target)));
                 continue;
             }
 
             if (!p.AllowEpisodeFallback && p.SeasonPackStrategy != SeasonPackStrategy.PreferEpisodes)
             {
-                if (bestPack is not null) { items.Add(ToItem(bestPack) with { Season = target.Season, NeededEpisodes = PackNeeded(target) }); continue; }
+                if (bestPack is not null) { items.Add(ToPackItem(bestPack, target.Season, PackNeeded(target))); continue; }
                 notes.Add($"Season {target.Season}: no acceptable pack and episode fallback is disabled");
                 coversAllTargets = false;
                 continue;
@@ -102,7 +102,7 @@ public class DownloadPlanner : IDownloadPlanner
             if (missing.Count == 0)
             {
                 // No episode list to fan out to (a metadata miss) — a pack is the only option.
-                if (bestPack is not null) items.Add(ToItem(bestPack) with { Season = target.Season });
+                if (bestPack is not null) items.Add(ToPackItem(bestPack, target.Season, null));
                 else
                 {
                     notes.Add($"Season {target.Season}: no pack and no episode list to fan out to");
@@ -113,7 +113,7 @@ public class DownloadPlanner : IDownloadPlanner
 
             if (missing.Count > p.MaxEpisodesForFanout)
             {
-                if (bestPack is not null) { items.Add(ToItem(bestPack) with { Season = target.Season, NeededEpisodes = PackNeeded(target) }); continue; }
+                if (bestPack is not null) { items.Add(ToPackItem(bestPack, target.Season, PackNeeded(target))); continue; }
                 notes.Add($"Season {target.Season}: {missing.Count} episodes missing (over the {p.MaxEpisodesForFanout} fan-out cap) and no usable pack");
                 coversAllTargets = false;
                 continue;
@@ -123,7 +123,7 @@ public class DownloadPlanner : IDownloadPlanner
             if (gaps.Count > 0 && bestPack is not null)
             {
                 notes.Add($"Season {target.Season}: {gaps.Count} episode(s) have no standalone release — using the pack, trimmed to what's missing");
-                items.Add(ToItem(bestPack) with { Season = target.Season, NeededEpisodes = PackNeeded(target) });
+                items.Add(ToPackItem(bestPack, target.Season, PackNeeded(target)));
                 continue;
             }
 
@@ -142,6 +142,7 @@ public class DownloadPlanner : IDownloadPlanner
         }
 
         if (items.Count == 0) return DownloadPlanResult.None(notes.ToArray());
+        items = ConsolidatePackItems(items, notes);
         return new DownloadPlanResult(new DownloadPlan(
             anyEpisodes ? DownloadPlanKind.Episodes : DownloadPlanKind.SeasonPack,
             items,
@@ -212,7 +213,7 @@ public class DownloadPlanner : IDownloadPlanner
             if (episodes.Count > p.MaxEpisodesForFanout && bestPack is not null)
             {
                 notes.Add($"Season {season}: {episodes.Count} episodes requested (over the fan-out cap) — taking the pack, trimmed");
-                items.Add(ToItem(bestPack) with { Season = season, NeededEpisodes = episodes });
+                items.Add(ToPackItem(bestPack, season, episodes));
                 continue;
             }
 
@@ -229,7 +230,7 @@ public class DownloadPlanner : IDownloadPlanner
             if (bestPack is not null)
             {
                 notes.Add($"Season {season}: episode(s) {string.Join(",", gaps)} have no standalone release — using the pack, trimmed to them");
-                items.Add(ToItem(bestPack) with { Season = season, NeededEpisodes = gaps });
+                items.Add(ToPackItem(bestPack, season, gaps));
             }
             else
             {
@@ -238,6 +239,7 @@ public class DownloadPlanner : IDownloadPlanner
             }
         }
 
+        items = ConsolidatePackItems(items, notes);
         return items.Count == 0
             ? DownloadPlanResult.None(notes.ToArray())
             : new DownloadPlanResult(new DownloadPlan(DownloadPlanKind.Episodes, items, coversAllTargets), notes);
@@ -295,6 +297,72 @@ public class DownloadPlanner : IDownloadPlanner
 
     private static DownloadPlanItem ToItem(RankedCandidate a) =>
         new(a.Candidate, a.Season, a.Episode, a.IsPack) { Resolution = a.Resolution };
+
+    private static DownloadPlanItem ToPackItem(RankedCandidate candidate, int season,
+        IReadOnlyList<int>? neededEpisodes)
+    {
+        var targets = neededEpisodes is { Count: > 0 }
+            ? neededEpisodes.Distinct().OrderBy(x => x)
+                .Select(x => new EpisodeRef { Season = season, Episode = x }).ToList()
+            : candidate.CanonicalEpisodeCoverage.Where(x => x.Season == season)
+                .DistinctBy(x => (x.Season, x.Episode)).OrderBy(x => x.Episode)
+                .Select(x => new EpisodeRef { Season = x.Season, Episode = x.Episode }).ToList();
+        return ToItem(candidate) with
+        {
+            Season = season,
+            NeededEpisodes = neededEpisodes is { Count: > 0 }
+                ? neededEpisodes.Distinct().OrderBy(x => x).ToList()
+                : null,
+            NeededEpisodeRefs = targets.Count > 0 ? targets : null
+        };
+    }
+
+    /// <summary>
+    /// Alternative episode orders routinely package one source sequence across several canonical Plex
+    /// seasons. Season planning sees that release once per season; collapse those logical selections into
+    /// one physical transfer while retaining the union of canonical targets.
+    /// </summary>
+    internal static List<DownloadPlanItem> ConsolidatePackItems(
+        IReadOnlyList<DownloadPlanItem> items, List<string>? notes = null)
+    {
+        var result = new List<DownloadPlanItem>();
+        var positions = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in items)
+        {
+            if (!item.IsPack || item.NeededEpisodeRefs is not { Count: > 0 })
+            {
+                result.Add(item);
+                continue;
+            }
+
+            var resource = item.Candidate.Acquisition;
+            var identity = string.IsNullOrWhiteSpace(resource.SourceId) ? resource.Locator : resource.SourceId;
+            var key = $"{(int)resource.Protocol}:{identity.Trim()}";
+            if (!positions.TryGetValue(key, out var position))
+            {
+                positions[key] = result.Count;
+                result.Add(item);
+                continue;
+            }
+
+            var existing = result[position];
+            var targets = existing.NeededEpisodeRefs!.Concat(item.NeededEpisodeRefs)
+                .DistinctBy(x => (x.Season, x.Episode))
+                .OrderBy(x => x.Season).ThenBy(x => x.Episode)
+                .Select(x => new EpisodeRef { Season = x.Season, Episode = x.Episode }).ToList();
+            var seasons = targets.Select(x => x.Season).Distinct().ToList();
+            result[position] = existing with
+            {
+                Season = seasons.Count == 1 ? seasons[0] : null,
+                NeededEpisodes = seasons.Count == 1 ? targets.Select(x => x.Episode).ToList() : null,
+                NeededEpisodeRefs = targets
+            };
+        }
+
+        if (result.Count < items.Count)
+            notes?.Add($"Avoided {items.Count - result.Count} duplicate pack transfer(s) by combining canonical season targets into one physical pack transfer");
+        return result;
+    }
 
     private static bool CoversCanonicalEpisode(RankedCandidate candidate, int season, int episode) =>
         candidate.CanonicalEpisodeCoverage.Count > 0
