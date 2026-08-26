@@ -14,6 +14,17 @@ public static class MediaLanguagePolicy
         ["de"] = "de", ["deu"] = "de", ["ger"] = "de", ["german"] = "de",
         ["it"] = "it", ["ita"] = "it", ["italian"] = "it",
         ["pt"] = "pt", ["por"] = "pt", ["portuguese"] = "pt",
+        ["nl"] = "nl", ["nld"] = "nl", ["dut"] = "nl", ["dutch"] = "nl",
+        ["sv"] = "sv", ["swe"] = "sv", ["swedish"] = "sv",
+        ["da"] = "da", ["dan"] = "da", ["danish"] = "da",
+        ["no"] = "no", ["nor"] = "no", ["norwegian"] = "no",
+        ["fi"] = "fi", ["fin"] = "fi", ["finnish"] = "fi",
+        ["pl"] = "pl", ["pol"] = "pl", ["polish"] = "pl",
+        ["ru"] = "ru", ["rus"] = "ru", ["russian"] = "ru",
+        ["ar"] = "ar", ["ara"] = "ar", ["arabic"] = "ar",
+        ["hi"] = "hi", ["hin"] = "hi", ["hindi"] = "hi",
+        ["ta"] = "ta", ["tam"] = "ta", ["tamil"] = "ta",
+        ["te"] = "te", ["tel"] = "te", ["telugu"] = "te",
         ["ko"] = "ko", ["kor"] = "ko", ["korean"] = "ko",
         ["zh"] = "zh", ["zho"] = "zh", ["chi"] = "zh", ["chinese"] = "zh"
     };
@@ -39,6 +50,14 @@ public static class MediaLanguagePolicy
             || clean.Equals("unknown", StringComparison.OrdinalIgnoreCase)) return null;
         var primary = clean.Split('-', 2)[0];
         return Aliases.TryGetValue(primary, out var normalized) ? normalized : primary.ToLowerInvariant();
+    }
+
+    /// <summary>Normalizes a concrete language token, excluding ambiguous release tags such as dual/multi.</summary>
+    public static string? NormalizeExplicitLanguage(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var primary = value.Trim().Replace('_', '-').Split('-', 2)[0];
+        return Aliases.TryGetValue(primary, out var normalized) ? normalized : null;
     }
 
     public static List<string> ParseCsv(string? csv) => string.IsNullOrWhiteSpace(csv)
