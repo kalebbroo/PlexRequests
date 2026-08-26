@@ -1,3 +1,7 @@
+using System.Net;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using PlexRequests.Downloader.Configuration;
 using PlexRequests.Downloader.Indexers;
 using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
@@ -93,6 +97,37 @@ public sealed class EpisodeOrderQueryTests
         Assert.Equal(["Ordinary Show", "Ordinary Show season 3"], queries);
     }
 
+    [Fact]
+    public async Task Nyaa_searches_absolute_scope_and_deduplicates_overlapping_feed_rows()
+    {
+        const string hash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        var handler = new RecordingHandler($$"""
+            <rss xmlns:nyaa="https://nyaa.si/xmlns/nyaa"><channel><item>
+              <title>[Group] Example Anime - 13 [1080p]</title>
+              <nyaa:infoHash>{{hash}}</nyaa:infoHash>
+              <nyaa:seeders>20</nyaa:seeders><nyaa:leechers>1</nyaa:leechers><nyaa:size>1 GiB</nyaa:size>
+            </item></channel></rss>
+            """);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://nyaa.si") };
+        var provider = new NyaaIndexerProvider(http,
+            new IndexerFetch(NullLogger<IndexerFetch>.Instance), Options.Create(new IndexerOptions()),
+            NullLogger<NyaaIndexerProvider>.Instance);
+
+        var results = await provider.SearchAsync(new IndexerConfigDto { Id = 9, Name = "Nyaa" },
+            new FulfillmentJobDto
+            {
+                MediaType = MediaType.TvShow,
+                Title = "Example Anime",
+                RequestedEpisodes = [new EpisodeRef { Season = 2, Episode = 1 }],
+                EpisodeOrderProfile = Profile(EpisodeOrderType.Absolute, "A13 -> S02E01")
+            }, CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.Equal(2, handler.Queries.Count);
+        Assert.Contains("q=Example%20Anime&", handler.Queries[0]);
+        Assert.Contains("q=Example%20Anime%2013&", handler.Queries[1]);
+    }
+
     private static SeriesEpisodeOrderProfileDto Profile(EpisodeOrderType type, string mappings) => new()
     {
         TmdbId = 123,
@@ -101,4 +136,17 @@ public sealed class EpisodeOrderQueryTests
         MappingsText = mappings,
         Enabled = true
     };
+
+    private sealed class RecordingHandler(string body) : HttpMessageHandler
+    {
+        public List<string> Queries { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Queries.Add(request.RequestUri!.Query);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new StringContent(body) });
+        }
+    }
 }
