@@ -568,12 +568,91 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         var origin = await _db.FulfillmentJobs
             .Where(j => j.MediaRequestId == request.Id && !j.IsUpgrade)
             .OrderByDescending(j => j.Id).FirstOrDefaultAsync();
+        var requestEntity = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == request.Id);
+
+        // Old jobs predate anime classification, named destinations, quality profiles, and per-series
+        // episode ordering. A replacement created from one of those rows must snapshot today's durable
+        // request/config context at enqueue time; leaving the fields blank makes the worker guess at import
+        // time and can route anime into ordinary TV or interpret an absolute-order pack as aired order.
+        var externalId = !string.IsNullOrWhiteSpace(request.ExternalId)
+            ? request.ExternalId
+            : requestEntity?.ExternalId;
+        var externalSource = !string.IsNullOrWhiteSpace(request.ExternalSource)
+            ? request.ExternalSource
+            : requestEntity?.ExternalSource;
+        var mediaRef = request.MediaRef is { IsValid: true } suppliedRef
+            ? suppliedRef
+            : !string.IsNullOrWhiteSpace(externalId)
+                ? MediaRef.FromExternal(externalSource ?? "external", externalId, request.MediaType,
+                    request.RequestScopeKind.ToMediaKind(request.MediaType))
+                : MediaRef.FromTmdb(request.MediaId, request.MediaType);
+        var genres = string.IsNullOrWhiteSpace(origin?.GenresCsv)
+            ? new List<string>()
+            : origin.GenresCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        var durableAnime = request.IsAnime ?? requestEntity?.IsAnime;
+        MediaDetailDto? refreshedDetail = null;
+        if ((durableAnime is null || genres.Count == 0) && mediaRef.Provider == "tmdb")
+        {
+            try
+            {
+                refreshedDetail = await _metadata.GetDetailsAsync(mediaRef);
+                if (refreshedDetail is not null)
+                {
+                    if (genres.Count == 0) genres = refreshedDetail.Genres.ToList();
+                    durableAnime ??= refreshedDetail.IsAnime
+                        ?? AnimeClassifier.IsAnime(refreshedDetail.Genres,
+                            refreshedDetail.Languages, refreshedDetail.Countries);
+                    if (requestEntity is { IsAnime: null }) requestEntity.IsAnime = durableAnime;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Could not refresh classification while creating replacement context for request {RequestId}",
+                    request.Id);
+            }
+        }
+        var isAnime = origin?.IsAnime == true || durableAnime == true || request.MediaType == MediaType.Anime;
+        var mediaKind = origin?.MediaKind ?? request.RequestScopeKind.ToMediaKind(request.MediaType);
+        if (request.MediaType is MediaType.TvShow or MediaType.Anime) mediaKind = MediaKind.Series;
+        var requestScope = origin?.RequestScopeKind ?? requestEntity?.RequestScopeKind ?? request.RequestScopeKind;
+        if (mediaKind == MediaKind.Series && episodes.Count > 0) requestScope = RequestScopeKind.Episodes;
+        var tmdbId = origin?.TmdbId
+            ?? (mediaRef.TryGetTmdbId(out var resolvedTmdbId) ? resolvedTmdbId : null);
+
+        var profileId = request.QualityProfileId ?? requestEntity?.QualityProfileId ?? origin?.QualityProfileId;
+        if (profileId is null)
+        {
+            profileId = await _profiles.ResolveProfileIdAsync(request.MediaType, request.MediaId, genres,
+                requesterChoiceId: null, userId: requestEntity?.RequestedByUserId, isAnime: isAnime);
+            if (requestEntity is not null) requestEntity.QualityProfileId = profileId;
+        }
+
+        var episodeOrderJson = origin?.EpisodeOrderProfileJson;
+        var hasDestinationSnapshot = HasCompleteDestinationSnapshot(origin, request.MediaType);
+        LibraryOrganizationPreferencesDto? currentSettings = null;
+        if (string.IsNullOrWhiteSpace(episodeOrderJson) || !hasDestinationSnapshot)
+            currentSettings = await _libraryPreferences.GetAsync();
+        if (string.IsNullOrWhiteSpace(episodeOrderJson)
+            && currentSettings is not null
+            && EpisodeOrderMapping.Resolve(currentSettings.SeriesEpisodeOrderProfiles, tmdbId) is { } episodeProfile)
+            episodeOrderJson = JsonSerializer.Serialize(episodeProfile);
+
+        LibraryDestinationSnapshotDto? destination = null;
+        if (!hasDestinationSnapshot)
+        {
+            destination = LibraryRouting.Resolve(currentSettings!, request.MediaType, target, genres, isAnime,
+                isEpisode: mediaKind == MediaKind.Series,
+                preferredDestinationId: origin?.LibraryDestinationId
+                    ?? request.LibraryDestinationId ?? requestEntity?.LibraryDestinationId);
+            if (requestEntity is not null) requestEntity.LibraryDestinationId = destination.Id;
+        }
 
         var episodesCsv = episodes.Count > 0
             ? string.Join(",", episodes.Select(e => $"S{e.season}E{e.episode}"))
             : null;
         var upgradePolicyJson = origin?.MediaLanguagePolicyJson;
-        if (string.IsNullOrWhiteSpace(upgradePolicyJson) && request.QualityProfileId is int upgradeProfileId)
+        if (string.IsNullOrWhiteSpace(upgradePolicyJson) && profileId is int upgradeProfileId)
         {
             var currentPolicy = MediaLanguagePolicy.FromProfile(await _profiles.GetProfileAsync(upgradeProfileId));
             if (MediaLanguagePolicy.IsActive(currentPolicy))
@@ -583,33 +662,34 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         var job = new FulfillmentJobEntity
         {
             MediaRequestId = request.Id,
-            MediaIdentityId = origin?.MediaIdentityId,
+            MediaIdentityId = origin?.MediaIdentityId ?? requestEntity?.MediaIdentityId,
             MediaId = request.MediaId,
             MediaType = request.MediaType,
-            MediaKind = origin?.MediaKind ?? request.RequestScopeKind.ToMediaKind(request.MediaType),
-            RequestScopeKind = origin?.RequestScopeKind ?? request.RequestScopeKind,
+            MediaKind = mediaKind,
+            RequestScopeKind = requestScope,
             AcquisitionContextJson = origin?.AcquisitionContextJson,
             Title = request.Title,
-            Year = origin?.Year,
-            TmdbId = origin?.TmdbId ?? (request.MediaRef?.TryGetTmdbId(out var tmdbId) == true ? tmdbId : null),
-            ImdbId = origin?.ImdbId,
-            TvdbId = origin?.TvdbId,
-            ExternalId = request.ExternalId,
-            ExternalSource = request.ExternalSource,
+            Year = origin?.Year ?? refreshedDetail?.Year,
+            TmdbId = tmdbId,
+            ImdbId = origin?.ImdbId ?? refreshedDetail?.ImdbId,
+            TvdbId = origin?.TvdbId ?? refreshedDetail?.TvdbId,
+            ExternalId = externalId,
+            ExternalSource = externalSource,
             RequestedEpisodesCsv = episodesCsv,
             Quality = target,
-            QualityProfileId = request.QualityProfileId,
+            QualityProfileId = profileId,
             MediaLanguagePolicyJson = upgradePolicyJson,
-            EpisodeOrderProfileJson = origin?.EpisodeOrderProfileJson,
-            GenresCsv = origin?.GenresCsv,
-            IsAnime = origin?.IsAnime ?? false,
-            LibraryDestinationId = origin?.LibraryDestinationId,
-            LibraryDestinationName = origin?.LibraryDestinationName,
-            LibraryDestinationKind = origin?.LibraryDestinationKind,
-            LibraryDestinationRootPath = origin?.LibraryDestinationRootPath,
-            LibraryPlexSectionId = origin?.LibraryPlexSectionId,
-            LibraryDestinationTemplate = origin?.LibraryDestinationTemplate,
-            LibrarySeasonPackFolderTemplate = origin?.LibrarySeasonPackFolderTemplate,
+            EpisodeOrderProfileJson = episodeOrderJson,
+            GenresCsv = genres.Count > 0 ? string.Join(",", genres) : null,
+            IsAnime = isAnime,
+            LibraryDestinationId = hasDestinationSnapshot ? origin!.LibraryDestinationId : destination!.Id,
+            LibraryDestinationName = hasDestinationSnapshot ? origin!.LibraryDestinationName : destination!.Name,
+            LibraryDestinationKind = hasDestinationSnapshot ? origin!.LibraryDestinationKind : destination!.ContentKind,
+            LibraryDestinationRootPath = hasDestinationSnapshot ? origin!.LibraryDestinationRootPath : destination!.RootPath,
+            LibraryPlexSectionId = hasDestinationSnapshot ? origin!.LibraryPlexSectionId : destination!.PlexSectionId,
+            LibraryDestinationTemplate = hasDestinationSnapshot ? origin!.LibraryDestinationTemplate : destination!.Template,
+            LibrarySeasonPackFolderTemplate = hasDestinationSnapshot
+                ? origin!.LibrarySeasonPackFolderTemplate : destination!.SeasonPackFolderTemplate,
             IsUpgrade = true,
             IsReplacement = mediaIssueId.HasValue,
             MediaIssueId = mediaIssueId,
@@ -633,6 +713,13 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             throw;
         }
     }
+
+    private static bool HasCompleteDestinationSnapshot(FulfillmentJobEntity? job, MediaType mediaType) =>
+        job is not null
+        && !string.IsNullOrWhiteSpace(job.LibraryDestinationId)
+        && job.LibraryDestinationKind == LibraryRouting.ContentKind(mediaType)
+        && !string.IsNullOrWhiteSpace(job.LibraryDestinationRootPath)
+        && !string.IsNullOrWhiteSpace(job.LibraryDestinationTemplate);
 
     public async Task<Quality> RecomputeAchievedQualityAsync(int mediaRequestId)
     {
