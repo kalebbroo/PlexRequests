@@ -841,6 +841,10 @@ public class FulfillmentJobDto
     /// Null keeps jobs and profiles created before media-track enforcement fully backward compatible.</summary>
     public MediaLanguagePolicyDto? MediaLanguagePolicy { get; set; }
 
+    /// <summary>Immutable per-series release-number translation captured when this job was enqueued.
+    /// Null means release numbering already matches Plex's aired order.</summary>
+    public SeriesEpisodeOrderProfileDto? EpisodeOrderProfile { get; set; }
+
     /// <summary>The quality-tier catalog, needed to resolve a release's (resolution, source) to a tier.</summary>
     public List<QualityDefinitionDto> QualityDefinitions { get; set; } = new();
 
@@ -1306,6 +1310,10 @@ public class LibraryOrganizationPreferencesDto
     /// consumers synthesize the three defaults from MoviePath/TvPath/MusicPath.</summary>
     public List<LibraryDestinationDto> LibraryDestinations { get; set; } = new();
 
+    /// <summary>Per-series release-number translations. These are snapshotted into new jobs so edits never
+    /// change the identity of files already downloading.</summary>
+    public List<SeriesEpisodeOrderProfileDto> SeriesEpisodeOrderProfiles { get; set; } = new();
+
     public TransferMode TransferMode { get; set; } = TransferMode.Hardlink;
     public bool ExtractArchives { get; set; } = true;
     public bool SplitSeasonPacks { get; set; } = true;
@@ -1319,6 +1327,17 @@ public class LibraryOrganizationPreferencesDto
     /// <summary>Delete the source after import instead of leaving it for the torrent client to keep seeding.
     /// Forced off when TransferMode is Hardlink (the "source" and the library copy are the same inode).</summary>
     public bool DeleteSourceAfterImport { get; set; } = false;
+}
+
+/// <summary>Maps the numbering advertised by one series' releases to Plex's canonical aired numbering.
+/// Mappings use one rule per line: <c>S01E13 -&gt; S02E01</c>, or <c>A13 -&gt; S02E01</c> for absolute order.</summary>
+public class SeriesEpisodeOrderProfileDto
+{
+    public int TmdbId { get; set; }
+    public string SeriesTitle { get; set; } = string.Empty;
+    public EpisodeOrderType SourceOrder { get; set; } = EpisodeOrderType.Absolute;
+    public string MappingsText { get; set; } = string.Empty;
+    public bool Enabled { get; set; } = true;
 }
 
 /// <summary>One routing rule: media type (+ optional quality/genre condition) -> an alternate library root
@@ -1634,6 +1653,9 @@ public class SearchTaskDto
     /// <summary>Profile to evaluate against, so an interactive search shows the same accept/reject calls
     /// the automatic search would make.</summary>
     public QualityProfileDto? QualityProfile { get; set; }
+    /// <summary>Series numbering translation used by the automatic job, so interactive results report the
+    /// same canonical episodes and mapping failures.</summary>
+    public SeriesEpisodeOrderProfileDto? EpisodeOrderProfile { get; set; }
     public List<QualityDefinitionDto> QualityDefinitions { get; set; } = new();
     public List<string> BlocklistedHashes { get; set; } = new();
 }

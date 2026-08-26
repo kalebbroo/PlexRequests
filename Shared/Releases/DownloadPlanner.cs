@@ -71,13 +71,13 @@ public class DownloadPlanner : IDownloadPlanner
         {
             var missing = target.MissingEpisodes;
             var packs = acceptable
-                .Where(a => a.IsPack && MatchesSeason(a, target.Season) && CoversEpisodes(a, missing))
+                .Where(a => a.IsPack && MatchesSeason(a, target.Season) && CoversEpisodes(a, missing, target.Season))
                 .OrderByDescending(a => a.Score).ToList();
             var bestPack = packs.FirstOrDefault();
 
             // Report packs that matched the season but demonstrably don't cover what's missing, rather than
             // silently taking one. This is the bug that produced "it only downloaded some episodes".
-            var incomplete = acceptable.Where(a => a.IsPack && MatchesSeason(a, target.Season) && !CoversEpisodes(a, missing)).ToList();
+            var incomplete = acceptable.Where(a => a.IsPack && MatchesSeason(a, target.Season) && !CoversEpisodes(a, missing, target.Season)).ToList();
             foreach (var inc in incomplete)
                 notes.Add($"Skipped \"{inc.Candidate.ReleaseName}\": covers E{inc.EpisodeStart}-E{inc.EpisodeEnd}, need {DescribeEpisodes(missing)}");
 
@@ -154,7 +154,7 @@ public class DownloadPlanner : IDownloadPlanner
         foreach (var ep in missing)
         {
             var best = acceptable
-                .Where(a => !a.IsPack && a.Season == target.Season && a.Episode == ep)
+                .Where(a => !a.IsPack && CoversCanonicalEpisode(a, target.Season, ep))
                 .OrderByDescending(a => a.Score).FirstOrDefault();
             if (best is not null) picks.Add(ToItem(best) with { Season = target.Season, Episode = ep });
         }
@@ -206,7 +206,7 @@ public class DownloadPlanner : IDownloadPlanner
             int season = group.Key;
             var episodes = group.Select(w => w.Episode).Distinct().OrderBy(e => e).ToList();
             var bestPack = acceptable
-                .Where(a => a.IsPack && MatchesSeason(a, season) && CoversEpisodes(a, episodes))
+                .Where(a => a.IsPack && MatchesSeason(a, season) && CoversEpisodes(a, episodes, season))
                 .OrderByDescending(a => a.Score).FirstOrDefault();
 
             if (episodes.Count > p.MaxEpisodesForFanout && bestPack is not null)
@@ -219,7 +219,7 @@ public class DownloadPlanner : IDownloadPlanner
             var gaps = new List<int>();
             foreach (var ep in episodes)
             {
-                var best = acceptable.Where(a => !a.IsPack && a.Season == season && a.Episode == ep)
+                var best = acceptable.Where(a => !a.IsPack && CoversCanonicalEpisode(a, season, ep))
                     .OrderByDescending(a => a.Score).FirstOrDefault();
                 if (best is not null) items.Add(ToItem(best) with { Season = season, Episode = ep });
                 else gaps.Add(ep);
@@ -250,6 +250,8 @@ public class DownloadPlanner : IDownloadPlanner
     /// match every season.</summary>
     internal static bool MatchesSeason(RankedCandidate a, int targetSeason)
     {
+        if (a.CanonicalEpisodeCoverage.Count > 0)
+            return a.CanonicalEpisodeCoverage.Any(x => x.Season == targetSeason);
         if (a.Season is int s)
             return a.SeasonEnd is int end ? targetSeason >= s && targetSeason <= end : s == targetSeason;
         return a.LooksLikeCompleteSeries;
@@ -262,9 +264,15 @@ public class DownloadPlanner : IDownloadPlanner
     /// everything. Previously no check existed at all, so an explicit "S01E01-E06" was accepted for a
     /// thirteen-episode season and the request quietly ended up with six.
     /// </summary>
-    internal static bool CoversEpisodes(RankedCandidate a, IReadOnlyList<int> missing)
+    internal static bool CoversEpisodes(RankedCandidate a, IReadOnlyList<int> missing, int? targetSeason = null)
     {
         if (missing.Count == 0) return true;
+        if (a.CanonicalEpisodeCoverage.Count > 0 && (targetSeason ?? a.Season) is int canonicalSeason)
+        {
+            var covered = a.CanonicalEpisodeCoverage.Where(x => x.Season == canonicalSeason)
+                .Select(x => x.Episode).ToHashSet();
+            return missing.All(covered.Contains);
+        }
         if (a.Parsed.EpisodeNumbers.Count > 0)
         {
             var ordered = a.Parsed.EpisodeNumbers.Distinct().OrderBy(x => x).ToList();
@@ -288,6 +296,11 @@ public class DownloadPlanner : IDownloadPlanner
     private static DownloadPlanItem ToItem(RankedCandidate a) =>
         new(a.Candidate, a.Season, a.Episode, a.IsPack) { Resolution = a.Resolution };
 
+    private static bool CoversCanonicalEpisode(RankedCandidate candidate, int season, int episode) =>
+        candidate.CanonicalEpisodeCoverage.Count > 0
+            ? candidate.CanonicalEpisodeCoverage.Any(x => x.Season == season && x.Episode == episode)
+            : candidate.Season == season && candidate.Episode == episode;
+
     private static string DescribeEpisodes(IReadOnlyList<int> episodes) =>
         episodes.Count == 0 ? "an unknown set" : $"E{episodes.Min()}-E{episodes.Max()}";
 
@@ -306,6 +319,7 @@ public class DownloadPlanner : IDownloadPlanner
         RejectionReason.YearMismatch => "from the wrong year",
         RejectionReason.MediaTypeMismatch => "of the wrong media type",
         RejectionReason.PackIncomplete => "incomplete season packs",
+        RejectionReason.EpisodeMappingMissing => "without a configured episode translation",
         RejectionReason.Blocklisted => "previously failed",
         RejectionReason.TooOld => "too old",
         RejectionReason.MissingAcquisition => "without an acquisition locator",

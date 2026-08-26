@@ -86,6 +86,56 @@ else
     </MudPaper>
 
     <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <MudText Typo="Typo.h6">Series episode ordering</MudText>
+            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddEpisodeOrderProfile">Add series</MudButton>
+        </div>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-3">
+            Translate absolute, DVD, digital, or custom release numbering into the aired season/episode numbers
+            Plex uses for this series. The mapping is frozen onto each new job. An incomplete mapping rejects
+            the release before any library write instead of guessing.
+        </MudText>
+        @if (_p.SeriesEpisodeOrderProfiles.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Tertiary">No series-specific ordering profiles.</MudText>
+        }
+        @for (var i = 0; i < _p.SeriesEpisodeOrderProfiles.Count; i++)
+        {
+            var idx = i;
+            var profile = _p.SeriesEpisodeOrderProfiles[idx];
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
+                    <MudNumericField T="int" @bind-Value="profile.TmdbId" Label="TMDb series ID" Min="1"
+                                     Variant="Variant.Outlined" dense="true" Style="max-width:170px;" />
+                    <MudTextField @bind-Value="profile.SeriesTitle" Label="Series name" Variant="Variant.Outlined"
+                                  dense="true" Style="min-width:240px;" />
+                    <MudSelect T="EpisodeOrderType" @bind-Value="profile.SourceOrder" Label="Release order"
+                               Variant="Variant.Outlined" dense="true" Style="min-width:180px;">
+                        <MudSelectItem Value="EpisodeOrderType.Absolute">Absolute</MudSelectItem>
+                        <MudSelectItem Value="EpisodeOrderType.Dvd">DVD</MudSelectItem>
+                        <MudSelectItem Value="EpisodeOrderType.Digital">Digital</MudSelectItem>
+                        <MudSelectItem Value="EpisodeOrderType.Custom">Custom</MudSelectItem>
+                        <MudSelectItem Value="EpisodeOrderType.Aired">Aired (identity)</MudSelectItem>
+                    </MudSelect>
+                    <MudSwitch T="bool" @bind-Value="profile.Enabled" Color="Color.Primary" Label="Enabled" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                   OnClick="@(() => RemoveEpisodeOrderProfile(idx))" />
+                </div>
+                @if (profile.SourceOrder != EpisodeOrderType.Aired)
+                {
+                    <MudTextField @bind-Value="profile.MappingsText" Label="Episode translations" Lines="6"
+                                  Variant="Variant.Outlined" FullWidth="true"
+                                  Placeholder="A1 -> S01E01&#10;A13 -> S02E01&#10;S01E14 -> S02E02" />
+                    <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                        One source-to-Plex mapping per line. Use <code>A13</code> for absolute episode 13 or
+                        <code>S01E13</code> for a season-based DVD/digital/custom source.
+                    </MudText>
+                }
+            </MudPaper>
+        }
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
         <MudText Typo="Typo.h6" Class="mb-3">Naming templates</MudText>
         <div class="d-flex flex-column gap-3">
             <div>
@@ -216,6 +266,27 @@ else
             await Toast.ShowErrorAsync(error ?? "Library destination settings are invalid.");
             return;
         }
+        var duplicateTmdb = _p.SeriesEpisodeOrderProfiles.Where(x => x.TmdbId > 0)
+            .GroupBy(x => x.TmdbId).FirstOrDefault(x => x.Count() > 1);
+        if (duplicateTmdb is not null)
+        {
+            await Toast.ShowErrorAsync($"TMDb series {duplicateTmdb.Key} has more than one episode-order profile.");
+            return;
+        }
+        foreach (var profile in _p.SeriesEpisodeOrderProfiles.Where(x => x.SourceOrder != EpisodeOrderType.Aired))
+        {
+            if (profile.TmdbId <= 0)
+            {
+                await Toast.ShowErrorAsync("Every episode-order profile needs a valid TMDb series ID.");
+                return;
+            }
+            if (!EpisodeOrderMapping.TryParse(profile, out _, out var mappingError))
+            {
+                var label = string.IsNullOrWhiteSpace(profile.SeriesTitle) ? $"TMDb {profile.TmdbId}" : profile.SeriesTitle.Trim();
+                await Toast.ShowErrorAsync($"{label}: {mappingError}");
+                return;
+            }
+        }
         if (await Prefs.UpdateAsync(_p)) await Toast.ShowSuccessAsync("Library organization settings saved.");
         else await Toast.ShowErrorAsync("Save failed.");
     }
@@ -244,6 +315,22 @@ else
             MediaType = MediaType.TvShow,
             DestinationId = EnabledDestinations(LibraryContentKind.Series).FirstOrDefault()?.Id
         });
+        StateHasChanged();
+    }
+
+    private void AddEpisodeOrderProfile()
+    {
+        _p!.SeriesEpisodeOrderProfiles.Add(new SeriesEpisodeOrderProfileDto
+        {
+            SourceOrder = EpisodeOrderType.Absolute,
+            Enabled = true
+        });
+        StateHasChanged();
+    }
+
+    private void RemoveEpisodeOrderProfile(int index)
+    {
+        _p!.SeriesEpisodeOrderProfiles.RemoveAt(index);
         StateHasChanged();
     }
 

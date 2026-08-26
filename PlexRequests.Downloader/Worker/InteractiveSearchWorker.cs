@@ -138,6 +138,7 @@ public class InteractiveSearchWorker(
         // what's acceptable, so the admin can see the releases that were rejected as well as the ones weren't.
         Quality = PlexRequestsHosted.Shared.Enums.Quality.Any,
         QualityProfile = t.QualityProfile,
+        EpisodeOrderProfile = t.EpisodeOrderProfile,
         QualityDefinitions = t.QualityDefinitions,
         RequestedSeasons = t.Season is int s && t.Episode is null ? new List<int> { s } : new(),
         RequestedEpisodes = t is { Season: int se, Episode: int ep }

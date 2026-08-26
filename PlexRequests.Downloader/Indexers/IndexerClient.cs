@@ -1,6 +1,6 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
-using System.Diagnostics;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Api;
@@ -379,6 +379,9 @@ public class IndexerClient(
         var identity = job.Media is { IsValid: true } media ? media.StableKey : $"legacy:{job.MediaId}";
         var music = job.Music is null ? string.Empty
             : $"{job.RequestScope}:{job.Music.Artist}:{job.Music.Album}:{job.Music.Track}";
-        return $"{identity}:{job.Title}:{job.Year}:{job.ImdbId}:{seasons}:{episodes}:{targets}:{music}";
+        var episodeOrder = job.EpisodeOrderProfile is null ? string.Empty
+            : $"{job.EpisodeOrderProfile.SourceOrder}:"
+              + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(job.EpisodeOrderProfile.MappingsText ?? string.Empty)));
+        return $"{identity}:{job.Title}:{job.Year}:{job.ImdbId}:{seasons}:{episodes}:{targets}:{music}:{episodeOrder}";
     }
 }

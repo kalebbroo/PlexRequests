@@ -109,6 +109,10 @@ public class FulfillmentJobEntity
     /// unchanged if an admin edits the profile while a transfer is in flight.</summary>
     public string? MediaLanguagePolicyJson { get; set; }
 
+    /// <summary>Serialized SeriesEpisodeOrderProfileDto captured at enqueue. Imports and ranking must use
+    /// this snapshot rather than mutable admin configuration.</summary>
+    public string? EpisodeOrderProfileJson { get; set; }
+
     /// <summary>
     /// Searches that returned candidates but nothing acceptable. Distinct from <see cref="Attempts"/>, which
     /// counts every claim including re-searches of an already-deferred job — using that to decide when to

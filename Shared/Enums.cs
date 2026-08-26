@@ -412,6 +412,16 @@ public enum SeasonPackStrategy
     Auto = 2
 }
 
+/// <summary>The numbering used by release names before translating to Plex's canonical season/episode order.</summary>
+public enum EpisodeOrderType
+{
+    Aired = 0,
+    Absolute = 1,
+    Dvd = 2,
+    Digital = 3,
+    Custom = 4
+}
+
 /// <summary>Network file-sharing protocol used to reach an admin-configured NAS/network drive.</summary>
 public enum NetworkShareProtocol
 {

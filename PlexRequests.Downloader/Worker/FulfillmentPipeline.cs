@@ -9,6 +9,7 @@ using PlexRequests.Downloader.Vpn;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
+using PlexRequestsHosted.Shared;
 
 namespace PlexRequests.Downloader.Worker;
 
@@ -360,10 +361,20 @@ public class FulfillmentPipeline(
                     var declaredCoverage = new HashSet<int>();
                     var keep = status.Files.Select(f =>
                     {
-                        var episodes = parser.Parse(Path.GetFileName(f)).EpisodeNumbers;
+                        var parsed = parser.Parse(Path.GetFileName(f));
+                        var episodes = parsed.EpisodeNumbers;
                         if (episodes.Count == 0) return true; // subtitles/extras remain available to the importer
-                        var selected = episodes.Any(keepSet.Contains);
-                        if (selected) declaredCoverage.UnionWith(episodes);
+                        var canonical = new List<int>();
+                        if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile) && parsed.Season is int sourceSeason)
+                        {
+                            foreach (var sourceEpisode in episodes)
+                                if (EpisodeOrderMapping.TryTranslate(job.EpisodeOrderProfile, sourceSeason, sourceEpisode, out var target)
+                                    && target.Season == it.Season)
+                                    canonical.Add(target.Episode);
+                        }
+                        else canonical.AddRange(episodes);
+                        var selected = canonical.Any(keepSet.Contains);
+                        if (selected) declaredCoverage.UnionWith(canonical);
                         return selected;
                     }).ToList();
                     // A physical file may cover several episodes, so count the declared logical coverage,
