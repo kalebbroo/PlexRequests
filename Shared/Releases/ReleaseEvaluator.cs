@@ -90,9 +90,60 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
                 $"{resolution}p is not better than the {floor}p already in the library"));
 
         // ---- Season / episode ------------------------------------------------------------------------
-        int? season = c.Season ?? parsed.Season;
-        int? episode = c.Episode ?? parsed.Episode;
-        bool isPack = episode is null && (parsed.IsSeasonPack || season is not null);
+        int? sourceSeason = c.Season ?? parsed.Season;
+        int? sourceEpisode = c.Episode ?? parsed.Episode;
+        bool isPack = sourceEpisode is null && (parsed.IsSeasonPack || sourceSeason is not null);
+        var canonicalCoverage = new List<EpisodeRef>();
+        int? season = sourceSeason;
+        int? episode = sourceEpisode;
+        int? seasonEnd = parsed.SeasonEnd;
+        int? episodeStart = parsed.EpisodeStart;
+        int? episodeEnd = parsed.EpisodeEnd;
+
+        if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
+        {
+            var sourceEpisodes = (c.Episode is int supplied ? new[] { supplied } : parsed.EpisodeNumbers)
+                .Distinct().OrderBy(x => x).ToList();
+            if (sourceEpisodes.Count > 0 && sourceSeason is int ss)
+            {
+                foreach (var source in sourceEpisodes)
+                {
+                    if (EpisodeOrderMapping.TryTranslate(job.EpisodeOrderProfile, ss, source, out var target))
+                        canonicalCoverage.Add(target);
+                    else
+                        rejections.Add(new Rejection(RejectionReason.EpisodeMappingMissing,
+                            $"{(ss == 0 ? $"A{source}" : $"S{ss:D2}E{source:D2}")} has no canonical episode mapping"));
+                }
+            }
+            else if (isPack)
+            {
+                canonicalCoverage.AddRange(EpisodeOrderMapping.SourceSeasonCoverage(job.EpisodeOrderProfile!, sourceSeason));
+                if (canonicalCoverage.Count == 0)
+                    rejections.Add(new Rejection(RejectionReason.EpisodeMappingMissing,
+                        "the pack's source numbering has no canonical episode mappings"));
+            }
+            else
+                rejections.Add(new Rejection(RejectionReason.EpisodeMappingMissing,
+                    "the release name has no source episode number to translate"));
+
+            if (canonicalCoverage.Count > 0)
+            {
+                canonicalCoverage = canonicalCoverage.DistinctBy(x => (x.Season, x.Episode))
+                    .OrderBy(x => x.Season).ThenBy(x => x.Episode).ToList();
+                season = canonicalCoverage[0].Season;
+                seasonEnd = canonicalCoverage[^1].Season == season ? null : canonicalCoverage[^1].Season;
+                episode = !isPack && canonicalCoverage.Count == 1 ? canonicalCoverage[0].Episode : null;
+                var sameSeason = canonicalCoverage.All(x => x.Season == season);
+                episodeStart = sameSeason ? canonicalCoverage[0].Episode : null;
+                episodeEnd = sameSeason ? canonicalCoverage[^1].Episode : null;
+            }
+        }
+        else if (sourceSeason is int identitySeason)
+        {
+            var sourceEpisodes = (c.Episode is int supplied ? new[] { supplied } : parsed.EpisodeNumbers)
+                .Distinct().OrderBy(x => x).ToList();
+            canonicalCoverage.AddRange(sourceEpisodes.Select(x => new EpisodeRef { Season = identitySeason, Episode = x }));
+        }
 
         // ---- Seeders, size ---------------------------------------------------------------------------
         int minSeeders = context.Profile?.MinSeeders ?? p.MinSeeders;
@@ -181,10 +232,11 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
             QualityDefinitionId = definition?.Id,
             ProfileRank = rank,
             Season = season,
-            SeasonEnd = parsed.SeasonEnd,
+            SeasonEnd = seasonEnd,
             Episode = episode,
-            EpisodeStart = parsed.EpisodeStart,
-            EpisodeEnd = parsed.EpisodeEnd,
+            EpisodeStart = episodeStart,
+            EpisodeEnd = episodeEnd,
+            CanonicalEpisodeCoverage = canonicalCoverage,
             IsPack = isPack,
             LooksLikeCompleteSeries = parsed.LooksLikeCompleteSeries,
             Accepted = rejections.Count == 0,

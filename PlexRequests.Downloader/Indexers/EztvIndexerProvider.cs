@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
+using PlexRequestsHosted.Shared;
 
 namespace PlexRequests.Downloader.Indexers;
 
@@ -49,7 +50,10 @@ public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> l
 
         // Episode-level targets take precedence (monitored/auto or explicit episode requests); otherwise
         // fall back to whole-season filtering. No selection ⇒ everything (whole series).
-        if (job.RequestedEpisodes.Count > 0)
+        // EZTV's season/episode fields are source-native. With an alternate-order profile, comparing them
+        // to canonical Plex targets here would discard the exact releases the shared evaluator is meant to
+        // translate. Keep the provider's full title feed and let ranking/planning apply the snapshot.
+        if (!EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile) && job.RequestedEpisodes.Count > 0)
         {
             var want = job.RequestedEpisodes.Select(e => (e.Season, e.Episode)).ToHashSet();
             var wantSeasons = job.RequestedEpisodes.Select(e => e.Season).ToHashSet();
@@ -62,7 +66,7 @@ public class EztvIndexerProvider(HttpClient http, ILogger<EztvIndexerProvider> l
                     || (c.Episode is null && (c.Season is null || wantSeasons.Contains(c.Season.Value))))
                 .ToList();
         }
-        else if (job.RequestedSeasons.Count > 0)
+        else if (!EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile) && job.RequestedSeasons.Count > 0)
         {
             candidates = candidates.Where(c => c.Season is null || job.RequestedSeasons.Contains(c.Season.Value)).ToList();
         }

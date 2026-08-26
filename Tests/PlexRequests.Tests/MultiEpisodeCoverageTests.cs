@@ -9,6 +9,7 @@ using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
+using PlexRequestsHosted.Shared;
 using Xunit;
 
 namespace PlexRequests.Tests;
@@ -39,6 +40,26 @@ public sealed class MultiEpisodeCoverageTests
 
         Assert.Equal([1, 3], parsed.EpisodeNumbers);
         Assert.DoesNotContain(2, parsed.EpisodeNumbers);
+    }
+
+    [Fact]
+    public void ParserRecognizesAnimeAbsoluteEpisodeWithoutTreatingItAsAPlexSeason()
+    {
+        var parsed = _parser.Parse("[Group] Show - 13v2 [1080p].mkv");
+
+        Assert.Equal(0, parsed.Season);
+        Assert.Equal(13, parsed.Episode);
+        Assert.Equal([13], parsed.EpisodeNumbers);
+        Assert.Equal("[Group] Show", parsed.Title);
+    }
+
+    [Fact]
+    public void MappingParserRejectsDuplicateTargets()
+    {
+        var profile = OrderProfile("A1 -> S01E01\nA2 -> S01E01");
+
+        Assert.False(EpisodeOrderMapping.TryParse(profile, out _, out var error));
+        Assert.Contains("more than one source episode", error);
     }
 
     [Fact]
@@ -112,6 +133,54 @@ public sealed class MultiEpisodeCoverageTests
 
             var result = await CreateOrganizer().OrganizeAsync(TvJob(library),
                 new TransferItem("transfer", 1, null, true, NeededEpisodes: [2]), source,
+                Preferences(), CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Equal(BlocklistReason.EpisodeMappingAmbiguous, result.BlocklistReason);
+            Assert.False(Directory.Exists(library));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OrganizerTranslatesAbsolutePackFileToCanonicalPlexEpisode()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "Show - 13.mkv");
+            await File.WriteAllBytesAsync(source, [1, 2, 3, 4]);
+            var library = Path.Combine(root, "library");
+            var job = TvJob(library);
+            job.EpisodeOrderProfile = OrderProfile("A13 -> S02E01");
+
+            var result = await CreateOrganizer().OrganizeAsync(job,
+                new TransferItem("transfer", 2, null, true, NeededEpisodes: [1]), source,
+                Preferences(), CancellationToken.None);
+
+            Assert.True(result.Success, result.FailReason);
+            var video = Assert.Single(result.Files, x => x.FileType == "video");
+            Assert.True(video.DestinationPath.EndsWith("Show - s02e01.mkv", StringComparison.OrdinalIgnoreCase),
+                video.DestinationPath);
+            Assert.Equal([(2, 1)], video.EpisodeCoverage!.Select(x => (x.Season, x.Episode)).ToList());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OrganizerRejectsMissingAbsoluteMappingBeforeWriting()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "Show - 14.mkv");
+            await File.WriteAllBytesAsync(source, [1, 2, 3, 4]);
+            var library = Path.Combine(root, "library");
+            var job = TvJob(library);
+            job.EpisodeOrderProfile = OrderProfile("A13 -> S02E01");
+
+            var result = await CreateOrganizer().OrganizeAsync(job,
+                new TransferItem("transfer", 2, null, true, NeededEpisodes: [1]), source,
                 Preferences(), CancellationToken.None);
 
             Assert.False(result.Success);
@@ -199,6 +268,15 @@ public sealed class MultiEpisodeCoverageTests
             Template = "{ShowTitle} ({Year})/Season {Season:00}/{ShowTitle} - s{Season:00}e{Episode:00} - {EpisodeTitle}{Ext}",
             SeasonPackFolderTemplate = "{ShowTitle} ({Year})/Season {Season:00}"
         }
+    };
+
+    private static SeriesEpisodeOrderProfileDto OrderProfile(string mappings) => new()
+    {
+        TmdbId = 123,
+        SeriesTitle = "Show",
+        SourceOrder = EpisodeOrderType.Absolute,
+        MappingsText = mappings,
+        Enabled = true
     };
 
     private static string NewRoot()

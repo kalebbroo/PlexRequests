@@ -26,6 +26,16 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
     public async Task<bool> UpdateAsync(LibraryOrganizationPreferencesDto prefs)
     {
         if (!LibraryRouting.TryNormalizeAndValidate(prefs, out _)) return false;
+        var profileIds = new HashSet<int>();
+        foreach (var profile in prefs.SeriesEpisodeOrderProfiles)
+        {
+            if (profile.TmdbId <= 0 || !profileIds.Add(profile.TmdbId)) return false;
+            if (profile.SourceOrder != Shared.Enums.EpisodeOrderType.Aired)
+            {
+                if (!EpisodeOrderMapping.TryParse(profile, out _, out _)) return false;
+                profile.MappingsText = EpisodeOrderMapping.Normalize(profile);
+            }
+        }
         var e = await GetOrCreateAsync();
         e.MoviePath = prefs.MoviePath?.Trim() ?? string.Empty;
         e.TvPath = prefs.TvPath?.Trim() ?? string.Empty;
@@ -36,6 +46,9 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
         e.MusicTrackTemplate = string.IsNullOrWhiteSpace(prefs.MusicTrackTemplate) ? e.MusicTrackTemplate : prefs.MusicTrackTemplate.Trim();
         e.LibraryRootRulesJson = prefs.LibraryRootRules is { Count: > 0 } ? JsonSerializer.Serialize(prefs.LibraryRootRules) : null;
         e.LibraryDestinationsJson = JsonSerializer.Serialize(prefs.LibraryDestinations);
+        e.SeriesEpisodeOrderProfilesJson = prefs.SeriesEpisodeOrderProfiles is { Count: > 0 }
+            ? JsonSerializer.Serialize(prefs.SeriesEpisodeOrderProfiles)
+            : null;
         e.TransferMode = prefs.TransferMode;
         e.ExtractArchives = prefs.ExtractArchives;
         e.SplitSeasonPacks = prefs.SplitSeasonPacks;
@@ -78,6 +91,10 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
         LibraryDestinations = string.IsNullOrWhiteSpace(e.LibraryDestinationsJson)
             ? new List<LibraryDestinationDto>()
             : (JsonSerializer.Deserialize<List<LibraryDestinationDto>>(e.LibraryDestinationsJson) ?? new List<LibraryDestinationDto>()),
+        SeriesEpisodeOrderProfiles = string.IsNullOrWhiteSpace(e.SeriesEpisodeOrderProfilesJson)
+            ? new List<SeriesEpisodeOrderProfileDto>()
+            : (JsonSerializer.Deserialize<List<SeriesEpisodeOrderProfileDto>>(e.SeriesEpisodeOrderProfilesJson)
+                ?? new List<SeriesEpisodeOrderProfileDto>()),
         TransferMode = e.TransferMode,
         ExtractArchives = e.ExtractArchives,
         SplitSeasonPacks = e.SplitSeasonPacks,

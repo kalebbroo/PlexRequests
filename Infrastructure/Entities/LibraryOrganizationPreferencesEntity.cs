@@ -32,6 +32,9 @@ public class LibraryOrganizationPreferencesEntity
     /// legacy root paths; the service upgrades those paths into deterministic named defaults.</summary>
     public string? LibraryDestinationsJson { get; set; }
 
+    /// <summary>Serialized List&lt;SeriesEpisodeOrderProfileDto&gt;.</summary>
+    public string? SeriesEpisodeOrderProfilesJson { get; set; }
+
     public TransferMode TransferMode { get; set; } = TransferMode.Hardlink;
     public bool ExtractArchives { get; set; } = true;
     public bool SplitSeasonPacks { get; set; } = true;

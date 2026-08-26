@@ -267,6 +267,18 @@ public class LibraryOrganizer(
             var best = videoFiles.OrderByDescending(f => SafeLength(f)).FirstOrDefault();
             if (best is null || transfer.Season is not int s || transfer.Episode is not int e) return records;
 
+            if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
+            {
+                var parsed = parser.Parse(Path.GetFileName(best));
+                var sourceEpisodes = parsed.EpisodeNumbers.Distinct().ToList();
+                if (parsed.Season is not int sourceSeason || sourceEpisodes.Count != 1
+                    || !EpisodeOrderMapping.TryTranslate(job.EpisodeOrderProfile, sourceSeason,
+                        sourceEpisodes[0], out var canonical)
+                    || canonical.Season != s || canonical.Episode != e)
+                    throw new EpisodeMappingException(
+                        $"Standalone file '{Path.GetFileName(best)}' does not prove canonical identity S{s:D2}E{e:D2}; no files were imported.");
+            }
+
             var inspected = await InspectSelectionAsync(job, [best], allFiles, prefs, ct);
             var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, s, e, CancellationToken.None).GetAwaiter().GetResult();
             var dest = naming.BuildEpisodePath(prefs, job, s, e, title, Path.GetExtension(best));
@@ -278,11 +290,21 @@ public class LibraryOrganizer(
 
         if (transfer.Season is int season)
         {
-            var map = splitter.Map(videoFiles, season, expectedEpisodeCount);
-            if (!map.IsUnambiguous)
-                throw new EpisodeMappingException(DescribeMappingFailure(season, map));
+            List<CanonicalFileMapping> mapped;
+            if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
+                mapped = MapTranslatedFiles(job, videoFiles);
+            else
+            {
+                var map = splitter.Map(videoFiles, season, expectedEpisodeCount);
+                if (!map.IsUnambiguous)
+                    throw new EpisodeMappingException(DescribeMappingFailure(season, map));
+                mapped = map.Mappings.Select(x => new CanonicalFileMapping(x.FilePath,
+                    x.Episodes.Select(e => new EpisodeRef { Season = x.Season, Episode = e }).ToList())).ToList();
+            }
 
-            var mapped = map.Mappings.ToList();
+            // A translated source pack can span several Plex seasons. This transfer was selected for one
+            // canonical season, so do not leak adjacent-season files into the library.
+            mapped = mapped.Where(x => x.Coverage.All(e => e.Season == season)).ToList();
             // If this pack was chosen to satisfy only specific episodes (an episode-level request, or a
             // partially-missing season), keep physical files whose declared coverage intersects the target.
             // Then prove the union covers every target; a numbering mismatch can never fall back to importing
@@ -291,8 +313,9 @@ public class LibraryOrganizer(
             {
                 var wanted = needed.Distinct().ToHashSet();
                 var before = mapped.Count;
-                mapped = mapped.Where(m => m.Episodes.Any(wanted.Contains)).ToList();
-                var covered = mapped.SelectMany(m => m.Episodes).ToHashSet();
+                mapped = mapped.Where(m => m.Coverage.Any(x => x.Season == season && wanted.Contains(x.Episode))).ToList();
+                var covered = mapped.SelectMany(m => m.Coverage).Where(x => x.Season == season)
+                    .Select(x => x.Episode).ToHashSet();
                 var missing = wanted.Where(x => !covered.Contains(x)).OrderBy(x => x).ToList();
                 if (missing.Count > 0)
                     throw new EpisodeMappingException(
@@ -309,7 +332,7 @@ public class LibraryOrganizer(
             foreach (var mapping in mapped)
             {
                 var file = mapping.FilePath;
-                var episodes = mapping.Episodes.Distinct().OrderBy(x => x).ToList();
+                var episodes = mapping.Coverage.Select(x => x.Episode).Distinct().OrderBy(x => x).ToList();
                 var first = episodes[0];
                 string dest;
                 if (prefs.SplitSeasonPacks)
@@ -331,7 +354,7 @@ public class LibraryOrganizer(
                     dest = Path.Combine(folder, name);
                 }
 
-                var coverage = Coverage(season, episodes);
+                var coverage = mapping.Coverage;
                 TransferOne(file, dest, season, first, "video", records, prefs,
                     inspected.GetValueOrDefault(file), coverage);
                 PairSubtitle(file, dest, allFiles, prefs, season, first, records, coverage);
@@ -342,6 +365,28 @@ public class LibraryOrganizer(
         // Whole-series / multi-season pack with no single target season (e.g. metadata was unavailable
         // at enqueue time): parse each file's own season+episode coverage independently. One unmapped or
         // overlapping file rejects the import — never guess or silently import a partial series.
+        if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
+        {
+            var translated = MapTranslatedFiles(job, videoFiles);
+            var inspection = await InspectSelectionAsync(job, translated.Select(x => x.FilePath), allFiles, prefs, ct);
+            foreach (var mapping in translated)
+            {
+                var file = mapping.FilePath;
+                var canonicalSeason = mapping.Coverage[0].Season;
+                var episodes = mapping.Coverage.Select(x => x.Episode).ToList();
+                var first = episodes[0];
+                var dest = episodes.Count == 1
+                    ? naming.BuildEpisodePath(prefs, job, canonicalSeason, first,
+                        episodeTitles.GetEpisodeTitleAsync(job.TmdbId, canonicalSeason, first, CancellationToken.None).GetAwaiter().GetResult(),
+                        Path.GetExtension(file))
+                    : naming.BuildEpisodeRangePath(prefs, job, canonicalSeason, first, episodes[^1], Path.GetExtension(file));
+                TransferOne(file, dest, canonicalSeason, first, "video", records, prefs,
+                    inspection.GetValueOrDefault(file), mapping.Coverage);
+                PairSubtitle(file, dest, allFiles, prefs, canonicalSeason, first, records, mapping.Coverage);
+            }
+            return records;
+        }
+
         var mappedFiles = new List<EpisodeFileMapping>();
         var unmappedFiles = new List<string>();
         foreach (var file in videoFiles)
@@ -385,6 +430,52 @@ public class LibraryOrganizer(
             PairSubtitle(file, dest, allFiles, prefs, mapping.Season, first, records, coverage);
         }
         return records;
+    }
+
+    private sealed record CanonicalFileMapping(string FilePath, IReadOnlyList<EpisodeRef> Coverage);
+
+    private List<CanonicalFileMapping> MapTranslatedFiles(FulfillmentJobDto job, IReadOnlyList<string> videoFiles)
+    {
+        var mapped = new List<CanonicalFileMapping>();
+        var unmapped = new List<string>();
+        foreach (var file in videoFiles)
+        {
+            var parsed = parser.Parse(Path.GetFileName(file));
+            var sourceEpisodes = parsed.EpisodeNumbers.Distinct().OrderBy(x => x).ToList();
+            if (parsed.Season is not int sourceSeason || sourceEpisodes.Count == 0 || !IsContiguous(sourceEpisodes))
+            {
+                unmapped.Add(file);
+                continue;
+            }
+
+            var coverage = new List<EpisodeRef>();
+            foreach (var sourceEpisode in sourceEpisodes)
+            {
+                if (!EpisodeOrderMapping.TryTranslate(job.EpisodeOrderProfile, sourceSeason, sourceEpisode, out var target))
+                {
+                    coverage.Clear();
+                    break;
+                }
+                coverage.Add(target);
+            }
+
+            coverage = coverage.DistinctBy(x => (x.Season, x.Episode))
+                .OrderBy(x => x.Season).ThenBy(x => x.Episode).ToList();
+            if (coverage.Count == 0 || coverage.Any(x => x.Season != coverage[0].Season)
+                || !IsContiguous(coverage.Select(x => x.Episode).ToList()))
+                unmapped.Add(file);
+            else
+                mapped.Add(new CanonicalFileMapping(file, coverage));
+        }
+
+        var conflicts = mapped.SelectMany(x => x.Coverage)
+            .GroupBy(x => (x.Season, x.Episode)).Where(x => x.Count() > 1).Select(x => x.Key).ToList();
+        if (unmapped.Count > 0 || conflicts.Count > 0)
+            throw new EpisodeMappingException(
+                $"Configured episode order could not map the pack safely: {unmapped.Count} unmapped file(s), {conflicts.Count} overlapping canonical episode(s); no files were imported.");
+        if (mapped.Count == 0)
+            throw new EpisodeMappingException("Configured episode order produced no canonical episode files.");
+        return mapped;
     }
 
     private void TransferOne(string source, string dest, int? season, int? episode, string fileType,

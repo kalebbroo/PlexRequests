@@ -29,6 +29,8 @@ public enum RejectionReason
     MetadataIncomplete,
     WrongSeason,
     WrongEpisode,
+    /// <summary>A non-aired series profile was active but did not define the release episode's canonical identity.</summary>
+    EpisodeMappingMissing,
     /// <summary>A season pack that demonstrably doesn't cover the episodes still missing.</summary>
     PackIncomplete,
     Blocklisted,
@@ -72,6 +74,8 @@ public sealed record RankedCandidate
     /// <summary>First and last episode when the name declares a range (S01E01-E06). Null otherwise.</summary>
     public int? EpisodeStart { get; init; }
     public int? EpisodeEnd { get; init; }
+    /// <summary>Canonical Plex episodes covered after applying the job's immutable episode-order snapshot.</summary>
+    public IReadOnlyList<EpisodeRef> CanonicalEpisodeCoverage { get; init; } = Array.Empty<EpisodeRef>();
     public bool IsPack { get; init; }
     public bool LooksLikeCompleteSeries { get; init; }
 

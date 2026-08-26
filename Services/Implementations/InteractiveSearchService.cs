@@ -42,7 +42,8 @@ public interface IInteractiveSearchService
 public class InteractiveSearchService(
     AppDbContext db,
     IQualityProfileService profiles,
-    ILogger<InteractiveSearchService> logger) : IInteractiveSearchService
+    ILogger<InteractiveSearchService> logger,
+    ILibraryOrganizationPreferencesService? libraryPreferences = null) : IInteractiveSearchService
 {
     // Fulfillment jobs predate search tasks and persisted their snapshots with CLR/Pascal-case names.
     // Search-task payloads use camelCase, so accept both when crossing that compatibility boundary.
@@ -221,6 +222,14 @@ public class InteractiveSearchService(
             : null;
         var policyJson = routingSnapshot?.MediaLanguagePolicyJson
             ?? (MediaLanguagePolicy.IsActive(currentPolicy) ? JsonSerializer.Serialize(currentPolicy) : null);
+        var episodeOrderJson = routingSnapshot?.EpisodeOrderProfileJson;
+        if (string.IsNullOrWhiteSpace(episodeOrderJson) && string.IsNullOrWhiteSpace(request.ExternalId)
+            && libraryPreferences is not null)
+        {
+            var settings = await libraryPreferences.GetAsync();
+            if (EpisodeOrderMapping.Resolve(settings.SeriesEpisodeOrderProfiles, request.MediaId) is { } profile)
+                episodeOrderJson = JsonSerializer.Serialize(profile);
+        }
 
         db.FulfillmentJobs.Add(new FulfillmentJobEntity
         {
@@ -240,6 +249,7 @@ public class InteractiveSearchService(
             RequestedSeasonsCsv = task.Season?.ToString(),
             RequestedEpisodesCsv = task is { Season: int s, Episode: int e } ? $"S{s}E{e}" : null,
             MediaLanguagePolicyJson = policyJson,
+            EpisodeOrderProfileJson = episodeOrderJson,
             LibraryDestinationId = routingSnapshot?.LibraryDestinationId,
             LibraryDestinationName = routingSnapshot?.LibraryDestinationName,
             LibraryDestinationKind = routingSnapshot?.LibraryDestinationKind,
@@ -307,6 +317,20 @@ public class InteractiveSearchService(
             dto.AllowedAcquisitionProtocols.Add(AcquisitionProtocol.DirectAudio);
 
         if (task.QualityProfileId is int pid) dto.QualityProfile = await profiles.GetProfileAsync(pid);
+        if (task.MediaType is MediaType.TvShow or MediaType.Anime)
+        {
+            var snapshotJson = task.MediaRequestId is int requestId
+                ? await db.FulfillmentJobs.AsNoTracking()
+                    .Where(x => x.MediaRequestId == requestId && x.EpisodeOrderProfileJson != null)
+                    .OrderByDescending(x => x.Id).Select(x => x.EpisodeOrderProfileJson).FirstOrDefaultAsync()
+                : null;
+            if (!string.IsNullOrWhiteSpace(snapshotJson))
+                dto.EpisodeOrderProfile = JsonSerializer.Deserialize<SeriesEpisodeOrderProfileDto>(snapshotJson);
+            else if (libraryPreferences is not null)
+                dto.EpisodeOrderProfile = EpisodeOrderMapping.Resolve(
+                    (await libraryPreferences.GetAsync()).SeriesEpisodeOrderProfiles,
+                    task.ExternalId is null ? task.MediaId : null);
+        }
         dto.QualityDefinitions = await db.QualityDefinitions.AsNoTracking().OrderBy(d => d.SortWeight)
             .Select(d => new QualityDefinitionDto
             {

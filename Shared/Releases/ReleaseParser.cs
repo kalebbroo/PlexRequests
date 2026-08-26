@@ -156,6 +156,15 @@ public partial class ReleaseParser : IReleaseParser
             return (int.Parse(alt.Groups[1].Value), null, value, [value], false, false, null, null);
         }
 
+        // Anime absolute order: "Show - 13" / "Show - 13v2". Season zero is a deliberate source-order
+        // sentinel, never a Plex destination; an active series mapping must translate it before use.
+        var absolute = Regex.Match(name, @"(?:^|[\s._])-[\s._]*(\d{1,3})(?:v\d+)?(?=[\s._\[\(\-]|$)", RxOpts);
+        if (absolute.Success)
+        {
+            var value = int.Parse(absolute.Groups[1].Value);
+            if (value > 0) return (0, null, value, [value], false, false, null, null);
+        }
+
         // No explicit episode ⇒ look for pack signals.
         var multi = Regex.Match(name, @"\bS(\d{1,2})[\s._-]*-[\s._-]*S(\d{1,2})\b", RxOpts); // S01-S05
         if (multi.Success) return (int.Parse(multi.Groups[1].Value), int.Parse(multi.Groups[2].Value), null, [], true, false, null, null);
@@ -270,7 +279,9 @@ public partial class ReleaseParser : IReleaseParser
         // word boundary around it).
         var normalized = Regex.Replace(name, @"[._]+", " ");
         var m = TitleBoundary.Match(normalized);
-        var head = m.Success ? normalized[..m.Index] : normalized;
+        var absolute = Regex.Match(normalized, @"\s+-\s+\d{1,3}(?:v\d+)?(?=\s|$)", RxOpts);
+        var boundary = new[] { m.Success ? m.Index : int.MaxValue, absolute.Success ? absolute.Index : int.MaxValue }.Min();
+        var head = boundary == int.MaxValue ? normalized : normalized[..boundary];
         head = Regex.Replace(head, @"\s+", " ").Trim();
         // Strip trailing separators / dangling open brackets left by cutting before a "(2017)"-style marker.
         head = Regex.Replace(head, @"[\s\-_.\(\[\{:]+$", "").Trim();

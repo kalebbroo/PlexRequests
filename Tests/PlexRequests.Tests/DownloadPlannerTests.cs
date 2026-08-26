@@ -100,6 +100,41 @@ public class DownloadPlannerTests
     }
 
     [Fact]
+    public void Absolute_release_is_planned_against_its_canonical_episode()
+    {
+        var job = TestData.Job(title: "Severance", episodes: [new() { Season = 2, Episode = 1 }]);
+        job.EpisodeOrderProfile = new SeriesEpisodeOrderProfileDto
+        {
+            TmdbId = 95396,
+            SourceOrder = EpisodeOrderType.Absolute,
+            MappingsText = "A13 -> S02E01"
+        };
+
+        var result = Plan([TestData.Release("Severance - 13 1080p WEB-DL")], job);
+
+        var item = Assert.Single(result.Plan.Items);
+        Assert.Equal(2, item.Season);
+        Assert.Equal(1, item.Episode);
+    }
+
+    [Fact]
+    public void Absolute_release_without_an_explicit_mapping_is_rejected()
+    {
+        var job = TestData.Job(title: "Severance", episodes: [new() { Season = 2, Episode = 2 }]);
+        job.EpisodeOrderProfile = new SeriesEpisodeOrderProfileDto
+        {
+            TmdbId = 95396,
+            SourceOrder = EpisodeOrderType.Absolute,
+            MappingsText = "A13 -> S02E01"
+        };
+
+        var ranked = _eval.Evaluate(TestData.Release("Severance - 14 1080p WEB-DL"), job, TestData.Context());
+
+        Assert.False(ranked.Accepted);
+        Assert.Contains(ranked.Rejections, x => x.Reason == RejectionReason.EpisodeMappingMissing);
+    }
+
+    [Fact]
     public void A_complete_series_pack_satisfies_any_requested_season()
     {
         var job = TestData.Job(seasonTargets: new() { TestData.Season(3, 1, 2) });

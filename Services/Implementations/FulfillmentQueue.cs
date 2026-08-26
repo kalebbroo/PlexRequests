@@ -181,8 +181,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
 
         // Resolve exactly once at the enqueue/approval boundary. The snapshot below remains authoritative
         // even if an admin later reorders rules, edits a root, or disables the destination mid-download.
+        var librarySettings = await _libraryPreferences.GetAsync();
         var libraryDestination = LibraryRouting.Resolve(
-            await _libraryPreferences.GetAsync(), request.MediaType, resolvedQuality, genres, isAnime,
+            librarySettings, request.MediaType, resolvedQuality, genres, isAnime,
             isEpisode: mediaRef.Kind == MediaKind.Series,
             preferredDestinationId: reqEntity?.LibraryDestinationId ?? request.LibraryDestinationId);
         if (reqEntity is not null && !string.Equals(reqEntity.LibraryDestinationId, libraryDestination.Id,
@@ -214,6 +215,10 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             QualityProfileId = profileId,
             MediaLanguagePolicyJson = MediaLanguagePolicy.IsActive(languagePolicy)
                 ? JsonSerializer.Serialize(languagePolicy)
+                : null,
+            EpisodeOrderProfileJson = EpisodeOrderMapping.Resolve(librarySettings.SeriesEpisodeOrderProfiles,
+                    mediaRef.TryGetTmdbId(out var profileTmdbId) ? profileTmdbId : null) is { } episodeProfile
+                ? JsonSerializer.Serialize(episodeProfile)
                 : null,
             GenresCsv = genres is { Count: > 0 } ? string.Join(",", genres) : null,
             IsAnime = isAnime,
@@ -595,6 +600,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             Quality = target,
             QualityProfileId = request.QualityProfileId,
             MediaLanguagePolicyJson = upgradePolicyJson,
+            EpisodeOrderProfileJson = origin?.EpisodeOrderProfileJson,
             GenresCsv = origin?.GenresCsv,
             IsAnime = origin?.IsAnime ?? false,
             LibraryDestinationId = origin?.LibraryDestinationId,
@@ -903,6 +909,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         MediaLanguagePolicy = string.IsNullOrWhiteSpace(j.MediaLanguagePolicyJson)
             ? null
             : JsonSerializer.Deserialize<MediaLanguagePolicyDto>(j.MediaLanguagePolicyJson),
+        EpisodeOrderProfile = string.IsNullOrWhiteSpace(j.EpisodeOrderProfileJson)
+            ? null
+            : JsonSerializer.Deserialize<SeriesEpisodeOrderProfileDto>(j.EpisodeOrderProfileJson),
         EmptySearchCount = j.EmptySearchCount,
         IsManualGrab = j.IsManualGrab,
         ForcedMagnet = j.ForcedMagnet,
