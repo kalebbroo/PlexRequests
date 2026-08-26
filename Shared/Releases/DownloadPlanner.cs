@@ -265,6 +265,13 @@ public class DownloadPlanner : IDownloadPlanner
     internal static bool CoversEpisodes(RankedCandidate a, IReadOnlyList<int> missing)
     {
         if (missing.Count == 0) return true;
+        if (a.Parsed.EpisodeNumbers.Count > 0)
+        {
+            var ordered = a.Parsed.EpisodeNumbers.Distinct().OrderBy(x => x).ToList();
+            if (!ordered.SequenceEqual(Enumerable.Range(ordered[0], ordered.Count))) return false;
+            var declared = ordered.ToHashSet();
+            return missing.All(declared.Contains);
+        }
         if (a.EpisodeStart is not int start || a.EpisodeEnd is not int end) return true;
         return missing.All(e => e >= start && e <= end);
     }

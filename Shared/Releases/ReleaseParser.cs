@@ -52,7 +52,8 @@ public partial class ReleaseParser : IReleaseParser
         var m = GroupRegex().Match(original);
         if (m.Success) group = m.Groups[1].Value;
 
-        var (season, seasonEnd, episode, isPack, looksLikeComplete, epStart, epEnd) = ParseSeasonEpisode(name);
+        var (season, seasonEnd, episode, episodeNumbers, isPack, looksLikeComplete, epStart, epEnd) =
+            ParseSeasonEpisode(name);
 
         int? year = null;
         var yearMatch = Regex.Match(name, @"\b(19\d{2}|20\d{2})\b", RxOpts);
@@ -83,6 +84,7 @@ public partial class ReleaseParser : IReleaseParser
             Season = season,
             SeasonEnd = seasonEnd,
             Episode = episode,
+            EpisodeNumbers = episodeNumbers,
             EpisodeStart = epStart,
             EpisodeEnd = epEnd,
             IsSeasonPack = isPack,
@@ -109,40 +111,64 @@ public partial class ReleaseParser : IReleaseParser
     /// match — only the latter sets <c>looksLikeCompleteSeries</c>, so a release that simply didn't parse
     /// isn't later treated as matching every requested season.
     /// </summary>
-    private static (int? season, int? seasonEnd, int? episode, bool isPack, bool looksLikeCompleteSeries, int? epStart, int? epEnd) ParseSeasonEpisode(string name)
+    private static (int? season, int? seasonEnd, int? episode, IReadOnlyList<int> episodeNumbers,
+        bool isPack, bool looksLikeCompleteSeries, int? epStart, int? epEnd) ParseSeasonEpisode(string name)
     {
         // Episode RANGE first — it must beat the single-episode pattern, which would otherwise match the
         // start of "S01E01-E06" and report a one-episode release. Telling a partial pack from a full season
         // is what stops a six-episode pack being accepted for a thirteen-episode season.
-        var range = Regex.Match(name, @"\bS(\d{1,2})[\s._-]*E(\d{1,3})[\s._-]*-[\s._-]*(?:E)?(\d{1,3})\b", RxOpts);
+        var range = Regex.Match(name,
+            @"\bS(\d{1,2})[\s._-]*E(\d{1,3})[\s._-]*-[\s._-]*(?:S(\d{1,2})[\s._-]*)?(?:E)?(\d{1,3})\b",
+            RxOpts);
         if (range.Success)
         {
             int s = int.Parse(range.Groups[1].Value);
-            int a = int.Parse(range.Groups[2].Value), b = int.Parse(range.Groups[3].Value);
-            if (b > a) return (s, null, null, true, false, a, b);
+            int a = int.Parse(range.Groups[2].Value), b = int.Parse(range.Groups[4].Value);
+            var endSeasonMatches = !range.Groups[3].Success || int.Parse(range.Groups[3].Value) == s;
+            if (endSeasonMatches && b > a)
+                return (s, null, null, Enumerable.Range(a, b - a + 1).ToList(), true, false, a, b);
+        }
+
+        // One physical file can declare multiple non-contiguous episodes (S01E01E03) as well as the
+        // common compact contiguous form (S01E01E02). Preserve the exact set instead of widening it to a
+        // range and falsely claiming that E02 is covered by the first example.
+        var chained = Regex.Match(name, @"\bS(\d{1,2})((?:[\s._-]*E\d{1,3}){2,})\b", RxOpts);
+        if (chained.Success)
+        {
+            int s = int.Parse(chained.Groups[1].Value);
+            var episodes = Regex.Matches(chained.Groups[2].Value, @"E(\d{1,3})", RxOpts)
+                .Select(m => int.Parse(m.Groups[1].Value)).Distinct().ToList();
+            if (episodes.Count > 1)
+                return (s, null, null, episodes, true, false, episodes.Min(), episodes.Max());
         }
 
         // Single episode: S01E02 / S1E2 / 1x02.
         var ep = Regex.Match(name, @"\bS(\d{1,2})[\s._-]*E(\d{1,3})\b", RxOpts);
         if (ep.Success)
-            return (int.Parse(ep.Groups[1].Value), null, int.Parse(ep.Groups[2].Value), false, false, null, null);
+        {
+            var value = int.Parse(ep.Groups[2].Value);
+            return (int.Parse(ep.Groups[1].Value), null, value, [value], false, false, null, null);
+        }
         var alt = Regex.Match(name, @"\b(\d{1,2})x(\d{1,3})\b", RxOpts);
         if (alt.Success)
-            return (int.Parse(alt.Groups[1].Value), null, int.Parse(alt.Groups[2].Value), false, false, null, null);
+        {
+            var value = int.Parse(alt.Groups[2].Value);
+            return (int.Parse(alt.Groups[1].Value), null, value, [value], false, false, null, null);
+        }
 
         // No explicit episode ⇒ look for pack signals.
         var multi = Regex.Match(name, @"\bS(\d{1,2})[\s._-]*-[\s._-]*S(\d{1,2})\b", RxOpts); // S01-S05
-        if (multi.Success) return (int.Parse(multi.Groups[1].Value), int.Parse(multi.Groups[2].Value), null, true, false, null, null);
+        if (multi.Success) return (int.Parse(multi.Groups[1].Value), int.Parse(multi.Groups[2].Value), null, [], true, false, null, null);
 
         var seasonWord = Regex.Match(name, @"\bseason[\s._-]*(\d{1,2})\b", RxOpts);          // Season 1
-        if (seasonWord.Success) return (int.Parse(seasonWord.Groups[1].Value), null, null, true, false, null, null);
+        if (seasonWord.Success) return (int.Parse(seasonWord.Groups[1].Value), null, null, [], true, false, null, null);
 
         var sOnly = Regex.Match(name, @"\bS(\d{1,2})\b(?![\s._-]*E\d)", RxOpts);             // S01 (no Exx)
-        if (sOnly.Success) return (int.Parse(sOnly.Groups[1].Value), null, null, true, false, null, null);
+        if (sOnly.Success) return (int.Parse(sOnly.Groups[1].Value), null, null, [], true, false, null, null);
 
-        if (Rx(name, @"\b(complete|complete[\s._-]*series)\b")) return (null, null, null, true, true, null, null); // whole-series pack, explicit
+        if (Rx(name, @"\b(complete|complete[\s._-]*series)\b")) return (null, null, null, [], true, true, null, null); // whole-series pack, explicit
 
-        return (null, null, null, false, false, null, null);
+        return (null, null, null, [], false, false, null, null);
     }
 
     // Where the title ends. Generated from ReleaseTokens rather than hand-maintained, so a token added

@@ -357,24 +357,24 @@ public class FulfillmentPipeline(
                 {
                     trimmed.Add(transferKey);
                     var keepSet = needed.ToHashSet();
+                    var declaredCoverage = new HashSet<int>();
                     var keep = status.Files.Select(f =>
                     {
-                        var ep = parser.Parse(Path.GetFileName(f)).Episode;
-                        return ep is null || keepSet.Contains(ep.Value); // keep unmappable files (subs/extras) to be safe
+                        var episodes = parser.Parse(Path.GetFileName(f)).EpisodeNumbers;
+                        if (episodes.Count == 0) return true; // subtitles/extras remain available to the importer
+                        var selected = episodes.Any(keepSet.Contains);
+                        if (selected) declaredCoverage.UnionWith(episodes);
+                        return selected;
                     }).ToList();
-                    // Safety valve for a numbering mismatch (TMDB vs the pack's internal episode numbers,
-                    // classic for kids'/preschool shows). This used to fire only when trimming would keep
-                    // NOTHING, which missed the far more common partial mismatch: needing 13 episodes but
-                    // matching only 1 left the other 12 deselected and the request silently short. Bail out
-                    // whenever we'd keep fewer files than episodes we're supposed to be fetching.
-                    int wouldKeep = keep.Count(k => k);
-                    if (wouldKeep < needed.Count)
+                    // A physical file may cover several episodes, so count the declared logical coverage,
+                    // not selected files. When the union cannot prove every wanted episode, leave all files
+                    // selected for inspection but retain NeededEpisodes; the organizer will reject the pack
+                    // rather than silently relaxing the request (the old kids-show numbering failure mode).
+                    var missingCoverage = keepSet.Where(x => !declaredCoverage.Contains(x)).OrderBy(x => x).ToList();
+                    if (missingCoverage.Count > 0)
                     {
-                        logger.LogWarning("Job {JobId} torrent {TorrentId}: trimming to episode(s) {Needed} would keep only {Kept} file(s) (numbering mismatch?) — keeping the whole pack",
-                            job.Id, it.TransferId, string.Join(",", needed), wouldKeep);
-                        // Clear the restriction so the importer's own NeededEpisodes filter also stands down;
-                        // otherwise it would re-apply the same partial match at import time.
-                        items[i] = it with { NeededEpisodes = null };
+                        logger.LogWarning("Job {JobId} torrent {TorrentId}: file identities cannot prove requested episode(s) {Missing} — keeping all files for inspection without relaxing the import contract",
+                            job.Id, it.TransferId, string.Join(",", missingCoverage));
                     }
                     else if (keep.Any(k => !k) && await backend.SetWantedFilesAsync(it.TransferId, keep, ct))
                         logger.LogInformation("Job {JobId} torrent {TorrentId}: season pack trimmed to episode(s) {Needed} — downloading {Kept}/{Total} file(s)",
@@ -427,7 +427,8 @@ public class FulfillmentPipeline(
                             ResolutionHeight = it.Resolution, // resolution the ranker chose for this torrent
                             ReleaseName = it.ReleaseName,
                             SourceId = it.SourceId,
-                            MediaTracks = f.MediaTracks
+                            MediaTracks = f.MediaTracks,
+                            EpisodeCoverage = f.EpisodeCoverage?.ToList() ?? new()
                         }).ToList();
                         var auditSaved = await api.ReportImportedFilesAsync(job.Id, files, ct);
                         if (!auditSaved && job.IsReplacement)

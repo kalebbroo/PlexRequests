@@ -76,6 +76,15 @@ public class DownloadPlannerTests
     }
 
     [Fact]
+    public void Rejects_non_contiguous_combined_episodes_that_plex_cannot_name_safely()
+    {
+        var job = TestData.Job(seasonTargets: new() { TestData.Season(1, 1, 3) });
+        var result = Plan(new[] { TestData.Release("Severance.S01E01E03.1080p.WEB-DL") }, job);
+
+        Assert.True(result.IsEmpty);
+    }
+
+    [Fact]
     public void Falls_back_to_episodes_when_no_pack_exists()
     {
         var job = TestData.Job(seasonTargets: new() { TestData.Season(2, 1, 2) });

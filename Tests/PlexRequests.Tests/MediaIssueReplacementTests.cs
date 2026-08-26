@@ -19,7 +19,7 @@ namespace PlexRequests.Tests;
 public sealed class MediaIssueReplacementTests
 {
     [Fact]
-    public async Task Admin_report_queues_safe_episode_replacement_and_blocklists_bad_source()
+    public async Task Admin_report_expands_combined_file_replacement_and_blocklists_bad_source()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -56,13 +56,18 @@ public sealed class MediaIssueReplacementTests
             TransferId = badHash,
             InfoHash = badHash,
             Protocol = AcquisitionProtocol.Torrent,
-            DestinationPath = "/library/Rick and Morty/Season 09/Rick and Morty - S09E09.mkv",
+            DestinationPath = "/library/Rick and Morty/Season 09/Rick and Morty - S09E09-E10.mkv",
             SourcePath = "/downloads/bad.mkv",
             FileType = "video",
             SeasonNumber = 9,
             EpisodeNumber = 9,
             ResolutionHeight = 1080,
-            ReleaseName = "Rick.and.Morty.S09E09.1080p.BAD"
+            ReleaseName = "Rick.and.Morty.S09E09-E10.1080p.BAD",
+            EpisodeCoverage =
+            [
+                new() { SeasonNumber = 9, EpisodeNumber = 9 },
+                new() { SeasonNumber = 9, EpisodeNumber = 10 }
+            ]
         });
         await db.SaveChangesAsync();
 
@@ -82,7 +87,7 @@ public sealed class MediaIssueReplacementTests
             Reason = "Wrong episode",
             Detail = "Episode 8 plays instead.",
             SeasonNumber = 9,
-            EpisodeNumber = 9,
+            EpisodeNumber = 10,
             RequestReplacement = true
         });
 
@@ -91,9 +96,9 @@ public sealed class MediaIssueReplacementTests
         var issue = await db.MediaIssues.SingleAsync();
         Assert.Equal(IssueStatus.ReplacementQueued, issue.Status);
         Assert.Equal(42, issue.ReplacementJobId);
-        Assert.Equal([(9, 9)], queue.Episodes);
+        Assert.Equal([(9, 9), (9, 10)], queue.Episodes);
         Assert.Equal(Quality.FullHD, queue.Floor);
-        Assert.Contains("S09E09.mkv", Assert.Single(queue.ReplacePaths));
+        Assert.Contains("S09E09-E10.mkv", Assert.Single(queue.ReplacePaths));
         var blocked = await db.ReleaseBlocklist.SingleAsync();
         Assert.Equal(badHash, blocked.InfoHash);
         Assert.Equal(BlocklistReason.WrongContent, blocked.Reason);

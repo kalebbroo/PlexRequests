@@ -330,7 +330,9 @@ public enum BlocklistReason
     WrongContent = 5,
     ManualBlock = 6,
     /// <summary>Actual audio/subtitle streams failed the request's immutable media policy.</summary>
-    MediaPolicyMismatch = 7
+    MediaPolicyMismatch = 7,
+    /// <summary>Downloaded pack files could not be mapped to an exact, non-overlapping Plex episode set.</summary>
+    EpisodeMappingAmbiguous = 8
 }
 
 /// <summary>Outcome of a single scheduled-job execution, recorded in the job-run history.</summary>

@@ -1391,6 +1391,9 @@ public class ImportedFileDto
     public string? SourceId { get; set; }
     /// <summary>Actual embedded/sidecar media tracks observed before import. Present on inspected video rows.</summary>
     public MediaTrackSummaryDto? MediaTracks { get; set; }
+    /// <summary>Every logical episode represented by this physical file. Empty for movies, music, subtitles,
+    /// and legacy workers; SeasonNumber/EpisodeNumber remain the backward-compatible primary identity.</summary>
+    public List<EpisodeRef> EpisodeCoverage { get; set; } = new();
 }
 
 /// <summary>Strict language contract evaluated against actual files, never just a release name.</summary>

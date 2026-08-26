@@ -207,8 +207,8 @@ public sealed class MediaLanguagePolicyTests
 
     private sealed class NoSeasonPacks : ISeasonPackSplitter
     {
-        public IReadOnlyList<(string FilePath, int Episode)> Map(IReadOnlyList<string> videoFiles,
-            int season, int? expectedEpisodeCount) => [];
+        public SeasonPackMapResult Map(IReadOnlyList<string> videoFiles,
+            int season, int? expectedEpisodeCount) => new([], [], []);
     }
 
     private sealed class NoEpisodes : IEpisodeTitleProvider

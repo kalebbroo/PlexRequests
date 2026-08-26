@@ -129,8 +129,13 @@ ImportedMediaFile 1 ── * ImportedEpisodeCoverage(Season, Episode)
 For a contiguous range, name it `Show - S02E18-E19.ext`, which Plex recognizes. Plex will display both
 episodes but play the full physical file for either entry. Automatic splitting is allowed only when reliable
 chapter/timestamp boundaries exist; otherwise the file remains a range. Ambiguous bundles go to manual mapping
-instead of being copied, guessed, or marked complete. Plex documents both alternate episode ordering and the
-multi-episode filename format in its TV naming guide linked above.
+once that workflow is available, instead of being copied, guessed, or marked complete. Plex documents both
+alternate episode ordering and the multi-episode filename format in its TV naming guide linked above.
+
+The range/coverage slice persists that one-to-many audit, protects upgrades and issue replacements from
+deleting a sibling episode, and fails closed on unmapped or overlapping files. Until the manual mapping UI and
+alternate-order profiles ship, an ambiguous release is blocklisted with its exact reason and the job searches
+another candidate; it never enters a Plex root.
 
 Kids cartoons use the same mapping machinery. They differ by destination/classification and often exercise
 DVD/digital or multi-episode mappings; they are not a separate hard-coded media type.

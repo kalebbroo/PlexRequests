@@ -1052,6 +1052,12 @@ app.MapPost("/api/fulfillment/{jobId:int}/imported-files", async (int jobId, Lis
         foreach (var f in files)
         {
             if (!known.Add(AuditKey(f.Protocol, f.TransferId, f.DestinationPath, f.FileType))) continue;
+            var episodeCoverage = (f.EpisodeCoverage ?? [])
+                .Where(x => x.Season >= 0 && x.Episode > 0)
+                .Select(x => (x.Season, x.Episode)).Distinct().ToList();
+            if (episodeCoverage.Count == 0 && f.SeasonNumber is int legacySeason
+                && f.EpisodeNumber is int legacyEpisode && legacySeason >= 0 && legacyEpisode > 0)
+                episodeCoverage.Add((legacySeason, legacyEpisode));
             db.ImportedFiles.Add(new PlexRequestsHosted.Infrastructure.Entities.ImportedFileEntity
             {
                 FulfillmentJobId = jobId,
@@ -1069,7 +1075,13 @@ app.MapPost("/api/fulfillment/{jobId:int}/imported-files", async (int jobId, Lis
                 InfoHash = f.Protocol == AcquisitionProtocol.Torrent
                     ? PlexRequestsHosted.Shared.Releases.MagnetUtil.Normalize(f.SourceId)
                     : null,
-                MediaTracksJson = f.MediaTracks is null ? null : JsonSerializer.Serialize(f.MediaTracks)
+                MediaTracksJson = f.MediaTracks is null ? null : JsonSerializer.Serialize(f.MediaTracks),
+                EpisodeCoverage = episodeCoverage
+                    .Select(x => new PlexRequestsHosted.Infrastructure.Entities.ImportedEpisodeCoverageEntity
+                    {
+                        SeasonNumber = x.Item1,
+                        EpisodeNumber = x.Item2
+                    }).ToList()
             });
             added++;
         }
@@ -1244,24 +1256,32 @@ app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpConte
     // Supersede the OLD audit rows for exactly the content this upgrade re-imported, matched by
     // (season, episode) so a PARTIAL upgrade only replaces the episodes it actually got — a failed episode
     // keeps its original row (and file). A movie (no season/episode) replaces the whole title.
-    var newFiles = await db.ImportedFiles.Where(f => f.FulfillmentJobId == jobId).ToListAsync();
+    var newFiles = await db.ImportedFiles.Include(f => f.EpisodeCoverage)
+        .Where(f => f.FulfillmentJobId == jobId).ToListAsync();
     var requestJobIds = await db.FulfillmentJobs.Where(j => j.MediaRequestId == job.MediaRequestId)
         .Select(j => j.Id).ToListAsync();
-    var oldRows = await db.ImportedFiles
+    var oldRows = await db.ImportedFiles.Include(f => f.EpisodeCoverage)
         .Where(f => requestJobIds.Contains(f.FulfillmentJobId) && f.FulfillmentJobId != jobId)
         .ToListAsync();
 
+    static IEnumerable<(int Season, int Episode)> AuditCoverage(
+        PlexRequestsHosted.Infrastructure.Entities.ImportedFileEntity file) =>
+        file.EpisodeCoverage.Count > 0
+            ? file.EpisodeCoverage.Select(x => (x.SeasonNumber, x.EpisodeNumber))
+            : file.SeasonNumber is int season && file.EpisodeNumber is int episode
+                ? [(season, episode)]
+                : [];
+
     List<PlexRequestsHosted.Infrastructure.Entities.ImportedFileEntity> superseded;
-    if (newFiles.Any(f => f.SeasonNumber == null && f.EpisodeNumber == null))
+    if (job.MediaType is not (MediaType.TvShow or MediaType.Anime))
     {
         // Movie / whole-title upgrade — every prior file for the request is replaced.
         superseded = oldRows;
     }
     else
     {
-        var upgradedEps = newFiles.Where(f => f.SeasonNumber != null && f.EpisodeNumber != null)
-            .Select(f => (f.SeasonNumber, f.EpisodeNumber)).ToHashSet();
-        superseded = oldRows.Where(f => upgradedEps.Contains((f.SeasonNumber, f.EpisodeNumber))).ToList();
+        var upgradedEps = newFiles.SelectMany(AuditCoverage).ToHashSet();
+        superseded = oldRows.Where(f => AuditCoverage(f).Any(upgradedEps.Contains)).ToList();
     }
     if (superseded.Count > 0) { db.ImportedFiles.RemoveRange(superseded); await db.SaveChangesAsync(); }
 
