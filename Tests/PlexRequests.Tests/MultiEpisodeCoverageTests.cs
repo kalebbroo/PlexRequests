@@ -22,6 +22,8 @@ public sealed class MultiEpisodeCoverageTests
     [InlineData("Show.S02E18-E19.1080p.mkv")]
     [InlineData("Show.S02E18-S02E19.1080p.mkv")]
     [InlineData("Show.S02E18E19.1080p.mkv")]
+    [InlineData("Show.2x18-19.1080p.mkv")]
+    [InlineData("Show.2x18-2x19.1080p.mkv")]
     public void ParserRetainsEveryEpisodeInACombinedFile(string name)
     {
         var parsed = _parser.Parse(name);
@@ -51,6 +53,34 @@ public sealed class MultiEpisodeCoverageTests
         Assert.Equal(13, parsed.Episode);
         Assert.Equal([13], parsed.EpisodeNumbers);
         Assert.Equal("[Group] Show", parsed.Title);
+    }
+
+    [Fact]
+    public void ParserRetainsAnimeAbsoluteRangeAsOneCombinedFile()
+    {
+        var parsed = _parser.Parse("[Group] Show - 13-14 [1080p].mkv");
+
+        Assert.Equal(0, parsed.Season);
+        Assert.Null(parsed.Episode);
+        Assert.Equal([13, 14], parsed.EpisodeNumbers);
+        Assert.Equal(13, parsed.EpisodeStart);
+        Assert.Equal(14, parsed.EpisodeEnd);
+        Assert.True(parsed.IsSeasonPack);
+        Assert.Equal("[Group] Show", parsed.Title);
+    }
+
+    [Theory]
+    [InlineData("Show.S01E01-S02E02.1080p.mkv")]
+    [InlineData("Show.1x01-2x02.1080p.mkv")]
+    [InlineData("Show.1x02-01.1080p.mkv")]
+    public void ParserDoesNotDowngradeAnInvalidRangeToItsFirstEpisode(string name)
+    {
+        var parsed = _parser.Parse(name);
+
+        Assert.Null(parsed.Season);
+        Assert.Null(parsed.Episode);
+        Assert.Empty(parsed.EpisodeNumbers);
+        Assert.False(parsed.IsSeasonPack);
     }
 
     [Fact]
@@ -163,6 +193,58 @@ public sealed class MultiEpisodeCoverageTests
             Assert.True(video.DestinationPath.EndsWith("Show - s02e01.mkv", StringComparison.OrdinalIgnoreCase),
                 video.DestinationPath);
             Assert.Equal([(2, 1)], video.EpisodeCoverage!.Select(x => (x.Season, x.Episode)).ToList());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OrganizerImportsAbsoluteCombinedFileWithinOneCanonicalSeason()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "Show - 13-14.mkv");
+            await File.WriteAllBytesAsync(source, [1, 2, 3, 4]);
+            var library = Path.Combine(root, "library");
+            var job = TvJob(library);
+            job.EpisodeOrderProfile = OrderProfile("A13 -> S02E01\nA14 -> S02E02");
+
+            var result = await CreateOrganizer().OrganizeAsync(job,
+                new TransferItem("transfer", 2, null, true, NeededEpisodes: [1, 2]), source,
+                Preferences(), CancellationToken.None);
+
+            Assert.True(result.Success, result.FailReason);
+            var video = Assert.Single(result.Files, x => x.FileType == "video");
+            Assert.True(video.DestinationPath.EndsWith("Show - s02e01-e02.mkv",
+                StringComparison.OrdinalIgnoreCase), video.DestinationPath);
+            Assert.Equal([(2, 1), (2, 2)], video.EpisodeCoverage!
+                .Select(x => (x.Season, x.Episode)).ToList());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OrganizerRejectsOneCombinedFileMappedAcrossCanonicalSeasons()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "Show - 13-14.mkv");
+            await File.WriteAllBytesAsync(source, [1, 2, 3, 4]);
+            var library = Path.Combine(root, "library");
+            var job = TvJob(library);
+            job.EpisodeOrderProfile = OrderProfile("A13 -> S01E01\nA14 -> S02E01");
+
+            var result = await CreateOrganizer().OrganizeAsync(job,
+                new TransferItem("transfer", null, null, true, NeededEpisodeRefs:
+                [
+                    new EpisodeRef { Season = 1, Episode = 1 },
+                    new EpisodeRef { Season = 2, Episode = 1 }
+                ]), source, Preferences(), CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Equal(BlocklistReason.EpisodeMappingAmbiguous, result.BlocklistReason);
+            Assert.False(Directory.Exists(library));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
