@@ -13,6 +13,49 @@ namespace PlexRequests.Tests;
 public sealed class FulfillmentTransferServiceTests
 {
     [Fact]
+    public async Task Canonical_cross_season_targets_round_trip_through_durable_tracking()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity { MediaId = 7, MediaType = MediaType.TvShow, Title = "Anime" };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var job = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId,
+            MediaType = request.MediaType, Title = request.Title
+        };
+        db.FulfillmentJobs.Add(job);
+        await db.SaveChangesAsync();
+        var service = new FulfillmentTransferService(db, NullLogger<FulfillmentTransferService>.Instance);
+
+        await service.RegisterAsync(job.Id,
+        [
+            new TrackedTransferDto
+            {
+                FulfillmentJobId = job.Id,
+                TransferId = "cross-season",
+                IsPack = true,
+                NeededEpisodeRefs =
+                [
+                    new EpisodeRef { Season = 2, Episode = 1 },
+                    new EpisodeRef { Season = 1, Episode = 12 },
+                    new EpisodeRef { Season = 2, Episode = 1 }
+                ]
+            }
+        ]);
+        db.ChangeTracker.Clear();
+
+        var transfer = Assert.Single(await service.GetForJobAsync(job.Id));
+        Assert.Equal([(1, 12), (2, 1)], transfer.NeededEpisodeRefs
+            .Select(x => (x.Season, x.Episode)).ToList());
+        Assert.NotNull((await db.FulfillmentTransfers.SingleAsync()).NeededEpisodeRefsJson);
+    }
+
+    [Fact]
     public async Task One_physical_torrent_updates_every_job_mapping()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

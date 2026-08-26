@@ -58,6 +58,7 @@ public class LegacyTorrentStateAdopter(
                     Episode = t.Episode,
                     IsPack = t.IsPack,
                     NeededEpisodes = t.NeededEpisodes?.ToList() ?? new(),
+                    NeededEpisodeRefs = t.NeededEpisodeRefs?.ToList() ?? new(),
                     Resolution = t.Resolution
                 }).ToList(), stoppingToken);
 

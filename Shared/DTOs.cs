@@ -712,6 +712,8 @@ public class TrackedTransferDto
     public int? Episode { get; set; }
     public bool IsPack { get; set; }
     public List<int> NeededEpisodes { get; set; } = new();
+    /// <summary>Canonical Plex episode targets. Unlike NeededEpisodes, this may span seasons.</summary>
+    public List<EpisodeRef> NeededEpisodeRefs { get; set; } = new();
     public int Resolution { get; set; }
 
     public TransferTrackingState State { get; set; }

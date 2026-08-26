@@ -191,6 +191,67 @@ public sealed class MultiEpisodeCoverageTests
     }
 
     [Fact]
+    public async Task OrganizerImportsOneAbsolutePackAcrossCanonicalSeasons()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "pack");
+            Directory.CreateDirectory(source);
+            await File.WriteAllBytesAsync(Path.Combine(source, "Show - 13.mkv"), [1, 2, 3, 4]);
+            await File.WriteAllBytesAsync(Path.Combine(source, "Show - 14.mkv"), [1, 2, 3, 4]);
+            var library = Path.Combine(root, "library");
+            var job = TvJob(library);
+            job.EpisodeOrderProfile = OrderProfile("A13 -> S01E01\nA14 -> S02E01");
+            var targets = new[]
+            {
+                new EpisodeRef { Season = 1, Episode = 1 },
+                new EpisodeRef { Season = 2, Episode = 1 }
+            };
+
+            var result = await CreateOrganizer().OrganizeAsync(job,
+                new TransferItem("transfer", null, null, true, NeededEpisodeRefs: targets), source,
+                Preferences(), CancellationToken.None);
+
+            Assert.True(result.Success, result.FailReason);
+            var videos = result.Files.Where(x => x.FileType == "video")
+                .OrderBy(x => x.Season).ToList();
+            Assert.Equal(2, videos.Count);
+            Assert.Equal([(1, 1), (2, 1)], videos.Select(x => (x.Season!.Value, x.Episode!.Value)).ToList());
+            Assert.Contains(videos, x => x.DestinationPath.EndsWith("Show - s01e01.mkv", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(videos, x => x.DestinationPath.EndsWith("Show - s02e01.mkv", StringComparison.OrdinalIgnoreCase));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OrganizerRejectsCrossSeasonPackMissingACanonicalTargetBeforeWriting()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "pack");
+            Directory.CreateDirectory(source);
+            await File.WriteAllBytesAsync(Path.Combine(source, "Show - 13.mkv"), [1, 2, 3, 4]);
+            var library = Path.Combine(root, "library");
+            var job = TvJob(library);
+            job.EpisodeOrderProfile = OrderProfile("A13 -> S01E01\nA14 -> S02E01");
+
+            var result = await CreateOrganizer().OrganizeAsync(job,
+                new TransferItem("transfer", null, null, true, NeededEpisodeRefs:
+                [
+                    new EpisodeRef { Season = 1, Episode = 1 },
+                    new EpisodeRef { Season = 2, Episode = 1 }
+                ]), source, Preferences(), CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Equal(BlocklistReason.EpisodeMappingAmbiguous, result.BlocklistReason);
+            Assert.False(Directory.Exists(library));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public async Task ImportAuditPersistsOnePhysicalFileToManyEpisodes()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
