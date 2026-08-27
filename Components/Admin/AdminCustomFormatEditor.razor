@@ -1,0 +1,148 @@
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Releases
+
+<MudExpansionPanel Class="mb-2 format-editor"
+                   Expanded="Expanded" ExpandedChanged="ExpandedChanged">
+    <TitleContent>
+        <div class="format-summary">
+            <span>
+                <b>@Format.Name</b>
+                <small>@ConditionSummary</small>
+            </span>
+            @if (Format.IsSystem)
+            {
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Built in</MudChip>
+            }
+            @if (!Format.Enabled)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">Disabled</MudChip>
+            }
+        </div>
+    </TitleContent>
+    <ChildContent>
+        <div class="format-editor-content">
+            <div class="format-basics">
+                <MudTextField T="string" Label="Format name" Value="Format.Name" Variant="Variant.Outlined"
+                              Disabled="Format.IsSystem"
+                              ValueChanged="@(v => { Format.Name = v; return Changed.InvokeAsync(Format); })" />
+                <MudSwitch T="bool" Label="Enabled" Value="Format.Enabled" Color="Color.Primary"
+                           ValueChanged="@(v => { Format.Enabled = v; return Changed.InvokeAsync(Format); })" />
+            </div>
+
+            <MudText Typo="Typo.subtitle2" Class="mt-4 mb-1">Match conditions</MudText>
+            <MudText Typo="Typo.caption" Class="text-muted d-block mb-3">
+                Every required condition must match. When optional conditions exist, at least one of them must match.
+                “Not” reverses a condition.
+            </MudText>
+
+            <div class="format-condition-list">
+                @foreach (var item in Format.Specifications.Select((condition, position) => new { condition, position }))
+                {
+                    var condition = item.condition;
+                    <MudPaper Class="format-condition" Outlined="true">
+                        <div class="format-condition-heading">
+                            <MudText Typo="Typo.subtitle2">Condition @(item.position + 1)</MudText>
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           aria-label="Delete condition"
+                                           OnClick="@(() => RemoveCondition(condition))" />
+                        </div>
+                        <div class="format-condition-fields">
+                            <MudSelect T="FormatField" Label="Release detail" Value="condition.Field" Variant="Variant.Outlined"
+                                       ValueChanged="@(v => ChangeField(condition, v))">
+                                @foreach (var field in Enum.GetValues<FormatField>())
+                                {
+                                    <MudSelectItem Value="field">@FieldLabel(field)</MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudSelect T="FormatOp" Label="Comparison" Value="condition.Op" Variant="Variant.Outlined"
+                                       ValueChanged="@(v => { condition.Op = v; return Changed.InvokeAsync(Format); })">
+                                @foreach (var op in OperatorsFor(condition.Field))
+                                {
+                                    <MudSelectItem Value="op">@OperatorLabel(op)</MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudTextField T="string" Label="Match value" Value="condition.Value" Variant="Variant.Outlined"
+                                          ValueChanged="@(v => { condition.Value = v; return Changed.InvokeAsync(Format); })" />
+                        </div>
+                        <div class="d-flex flex-wrap gap-3 mt-2">
+                            <MudSwitch T="bool" Value="condition.Required" Label="Required" Color="Color.Primary"
+                                       ValueChanged="@(v => { condition.Required = v; return Changed.InvokeAsync(Format); })" />
+                            <MudSwitch T="bool" Value="condition.Negate" Label="Not" Color="Color.Secondary"
+                                       ValueChanged="@(v => { condition.Negate = v; return Changed.InvokeAsync(Format); })" />
+                        </div>
+                    </MudPaper>
+                }
+            </div>
+
+            <div class="d-flex justify-content-between flex-wrap gap-2 mt-3">
+                <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddCondition">Add condition</MudButton>
+                @if (!Format.IsSystem)
+                {
+                    <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined"
+                               StartIcon="@Icons.Material.Filled.Delete" OnClick="() => Deleted.InvokeAsync(Format)">Delete format</MudButton>
+                }
+            </div>
+        </div>
+    </ChildContent>
+</MudExpansionPanel>
+
+@code {
+    [Parameter, EditorRequired] public CustomFormatDto Format { get; set; } = new();
+    [Parameter] public bool Expanded { get; set; }
+    [Parameter] public EventCallback<bool> ExpandedChanged { get; set; }
+    [Parameter] public EventCallback<CustomFormatDto> Changed { get; set; }
+    [Parameter] public EventCallback<CustomFormatDto> Deleted { get; set; }
+
+    private string ConditionSummary => $"{Format.Specifications.Count} condition{(Format.Specifications.Count == 1 ? "" : "s")}";
+
+    private Task AddCondition()
+    {
+        Format.Specifications.Add(new FormatSpecificationDto { Field = FormatField.ReleaseTitle, Op = FormatOp.Regex });
+        return Changed.InvokeAsync(Format);
+    }
+
+    private Task RemoveCondition(FormatSpecificationDto condition)
+    {
+        Format.Specifications.Remove(condition);
+        return Changed.InvokeAsync(Format);
+    }
+
+    private Task ChangeField(FormatSpecificationDto condition, FormatField field)
+    {
+        condition.Field = field;
+        var validOperators = OperatorsFor(field);
+        if (!validOperators.Contains(condition.Op))
+            condition.Op = validOperators[0];
+        return Changed.InvokeAsync(Format);
+    }
+
+    private static IReadOnlyList<FormatOp> OperatorsFor(FormatField field) => field is FormatField.Resolution
+        or FormatField.SizeGb or FormatField.AgeDays
+        ? [FormatOp.Equals, FormatOp.GreaterThan, FormatOp.LessThan]
+        : [FormatOp.Contains, FormatOp.Equals, FormatOp.Regex];
+
+    private static string FieldLabel(FormatField field) => field switch
+    {
+        FormatField.ReleaseTitle => "Release name",
+        FormatField.ReleaseGroup => "Release group",
+        FormatField.AudioChannels => "Audio channels",
+        FormatField.AudioCodec => "Audio codec",
+        FormatField.VideoCodec => "Video codec",
+        FormatField.SizeGb => "Size (GB)",
+        FormatField.AgeDays => "Age (days)",
+        _ => SplitWords(field.ToString())
+    };
+
+    private static string OperatorLabel(FormatOp op) => op switch
+    {
+        FormatOp.Contains => "Contains",
+        FormatOp.Equals => "Equals",
+        FormatOp.Regex => "Matches regular expression",
+        FormatOp.GreaterThan => "Greater than",
+        FormatOp.LessThan => "Less than",
+        _ => SplitWords(op.ToString())
+    };
+
+    private static string SplitWords(string value) =>
+        System.Text.RegularExpressions.Regex.Replace(value, "([a-z])([A-Z])", "$1 $2");
+}
