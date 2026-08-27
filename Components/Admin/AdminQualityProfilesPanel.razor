@@ -18,8 +18,8 @@ else
 {
     <div class="d-flex justify-content-between align-items-center mb-3">
         <MudText Typo="Typo.body2" Class="text-muted">
-            A request is bound to one profile. Tiers are ordered worst to best — allow the ones you'd accept,
-            then set the cutoff to the point where you'd stop looking for something better.
+            Profiles answer two questions: what quality is acceptable, and when should Plex Requests stop
+            looking for an upgrade? Start with a built-in profile and choose an audio/subtitle preset.
         </MudText>
         <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
                    StartIcon="@Icons.Material.Filled.Add" OnClick="AddProfile">New profile</MudButton>
@@ -47,6 +47,10 @@ else
                 </div>
             </TitleContent>
             <ChildContent>
+                <MudText Typo="Typo.body2" Class="text-muted mb-3">
+                    <b>@p.Name</b> accepts @p.Items.Count(i => i.Allowed) quality tiers and stops upgrading at
+                    <b>@CutoffName(p)</b>. Changes on this page save automatically.
+                </MudText>
                 <div class="d-flex flex-wrap gap-3 mb-3">
                     <MudTextField T="string" Label="Name" Value="p.Name" Variant="Variant.Outlined"
                                   Style="min-width:220px;" ValueChanged="@(v => Rename(p, v))" />
@@ -54,7 +58,13 @@ else
                                Variant="Variant.Outlined" Style="min-width:240px;"
                                ValueChanged="@(v => SetCutoff(p, v))">
                         @* Only allowed tiers can be a cutoff — an unreachable cutoff means the upgrade scan
-                           hunts forever for something the profile would never accept. *@
+                           hunts forever for something the profile would never accept. A persisted cutoff can
+                           also be one member of a grouped tier; retain its human label instead of letting the
+                           select render the raw definition id. *@
+                        @if (!p.Items.Where(i => i.Allowed).Any(i => CutoffIdOf(i) == p.CutoffQualityDefinitionId))
+                        {
+                            <MudSelectItem Value="@p.CutoffQualityDefinitionId">@CutoffName(p)</MudSelectItem>
+                        }
                         @foreach (var item in p.Items.Where(i => i.Allowed).Reverse())
                         {
                             <MudSelectItem Value="@CutoffIdOf(item)">@item.N</MudSelectItem>
@@ -66,32 +76,30 @@ else
                                ValueChanged="@(v => SetSelectable(p, v))" />
                 </div>
 
-                <div class="d-flex flex-wrap gap-3 mb-3">
-                    <MudNumericField T="double?" Label="Max size (GB)" Value="p.MaxSizeGb" Clearable="true"
-                                     Variant="Variant.Outlined" Style="max-width:170px;"
-                                     ValueChanged="@(v => SetSize(p, v, season: false))" />
-                    <MudNumericField T="double?" Label="Max season pack (GB)" Value="p.MaxSeasonPackSizeGb" Clearable="true"
-                                     Variant="Variant.Outlined" Style="max-width:190px;"
-                                     ValueChanged="@(v => SetSize(p, v, season: true))" />
-                    <MudNumericField T="int?" Label="Min seeders" Value="p.MinSeeders" Clearable="true"
-                                     Variant="Variant.Outlined" Style="max-width:150px;"
-                                     ValueChanged="@(v => SetSeeders(p, v))" />
-                    <MudText Typo="Typo.caption" Class="text-muted align-self-center">Blank = use the global download preferences.</MudText>
-                </div>
-
                 <MudPaper Class="pa-3 mb-3" Outlined="true">
-                    <MudText Typo="Typo.subtitle2">Audio and subtitle policy</MudText>
+                    <MudText Typo="Typo.subtitle2">Audio and subtitles</MudText>
                     <MudText Typo="Typo.caption" Class="text-muted d-block mb-2">
-                        Release-name tags help ranking, but strict profiles are proved from every selected
-                        file with MediaInfo before anything enters Plex. Use ISO codes such as <code>en</code> and <code>ja</code>.
+                        Choose a common policy. Plex Requests verifies the actual tracks before importing files into Plex.
                     </MudText>
-                    <div class="d-flex flex-wrap gap-2 mb-3">
-                        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick='@(() => ApplyLanguagePreset(p, "dual"))'>Dual audio (EN + JA)</MudButton>
-                        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick='@(() => ApplyLanguagePreset(p, "sub"))'>Japanese + English subs</MudButton>
-                        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick='@(() => ApplyLanguagePreset(p, "dub"))'>English dub</MudButton>
-                        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick='@(() => ApplyLanguagePreset(p, "any"))'>Any / original</MudButton>
-                    </div>
-                    <div class="d-flex flex-wrap gap-3 align-items-center">
+                    <MudSelect T="string" Label="Required language policy" Value="@LanguagePreset(p)"
+                               ValueChanged="@(v => ApplyLanguagePreset(p, v))" Variant="Variant.Outlined"
+                               Style="max-width:360px;">
+                        <MudSelectItem T="string" Value='@("any")'>Any language / original audio</MudSelectItem>
+                        <MudSelectItem T="string" Value='@("dual")'>Dual audio — English + Japanese</MudSelectItem>
+                        <MudSelectItem T="string" Value='@("sub")'>Japanese audio + English subtitles</MudSelectItem>
+                        <MudSelectItem T="string" Value='@("dub")'>English audio</MudSelectItem>
+                        @if (LanguagePreset(p) == "custom")
+                        {
+                            <MudSelectItem T="string" Value='@("custom")' Disabled="true">Custom language rules</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    <details class="profile-option" open="@(LanguagePreset(p) == "custom")">
+                        <summary>
+                            <span><b>Custom language rules</b><small>Use only when the presets above do not describe this profile.</small></span>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@LanguagePolicySummary(p)</MudChip>
+                        </summary>
+                        <div class="profile-option-content d-flex flex-wrap gap-3 align-items-center">
                         <MudTextField T="string" Label="Required audio" Value="p.RequiredAudioLanguagesCsv"
                                       Placeholder="en,ja" Variant="Variant.Outlined" Style="min-width:190px;"
                                       ValueChanged="@(v => SetLanguageValue(p, "required-audio", v))" />
@@ -105,10 +113,20 @@ else
                                    Color="Color.Primary" ValueChanged="@(v => SetForcedSubtitle(p, v))" />
                         <MudSwitch T="bool" Label="Allow untagged tracks" Value="p.AllowUnknownTrackLanguage"
                                    Color="Color.Primary" ValueChanged="@(v => SetUnknownLanguage(p, v))" />
-                    </div>
+                        <MudText Typo="Typo.caption" Class="text-muted w-100">
+                            Use ISO language codes such as <code>en</code> and <code>ja</code>. Strict policies are verified with MediaInfo, not only filename tags.
+                        </MudText>
+                        </div>
+                    </details>
                 </MudPaper>
 
-                <MudTable Items="@p.Items.AsEnumerable().Reverse()" dense="true" Hover="true" Class="elevation-1">
+                <details class="profile-option">
+                    <summary>
+                        <span><b>Quality tiers</b><small>Choose every quality this profile may download.</small></span>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@p.Items.Count(i => i.Allowed) allowed · cutoff @CutoffName(p)</MudChip>
+                    </summary>
+                    <div class="profile-option-content">
+                    <MudTable Items="@p.Items.AsEnumerable().Reverse()" dense="true" Hover="true" Class="elevation-1">
                     <HeaderContent>
                         <MudTh>Quality tier</MudTh>
                         <MudTh Style="width:120px;">Allowed</MudTh>
@@ -127,14 +145,40 @@ else
                             }
                         </MudTd>
                     </RowTemplate>
-                </MudTable>
+                    </MudTable>
+                    </div>
+                </details>
+
+                <details class="profile-option">
+                    <summary>
+                        <span><b>Profile-specific limits</b><small>Override global size and seeder limits only for this profile.</small></span>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@LimitSummary(p)</MudChip>
+                    </summary>
+                    <div class="profile-option-content d-flex flex-wrap gap-3 align-items-center">
+                        <MudNumericField T="double?" Label="Max size (GB)" Value="p.MaxSizeGb" Clearable="true"
+                                         Variant="Variant.Outlined" Style="max-width:170px;"
+                                         ValueChanged="@(v => SetSize(p, v, season: false))" />
+                        <MudNumericField T="double?" Label="Max season pack (GB)" Value="p.MaxSeasonPackSizeGb" Clearable="true"
+                                         Variant="Variant.Outlined" Style="max-width:210px;"
+                                         ValueChanged="@(v => SetSize(p, v, season: true))" />
+                        <MudNumericField T="int?" Label="Minimum seeders" Value="p.MinSeeders" Clearable="true"
+                                         Variant="Variant.Outlined" Style="max-width:170px;"
+                                         ValueChanged="@(v => SetSeeders(p, v))" />
+                        <MudText Typo="Typo.caption" Class="text-muted w-100">Leave blank to use the Basic rules fallback limits.</MudText>
+                    </div>
+                </details>
 
                 @* Scores live here rather than on the format, so the same rule can be worth having in one
                    profile and disqualifying in another. *@
                 @if (_formatsByProfile.TryGetValue(p.Id, out var formats) && formats.Count > 0)
                 {
-                    <MudText Typo="Typo.subtitle2" Class="mt-4 mb-1">Custom format scores</MudText>
-                    <div class="d-flex flex-wrap gap-2">
+                    <details class="profile-option">
+                        <summary>
+                            <span><b>Advanced matching scores</b><small>Score reusable custom formats differently for this profile.</small></span>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">minimum @p.MinCustomFormatScore</MudChip>
+                        </summary>
+                        <div class="profile-option-content">
+                        <div class="d-flex flex-wrap gap-2">
                         @foreach (var f in formats.Where(f => f.Enabled))
                         {
                             <MudNumericField T="int" Label="@f.Name" Value="f.Score" Variant="Variant.Outlined"
@@ -150,6 +194,8 @@ else
                             Releases scoring below this are rejected outright.
                         </MudText>
                     </div>
+                        </div>
+                    </details>
                 }
 
                 <div class="d-flex justify-content-end gap-2 mt-3">
@@ -266,6 +312,52 @@ else
                 break;
         }
         await Save(profile, "media language preset");
+    }
+
+    private static string LanguagePreset(QualityProfileDto profile)
+    {
+        if (CsvEquals(profile.RequiredAudioLanguagesCsv, "en", "ja")
+            && string.IsNullOrWhiteSpace(profile.AllowedLanguagesCsv)
+            && string.IsNullOrWhiteSpace(profile.RequiredSubtitleLanguagesCsv)
+            && !profile.RequireForcedSubtitle && !profile.AllowUnknownTrackLanguage) return "dual";
+        if (CsvEquals(profile.RequiredAudioLanguagesCsv, "ja")
+            && string.IsNullOrWhiteSpace(profile.AllowedLanguagesCsv)
+            && CsvEquals(profile.RequiredSubtitleLanguagesCsv, "en")
+            && !profile.RequireForcedSubtitle && !profile.AllowUnknownTrackLanguage) return "sub";
+        if (CsvEquals(profile.RequiredAudioLanguagesCsv, "en")
+            && string.IsNullOrWhiteSpace(profile.AllowedLanguagesCsv)
+            && string.IsNullOrWhiteSpace(profile.RequiredSubtitleLanguagesCsv)
+            && !profile.RequireForcedSubtitle && !profile.AllowUnknownTrackLanguage) return "dub";
+        if (string.IsNullOrWhiteSpace(profile.RequiredAudioLanguagesCsv)
+            && string.IsNullOrWhiteSpace(profile.AllowedLanguagesCsv)
+            && string.IsNullOrWhiteSpace(profile.RequiredSubtitleLanguagesCsv)
+            && !profile.RequireForcedSubtitle && profile.AllowUnknownTrackLanguage) return "any";
+        return "custom";
+    }
+
+    private static bool CsvEquals(string? value, params string[] expected)
+    {
+        var actual = (value ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => x.ToLowerInvariant()).Order().ToArray();
+        return actual.SequenceEqual(expected.Select(x => x.ToLowerInvariant()).Order());
+    }
+
+    private static string LanguagePolicySummary(QualityProfileDto profile) => LanguagePreset(profile) switch
+    {
+        "dual" => "Dual audio",
+        "sub" => "Japanese + English subs",
+        "dub" => "English audio",
+        "any" => "Any / original",
+        _ => "Custom"
+    };
+
+    private static string LimitSummary(QualityProfileDto profile)
+    {
+        var overrides = new List<string>();
+        if (profile.MaxSizeGb.HasValue) overrides.Add($"{profile.MaxSizeGb:g} GB files");
+        if (profile.MaxSeasonPackSizeGb.HasValue) overrides.Add($"{profile.MaxSeasonPackSizeGb:g} GB packs");
+        if (profile.MinSeeders.HasValue) overrides.Add($"{profile.MinSeeders} seeders");
+        return overrides.Count == 0 ? "Use global limits" : string.Join(" · ", overrides);
     }
 
     private async Task SetLanguageValue(QualityProfileDto profile, string field, string? value)

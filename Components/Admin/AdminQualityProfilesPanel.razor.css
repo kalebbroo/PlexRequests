@@ -1,0 +1,73 @@
+.profile-option {
+    overflow: hidden;
+    margin-top: var(--spacing-sm);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.012);
+}
+
+.profile-option > summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0.7rem;
+    min-height: 58px;
+    padding: 0.75rem 0.85rem;
+    cursor: pointer;
+    list-style: none;
+}
+
+.profile-option > summary::-webkit-details-marker {
+    display: none;
+}
+
+.profile-option > summary::after {
+    content: "+";
+    color: var(--text-secondary);
+    font-size: 1.15rem;
+}
+
+.profile-option[open] > summary {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(229, 160, 13, 0.04);
+}
+
+.profile-option[open] > summary::after {
+    content: "−";
+}
+
+.profile-option > summary:hover,
+.profile-option > summary:focus-visible {
+    background: rgba(229, 160, 13, 0.06);
+}
+
+.profile-option > summary:focus-visible {
+    outline: 2px solid var(--plex-orange);
+    outline-offset: -2px;
+}
+
+.profile-option > summary span {
+    display: grid;
+    gap: 0.15rem;
+}
+
+.profile-option > summary small {
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    font-weight: 400;
+    line-height: 1.35;
+}
+
+.profile-option-content {
+    padding: 0.9rem;
+}
+
+@media (max-width: 600px) {
+    .profile-option > summary {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .profile-option > summary ::deep .mud-chip {
+        display: none;
+    }
+}
