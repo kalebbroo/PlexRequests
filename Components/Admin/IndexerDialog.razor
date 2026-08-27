@@ -10,124 +10,147 @@
 
 <MudDialog>
     <DialogContent>
-        <MudGrid Spacing="2">
-            <MudItem xs="12" sm="6">
-                <MudTextField T="string" Label="Name" @bind-Value="_model.Name" Required="true"
-                              Variant="Variant.Outlined" HelperText="How it appears in the panel and in logs." />
-            </MudItem>
-            <MudItem xs="12" sm="6">
-                <MudSelect T="string" Label="Type" @bind-Value="_model.Implementation" Variant="Variant.Outlined"
-                           Disabled="_model.IsBuiltIn"
-                           HelperText="@(_model.IsBuiltIn ? "Built-in indexers have a fixed type." : "A Torznab-compatible API endpoint.")">
-                    <MudSelectItem Value="@("Torznab")">Torznab-compatible API</MudSelectItem>
-                </MudSelect>
-            </MudItem>
+        <section class="dialog-section">
+            <div class="dialog-section-heading">
+                <div>
+                    <MudText Typo="Typo.subtitle1"><b>Connection</b></MudText>
+                    <MudText Typo="Typo.body2" Class="text-muted">
+                        @(_model.IsBuiltIn ? "This public source is maintained by Plex Requests." : "Copy these values from your Prowlarr, Jackett, or Torznab provider.")
+                    </MudText>
+                </div>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                    @(_model.IsBuiltIn ? "Built in" : "Torznab API")
+                </MudChip>
+            </div>
 
-            @if (!_model.IsBuiltIn)
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <MudTextField T="string" Label="Source name" @bind-Value="_model.Name" Required="true"
+                                  Variant="Variant.Outlined" HelperText="A short name shown on the Download sources page." />
+                </MudItem>
+                @if (!_model.IsBuiltIn)
+                {
+                    <MudItem xs="12">
+                        <MudTextField T="string" Label="API URL" @bind-Value="_model.Url" Required="true"
+                                      Variant="Variant.Outlined" Placeholder="https://indexer.example/api"
+                                      HelperText="Use the full Torznab API endpoint, not the provider's home page." />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudTextField T="string" Label="API key" @bind-Value="_model.ApiKey"
+                                      InputType="InputType.Password" Variant="Variant.Outlined"
+                                      HelperText="@(_model.HasApiKey ? "A key is stored securely. Leave this blank to keep it." : "Stored encrypted after you save.")" />
+                    </MudItem>
+                }
+            </MudGrid>
+
+            @if (SupportsFirefoxCapture())
             {
-                <MudItem xs="12">
-                    <MudTextField T="string" Label="API URL" @bind-Value="_model.Url" Required="true"
-                                  Variant="Variant.Outlined"
-                                  Placeholder="https://indexer.example/api"
-                                  HelperText="The endpoint's full Torznab API URL." />
-                </MudItem>
-                <MudItem xs="12">
-                    <MudTextField T="string" Label="API key" @bind-Value="_model.ApiKey"
-                                  InputType="InputType.Password" Variant="Variant.Outlined"
-                                  HelperText="@(_model.HasApiKey ? "A key is stored. Leave blank to keep it." : "Stored encrypted.")" />
-                </MudItem>
+                <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mt-2">
+                    Firefox pairing is managed from this source's <b>Pair Firefox</b> action after you close this window.
+                </MudAlert>
+            }
+        </section>
+
+        <MudDivider Class="my-3" />
+
+        <section class="dialog-section">
+            <MudText Typo="Typo.subtitle1"><b>Media this source can find</b></MudText>
+            <MudText Typo="Typo.body2" Class="text-muted mb-2">
+                Turn on only the media types this source actually carries. Standard category IDs are filled in automatically.
+            </MudText>
+            <div class="media-choice-grid">
+                @foreach (var capability in _model.MediaCapabilities.OrderBy(x => MediaOrder(x.MediaType)))
+                {
+                    <MudPaper Class="media-choice" Outlined="true">
+                        <MudIcon Icon="@MediaIcon(capability.MediaType)" Color="Color.Primary" />
+                        <MudSwitch T="bool" Label="@MediaLabel(capability.MediaType)"
+                                   @bind-Value="capability.Enabled" Color="Color.Primary" />
+                    </MudPaper>
+                }
+            </div>
+            <MudSwitch T="bool" Label="Use only for anime releases" @bind-Value="_model.AnimeOnly" Color="Color.Secondary" />
+        </section>
+
+        <div class="dialog-optional-heading">
+            <MudText Typo="Typo.subtitle2">Optional settings</MudText>
+            <MudText Typo="Typo.caption" Class="text-muted">The defaults work for most sources.</MudText>
+        </div>
+        <MudExpansionPanels MultiExpansion="true" Class="dialog-expansions">
+            <MudExpansionPanel Text="@($"Search behavior · {SearchBehaviorSummary()}")">
+                <div class="behavior-grid">
+                    <div class="behavior-choice">
+                        <MudSwitch T="bool" Label="Request fulfillment" @bind-Value="_model.EnableAutomaticSearch" Color="Color.Primary" />
+                        <MudText Typo="Typo.caption" Class="text-muted">Search when an approved request needs a release.</MudText>
+                    </div>
+                    <div class="behavior-choice">
+                        <MudSwitch T="bool" Label="New-episode monitoring" @bind-Value="_model.EnableIngestion" Color="Color.Primary" />
+                        <MudText Typo="Typo.caption" Class="text-muted">Use feeds when supported to find newly released episodes.</MudText>
+                    </div>
+                    <div class="behavior-choice">
+                        <MudSwitch T="bool" Label="Manual searches" @bind-Value="_model.EnableInteractiveSearch" Color="Color.Primary" />
+                        <MudText Typo="Typo.caption" Class="text-muted">Include this source when an admin searches manually.</MudText>
+                    </div>
+                    <div class="behavior-choice">
+                        <MudSwitch T="bool" Label="Recommended row" @bind-Value="_model.EnableRecommendedFeed" Color="Color.Secondary" />
+                        <MudText Typo="Typo.caption" Class="text-muted">Show newest uploads on the home page when browsing is supported.</MudText>
+                    </div>
+                </div>
+            </MudExpansionPanel>
+
+            <MudExpansionPanel Text="@($"Category IDs · {CategorySummary()}")">
+                <MudText Typo="Typo.body2" Class="text-muted mb-3">
+                    Leave a field blank to use the standard category. Enter custom IDs only when your provider uses different numbering.
+                </MudText>
+                <div class="category-grid">
+                    @foreach (var capability in _model.MediaCapabilities.OrderBy(x => MediaOrder(x.MediaType)))
+                    {
+                        <MudTextField T="string" Label="@($"{MediaLabel(capability.MediaType)} categories")"
+                                      @bind-Value="capability.CategoriesCsv" Variant="Variant.Outlined"
+                                      Placeholder="@DefaultCategories(capability.MediaType)" Disabled="@(!capability.Enabled)"
+                                      HelperText="@($"Blank uses {DefaultCategories(capability.MediaType)}.")" />
+                    }
+                </div>
+            </MudExpansionPanel>
+
+            @if (!_model.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase))
+            {
+                <MudExpansionPanel Text="@ClearanceSummary()">
+                    <MudText Typo="Typo.body2" Class="text-muted mb-3">
+                        Use this only when a scraper explicitly supports reusable Cloudflare clearance. The cookie,
+                        browser User-Agent, and downloader IP must all match.
+                    </MudText>
+                    <MudTextField T="string" Label="Cookie header" @bind-Value="_model.ClearanceCookie"
+                                  Variant="Variant.Outlined" Placeholder="cf_clearance=abc123..."
+                                  HelperText="@(_model.HasClearance ? $"A clearance is stored ({Age(_model.ClearanceObtainedAt)}). Leave blank to keep it." : "Paste the raw Cookie header value.")" />
+                    <MudTextField T="string" Label="Browser User-Agent" @bind-Value="_model.UserAgent" Class="mt-3"
+                                  Variant="Variant.Outlined" Placeholder="Mozilla/5.0 ..."
+                                  HelperText="Use the exact User-Agent that obtained the cookie." />
+                    @if (_model.HasClearance)
+                    {
+                        <MudCheckBox T="bool" @bind-Value="_model.ClearClearance" Dense="true" Color="Color.Error"
+                                     Label="Delete the stored clearance" Class="mt-1" />
+                    }
+                </MudExpansionPanel>
             }
 
-            <MudItem xs="12"><MudDivider Class="my-2" /></MudItem>
-
-            <MudItem xs="12">
-                @if (SupportsFirefoxCapture())
-                {
-                    <MudAlert Severity="Severity.Info" Variant="Variant.Text" dense="true">
-                        @_model.Name browser coverage is managed by a source-specific Firefox pairing. Use the
-                        extension button on the indexer row to install, pair, and monitor it.
-                    </MudAlert>
-                }
-                @if (!_model.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase))
-                {
-                    <MudExpansionPanel Text="@ClearanceSummary()" dense="true">
-                        <MudText Typo="Typo.caption" Class="text-muted mb-2 d-block">
-                            Optional advanced override for a scraper that accepts reusable clearance. The cookie,
-                            User-Agent, and downloader egress IP must match. A refused request remains visible as blocked.
-                        </MudText>
-                        <MudTextField T="string" Label="Cookie header" @bind-Value="_model.ClearanceCookie"
-                                      Variant="Variant.Outlined" Placeholder="cf_clearance=abc123..."
-                                      HelperText="@(_model.HasClearance ? $"A clearance is stored ({Age(_model.ClearanceObtainedAt)}). Leave blank to keep it." : "Paste the raw Cookie header value.")" />
-                        <MudTextField T="string" Label="User-Agent" @bind-Value="_model.UserAgent" Class="mt-2"
-                                      Variant="Variant.Outlined"
-                                      Placeholder="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ..."
-                                      HelperText="Must exactly match the client that obtained the cookie." />
-                        @if (_model.HasClearance)
-                        {
-                            <MudCheckBox T="bool" @bind-Value="_model.ClearClearance" dense="true" Color="Color.Error"
-                                         Label="Delete the stored clearance" Class="mt-1" />
-                        }
-                    </MudExpansionPanel>
-                }
-            </MudItem>
-
-            <MudItem xs="12">
-                <MudText Typo="Typo.caption" Class="text-muted mb-2 d-block">Media coverage and categories</MudText>
-                <MudGrid Spacing="2">
-                    @foreach (var capability in _model.MediaCapabilities.OrderBy(x => x.MediaType))
-                    {
-                        <MudItem xs="12" sm="6">
-                            <div class="d-flex align-items-center gap-2">
-                                <MudSwitch T="bool" Label="@MediaLabel(capability.MediaType)"
-                                           @bind-Value="capability.Enabled" Color="Color.Primary" />
-                                <MudTextField T="string" Label="Categories" @bind-Value="capability.CategoriesCsv"
-                                              Variant="Variant.Outlined" Placeholder="@DefaultCategories(capability.MediaType)"
-                                              Disabled="@(!capability.Enabled)" HelperText="Blank = standard category." />
-                            </div>
-                        </MudItem>
-                    }
-                </MudGrid>
-                <MudSwitch T="bool" Label="Anime only" @bind-Value="_model.AnimeOnly" Color="Color.Secondary" />
-            </MudItem>
-            <MudItem xs="12" sm="6">
-                <MudText Typo="Typo.caption" Class="text-muted">When it's used</MudText>
-                <div class="d-flex flex-column">
-                    <MudSwitch T="bool" Label="Automatic search" @bind-Value="_model.EnableAutomaticSearch" Color="Color.Primary" />
-                    <MudTooltip Text="Ingest this source's incremental feed when supported and use it for automatic release monitoring.">
-                        <MudSwitch T="bool" Label="Release monitoring" @bind-Value="_model.EnableIngestion" Color="Color.Primary" />
-                    </MudTooltip>
-                    <MudSwitch T="bool" Label="Interactive search" @bind-Value="_model.EnableInteractiveSearch" Color="Color.Primary" />
-                    <MudTooltip Text="Use this indexer's newest uploads for the home page's Recommended row. Only sources that can browse (not just search) can serve it.">
-                        <MudSwitch T="bool" Label="Recommended feed" @bind-Value="_model.EnableRecommendedFeed" Color="Color.Secondary" />
-                    </MudTooltip>
+            <MudExpansionPanel Text="@($"Ranking and limits · priority {_model.Priority}")">
+                <MudText Typo="Typo.body2" Class="text-muted mb-3">
+                    Change these only to solve a specific ranking, throttling, or result-quality problem.
+                </MudText>
+                <div class="advanced-field-grid">
+                    <MudNumericField T="int" Label="Priority" @bind-Value="_model.Priority" Min="1" Max="50"
+                                     Variant="Variant.Outlined" HelperText="1 is highest." />
+                    <MudNumericField T="int" Label="Requests per minute" @bind-Value="_model.RateLimitPerMinute" Min="1" Max="600"
+                                     Variant="Variant.Outlined" />
+                    <MudNumericField T="int" Label="Cache seconds" @bind-Value="_model.CacheSeconds" Min="0" Max="3600"
+                                     Variant="Variant.Outlined" />
+                    <MudNumericField T="int" Label="Maximum detail fetches" @bind-Value="_model.MaxDetailFetches" Min="1" Max="100"
+                                     Variant="Variant.Outlined" HelperText="Used by scrapers." />
+                    <MudNumericField T="int?" Label="Minimum seeders" @bind-Value="_model.MinSeeders" Clearable="true" Variant="Variant.Outlined" />
+                    <MudNumericField T="int?" Label="Maximum age in days" @bind-Value="_model.MaxAgeDays" Clearable="true" Variant="Variant.Outlined" />
                 </div>
-            </MudItem>
-
-            <MudItem xs="12"><MudDivider Class="my-2" /></MudItem>
-
-            <MudItem xs="6" sm="3">
-                <MudNumericField T="int" Label="Priority" @bind-Value="_model.Priority" Min="1" Max="50"
-                                 Variant="Variant.Outlined" HelperText="1 = highest." />
-            </MudItem>
-            <MudItem xs="6" sm="3">
-                <MudNumericField T="int" Label="Requests / min" @bind-Value="_model.RateLimitPerMinute" Min="1" Max="600"
-                                 Variant="Variant.Outlined" />
-            </MudItem>
-            <MudItem xs="6" sm="3">
-                <MudNumericField T="int" Label="Cache (sec)" @bind-Value="_model.CacheSeconds" Min="0" Max="3600"
-                                 Variant="Variant.Outlined" />
-            </MudItem>
-            <MudItem xs="6" sm="3">
-                <MudNumericField T="int" Label="Detail fetches" @bind-Value="_model.MaxDetailFetches" Min="1" Max="100"
-                                 Variant="Variant.Outlined" HelperText="Scrapers only." />
-            </MudItem>
-            <MudItem xs="6" sm="3">
-                <MudNumericField T="int?" Label="Min seeders" @bind-Value="_model.MinSeeders" Clearable="true" Variant="Variant.Outlined" />
-            </MudItem>
-            <MudItem xs="6" sm="3">
-                <MudNumericField T="int?" Label="Max age (days)" @bind-Value="_model.MaxAgeDays" Clearable="true" Variant="Variant.Outlined" />
-            </MudItem>
-        </MudGrid>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
 
         @if (!string.IsNullOrWhiteSpace(_error))
         {
@@ -138,7 +161,7 @@
         {
             <div class="d-flex align-items-center gap-2 mt-3">
                 <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
-                <MudText Typo="Typo.body2">Asking the downloader to contact the endpoint…</MudText>
+                <MudText Typo="Typo.body2">Checking the saved connection through the downloader…</MudText>
             </div>
         }
         else if (_caps is not null)
@@ -151,9 +174,7 @@
             {
                 <div class="d-flex justify-content-between align-items-center mt-2">
                     <MudText Typo="Typo.caption" Class="text-muted">
-                        Categories this endpoint advertises. The category fields above are the single most
-                        common misconfiguration — a tracker with private numbering returns nothing for the
-                        Torznab standards, which looks exactly like "no matches".
+                        This endpoint advertises custom category IDs. Apply them if searches return no matches with the standard categories.
                     </MudText>
                     <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="ApplySuggestedCategories">
                         Use these
@@ -178,16 +199,18 @@
     <DialogActions>
         @* A test runs against the SAVED row: the probe happens in the downloader, which reads its config
            from the database, so an unsaved URL is not something it can reach. *@
-        @if (!_model.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase))
+        @if (_model.Id > 0 && !_model.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase))
         {
-            <MudTooltip Text="@(_model.Id > 0 ? "Contact this endpoint and read back what it supports." : "Save the indexer first — the downloader tests the stored configuration.")">
-                <MudButton StartIcon="@Icons.Material.Filled.NetworkCheck" Disabled="@(_testing || _saving || _model.Id <= 0)"
-                           OnClick="Test">Test</MudButton>
+            <MudTooltip Text="Ask the downloader to contact this saved source.">
+                <MudButton StartIcon="@Icons.Material.Filled.NetworkCheck" Disabled="@(_testing || _saving)"
+                           OnClick="Test">Test connection</MudButton>
             </MudTooltip>
         }
         <MudSpacer />
         <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_saving" OnClick="Save">Save</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_saving" OnClick="Save">
+            @(Existing is null ? "Add source" : "Save changes")
+        </MudButton>
     </DialogActions>
 </MudDialog>
 
@@ -371,6 +394,40 @@
         MediaType.Music => "Music",
         _ => mediaType.ToString()
     };
+
+    private static string MediaIcon(MediaType mediaType) => mediaType switch
+    {
+        MediaType.Movie => Icons.Material.Filled.Movie,
+        MediaType.TvShow => Icons.Material.Filled.Tv,
+        MediaType.Anime => Icons.Material.Filled.AutoAwesome,
+        MediaType.Music => Icons.Material.Filled.MusicNote,
+        _ => Icons.Material.Filled.Search
+    };
+
+    private static int MediaOrder(MediaType mediaType) => mediaType switch
+    {
+        MediaType.Movie => 0,
+        MediaType.TvShow => 1,
+        MediaType.Anime => 2,
+        MediaType.Music => 3,
+        _ => 4
+    };
+
+    private string SearchBehaviorSummary()
+    {
+        var enabled = new List<string>();
+        if (_model.EnableAutomaticSearch) enabled.Add("requests");
+        if (_model.EnableIngestion) enabled.Add("monitoring");
+        if (_model.EnableInteractiveSearch) enabled.Add("manual");
+        if (_model.EnableRecommendedFeed) enabled.Add("recommendations");
+        return enabled.Count == 0 ? "not used" : string.Join(", ", enabled);
+    }
+
+    private string CategorySummary()
+    {
+        var custom = _model.MediaCapabilities.Count(capability => !string.IsNullOrWhiteSpace(capability.CategoriesCsv));
+        return custom == 0 ? "standard defaults" : $"{custom} custom";
+    }
 
     private static string DefaultCategories(MediaType mediaType) => mediaType switch
     {
