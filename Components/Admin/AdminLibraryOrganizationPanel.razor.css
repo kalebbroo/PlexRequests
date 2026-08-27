@@ -1,0 +1,188 @@
+.library-defaults {
+    padding: 0.85rem;
+    border: 1px solid rgba(229, 160, 13, 0.18);
+    border-radius: var(--radius-md);
+    background: rgba(229, 160, 13, 0.035);
+}
+
+.library-destination {
+    overflow: hidden;
+    margin-bottom: var(--spacing-sm);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: var(--radius-md);
+}
+
+.library-destination > summary {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0.7rem;
+    min-height: 58px;
+    padding: 0.75rem 0.85rem;
+    cursor: pointer;
+    list-style: none;
+}
+
+.library-destination > summary::-webkit-details-marker {
+    display: none;
+}
+
+.library-destination > summary::after {
+    content: "+";
+    color: var(--text-secondary);
+    font-size: 1.15rem;
+}
+
+.library-destination[open] > summary {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(229, 160, 13, 0.04);
+}
+
+.library-destination[open] > summary::after {
+    content: "−";
+}
+
+.library-destination > summary:hover,
+.library-destination > summary:focus-visible {
+    background: rgba(229, 160, 13, 0.06);
+}
+
+.library-destination > summary:focus-visible {
+    outline: 2px solid var(--plex-orange);
+    outline-offset: -2px;
+}
+
+.library-destination > summary span {
+    display: grid;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+.library-destination > summary small {
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    font-weight: 400;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.library-destination-content {
+    padding: 0.9rem;
+}
+
+.destination-options {
+    margin-top: var(--spacing-sm);
+    padding-top: var(--spacing-sm);
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.destination-options summary {
+    width: fit-content;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.destination-options summary:hover,
+.destination-options summary:focus-visible {
+    color: var(--plex-orange);
+}
+
+.library-optional-heading {
+    margin: var(--spacing-xl) 0 var(--spacing-md);
+}
+
+.library-task-list {
+    display: grid;
+    gap: var(--spacing-sm);
+}
+
+.library-task {
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.018);
+}
+
+.library-task > summary {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 64px;
+    padding: 0.85rem 1rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    list-style: none;
+}
+
+.library-task > summary::-webkit-details-marker {
+    display: none;
+}
+
+.library-task > summary::after {
+    content: "+";
+    grid-column: 4;
+    color: var(--text-secondary);
+    font-size: 1.25rem;
+}
+
+.library-task[open] > summary {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(229, 160, 13, 0.045);
+}
+
+.library-task[open] > summary::after {
+    content: "−";
+}
+
+.library-task > summary:hover,
+.library-task > summary:focus-visible {
+    background: rgba(229, 160, 13, 0.065);
+}
+
+.library-task > summary:focus-visible {
+    outline: 2px solid var(--plex-orange);
+    outline-offset: -2px;
+}
+
+.library-task > summary span {
+    display: grid;
+    gap: 0.18rem;
+}
+
+.library-task > summary small {
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    font-weight: 400;
+    line-height: 1.35;
+}
+
+.library-task-content {
+    padding: clamp(1rem, 2vw, 1.5rem);
+}
+
+@media (max-width: 600px) {
+    .library-destination > summary {
+        grid-template-columns: 22px minmax(0, 1fr) auto;
+    }
+
+    .library-destination > summary ::deep .mud-chip {
+        display: none;
+    }
+
+    .library-task > summary {
+        grid-template-columns: 22px minmax(0, 1fr) auto;
+        padding: 0.8rem;
+    }
+
+    .library-task > summary ::deep .mud-chip {
+        display: none;
+    }
+
+    .library-task > summary::after {
+        grid-column: 3;
+    }
+}
