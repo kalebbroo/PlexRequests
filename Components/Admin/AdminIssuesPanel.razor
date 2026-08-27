@@ -3,10 +3,19 @@
 @inject PlexRequestsHosted.Services.Implementations.IMediaIssueService IssueService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 
-<div class="d-flex justify-content-end align-items-center mb-4">
-    <div class="d-flex gap-2 align-items-center">
+<div class="issues-heading">
+    <div>
+        <MudText Typo="Typo.h6" HtmlTag="h3">Problems reported by users</MudText>
+        <MudText Typo="Typo.body2" Class="text-secondary">
+            Each report identifies the affected title, episode, and file when available. Replace only when a new copy is needed.
+        </MudText>
+    </div>
+    <div class="issues-controls">
         <MudSwitch T="bool" Value="_openOnly" Label="Open only" Color="Color.Primary" ValueChanged="OnOpenOnlyChanged" />
-        <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="Load">Refresh</MudButton>
+        <MudTooltip Text="Refresh reported issues">
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Color="Color.Primary" Disabled="@_loading"
+                           OnClick="Load" aria-label="Refresh reported issues" />
+        </MudTooltip>
     </div>
 </div>
 
@@ -16,92 +25,92 @@
 }
 else if (_issues.Count == 0)
 {
-    <div class="text-center py-6 text-muted">No reported problems @(_openOnly ? "open" : "").</div>
+    <div class="issues-empty">
+        <MudIcon Icon="@(_openOnly ? Icons.Material.Filled.TaskAlt : Icons.Material.Filled.SearchOff)"
+                 Color="@(_openOnly ? Color.Success : Color.Default)" />
+        <strong>@(_openOnly ? "No open problems" : "No reported problems")</strong>
+        <span>@(_openOnly ? "Users have not reported anything that still needs attention." : "Issue reports will appear here when a user reports a playback, quality, or episode problem.")</span>
+    </div>
 }
 else
 {
-    <MudTable Items="_issues" dense="true" Hover="true" Class="elevation-1">
-        <HeaderContent>
-            <MudTh>Title</MudTh>
-            <MudTh>Problem</MudTh>
-            <MudTh>Details</MudTh>
-            <MudTh>Reported by</MudTh>
-            <MudTh>When</MudTh>
-            <MudTh>Status</MudTh>
-            <MudTh>Actions</MudTh>
-        </HeaderContent>
-        <RowTemplate>
-            <MudTd>
-                <div class="d-flex align-items-center gap-2">
-                    @if (!string.IsNullOrWhiteSpace(context.PosterUrl))
-                    {
-                        <img src="@context.PosterUrl" alt="" loading="lazy" style="width:36px;height:54px;object-fit:cover;border-radius:4px;" />
-                    }
-                    <div>
-                        <div class="fw-bold">@context.Title</div>
-                        <div class="text-muted small">@(context.MediaType == MediaType.Movie ? "Movie" : context.MediaType == MediaType.TvShow ? "TV" : context.MediaType.ToString())
-                            @if (context.SeasonNumber is int s) { <text> · S@(s.ToString("D2"))@(context.EpisodeNumber is int e ? $"E{e:D2}" : "")</text> }</div>
-                        @if (!string.IsNullOrWhiteSpace(context.EpisodeTitle))
+    <div class="issue-list">
+        @foreach (var issue in _issues)
+        {
+            <article class="issue-card">
+                <div class="issue-media">
+                    <img src="@(issue.PosterUrl ?? "/img/poster-placeholder.svg")" alt="" loading="lazy"
+                         onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
+                    <div class="issue-title">
+                        <MudText Typo="Typo.subtitle1" HtmlTag="h4">@issue.Title</MudText>
+                        <span>@MediaLabel(issue)</span>
+                        @if (!string.IsNullOrWhiteSpace(issue.EpisodeTitle))
                         {
-                            <div class="small">@context.EpisodeTitle</div>
-                        }
-                        @if (context.ReplacementRequested)
-                        {
-                            <div class="small text-primary">Replacement requested</div>
+                            <strong>@issue.EpisodeTitle</strong>
                         }
                     </div>
                 </div>
-            </MudTd>
-            <MudTd>@context.Reason</MudTd>
-            <MudTd Style="max-width:320px;white-space:normal;">
-                @context.Detail
-                @if (!string.IsNullOrWhiteSpace(context.AffectedReleaseName))
+
+                <div class="issue-status">
+                    <MudChip T="string" Size="Size.Small" Color="@StatusColor(issue)">@StatusText(issue)</MudChip>
+                    @if (issue.Status == IssueStatus.ReplacementQueued && issue.ReplacementJobStatus.HasValue)
+                    {
+                        <span>@ReplacementProgress(issue)</span>
+                    }
+                </div>
+
+                <div class="issue-report">
+                    <div class="issue-reason"><MudIcon Icon="@Icons.Material.Filled.ReportProblem" Size="Size.Small" /><strong>@issue.Reason</strong></div>
+                    @if (!string.IsNullOrWhiteSpace(issue.Detail))
+                    {
+                        <p>@issue.Detail</p>
+                    }
+                    else
+                    {
+                        <p class="text-secondary">No additional details were provided.</p>
+                    }
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(issue.AffectedReleaseName) || !string.IsNullOrWhiteSpace(issue.AffectedFilePath))
                 {
-                    <div class="small text-muted mt-1"><strong>Reported copy:</strong> @context.AffectedReleaseName@(context.AffectedResolution > 0 ? $" · {context.AffectedResolution}p" : "")</div>
-                }
-                @if (!string.IsNullOrWhiteSpace(context.AffectedFilePath))
-                {
-                    <MudTooltip Text="@context.AffectedFilePath">
-                        <div class="small text-muted text-truncate" style="max-width:300px;">@context.AffectedFilePath</div>
-                    </MudTooltip>
-                }
-            </MudTd>
-            <MudTd>@context.ReportedBy</MudTd>
-            <MudTd>@context.CreatedAt.ToLocalTime().ToString("g")</MudTd>
-            <MudTd>
-                <MudChip T="string" Size="Size.Small" Color="@StatusColor(context)">@StatusText(context)</MudChip>
-                @if (context.Status == IssueStatus.ReplacementQueued && context.ReplacementJobStatus.HasValue)
-                {
-                    <div class="small text-muted mt-1">
-                        @if (context.ReplacementJobStatus == FulfillmentStatus.Downloading)
+                    <details class="issue-file">
+                        <summary>Reported file details</summary>
+                        @if (!string.IsNullOrWhiteSpace(issue.AffectedReleaseName))
                         {
-                            <text>@context.ReplacementProgress% downloaded</text>
+                            <div><span>Release</span><strong>@issue.AffectedReleaseName@(issue.AffectedResolution > 0 ? $" · {issue.AffectedResolution}p" : "")</strong></div>
                         }
-                        else if (context.ReplacementJobStatus == FulfillmentStatus.Deferred)
+                        @if (!string.IsNullOrWhiteSpace(issue.AffectedFilePath))
                         {
-                            <text>Retry @(context.ReplacementNextRetryAt?.ToLocalTime().ToString("g") ?? "later")</text>
+                            <div><span>Path</span><code>@issue.AffectedFilePath</code></div>
                         }
-                        else
-                        {
-                            <text>@context.ReplacementJobStatus</text>
-                        }
-                    </div>
+                    </details>
                 }
-            </MudTd>
-            <MudTd>
-                @if (context.Status == IssueStatus.Open)
+
+                <div class="issue-footer">
+                    <span><MudIcon Icon="@Icons.Material.Filled.PersonOutline" Size="Size.Small" />@(issue.ReportedBy ?? "Unknown user")</span>
+                    <span><MudIcon Icon="@Icons.Material.Filled.Schedule" Size="Size.Small" />@issue.CreatedAt.ToLocalTime().ToString("g")</span>
+                    @if (issue.ReplacementRequested && issue.Status == IssueStatus.Open)
+                    {
+                        <span class="replacement-request"><MudIcon Icon="@Icons.Material.Filled.FindReplace" Size="Size.Small" />User requested a replacement</span>
+                    }
+                </div>
+
+                @if (issue.Status == IssueStatus.Open)
                 {
-                    <div class="d-flex gap-1">
-                        <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled" OnClick="() => Redownload(context)">
-                            @(context.ReplacementRequested ? "Approve replacement" : "Replace file")
+                    <div class="issue-actions">
+                        <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                                   StartIcon="@Icons.Material.Filled.FindReplace" OnClick="() => Redownload(issue)">
+                            @(issue.ReplacementRequested ? "Approve replacement" : "Replace file")
                         </MudButton>
-                        <MudButton Size="Size.Small" Color="Color.Success" Variant="Variant.Text" OnClick="() => Resolve(context)">Resolve</MudButton>
-                        <MudButton Size="Size.Small" Color="Color.Default" Variant="Variant.Text" OnClick="() => Dismiss(context)">Dismiss</MudButton>
+                        <MudButton Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined"
+                                   StartIcon="@Icons.Material.Filled.Check" OnClick="() => Resolve(issue)">Mark resolved</MudButton>
+                        <MudButton Size="Size.Small" Color="Color.Default" Variant="Variant.Text"
+                                   OnClick="() => Dismiss(issue)">Dismiss report</MudButton>
                     </div>
                 }
-            </MudTd>
-        </RowTemplate>
-    </MudTable>
+            </article>
+        }
+    </div>
 }
 
 @code {
@@ -157,5 +166,21 @@ else
         IssueStatus.ReplacementQueued => Color.Info,
         IssueStatus.Resolved => Color.Success,
         _ => Color.Default
+    };
+
+    private static string MediaLabel(MediaIssueDto issue)
+    {
+        var mediaType = issue.MediaType == MediaType.Movie ? "Movie" : issue.MediaType == MediaType.TvShow ? "TV show" : issue.MediaType.ToString();
+        if (issue.SeasonNumber is not int season) return mediaType;
+        return $"{mediaType} · S{season:D2}{(issue.EpisodeNumber is int episode ? $"E{episode:D2}" : string.Empty)}";
+    }
+
+    private static string ReplacementProgress(MediaIssueDto issue) => issue.ReplacementJobStatus switch
+    {
+        FulfillmentStatus.Downloading => $"{issue.ReplacementProgress}% downloaded",
+        FulfillmentStatus.Deferred => issue.ReplacementNextRetryAt is DateTime retry
+            ? $"Searching again {retry.ToLocalTime():g}"
+            : "Searching again soon",
+        _ => issue.ReplacementJobStatus?.ToString() ?? string.Empty
     };
 }
