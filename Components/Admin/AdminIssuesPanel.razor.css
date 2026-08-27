@@ -1,0 +1,244 @@
+.issues-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+.issues-heading > div:first-child {
+    display: grid;
+    gap: 0.25rem;
+    max-width: 720px;
+}
+
+.issues-controls {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+}
+
+.issue-list {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.issue-card {
+    display: grid;
+    grid-template-columns: minmax(230px, 0.8fr) minmax(260px, 1.4fr) auto;
+    grid-template-areas:
+        "media report status"
+        "media report actions"
+        "file file file"
+        "footer footer footer";
+    gap: 0.8rem 1rem;
+    padding: 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.018);
+}
+
+.issue-media {
+    grid-area: media;
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr);
+    align-items: start;
+    gap: 0.75rem;
+}
+
+.issue-media > img {
+    width: 52px;
+    height: 78px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    object-fit: cover;
+}
+
+.issue-title {
+    display: grid;
+    gap: 0.15rem;
+}
+
+.issue-title span,
+.issue-status span,
+.issue-footer,
+.issue-file summary,
+.issue-file div > span {
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+}
+
+.issue-title strong {
+    margin-top: 0.15rem;
+    font-size: 0.82rem;
+    line-height: 1.35;
+}
+
+.issue-status {
+    grid-area: status;
+    display: grid;
+    justify-items: end;
+    align-content: start;
+    gap: 0.25rem;
+    text-align: right;
+}
+
+.issue-report {
+    grid-area: report;
+    min-width: 0;
+}
+
+.issue-reason {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.35rem;
+    color: var(--mud-palette-warning);
+}
+
+.issue-report p {
+    margin: 0;
+    font-size: 0.86rem;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+}
+
+.issue-file {
+    grid-area: file;
+    overflow: hidden;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.issue-file summary {
+    width: max-content;
+    padding-top: 0.7rem;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.issue-file summary:hover {
+    color: var(--text-primary);
+}
+
+.issue-file div {
+    display: grid;
+    grid-template-columns: 60px minmax(0, 1fr);
+    gap: 0.5rem;
+    margin-top: 0.55rem;
+    font-size: 0.78rem;
+}
+
+.issue-file code {
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+.issue-footer {
+    grid-area: footer;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.8rem 1rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.issue-footer > span {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.issue-footer .replacement-request {
+    color: var(--plex-orange);
+}
+
+.issue-actions {
+    grid-area: actions;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+
+.issues-empty {
+    display: grid;
+    justify-items: center;
+    gap: 0.4rem;
+    padding: clamp(2rem, 7vw, 4rem) 1rem;
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.issues-empty ::deep .mud-icon-root {
+    font-size: 2rem;
+}
+
+.issues-empty strong {
+    color: var(--text-primary);
+    font-size: 1rem;
+}
+
+@media (max-width: 1050px) {
+    .issue-card {
+        grid-template-columns: minmax(210px, 0.75fr) minmax(240px, 1fr);
+        grid-template-areas:
+            "media status"
+            "report report"
+            "file file"
+            "footer footer"
+            "actions actions";
+    }
+}
+
+@media (max-width: 600px) {
+    .issues-heading {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.65rem;
+    }
+
+    .issues-controls {
+        justify-content: space-between;
+    }
+
+    .issue-card {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+            "media status"
+            "report report"
+            "file file"
+            "footer footer"
+            "actions actions";
+        padding: 0.85rem;
+    }
+
+    .issue-media {
+        grid-template-columns: 42px minmax(0, 1fr);
+    }
+
+    .issue-media > img {
+        width: 42px;
+        height: 63px;
+    }
+
+    .issue-status ::deep .mud-chip-root {
+        margin: 0;
+    }
+
+    .issue-status span {
+        max-width: 100px;
+    }
+
+    .issue-actions {
+        justify-content: stretch;
+    }
+
+    .issue-actions ::deep .mud-button-root {
+        flex: 1 1 145px;
+    }
+}

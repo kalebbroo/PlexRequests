@@ -8,19 +8,33 @@
 @inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthProvider
 @implements IDisposable
 
-<div class="d-flex justify-content-end align-items-center mb-4">
-    <div class="d-flex gap-2">
-        <MudSelect T="RequestStatus?" Value="_statusFilter" ValueChanged="OnStatusChanged" Label="Status" dense="true" Variant="Variant.Outlined" Class="me-2">
-            <MudSelectItem T="RequestStatus?" Value="@( (RequestStatus?)null )">All</MudSelectItem>
-            <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Pending)">Pending</MudSelectItem>
-            <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Approved)">Approved</MudSelectItem>
-            <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Available)">Available</MudSelectItem>
-            <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Rejected)">Rejected</MudSelectItem>
-            <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Cancelled)">Cancelled</MudSelectItem>
-        </MudSelect>
-        <MudTextField T="string" Value="_search" ValueChanged="OnSearchChanged" Placeholder="Search title..." Margin="Margin.Dense" Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" DebounceInterval="250"/>
-        <MudButton Color="Color.Primary" Variant="Variant.Outlined" OnClick="Refresh">Refresh</MudButton>
+<div class="triage-heading">
+    <div>
+        <MudText Typo="Typo.h6" HtmlTag="h3">Requests needing a decision</MudText>
+        <MudText Typo="Typo.body2" Class="text-secondary">
+            New requests appear here first. Approve one to start searching, or deny it with a reason the requester can understand.
+        </MudText>
     </div>
+    <MudTooltip Text="Refresh requests">
+        <MudIconButton Icon="@Icons.Material.Filled.Refresh" Color="Color.Primary" Disabled="@_loading"
+                       OnClick="Refresh" aria-label="Refresh requests" />
+    </MudTooltip>
+</div>
+
+<div class="triage-filters">
+    <MudSelect T="RequestStatus?" Value="_statusFilter" ValueChanged="OnStatusChanged"
+               Label="Show" Variant="Variant.Outlined">
+        <MudSelectItem T="RequestStatus?" Value="@((RequestStatus?)null)">All requests</MudSelectItem>
+        <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Pending)">Needs approval</MudSelectItem>
+        <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Approved)">Approved</MudSelectItem>
+        <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Available)">Available</MudSelectItem>
+        <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Rejected)">Denied</MudSelectItem>
+        <MudSelectItem T="RequestStatus?" Value="@(RequestStatus.Cancelled)">Cancelled</MudSelectItem>
+    </MudSelect>
+    <MudTextField T="string" Value="_search" ValueChanged="OnSearchChanged" Label="Find a request"
+                  Placeholder="Title" Variant="Variant.Outlined" Adornment="Adornment.Start"
+                  AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" Clearable="true"
+                  DebounceInterval="250" />
 </div>
 
 @if (_loading)
@@ -29,55 +43,79 @@
 }
 else if (_items.Count == 0)
 {
-    <div class="text-center py-6 text-muted">No requests</div>
+    <div class="triage-empty">
+        <MudIcon Icon="@(_statusFilter == RequestStatus.Pending ? Icons.Material.Filled.TaskAlt : Icons.Material.Filled.SearchOff)"
+                 Color="@(_statusFilter == RequestStatus.Pending ? Color.Success : Color.Default)" />
+        <strong>@EmptyTitle</strong>
+        <span>@EmptyDescription</span>
+    </div>
 }
 else
 {
-    <MudTable Items="_items" dense="true" Hover="true" Class="elevation-1">
+    <MudTable Items="_items" Hover="true" Breakpoint="Breakpoint.Md" Class="request-table">
         <HeaderContent>
-            <MudTh>Type</MudTh>
-            <MudTh>Poster</MudTh>
-            <MudTh>Title</MudTh>
+            <MudTh>Request</MudTh>
+            <MudTh>Requested by</MudTh>
             <MudTh>Status</MudTh>
             <MudTh>Requested</MudTh>
-            <MudTh>User</MudTh>
             <MudTh>Actions</MudTh>
         </HeaderContent>
         <RowTemplate>
-            <MudTd>@(context.MediaType == MediaType.Movie ? "Movie" : context.MediaType == MediaType.TvShow ? "TV" : context.MediaType.ToString())</MudTd>
-            <MudTd>
-                @if (!string.IsNullOrWhiteSpace(context.PosterUrl))
-                {
-                    <img src="@context.PosterUrl" alt="poster" loading="lazy" style="width:48px;height:72px;object-fit:cover;border-radius:4px;" onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
-                }
-                else
-                {
-                    <div style="width:48px;height:72px;border-radius:4px;background:#222;display:flex;align-items:center;justify-content:center;color:#888;">
-                        <MudIcon Icon="@Icons.Material.Filled.Image" />
+            <MudTd DataLabel="Request">
+                <div class="request-identity">
+                    <img src="@(context.PosterUrl ?? "/img/poster-placeholder.svg")" alt="" loading="lazy"
+                         onerror="this.onerror=null;this.src='/img/poster-placeholder.svg'" />
+                    <div>
+                        <strong>@context.Title</strong>
+                        <span>@MediaTypeLabel(context.MediaType)@RequestScope(context)</span>
+                        @if (!string.IsNullOrWhiteSpace(context.QualityProfileName))
+                        {
+                            <small>@context.QualityProfileName</small>
+                        }
                     </div>
+                </div>
+            </MudTd>
+            <MudTd DataLabel="Requested by">
+                <strong>@context.RequestedByUsername</strong>
+                @if (!string.IsNullOrWhiteSpace(context.RequestNote))
+                {
+                    <MudTooltip Text="@context.RequestNote">
+                        <span class="request-note"><MudIcon Icon="@Icons.Material.Filled.ChatBubbleOutline" Size="Size.Small" /> Note</span>
+                    </MudTooltip>
                 }
             </MudTd>
-            <MudTd>
-                <div class="fw-bold">@context.Title</div>
-                <div class="text-muted small">@context.MediaType • ID @context.MediaId</div>
-            </MudTd>
-            <MudTd>
+            <MudTd DataLabel="Status">
                 @RenderStatusChip(context.Status)
             </MudTd>
-            <MudTd>@context.RequestedAt.ToLocalTime().ToString("g")</MudTd>
-            <MudTd>@context.RequestedByUsername</MudTd>
-            <MudTd>
-                <div class="d-flex gap-1">
-                    <MudButton Size="Size.Small" Color="Color.Success" Variant="Variant.Text" Disabled="@(context.Status == RequestStatus.Approved || context.Status == RequestStatus.Available)" OnClick="() => Approve(context)">Approve</MudButton>
-                    <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text" Disabled="@(context.Status == RequestStatus.Rejected || context.Status == RequestStatus.Available)" OnClick="() => Deny(context)">Deny</MudButton>
-                    <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Text" Disabled="@(context.Status == RequestStatus.Available)" OnClick="() => MarkAvailable(context)">Mark Available</MudButton>
+            <MudTd DataLabel="Requested">@context.RequestedAt.ToLocalTime().ToString("g")</MudTd>
+            <MudTd DataLabel="Actions">
+                <div class="request-actions">
+                    @if (context.Status is not RequestStatus.Approved and not RequestStatus.Available)
+                    {
+                        <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                                   StartIcon="@Icons.Material.Filled.Check" OnClick="() => Approve(context)">Approve</MudButton>
+                    }
+                    @if (context.Status is not RequestStatus.Rejected and not RequestStatus.Available)
+                    {
+                        <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text"
+                                   OnClick="() => Deny(context)">Deny</MudButton>
+                    }
+                    @if (context.Status != RequestStatus.Available)
+                    {
+                        <MudButton Size="Size.Small" Color="Color.Default" Variant="Variant.Text"
+                                   OnClick="() => MarkAvailable(context)">Already in Plex</MudButton>
+                    }
+                    else
+                    {
+                        <span class="no-action">No action needed</span>
+                    }
                 </div>
             </MudTd>
         </RowTemplate>
     </MudTable>
     @if (_pageCount > 1)
     {
-        <div class="d-flex justify-content-end py-3">
+        <div class="triage-pagination">
             <MudPagination Count="@_pageCount" Selected="@_page" SelectedChanged="OnPageChanged" />
         </div>
     }
@@ -85,15 +123,22 @@ else
 
 @if (_denyOpen)
 {
-    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1050;">
-        <div style="background:#121212;border-radius:8px;min-width:360px;max-width:90vw;padding:16px;">
-            <h5 class="mb-2">Deny Request</h5>
-            <MudTextField @bind-Value="_denyReason" Label="Reason" Variant="Variant.Outlined" Lines="3" FullWidth="true" />
-            <div class="d-flex justify-content-end gap-2 mt-3">
-                <MudButton Variant="Variant.Text" OnClick="() => { _denyOpen = false; _denyReason = string.Empty; }">Cancel</MudButton>
-                <MudButton Color="Color.Primary" OnClick="ConfirmDeny">Confirm</MudButton>
+    <div class="deny-backdrop" role="presentation" @onclick="CloseDeny">
+        <section class="deny-dialog" role="dialog" aria-modal="true" aria-labelledby="deny-title" @onclick:stopPropagation>
+            <div class="deny-heading">
+                <div class="deny-icon"><MudIcon Icon="@Icons.Material.Filled.Block" /></div>
+                <div>
+                    <MudText Typo="Typo.h6" HtmlTag="h3" id="deny-title">Deny @_denyTarget?.Title</MudText>
+                    <MudText Typo="Typo.body2" Class="text-secondary">The requester will see this explanation.</MudText>
+                </div>
             </div>
-        </div>
+            <MudTextField @bind-Value="_denyReason" Label="Reason for denying" Placeholder="For example: Already available in Plex"
+                          Variant="Variant.Outlined" Lines="3" FullWidth="true" AutoFocus="true" />
+            <div class="deny-actions">
+                <MudButton Variant="Variant.Text" OnClick="CloseDeny">Cancel</MudButton>
+                <MudButton Color="Color.Error" Variant="Variant.Filled" OnClick="ConfirmDeny">Deny request</MudButton>
+            </div>
+        </section>
     </div>
 }
 
@@ -112,6 +157,19 @@ else
     private string _denyReason = string.Empty;
 
     private int _userId;
+
+    private string EmptyTitle => !string.IsNullOrWhiteSpace(_search)
+        ? "No matching requests"
+        : _statusFilter switch
+        {
+            RequestStatus.Pending => "Approval queue is clear",
+            null => "No requests yet",
+            _ => $"No {StatusLabel(_statusFilter).ToLowerInvariant()} requests"
+        };
+
+    private string EmptyDescription => _statusFilter == RequestStatus.Pending
+        ? "There are no new requests waiting for you."
+        : string.IsNullOrWhiteSpace(_search) ? "Try another status to review older requests." : "Try a different title or clear the search.";
 
     protected override async Task OnInitializedAsync()
     {
@@ -206,6 +264,13 @@ else
         _denyOpen = true;
     }
 
+    private void CloseDeny()
+    {
+        _denyOpen = false;
+        _denyTarget = null;
+        _denyReason = string.Empty;
+    }
+
     private async Task ConfirmDeny()
     {
         if (_denyTarget is null) return;
@@ -255,5 +320,31 @@ else
         __builder.AddAttribute(3, "ChildContent", (RenderFragment)((b2) => b2.AddContent(0, txt)));
         __builder.CloseComponent();
     };
+
+    private static string MediaTypeLabel(MediaType type) => type switch
+    {
+        MediaType.Movie => "Movie",
+        MediaType.TvShow => "TV show",
+        _ => type.ToString()
+    };
+
+    private static string RequestScope(MediaRequestDto request)
+    {
+        if (request.MediaType != MediaType.TvShow) return string.Empty;
+        if (request.RequestAllSeasons) return " · All seasons";
+        if (request.RequestedSeasons.Count > 0)
+            return $" · Season{(request.RequestedSeasons.Count == 1 ? "" : "s")} {string.Join(", ", request.RequestedSeasons)}";
+        if (!string.IsNullOrWhiteSpace(request.RequestedEpisodesCsv)) return $" · {request.RequestedEpisodesCsv}";
+        return string.Empty;
+    }
+
+    private static string StatusLabel(RequestStatus? status) => status switch
+    {
+        null => "All",
+        RequestStatus.Pending => "Pending",
+        RequestStatus.Rejected => "Denied",
+        _ => status.Value.ToString()
+    };
+
     public void Dispose() => Broker.Notified -= OnNotified;
 }
