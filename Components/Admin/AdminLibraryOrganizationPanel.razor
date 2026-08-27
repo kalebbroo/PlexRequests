@@ -8,11 +8,12 @@
 @inject MudBlazor.IDialogService DialogService
 
 <div class="d-flex justify-content-end align-items-center mb-2">
-    <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="Save" Disabled="_loading">Save</MudButton>
+    <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="Save" Disabled="_loading">Save changes</MudButton>
 </div>
 <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-4">
-    Controls how the downloader renames and places finished downloads into the Plex library: where they go,
-    what they're named, and how the transfer happens. Applies to new imports going forward only.
+    Choose the folders Plex Requests should use for completed media. The defaults below are enough for most
+    installations; specialized routing, episode numbering, naming, and import controls are available when needed.
+    Changes apply to new imports only.
 </MudText>
 
 @if (_loading || _p is null)
@@ -23,39 +24,65 @@ else
 {
     <MudPaper Class="pa-4 mb-4" Elevation="1">
         <div class="d-flex justify-content-between align-items-center mb-2">
-            <MudText Typo="Typo.h6">Library destinations</MudText>
-            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddDestination">Add destination</MudButton>
+            <MudText Typo="Typo.h6">Library folders</MudText>
+            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddDestination">Add library folder</MudButton>
         </div>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-3">
-            Add as many Plex libraries as needed. Each destination is restricted to one scanner shape, so a
-            movie can never be imported into a TV root. Paths are seen by the downloader; requesters only see
-            destinations you explicitly make selectable and never submit filesystem paths.
+            Add one folder for each Plex library, such as Movies, TV, Anime Movies, Anime TV, or Kids TV.
+            Movie and TV folders stay safely separated. Users see only friendly names, never filesystem paths.
         </MudText>
-        <div class="d-flex gap-3 flex-wrap align-items-center mb-4">
-            <MudSelect T="string" @bind-Value="DefaultMovieId" Label="Default movies" dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
-                @foreach (var destination in EnabledDestinations(LibraryContentKind.Movie))
-                {
-                    <MudSelectItem T="string" Value="@destination.Id">@destination.Name</MudSelectItem>
-                }
-            </MudSelect>
-            <MudSelect T="string" @bind-Value="DefaultSeriesId" Label="Default TV" dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
-                @foreach (var destination in EnabledDestinations(LibraryContentKind.Series))
-                {
-                    <MudSelectItem T="string" Value="@destination.Id">@destination.Name</MudSelectItem>
-                }
-            </MudSelect>
-            <MudSelect T="string" @bind-Value="DefaultMusicId" Label="Default music" dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
-                @foreach (var destination in EnabledDestinations(LibraryContentKind.Music))
-                {
-                    <MudSelectItem T="string" Value="@destination.Id">@destination.Name</MudSelectItem>
-                }
-            </MudSelect>
-        </div>
+        @if (HasMultipleDestinations)
+        {
+            <div class="library-defaults mb-4">
+                <MudText Typo="Typo.subtitle2">Default folder when no special routing rule matches</MudText>
+                <div class="d-flex gap-3 flex-wrap align-items-center mt-2">
+                    @if (HasMultipleDestinationsFor(LibraryContentKind.Movie))
+                    {
+                        <MudSelect T="string" @bind-Value="DefaultMovieId" Label="Movies" dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
+                            @foreach (var destination in EnabledDestinations(LibraryContentKind.Movie))
+                            {
+                                <MudSelectItem T="string" Value="@destination.Id">@destination.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
+                    @if (HasMultipleDestinationsFor(LibraryContentKind.Series))
+                    {
+                        <MudSelect T="string" @bind-Value="DefaultSeriesId" Label="TV / series" dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
+                            @foreach (var destination in EnabledDestinations(LibraryContentKind.Series))
+                            {
+                                <MudSelectItem T="string" Value="@destination.Id">@destination.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
+                    @if (HasMultipleDestinationsFor(LibraryContentKind.Music))
+                    {
+                        <MudSelect T="string" @bind-Value="DefaultMusicId" Label="Music" dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
+                            @foreach (var destination in EnabledDestinations(LibraryContentKind.Music))
+                            {
+                                <MudSelectItem T="string" Value="@destination.Id">@destination.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
+                </div>
+            </div>
+        }
         @for (var i = 0; i < _p.LibraryDestinations.Count; i++)
         {
             var idx = i;
             var destination = _p.LibraryDestinations[idx];
-            <MudPaper Class="pa-3 mb-3" Outlined="true">
+            <details class="library-destination">
+                <summary>
+                    <MudIcon Icon="@ContentKindIcon(destination.ContentKind)" Size="Size.Small" />
+                    <span>
+                        <b>@destination.Name</b>
+                        <small>@ContentKindSummary(destination.ContentKind) · @DestinationPathSummary(destination)</small>
+                    </span>
+                    @if (destination.IsDefault)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined">Default</MudChip>
+                    }
+                </summary>
+                <div class="library-destination-content">
                 <div class="d-flex gap-2 flex-wrap align-items-center">
                     <MudTextField @bind-Value="destination.Name" Label="Name" dense="true" Variant="Variant.Outlined" Style="min-width:190px;" />
                     <MudSelect T="LibraryContentKind" @bind-Value="destination.ContentKind" Label="Content type" dense="true"
@@ -66,8 +93,6 @@ else
                     </MudSelect>
                     <MudTextField @bind-Value="destination.RootPath" Label="Root path" dense="true" Variant="Variant.Outlined" Style="min-width:310px;"
                                   Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="@(() => BrowseDestination(idx))" />
-                    <MudTextField @bind-Value="destination.PlexSectionId" Label="Plex section ID (optional)" dense="true" Variant="Variant.Outlined" Style="min-width:190px;" />
-                    <MudTextField @bind-Value="destination.TemplateOverride" Label="Naming override (optional)" dense="true" Variant="Variant.Outlined" Style="min-width:260px;" />
                     <MudSwitch T="bool" @bind-Value="destination.Enabled" Color="Color.Primary" Label="Enabled" Disabled="destination.IsDefault" />
                     <MudSwitch T="bool" @bind-Value="destination.AllowUserSelection" Color="Color.Primary" Label="Users may select" />
                     <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Disabled="destination.IsDefault"
@@ -77,16 +102,41 @@ else
                 {
                     <MudText Typo="Typo.caption" Color="Color.Primary">Default @ContentKindLabel(destination.ContentKind) destination</MudText>
                 }
-            </MudPaper>
+                <details class="destination-options">
+                    <summary>Advanced destination options</summary>
+                    <div class="d-flex gap-2 flex-wrap align-items-center mt-3">
+                        <MudTextField @bind-Value="destination.PlexSectionId" Label="Plex section ID (optional)" dense="true" Variant="Variant.Outlined" Style="min-width:210px;" />
+                        <MudTextField @bind-Value="destination.TemplateOverride" Label="Naming override (optional)" dense="true" Variant="Variant.Outlined" Style="min-width:300px;" />
+                    </div>
+                    <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
+                        Leave these blank unless this folder needs a targeted Plex scan or a different naming template.
+                    </MudText>
+                </details>
+                </div>
+            </details>
         }
         <MudText Typo="Typo.caption" Color="Color.Tertiary">
-            For a NAS/network drive, configure it under <b>Admin → Library → Network Drives</b> and select a path
+            For a NAS or network drive, configure it under <b>Libraries &amp; importing → Network storage</b> and select a path
             beneath <code>/mnt/nas/&lt;name&gt;</code>. Plex section IDs are carried with jobs for targeted scan and
             verification support; leaving them empty keeps the current media-type refresh behavior.
         </MudText>
     </MudPaper>
 
-    <MudPaper Class="pa-4 mb-4" Elevation="1">
+    <div class="library-optional-heading">
+        <MudText Typo="Typo.h6">Optional setup</MudText>
+        <MudText Typo="Typo.body2" Color="Color.Tertiary">
+            Open only the task you need. Existing settings are summarized beside each task.
+        </MudText>
+    </div>
+
+    <div class="library-task-list">
+    <details class="library-task">
+        <summary>
+            <MudIcon Icon="@Icons.Material.Filled.FormatListNumbered" Size="Size.Small" />
+            <span><b>Handle alternate episode numbering</b><small>Anime absolute order, DVD order, digital order, or custom mappings.</small></span>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_p.SeriesEpisodeOrderProfiles.Count configured</MudChip>
+        </summary>
+        <div class="library-task-content">
         <div class="d-flex justify-content-between align-items-center mb-2">
             <MudText Typo="Typo.h6">Series episode ordering</MudText>
             <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddEpisodeOrderProfile">Add series</MudButton>
@@ -200,9 +250,15 @@ else
                 }
             </MudPaper>
         }
-    </MudPaper>
+        </div>
+    </details>
 
-    <MudPaper Class="pa-4 mb-4" Elevation="1">
+    <details class="library-task">
+        <summary>
+            <MudIcon Icon="@Icons.Material.Filled.DriveFileRenameOutline" Size="Size.Small" />
+            <span><b>Customize file names</b><small>Change Plex folder and filename templates with live previews.</small></span>
+        </summary>
+        <div class="library-task-content">
         <MudText Typo="Typo.h6" Class="mb-3">Naming templates</MudText>
         <div class="d-flex flex-column gap-3">
             <div>
@@ -228,11 +284,18 @@ else
             Music also supports <code>{Artist}</code>, <code>{Album}</code>, <code>{Disc:00}</code>, <code>{Track:00}</code>, and <code>{TrackTitle}</code>.
             <code>:00</code> zero-pads season/episode numbers to 2 digits.
         </MudText>
-    </MudPaper>
+        </div>
+    </details>
 
-    <MudPaper Class="pa-4 mb-4" Elevation="1">
+    <details class="library-task">
+        <summary>
+            <MudIcon Icon="@Icons.Material.Filled.AltRoute" Size="Size.Small" />
+            <span><b>Route anime, kids, and special libraries</b><small>Send matching content to a different library folder.</small></span>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_p.LibraryRootRules.Count rule@(_p.LibraryRootRules.Count == 1 ? "" : "s")</MudChip>
+        </summary>
+        <div class="library-task-content">
         <div class="d-flex justify-content-between align-items-center mb-2">
-            <MudText Typo="Typo.h6">Advanced routing rules</MudText>
+            <MudText Typo="Typo.h6">Library routing rules</MudText>
             <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddRule">Add rule</MudButton>
         </div>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-2">
@@ -278,10 +341,17 @@ else
                 </div>
             }
         }
-    </MudPaper>
+        </div>
+    </details>
 
-    <MudPaper Class="pa-4 mb-4" Elevation="1">
-        <MudText Typo="Typo.h6" Class="mb-3">Transfer behavior</MudText>
+    <details class="library-task">
+        <summary>
+            <MudIcon Icon="@Icons.Material.Filled.DriveFileMove" Size="Size.Small" />
+            <span><b>Change import and file handling</b><small>Transfer mode, archives, season packs, subtitles, and sample detection.</small></span>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@TransferModeLabel(_p.TransferMode)</MudChip>
+        </summary>
+        <div class="library-task-content">
+        <MudText Typo="Typo.h6" Class="mb-3">Import behavior</MudText>
         <div class="d-flex gap-3 flex-wrap align-items-center">
             <MudSelect T="TransferMode" @bind-Value="_p.TransferMode" Label="Transfer mode" dense="true" Variant="Variant.Outlined" Style="min-width:220px;">
                 <MudSelectItem Value="TransferMode.Hardlink">Hardlink (keeps seeding)</MudSelectItem>
@@ -309,7 +379,13 @@ else
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
             Files below the minimum size are treated as samples/junk, not real episodes/movies.
         </MudText>
-    </MudPaper>
+        </div>
+    </details>
+    </div>
+
+    <div class="d-flex justify-content-end mt-4">
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="Save">Save changes</MudButton>
+    </div>
 }
 
 @code {
@@ -595,6 +671,10 @@ else
     private IEnumerable<LibraryDestinationDto> EnabledDestinations(LibraryContentKind kind) =>
         _p!.LibraryDestinations.Where(d => d.ContentKind == kind && d.Enabled);
 
+    private bool HasMultipleDestinations => Enum.GetValues<LibraryContentKind>().Any(HasMultipleDestinationsFor);
+
+    private bool HasMultipleDestinationsFor(LibraryContentKind kind) => EnabledDestinations(kind).Take(2).Count() > 1;
+
     private IEnumerable<LibraryDestinationDto> RuleDestinations(LibraryRootRuleDto rule) =>
         EnabledDestinations(LibraryRouting.ContentKind(rule.MediaType));
 
@@ -630,6 +710,30 @@ else
         LibraryContentKind.Movie => "movie",
         LibraryContentKind.Series => "TV",
         _ => "music"
+    };
+
+    private static string ContentKindSummary(LibraryContentKind kind) => kind switch
+    {
+        LibraryContentKind.Movie => "Movies",
+        LibraryContentKind.Series => "TV / series",
+        _ => "Music"
+    };
+
+    private static string ContentKindIcon(LibraryContentKind kind) => kind switch
+    {
+        LibraryContentKind.Movie => Icons.Material.Filled.Movie,
+        LibraryContentKind.Series => Icons.Material.Filled.Tv,
+        _ => Icons.Material.Filled.LibraryMusic
+    };
+
+    private static string DestinationPathSummary(LibraryDestinationDto destination) =>
+        string.IsNullOrWhiteSpace(destination.RootPath) ? "folder not set" : destination.RootPath.Trim();
+
+    private static string TransferModeLabel(TransferMode mode) => mode switch
+    {
+        TransferMode.Hardlink => "Hardlink",
+        TransferMode.Copy => "Copy",
+        _ => "Move"
     };
 
     // Preview-only rendering — a simplified stand-in for the downloader's real NamingTemplateEngine,
