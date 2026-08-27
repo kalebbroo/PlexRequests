@@ -1,0 +1,192 @@
+.activity-toolbar,
+.activity-section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+}
+
+.activity-toolbar {
+    margin-bottom: var(--spacing-md);
+}
+
+.queue-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-lg);
+}
+
+.queue-summary > div {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.018);
+}
+
+.queue-summary ::deep .mud-icon-root {
+    color: var(--accent-primary);
+}
+
+.queue-summary span {
+    display: grid;
+}
+
+.queue-summary strong {
+    font-size: 1.35rem;
+    line-height: 1.1;
+}
+
+.queue-summary small {
+    color: var(--text-secondary);
+}
+
+.activity-section-heading {
+    margin-bottom: var(--spacing-sm);
+}
+
+.activity-section-heading.with-divider {
+    margin-top: var(--spacing-lg);
+    padding-top: var(--spacing-lg);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.activity-empty {
+    display: grid;
+    justify-items: center;
+    gap: var(--spacing-xs);
+    padding: 2.5rem var(--spacing-md);
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.activity-empty ::deep .mud-icon-root {
+    font-size: 2rem;
+}
+
+.activity-empty.compact {
+    padding: var(--spacing-lg);
+}
+
+.queue-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+}
+
+.job-history {
+    margin-top: var(--spacing-lg);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+@media (max-width: 600px) {
+    .activity-toolbar,
+    .activity-section-heading {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .queue-summary {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .activity-tabs-shell ::deep .mud-tabs-scroll-button {
+        display: none;
+    }
+
+    .activity-tabs-shell ::deep .mud-tabs-tabbar,
+    .activity-tabs-shell ::deep .mud-tabs-tabbar-inner {
+        height: auto;
+    }
+
+    .activity-tabs-shell ::deep .mud-tabs-tabbar-content {
+        width: 100%;
+        overflow: visible;
+    }
+
+    .activity-tabs-shell ::deep .mud-tabs-tabbar-wrapper {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+        transform: none !important;
+    }
+
+    .activity-tabs-shell ::deep .mud-tooltip-root,
+    .activity-tabs-shell ::deep .mud-tab {
+        min-width: 0 !important;
+        width: 100%;
+    }
+
+    .activity-tabs-shell ::deep .mud-tab {
+        padding: 0.7rem 0.35rem;
+        font-size: 0.72rem;
+        text-align: center;
+    }
+
+    .activity-tabs-shell ::deep .mud-tab-active {
+        background: rgba(255, 179, 0, 0.1);
+    }
+
+    .activity-tabs-shell ::deep .mud-tab-slider {
+        display: none;
+    }
+
+    .activity-tabs-shell ::deep .mud-tabs-panels {
+        padding: var(--spacing-md) 0.2rem !important;
+    }
+
+    .automation-table-shell ::deep .mud-table-body .mud-table-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.2rem var(--spacing-sm);
+        padding: var(--spacing-sm);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .automation-table-shell ::deep .mud-table-cell {
+        display: block;
+        width: auto;
+        padding: 0.35rem;
+        border: 0;
+    }
+
+    .automation-table-shell ::deep .mud-table-cell::before {
+        display: none;
+    }
+
+    .automation-table-shell ::deep .mud-table-cell:nth-child(1) {
+        grid-column: 1;
+        grid-row: 1;
+        align-self: center;
+        font-weight: 700;
+    }
+
+    .automation-table-shell ::deep .mud-table-cell:nth-child(2) {
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    .automation-table-shell ::deep .mud-table-cell:nth-child(3) {
+        grid-column: 1;
+        grid-row: 2;
+    }
+
+    .automation-table-shell ::deep .mud-table-cell:nth-child(4) {
+        grid-column: 1 / -1;
+        grid-row: 3;
+        color: var(--text-secondary);
+    }
+
+    .automation-table-shell ::deep .mud-table-cell:nth-child(5) {
+        display: none;
+    }
+
+    .automation-table-shell ::deep .mud-table-cell:nth-child(6) {
+        grid-column: 2;
+        grid-row: 2;
+        align-self: center;
+    }
+}
