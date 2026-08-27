@@ -1,0 +1,88 @@
+.assignment-rule-list ::deep .mud-expand-panel {
+    margin-bottom: var(--spacing-sm);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.018);
+}
+
+.assignment-rule-list ::deep .mud-expand-panel-header {
+    min-height: 68px;
+}
+
+.assignment-rule-summary {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+}
+
+.assignment-rule-order {
+    display: grid;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    border: 1px solid rgba(229, 160, 13, 0.35);
+    border-radius: 50%;
+    color: var(--plex-orange);
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.assignment-rule-copy {
+    display: grid;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+.assignment-rule-copy small {
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    font-weight: 400;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.assignment-rule-editor {
+    padding: 0.25rem 0.25rem 0.75rem;
+}
+
+.assignment-rule-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.assignment-rule-core,
+.assignment-rule-conditions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--spacing-md);
+}
+
+@media (max-width: 600px) {
+    .assignment-rule-summary {
+        grid-template-columns: 26px minmax(0, 1fr);
+    }
+
+    .assignment-rule-summary ::deep .mud-chip {
+        display: none;
+    }
+
+    .assignment-rule-copy small {
+        white-space: normal;
+    }
+
+    .assignment-rule-actions {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .assignment-rule-core,
+    .assignment-rule-conditions {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
