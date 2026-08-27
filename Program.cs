@@ -341,6 +341,7 @@ builder.Services.AddScoped<IUserQuotaService, UserQuotaService>();
 builder.Services.AddScoped<IUserAdministrationService, UserAdministrationService>();
 builder.Services.AddScoped<UserGroupSeeder>();
 builder.Services.AddScoped<IToastService, ToastService>();
+builder.Services.AddScoped<INotificationPreferenceService, NotificationPreferenceService>();
 builder.Services.AddScoped<IThemeService, ThemeService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 // In-process notification pub/sub (replaces the SignalR client round-trip) + persistence-backed service

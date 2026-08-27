@@ -85,6 +85,14 @@ public interface INotificationService
     // External channels (e.g., Discord) can be triggered here as well in the implementation
 }
 
+public interface INotificationPreferenceService
+{
+    /// <summary>Gets the signed-in user's explicit per-event channel choices.</summary>
+    Task<NotificationPreferencesDto> GetCurrentAsync();
+    /// <summary>Replaces the signed-in user's channel choices after clamping unsupported bits.</summary>
+    Task<bool> UpdateCurrentAsync(NotificationPreferencesDto preferences);
+}
+
 public interface IPlexAuthService
 {
     Task<PlexAuthenticationFlow> BeginAuthenticationAsync(string? returnUrl = null);

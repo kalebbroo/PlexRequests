@@ -126,7 +126,19 @@ public enum NotificationType
     /// <summary>An administrator resolved a report without an automatic replacement completion.</summary>
     MediaIssueResolved = 13,
     /// <summary>An administrator closed a report without taking replacement action.</summary>
-    MediaIssueDismissed = 14
+    MediaIssueDismissed = 14,
+    /// <summary>A request was cancelled before completion.</summary>
+    RequestCancelled = 15
+}
+
+/// <summary>
+/// Where a user wants a notification delivered. Channels are intentionally independent: linking an
+/// external account never opts the user into messages, and enabling a web alert never enables a DM.
+/// </summary>
+public enum NotificationChannel
+{
+    Web = 0,
+    Discord = 1
 }
 
 public enum BridgeEventType

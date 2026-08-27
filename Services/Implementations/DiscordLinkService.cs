@@ -70,11 +70,15 @@ public class DiscordLinkService(
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(p => p.DiscordUserId, (string?)null)
                     .SetProperty(p => p.DiscordUsername, (string?)null)
-                    .SetProperty(p => p.DiscordDmOptIn, false));
+                    .SetProperty(p => p.DiscordDmOptIn, false)
+                    .SetProperty(p => p.DiscordNotificationTypes, 0L));
 
             profile.DiscordUserId = normalizedDiscordId;
             profile.DiscordUsername = normalizedUsername;
-            profile.DiscordDmOptIn = true; // opt in on link; user can toggle in Profile
+            // Linking establishes identity only. Delivery remains off until the user explicitly enables
+            // individual event types in the shared notification settings.
+            profile.DiscordDmOptIn = false;
+            profile.DiscordNotificationTypes = 0;
             await db.SaveChangesAsync();
             await transaction.CommitAsync();
         }
@@ -108,7 +112,7 @@ public class DiscordLinkService(
         {
             Linked = true,
             PlexUsername = p.PlexUsername ?? p.User?.Username,
-            DmOptIn = p.DiscordDmOptIn && access.IsActive,
+            DmOptIn = (p.DiscordDmOptIn || p.DiscordNotificationTypes != 0) && access.IsActive,
             AccountAvailable = access.IsActive,
             AccountStatus = access.AccountStatus,
             Message = access.IsActive ? null : access.AccountStatus == UserAccountStatus.Suspended
@@ -128,7 +132,8 @@ public class DiscordLinkService(
             {
                 Linked = p.DiscordUserId != null && p.DiscordUserId != string.Empty,
                 DiscordUsername = p.DiscordUsername,
-                DmOptIn = p.DiscordUserId != null && p.DiscordUserId != string.Empty && p.DiscordDmOptIn
+                DmOptIn = p.DiscordUserId != null && p.DiscordUserId != string.Empty
+                    && (p.DiscordDmOptIn || p.DiscordNotificationTypes != 0)
             })
             .FirstOrDefaultAsync() ?? new DiscordLinkStatusDto();
     }
@@ -158,6 +163,7 @@ public class DiscordLinkService(
         var profile = await db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId.Value);
         if (profile is null || string.IsNullOrEmpty(profile.DiscordUserId)) return false;
         profile.DiscordDmOptIn = optIn;
+        profile.DiscordNotificationTypes = optIn ? NotificationPreferenceService.SupportedMask : 0;
         await db.SaveChangesAsync();
         return true;
     }
@@ -171,6 +177,7 @@ public class DiscordLinkService(
         profile.DiscordUserId = null;
         profile.DiscordUsername = null;
         profile.DiscordDmOptIn = false;
+        profile.DiscordNotificationTypes = 0;
         await db.SaveChangesAsync();
         return true;
     }
