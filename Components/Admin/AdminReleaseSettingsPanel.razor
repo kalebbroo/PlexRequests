@@ -1,0 +1,45 @@
+@inject NavigationManager Navigation
+
+<MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mb-4">
+    Start with Basic rules and Quality. Automatic choices and Advanced matching are optional and can be added later.
+</MudAlert>
+
+<AdminWorkspaceNav AriaLabel="Release settings view"
+                   Sections="Sections"
+                   ActiveKey="@ActiveSection"
+                   Selected="NavigateTo" />
+
+<div @key="ActiveSection">
+    @switch (ActiveSection)
+    {
+        case "quality":
+            <AdminQualityProfilesPanel />
+            break;
+        case "assignment":
+            <AdminProfileAssignmentPanel />
+            break;
+        case "formats":
+            <AdminCustomFormatsPanel />
+            break;
+        default:
+            <AdminDownloadsPanel />
+            break;
+    }
+</div>
+
+@code {
+    private static readonly AdminWorkspaceSection[] Sections =
+    [
+        new("basics", "Basic rules", "Season packs, minimum seeders, and global preferences.", Icons.Material.Filled.Download, "/admin?tab=downloads&sub=preferences"),
+        new("quality", "Quality", "Allowed resolutions, size limits, audio, and subtitles.", Icons.Material.Filled.HighQuality, "/admin?tab=downloads&sub=quality"),
+        new("assignment", "Automatic choices", "Apply a quality profile by media type, genre, or title.", Icons.Material.Filled.AutoAwesome, "/admin?tab=downloads&sub=assignment"),
+        new("formats", "Advanced matching", "Prefer or reject releases using reusable filename rules.", Icons.Material.Filled.Tune, "/admin?tab=downloads&sub=formats")
+    ];
+
+    [Parameter]
+    public string? Section { get; set; }
+
+    private string ActiveSection => Section is "quality" or "assignment" or "formats" ? Section : "basics";
+
+    private void NavigateTo(AdminWorkspaceSection section) => Navigation.NavigateTo(section.Url);
+}

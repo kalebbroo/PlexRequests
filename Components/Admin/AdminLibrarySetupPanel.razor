@@ -1,0 +1,41 @@
+@inject NavigationManager Navigation
+
+<MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mb-4">
+    Most installations only need Destinations &amp; importing. Add network storage when the library is on a NAS; optional catalogs enable additional media types.
+</MudAlert>
+
+<AdminWorkspaceNav AriaLabel="Library setup view"
+                   Sections="Sections"
+                   ActiveKey="@ActiveSection"
+                   Selected="NavigateTo" />
+
+<div @key="ActiveSection">
+    @switch (ActiveSection)
+    {
+        case "network":
+            <AdminNetworkSharesPanel />
+            break;
+        case "catalogs":
+            <AdminMediaCatalogPanel />
+            break;
+        default:
+            <AdminLibraryOrganizationPanel />
+            break;
+    }
+</div>
+
+@code {
+    private static readonly AdminWorkspaceSection[] Sections =
+    [
+        new("destinations", "Destinations & importing", "Folders, routing, names, episode order, and file transfer.", Icons.Material.Filled.Folder, "/admin?tab=library&sub=organization"),
+        new("network", "Network storage", "Connect and test a NAS or another network drive.", Icons.Material.Filled.Storage, "/admin?tab=library&sub=network"),
+        new("catalogs", "Optional catalogs", "Enable additional media experiences such as music.", Icons.Material.Filled.LibraryMusic, "/admin?tab=library&sub=catalogs")
+    ];
+
+    [Parameter]
+    public string? Section { get; set; }
+
+    private string ActiveSection => Section is "network" or "catalogs" ? Section : "destinations";
+
+    private void NavigateTo(AdminWorkspaceSection section) => Navigation.NavigateTo(section.Url);
+}

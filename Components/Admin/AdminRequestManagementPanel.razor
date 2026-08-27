@@ -1,0 +1,32 @@
+@inject NavigationManager Navigation
+
+<AdminWorkspaceNav AriaLabel="Request management view"
+                   Sections="Sections"
+                   ActiveKey="@ActiveSection"
+                   Selected="NavigateTo" />
+
+<div @key="ActiveSection">
+    @if (ActiveSection == "issues")
+    {
+        <AdminIssuesPanel />
+    }
+    else
+    {
+        <AdminApprovalsPanel />
+    }
+</div>
+
+@code {
+    private static readonly AdminWorkspaceSection[] Sections =
+    [
+        new("queue", "Request queue", "Approve, reject, or mark requests available.", Icons.Material.Filled.Assignment, "/admin?tab=requests&sub=approvals"),
+        new("issues", "Reported issues", "Resolve playback, quality, or episode problems.", Icons.Material.Filled.ReportProblem, "/admin?tab=requests&sub=issues")
+    ];
+
+    [Parameter]
+    public string? Section { get; set; }
+
+    private string ActiveSection => Section == "issues" ? "issues" : "queue";
+
+    private void NavigateTo(AdminWorkspaceSection section) => Navigation.NavigateTo(section.Url);
+}
