@@ -10,6 +10,8 @@ public sealed class NotificationPreferenceService(
     AppDbContext db,
     IUserAccessService userAccess) : INotificationPreferenceService
 {
+    public event Action<NotificationPreferencesDto>? Changed;
+
     internal static readonly long SupportedMask = Enum.GetValues<NotificationType>()
         .Aggregate(0L, (mask, type) => mask | NotificationPreferencesDto.Bit(type));
 
@@ -28,7 +30,9 @@ public sealed class NotificationPreferenceService(
                 // rolling-version tests compatible until the first per-event save.
                 DiscordTypeMask = x.DiscordNotificationTypes == 0 && x.DiscordDmOptIn
                     ? SupportedMask
-                    : x.DiscordNotificationTypes
+                    : x.DiscordNotificationTypes,
+                ReadBehavior = x.NotificationReadBehavior,
+                AutoReadSeconds = x.NotificationAutoReadSeconds
             })
             .FirstOrDefaultAsync() ?? new NotificationPreferencesDto();
     }
@@ -43,7 +47,22 @@ public sealed class NotificationPreferenceService(
         profile.WebNotificationTypes = preferences.WebTypeMask & SupportedMask;
         profile.DiscordNotificationTypes = preferences.DiscordTypeMask & SupportedMask;
         profile.DiscordDmOptIn = profile.DiscordNotificationTypes != 0;
+        profile.NotificationReadBehavior = Enum.IsDefined(preferences.ReadBehavior)
+            ? preferences.ReadBehavior
+            : NotificationReadBehavior.Manual;
+        profile.NotificationAutoReadSeconds = Math.Clamp(preferences.AutoReadSeconds, 10, 3600);
         await db.SaveChangesAsync();
+        preferences.WebTypeMask = profile.WebNotificationTypes;
+        preferences.DiscordTypeMask = profile.DiscordNotificationTypes;
+        preferences.ReadBehavior = profile.NotificationReadBehavior;
+        preferences.AutoReadSeconds = profile.NotificationAutoReadSeconds;
+        Changed?.Invoke(new NotificationPreferencesDto
+        {
+            WebTypeMask = profile.WebNotificationTypes,
+            DiscordTypeMask = profile.DiscordNotificationTypes,
+            ReadBehavior = profile.NotificationReadBehavior,
+            AutoReadSeconds = profile.NotificationAutoReadSeconds
+        });
         return true;
     }
 }

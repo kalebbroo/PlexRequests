@@ -81,12 +81,14 @@ public interface INotificationService
     Task<int> GetUnreadCountAsync(int userId);
     Task MarkAllReadAsync(int userId);
     Task MarkReadAsync(int notificationId, int userId);
+    Task MarkCreatedBeforeReadAsync(int userId, DateTime cutoffUtc);
 
     // External channels (e.g., Discord) can be triggered here as well in the implementation
 }
 
 public interface INotificationPreferenceService
 {
+    event Action<NotificationPreferencesDto>? Changed;
     /// <summary>Gets the signed-in user's explicit per-event channel choices.</summary>
     Task<NotificationPreferencesDto> GetCurrentAsync();
     /// <summary>Replaces the signed-in user's channel choices after clamping unsupported bits.</summary>

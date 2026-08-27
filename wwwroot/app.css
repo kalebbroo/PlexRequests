@@ -106,21 +106,23 @@ a:hover { color: var(--plex-orange); text-decoration: none; }
 /* Notification bell dropdown (MudMenu renders its popover into a provider outside the header's DOM
    subtree, so these classes are styled globally here rather than in MainLayout's scoped CSS). */
 .notification-popover {
-    width: 360px;
-    max-width: 90vw;
+    width: 400px;
+    max-width: calc(100vw - 1rem);
     background-color: var(--bg-secondary);
     border: 1px solid var(--bg-tertiary);
+    border-radius: var(--radius-lg) !important;
     box-shadow: var(--shadow-lg);
+    overflow: hidden;
 }
 
 .notification-list {
     padding: 0 !important;
-    max-height: 420px;
+    max-height: min(560px, calc(100vh - var(--header-offset) - 1rem));
     overflow-y: auto;
 }
 
 .notification-list .notification-item {
-    padding: var(--spacing-sm) var(--spacing-md) !important;
+    padding: 0 !important;
     border-bottom: 1px solid var(--bg-tertiary);
     white-space: normal;
 }
@@ -130,7 +132,37 @@ a:hover { color: var(--plex-orange); text-decoration: none; }
 }
 
 .notification-list .notification-item.unread {
-    background-color: rgba(229, 160, 13, 0.06);
+    background: linear-gradient(90deg, rgba(229, 160, 13, .09), rgba(229, 160, 13, .025));
+}
+
+/* Toasts are transient action feedback, not a second notification center. Keep them compact and anchored
+   away from the top-right bell so a user can always open persistent notifications immediately. */
+.mud-snackbar-container.mud-snackbar-location-bottom-left {
+    left: max(1rem, env(safe-area-inset-left));
+    bottom: max(1rem, env(safe-area-inset-bottom));
+    width: min(380px, calc(100vw - 2rem));
+}
+
+.mud-snackbar-container .mud-snackbar {
+    margin: 0 0 .5rem !important;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 10px !important;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .36) !important;
+}
+
+.mud-snackbar-container .mud-snackbar-content-message {
+    padding: .75rem .85rem !important;
+    font-size: .8rem;
+    line-height: 1.4;
+}
+
+@media (max-width: 600px) {
+    .mud-snackbar-container.mud-snackbar-location-bottom-left {
+        left: max(.65rem, env(safe-area-inset-left));
+        right: max(.65rem, env(safe-area-inset-right));
+        bottom: max(.65rem, env(safe-area-inset-bottom));
+        width: auto;
+    }
 }
 
 /* Utility: muted text consistent with theme */

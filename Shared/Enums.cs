@@ -141,6 +141,18 @@ public enum NotificationChannel
     Discord = 1
 }
 
+public enum NotificationReadBehavior
+{
+    /// <summary>Unread state changes only through an explicit Mark read or Mark all action.</summary>
+    Manual = 0,
+    /// <summary>Opening one notification marks only that notification read.</summary>
+    WhenNotificationOpened = 1,
+    /// <summary>Opening the notification center marks every currently loaded notification read.</summary>
+    WhenCenterOpened = 2,
+    /// <summary>Unread notifications automatically become read after the user's chosen delay.</summary>
+    AfterDelay = 3
+}
+
 public enum BridgeEventType
 {
     Created = 0,
