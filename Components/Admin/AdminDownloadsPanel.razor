@@ -4,11 +4,11 @@
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 
 <div class="d-flex justify-content-end align-items-center mb-2">
-    <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="Save" Disabled="_loading">Save</MudButton>
+    <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="Save" Disabled="_loading">Save changes</MudButton>
 </div>
 <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-4">
-    Global rules the downloader uses to choose between a full-season pack and individual episodes, and to
-    rank candidate releases. Applied to new download jobs. Not shown to users.
+    Set safe fallback rules for new downloads. Quality profiles can override size and seeder limits for
+    specific kinds of media; users do not see these settings.
 </MudText>
 
 @if (_loading || _p is null)
@@ -18,61 +18,81 @@
 else
 {
     <MudPaper Class="pa-4 mb-4" Elevation="1">
-        <MudText Typo="Typo.h6" Class="mb-3">Season packs vs. episodes</MudText>
+        <MudText Typo="Typo.h6" Class="mb-1">TV automation</MudText>
+        <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+            Choose how seasons are downloaded and whether full-series requests should keep following new episodes.
+        </MudText>
         <div class="d-flex gap-3 flex-wrap align-items-center">
-            <MudSelect T="SeasonPackStrategy" @bind-Value="_p.SeasonPackStrategy" Label="Strategy" dense="true" Variant="Variant.Outlined" Style="min-width:240px;">
-                <MudSelectItem Value="SeasonPackStrategy.PreferPack">Prefer full-season pack</MudSelectItem>
-                <MudSelectItem Value="SeasonPackStrategy.PreferEpisodes">Prefer individual episodes</MudSelectItem>
-                <MudSelectItem Value="SeasonPackStrategy.Auto">Auto (pack if within size cap, else episodes)</MudSelectItem>
+            <MudSelect T="SeasonPackStrategy" @bind-Value="_p.SeasonPackStrategy" Label="When a season is needed" dense="true" Variant="Variant.Outlined" Style="min-width:280px;">
+                <MudSelectItem Value="SeasonPackStrategy.Auto">Automatic (recommended)</MudSelectItem>
+                <MudSelectItem Value="SeasonPackStrategy.PreferPack">Prefer one season pack</MudSelectItem>
+                <MudSelectItem Value="SeasonPackStrategy.PreferEpisodes">Prefer separate episodes</MudSelectItem>
             </MudSelect>
-            <MudSwitch T="bool" @bind-Value="_p.AllowEpisodeFallback" Color="Color.Primary" Label="Fall back to episodes when no acceptable pack" />
-            <MudNumericField T="int" @bind-Value="_p.MaxEpisodesForFanout" Label="Max episodes to fan out" Variant="Variant.Outlined" dense="true" Min="1" Max="500" Style="max-width:200px;" />
+            <MudSwitch T="bool" @bind-Value="_p.AllowEpisodeFallback" Color="Color.Primary" Label="Use separate episodes if no acceptable pack is found" />
         </div>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
-            If a season is missing more episodes than the fan-out cap and no pack exists, the job fails instead of adding many torrents.
+            @SeasonStrategyDescription()
         </MudText>
-    </MudPaper>
-
-    <MudPaper Class="pa-4 mb-4" Elevation="1">
-        <MudText Typo="Typo.h6" Class="mb-3">Series monitoring</MudText>
-        <div class="d-flex gap-3 flex-wrap align-items-center">
+        <MudDivider Class="my-4" />
+        <div>
             <MudSwitch T="bool" @bind-Value="_p.AutoMonitorEntireSeriesRequests" Color="Color.Primary" Label="Auto-monitor new episodes when a user requests an entire series" />
         </div>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
-            When on, requesting an entire series also enables monitoring, so newly-aired episodes are automatically downloaded. Users no longer choose this per-request.
+            When enabled, newly aired episodes are downloaded automatically after a user requests the full series.
         </MudText>
     </MudPaper>
 
     <MudPaper Class="pa-4 mb-4" Elevation="1">
-        <MudText Typo="Typo.h6" Class="mb-3">Filters</MudText>
+        <MudText Typo="Typo.h6" Class="mb-1">Fallback download limits</MudText>
+        <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+            These limits apply when the selected quality profile does not provide its own value.
+        </MudText>
         <div class="d-flex gap-3 flex-wrap align-items-center">
-            <MudNumericField T="int" @bind-Value="_p.MinSeeders" Label="Min seeders" Variant="Variant.Outlined" dense="true" Min="0" Style="max-width:160px;" />
-            <MudNumericField T="double" @bind-Value="_p.MaxSizeGb" Label="Max size (GB)" Variant="Variant.Outlined" dense="true" Min="0.05" Style="max-width:180px;" />
-            <MudNumericField T="double" @bind-Value="_p.MaxSeasonPackSizeGb" Label="Max season-pack size (GB)" Variant="Variant.Outlined" dense="true" Min="0.05" Style="max-width:220px;" />
-            <MudSwitch T="bool" @bind-Value="_p.EnforceQualityFloor" Color="Color.Primary" Label="Hold out for preferred quality first" />
-            <MudNumericField T="double" @bind-Value="_p.MinTitleSimilarity" Label="Min title match (0-1)" Variant="Variant.Outlined" dense="true" Min="0" Max="1" Step="0.05" Style="max-width:200px;" />
+            <MudNumericField T="int" @bind-Value="_p.MinSeeders" Label="Minimum seeders" Variant="Variant.Outlined" dense="true" Min="0" Style="max-width:180px;" />
+            <MudNumericField T="double" @bind-Value="_p.MaxSizeGb" Label="Largest single download (GB)" Variant="Variant.Outlined" dense="true" Min="0.05" Style="max-width:230px;" />
+            <MudNumericField T="double" @bind-Value="_p.MaxSeasonPackSizeGb" Label="Largest season pack (GB)" Variant="Variant.Outlined" dense="true" Min="0.05" Style="max-width:230px;" />
         </div>
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
-            <b>Hold out for preferred quality:</b> on, the first search only accepts the preferred quality or better;
-            if nothing has appeared by the next search pass, the best available release (even 480p) is taken and the
-            quality-upgrade scan automatically replaces it once the preferred quality shows up. Off, the best available
-            release is taken immediately (the preferred quality still wins whenever it exists).
-            <br />
-            <b>Min title match</b> rejects a release whose name doesn't sufficiently match the requested title — guards
-            free-text-search indexers against wrong-show or spam results. 0 disables the check; 1 requires every word of
-            the title to appear in the release name.
+            Seeder limits avoid stalled downloads. Size limits prevent unexpectedly large transfers; quality-specific
+            limits belong under Quality.
         </MudText>
     </MudPaper>
 
-    <MudPaper Class="pa-4 mb-4" Elevation="1">
-        <MudText Typo="Typo.h6" Class="mb-3">Release preferences</MudText>
+    <details class="release-advanced">
+        <summary>
+            <MudIcon Icon="@Icons.Material.Filled.Tune" Size="Size.Small" />
+            <span><b>Advanced release matching</b><small>Quality timing, title protection, episode safety, release groups, codec, HDR, and source ranking.</small></span>
+        </summary>
+        <div class="release-advanced-content">
+        <MudText Typo="Typo.h6" Class="mb-3">Search safeguards</MudText>
+        <div class="d-flex gap-3 flex-wrap align-items-center">
+            <MudSwitch T="bool" @bind-Value="_p.EnforceQualityFloor" Color="Color.Primary" Label="Hold out for preferred quality first" />
+            <MudNumericField T="double" @bind-Value="_p.MinTitleSimilarity" Label="Minimum title match (0–1)" Variant="Variant.Outlined" dense="true" Min="0" Max="1" Step="0.05" Style="max-width:220px;" />
+            <MudNumericField T="int" @bind-Value="_p.MaxEpisodesForFanout" Label="Maximum separate episodes per job" Variant="Variant.Outlined" dense="true" Min="1" Max="500" Style="max-width:280px;" />
+        </div>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
+            Holding out waits one search cycle for the preferred quality, then accepts the best available release and
+            upgrades later. Title matching protects free-text searches from wrong-show results. The episode maximum
+            prevents one missing pack from creating an excessive number of downloads.
+        </MudText>
+
+        <MudDivider Class="my-4" />
+        <MudText Typo="Typo.h6" Class="mb-3">Release ranking</MudText>
         <div class="d-flex gap-3 flex-wrap align-items-center">
             <MudTextField @bind-Value="_p.PreferredGroupsCsv" Label="Preferred groups (comma-separated)" Placeholder="e.g. NTb, FLUX" Variant="Variant.Outlined" dense="true" Style="min-width:280px;" />
             <MudSwitch T="bool" @bind-Value="_p.PreferX265" Color="Color.Primary" Label="Prefer x265/HEVC" />
             <MudSwitch T="bool" @bind-Value="_p.PreferHdr" Color="Color.Primary" Label="Prefer HDR" />
             <MudSwitch T="bool" @bind-Value="_p.PreferHigherQualitySource" Color="Color.Primary" Label="Prefer higher-quality source (BluRay > WebDL)" />
         </div>
-    </MudPaper>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
+            These are preferences, not requirements. Use Custom formats when a release must be rejected or given an exact score.
+        </MudText>
+        </div>
+    </details>
+
+    <div class="d-flex justify-content-end mt-4">
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="Save">Save changes</MudButton>
+    </div>
 }
 
 @code {
@@ -97,4 +117,11 @@ else
         if (await Prefs.UpdateAsync(_p)) await Toast.ShowSuccessAsync("Download preferences saved.");
         else await Toast.ShowErrorAsync("Save failed.");
     }
+
+    private string SeasonStrategyDescription() => _p!.SeasonPackStrategy switch
+    {
+        SeasonPackStrategy.Auto => "Automatic uses a season pack when it fits the limit below, then safely falls back to individual episodes.",
+        SeasonPackStrategy.PreferPack => "Plex Requests looks for one season pack first, then uses separate episodes when fallback is enabled and no acceptable pack exists.",
+        _ => "Plex Requests looks for separate episodes first, which can help when season packs do not match the episodes Plex expects."
+    };
 }
