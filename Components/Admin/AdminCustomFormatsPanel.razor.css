@@ -1,0 +1,21 @@
+.format-section-heading,
+.format-builtins-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    margin: var(--spacing-lg) 0 var(--spacing-md);
+}
+
+.format-builtins-heading {
+    padding-top: var(--spacing-md);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+@media (max-width: 600px) {
+    .format-section-heading,
+    .format-builtins-heading {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}
