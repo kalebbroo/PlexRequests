@@ -1,0 +1,209 @@
+.maintenance-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-lg);
+}
+
+.maintenance-section {
+    margin-bottom: var(--spacing-xl);
+}
+
+.backup-card {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.018);
+}
+
+.maintenance-icon {
+    display: grid;
+    place-items: center;
+    width: 2.8rem;
+    height: 2.8rem;
+    flex: 0 0 auto;
+    border-radius: var(--radius-md);
+    color: var(--accent-primary);
+    background: rgba(255, 179, 0, 0.1);
+}
+
+.backup-copy {
+    flex: 1;
+}
+
+.maintenance-details {
+    margin-top: var(--spacing-sm);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.012);
+}
+
+.maintenance-details > summary,
+.danger-action > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    cursor: pointer;
+    list-style: none;
+}
+
+.maintenance-details > summary::-webkit-details-marker,
+.danger-action > summary::-webkit-details-marker {
+    display: none;
+}
+
+.maintenance-details > summary::after,
+.danger-action > summary::after {
+    content: "+";
+    color: var(--text-secondary);
+    font-size: 1.2rem;
+}
+
+.maintenance-details[open] > summary::after,
+.danger-action[open] > summary::after {
+    content: "−";
+}
+
+.maintenance-details summary span,
+.danger-action summary span,
+.cleanup-list span {
+    display: grid;
+    gap: 0.1rem;
+}
+
+.maintenance-details summary small,
+.danger-action summary small,
+.cleanup-list small {
+    color: var(--text-secondary);
+    font-weight: 400;
+}
+
+.maintenance-details-content,
+.danger-action-content {
+    padding: 0 var(--spacing-md) var(--spacing-md);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.database-file-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md) 0;
+}
+
+.database-file-row code {
+    overflow-wrap: anywhere;
+}
+
+.repair-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--spacing-sm);
+}
+
+.repair-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.018);
+}
+
+.repair-card > div {
+    display: grid;
+    gap: 0.2rem;
+}
+
+.repair-card > div span {
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+}
+
+.repair-card ::deep .mud-button-root {
+    grid-column: 2;
+    justify-self: start;
+}
+
+.cleanup-list {
+    display: grid;
+    padding: 0 var(--spacing-md) var(--spacing-sm);
+}
+
+.cleanup-list > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    padding: var(--spacing-sm) 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.danger-zone {
+    padding: var(--spacing-md);
+    border: 1px solid rgba(244, 67, 54, 0.45);
+    border-radius: var(--radius-md);
+    background: rgba(244, 67, 54, 0.025);
+}
+
+.danger-heading {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.danger-action {
+    border-top: 1px solid rgba(244, 67, 54, 0.18);
+}
+
+.danger-action.critical {
+    color: var(--mud-palette-error);
+}
+
+.danger-action-content {
+    color: var(--text-primary);
+    padding-top: var(--spacing-md);
+}
+
+.danger-controls {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+    margin-top: var(--spacing-md);
+}
+
+.danger-controls ::deep .mud-select,
+.danger-controls ::deep .mud-input-control {
+    min-width: 220px;
+}
+
+@media (max-width: 700px) {
+    .backup-card,
+    .database-file-row,
+    .cleanup-list > div,
+    .danger-controls {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .backup-card ::deep .mud-button-root,
+    .danger-controls ::deep .mud-button-root,
+    .danger-controls ::deep .mud-input-control {
+        width: 100%;
+    }
+
+    .repair-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
