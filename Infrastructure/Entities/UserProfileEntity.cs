@@ -100,4 +100,6 @@ public class UserProfileEntity
     // for both masks, including existing accounts after migration.
     public long WebNotificationTypes { get; set; }
     public long DiscordNotificationTypes { get; set; }
+    public NotificationReadBehavior NotificationReadBehavior { get; set; } = NotificationReadBehavior.Manual;
+    public int NotificationAutoReadSeconds { get; set; } = 30;
 }

@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
+using PlexRequestsHosted.Components.Layout;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.Implementations;
 using PlexRequestsHosted.Shared.DTOs;
@@ -14,6 +15,17 @@ namespace PlexRequests.Tests;
 
 public sealed class NotificationServiceTests
 {
+    [Theory]
+    [InlineData(NotificationType.RequestCreated, "/admin?tab=requests&sub=approvals")]
+    [InlineData(NotificationType.MediaIssueReported, "/admin?tab=requests&sub=issues")]
+    [InlineData(NotificationType.RequestSearchStalled, "/admin?tab=jobs")]
+    [InlineData(NotificationType.Error, "/admin?tab=jobs")]
+    [InlineData(NotificationType.RequestApproved, "/requests")]
+    [InlineData(NotificationType.RequestAvailable, "/requests")]
+    [InlineData(NotificationType.MediaIssueResolved, "/requests")]
+    public void Notification_clicks_have_a_working_destination(NotificationType type, string expected) =>
+        Assert.Equal(expected, NotificationNavigation.Destination(type));
+
     [Fact]
     public async Task Completed_replacement_notifies_request_owner_and_distinct_issue_reporter_once_each()
     {
@@ -181,17 +193,57 @@ public sealed class NotificationServiceTests
         selected.SetEnabled(NotificationChannel.Web, NotificationType.RequestAvailable, true);
         selected.SetEnabled(NotificationChannel.Discord, NotificationType.RequestApproved, true);
         selected.DiscordTypeMask |= 1L << 60; // unsupported bits are never persisted
+        selected.ReadBehavior = NotificationReadBehavior.AfterDelay;
+        selected.AutoReadSeconds = 1;
 
         Assert.True(await service.UpdateCurrentAsync(selected));
         var saved = await service.GetCurrentAsync();
         Assert.True(saved.IsEnabled(NotificationChannel.Web, NotificationType.RequestAvailable));
         Assert.True(saved.IsEnabled(NotificationChannel.Discord, NotificationType.RequestApproved));
         Assert.Equal(0, saved.DiscordTypeMask & (1L << 60));
+        Assert.Equal(NotificationReadBehavior.AfterDelay, saved.ReadBehavior);
+        Assert.Equal(10, saved.AutoReadSeconds);
         Assert.True(await db.UserProfiles.Select(x => x.DiscordDmOptIn).SingleAsync());
 
         saved.DiscordTypeMask = 0;
         Assert.True(await service.UpdateCurrentAsync(saved));
         Assert.False(await db.UserProfiles.Select(x => x.DiscordDmOptIn).SingleAsync());
+    }
+
+    [Fact]
+    public async Task Timed_read_updates_only_the_users_unread_notifications_at_or_before_the_cutoff()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(options => options.UseSqlite(connection));
+        services.AddSingleton<IBridgeOutboxService, NoOpOutbox>();
+        await using var provider = services.BuildServiceProvider();
+        var cutoff = DateTime.UtcNow.AddMinutes(-1);
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await db.Database.EnsureCreatedAsync();
+            db.Users.AddRange(
+                new UserEntity { Id = 7, Username = "reader" },
+                new UserEntity { Id = 8, Username = "other" });
+            db.Notifications.AddRange(
+                new NotificationEntity { UserId = 7, Title = "Old", Message = "Old", CreatedAt = cutoff.AddSeconds(-1) },
+                new NotificationEntity { UserId = 7, Title = "New", Message = "New", CreatedAt = cutoff.AddSeconds(1) },
+                new NotificationEntity { UserId = 8, Title = "Other", Message = "Other", CreatedAt = cutoff.AddSeconds(-1) });
+            await db.SaveChangesAsync();
+        }
+
+        var notifications = new NotificationService(provider.GetRequiredService<IServiceScopeFactory>(),
+            new NotificationBroker(), NullLogger<NotificationService>.Instance);
+        await notifications.MarkCreatedBeforeReadAsync(7, cutoff);
+
+        await using var verifyScope = provider.CreateAsyncScope();
+        var rows = await verifyScope.ServiceProvider.GetRequiredService<AppDbContext>().Notifications
+            .AsNoTracking().OrderBy(x => x.UserId).ThenBy(x => x.CreatedAt).ToListAsync();
+        Assert.True(rows[0].IsRead);
+        Assert.False(rows[1].IsRead);
+        Assert.False(rows[2].IsRead);
     }
 
     private sealed class NoOpOutbox : IBridgeOutboxService

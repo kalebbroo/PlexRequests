@@ -108,7 +108,7 @@
                 </MudTabs>
             </MudPaper>
 
-            <MudPaper Class="pa-4 mt-4 notification-settings" Elevation="2">
+            <MudPaper Class="pa-4 mt-4 notification-settings" Elevation="2" id="notification-settings">
                 <div class="notification-settings-heading">
                     <div>
                         <MudText Typo="Typo.h6" HtmlTag="h2">Notifications</MudText>
@@ -142,6 +142,35 @@
                     {
                         @PreferenceGroup("Administrator alerts", "New work or failures that may need an administrator.", AdminOptions)
                     }
+
+                    <section class="notification-read-settings" aria-labelledby="notification-read-title">
+                        <div>
+                            <MudText Typo="Typo.subtitle1" HtmlTag="h3" id="notification-read-title">When should web notifications count as read?</MudText>
+                            <MudText Typo="Typo.caption" Class="text-secondary">This only changes the unread badge. Notifications remain in the list.</MudText>
+                        </div>
+                        <div class="notification-read-controls">
+                            <MudSelect T="NotificationReadBehavior" Value="_notificationPreferences.ReadBehavior"
+                                       ValueChanged="ChangeReadBehavior" Label="Mark as read"
+                                       Variant="Variant.Outlined" Disabled="@_savingNotifications">
+                                <MudSelectItem Value="NotificationReadBehavior.Manual">Only when I choose Mark read</MudSelectItem>
+                                <MudSelectItem Value="NotificationReadBehavior.WhenNotificationOpened">When I open each notification</MudSelectItem>
+                                <MudSelectItem Value="NotificationReadBehavior.WhenCenterOpened">When I open the notification center</MudSelectItem>
+                                <MudSelectItem Value="NotificationReadBehavior.AfterDelay">Automatically after a delay</MudSelectItem>
+                            </MudSelect>
+                            @if (_notificationPreferences.ReadBehavior == NotificationReadBehavior.AfterDelay)
+                            {
+                                <MudSelect T="int" Value="_notificationPreferences.AutoReadSeconds"
+                                           ValueChanged="ChangeAutoReadSeconds" Label="Delay"
+                                           Variant="Variant.Outlined" Disabled="@_savingNotifications">
+                                    <MudSelectItem Value="10">10 seconds</MudSelectItem>
+                                    <MudSelectItem Value="30">30 seconds</MudSelectItem>
+                                    <MudSelectItem Value="60">1 minute</MudSelectItem>
+                                    <MudSelectItem Value="300">5 minutes</MudSelectItem>
+                                    <MudSelectItem Value="900">15 minutes</MudSelectItem>
+                                </MudSelect>
+                            }
+                        </div>
+                    </section>
 
                     <section class="discord-connection" aria-labelledby="discord-connection-title">
                         <div class="discord-mark"><MudIcon Icon="@Icons.Material.Filled.Forum" /></div>
@@ -344,6 +373,40 @@
                 _notificationPreferences.WebTypeMask = previousWeb;
                 _notificationPreferences.DiscordTypeMask = previousDiscord;
             }
+        }
+        finally
+        {
+            _savingNotifications = false;
+        }
+    }
+
+    private async Task ChangeReadBehavior(NotificationReadBehavior behavior)
+    {
+        if (_notificationPreferences is null || _savingNotifications) return;
+        var previous = _notificationPreferences.ReadBehavior;
+        _notificationPreferences.ReadBehavior = behavior;
+        _savingNotifications = true;
+        try
+        {
+            if (!await NotificationPreferences.UpdateCurrentAsync(_notificationPreferences))
+                _notificationPreferences.ReadBehavior = previous;
+        }
+        finally
+        {
+            _savingNotifications = false;
+        }
+    }
+
+    private async Task ChangeAutoReadSeconds(int seconds)
+    {
+        if (_notificationPreferences is null || _savingNotifications) return;
+        var previous = _notificationPreferences.AutoReadSeconds;
+        _notificationPreferences.AutoReadSeconds = seconds;
+        _savingNotifications = true;
+        try
+        {
+            if (!await NotificationPreferences.UpdateCurrentAsync(_notificationPreferences))
+                _notificationPreferences.AutoReadSeconds = previous;
         }
         finally
         {

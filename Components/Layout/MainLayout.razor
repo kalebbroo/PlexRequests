@@ -4,6 +4,7 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @inject PlexRequestsHosted.Services.Abstractions.INotificationBroker Broker
 @inject PlexRequestsHosted.Services.Abstractions.INotificationService Notifications
+@inject PlexRequestsHosted.Services.Abstractions.INotificationPreferenceService NotificationPreferences
 @inject PlexRequestsHosted.Services.Abstractions.IMusicSettingsService MusicSettings
 @inject IJSRuntime JS
 @implements IDisposable
@@ -43,13 +44,20 @@
                 <MudBadge Content="_unreadCount" Color="Color.Error" Overlap="true" Bordered="true"
                           Visible="@(_unreadCount > 0)" Class="desktop-only notification-btn">
                     <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight"
-                             PopoverClass="notification-popover" ListClass="notification-list">
+                             PopoverClass="notification-popover" ListClass="notification-list"
+                             OpenChanged="NotificationMenuOpenChanged">
                         <ActivatorContent>
-                            <MudIconButton Icon="@Icons.Material.Filled.Notifications" Color="Color.Inherit" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Notifications" Color="Color.Inherit"
+                                           aria-label="@(_unreadCount > 0 ? $"Notifications, {_unreadCount} unread" : "Notifications")" />
                         </ActivatorContent>
                         <ChildContent>
                             <div class="notification-header">
-                                <MudText Typo="Typo.subtitle2">Notifications</MudText>
+                                <div>
+                                    <MudText Typo="Typo.subtitle1">Notifications</MudText>
+                                    <MudText Typo="Typo.caption" Class="text-secondary">
+                                        @(_unreadCount == 0 ? "You're caught up" : $"{_unreadCount} unread")
+                                    </MudText>
+                                </div>
                                 @if (_unreadCount > 0)
                                 {
                                     <button type="button" class="notification-mark-all" @onclick="MarkAllRead">Mark all read</button>
@@ -59,28 +67,42 @@
                             {
                                 @foreach (var notification in _notifications)
                                 {
-                                    <MudMenuItem Class="@("notification-item" + (notification.IsRead ? "" : " unread"))">
-                                        <div class="notification-row">
+                                    <article class="@("notification-item" + (notification.IsRead ? "" : " unread"))">
+                                        <button type="button" class="notification-open" @onclick="() => OpenNotification(notification)">
                                             <MudIcon Icon="@GetNotificationIcon(notification.Type)" Color="@GetNotificationColor(notification.Type)" Size="Size.Small" Class="notification-icon" />
                                             <div class="notification-body">
+                                                <MudText Typo="Typo.subtitle2" Class="notification-title">@notification.Title</MudText>
                                                 <MudText Typo="Typo.body2" Class="notification-message">@notification.Message</MudText>
-                                                <MudText Typo="Typo.caption" Class="notification-time">@notification.CreatedAt.ToLocalTime().ToString("g")</MudText>
+                                                <MudText Typo="Typo.caption" Class="notification-time">@RelativeTime(notification.CreatedAt)</MudText>
                                             </div>
                                             @if (!notification.IsRead)
                                             {
                                                 <span class="unread-dot" aria-hidden="true"></span>
                                             }
-                                        </div>
-                                    </MudMenuItem>
+                                        </button>
+                                        @if (!notification.IsRead)
+                                        {
+                                            <MudTooltip Text="Mark read">
+                                                <MudIconButton Icon="@Icons.Material.Filled.Done" Size="Size.Small"
+                                                               Class="notification-read-one"
+                                                               OnClick="() => MarkRead(notification)"
+                                                               aria-label="@($"Mark {notification.Title} read")" />
+                                            </MudTooltip>
+                                        }
+                                    </article>
                                 }
                             }
                             else
                             {
                                 <div class="notification-empty">
                                     <MudIcon Icon="@Icons.Material.Filled.NotificationsNone" Color="Color.Default" />
-                                    <MudText Typo="Typo.body2" Class="text-secondary">No new notifications</MudText>
+                                    <MudText Typo="Typo.body2">No notifications yet</MudText>
+                                    <MudText Typo="Typo.caption" Class="text-secondary">Updates you opt into will appear here.</MudText>
                                 </div>
                             }
+                            <a class="notification-settings-link" href="/profile#notification-settings">
+                                <MudIcon Icon="@Icons.Material.Filled.Tune" Size="Size.Small" /> Notification settings
+                            </a>
                         </ChildContent>
                     </MudMenu>
                 </MudBadge>
@@ -216,12 +238,17 @@
     private bool _isAdmin = false;
     private bool _musicEnabled;
     private string? _currentUsername;
+    private NotificationReadBehavior _readBehavior = NotificationReadBehavior.Manual;
+    private int _autoReadSeconds = 30;
+    private int _readPreferenceVersion;
+    private readonly CancellationTokenSource _notificationLifetime = new();
 
     protected override async Task OnInitializedAsync()
     {
         DetermineRouteContext();
         Navigation.LocationChanged += HandleLocationChanged;
         AuthStateProvider.AuthenticationStateChanged += HandleAuthenticationStateChanged;
+        NotificationPreferences.Changed += OnNotificationPreferencesChanged;
 
         // Get authentication state
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -294,12 +321,18 @@
 
         if (!firstRender || _userId <= 0 || _notificationsLoaded) return;
         _notificationsLoaded = true;
+        var preferences = await NotificationPreferences.GetCurrentAsync();
+        ApplyNotificationPreferences(preferences);
+        if (_readBehavior == NotificationReadBehavior.AfterDelay)
+            await Notifications.MarkCreatedBeforeReadAsync(_userId, DateTime.UtcNow.AddSeconds(-_autoReadSeconds));
+
         // Load persisted notifications after the shell has painted, both queries in parallel.
         var listTask = Notifications.GetForUserAsync(_userId, 20);
         var countTask = Notifications.GetUnreadCountAsync(_userId);
         await Task.WhenAll(listTask, countTask);
         _notifications = listTask.Result;
         _unreadCount = countTask.Result;
+        foreach (var notification in _notifications.Where(x => !x.IsRead)) ScheduleAutoRead(notification);
         await InvokeAsync(StateHasChanged);
     }
 
@@ -311,6 +344,7 @@
             _notifications.Insert(0, n);
             if (_notifications.Count > 20) _notifications = _notifications.Take(20).ToList();
             _unreadCount++;
+            ScheduleAutoRead(n);
             await InvokeAsync(StateHasChanged);
         }
         catch { /* component may be disposing */ }
@@ -323,6 +357,81 @@
         foreach (var n in _notifications) n.IsRead = true;
         _unreadCount = 0;
         StateHasChanged();
+    }
+
+    private async Task MarkRead(NotificationDto notification)
+    {
+        if (_userId <= 0 || notification.IsRead) return;
+        await Notifications.MarkReadAsync(notification.Id, _userId);
+        notification.IsRead = true;
+        _unreadCount = Math.Max(0, _unreadCount - 1);
+        StateHasChanged();
+    }
+
+    private async Task NotificationMenuOpenChanged(bool open)
+    {
+        if (!open || _userId <= 0) return;
+        if (_readBehavior == NotificationReadBehavior.WhenCenterOpened && _unreadCount > 0)
+            await MarkAllRead();
+    }
+
+    private async Task OpenNotification(NotificationDto notification)
+    {
+        if (_readBehavior == NotificationReadBehavior.WhenNotificationOpened)
+            await MarkRead(notification);
+        Navigation.NavigateTo(NotificationNavigation.Destination(notification.Type));
+    }
+
+    private void OnNotificationPreferencesChanged(NotificationPreferencesDto preferences)
+    {
+        ApplyNotificationPreferences(preferences);
+        if (_readBehavior == NotificationReadBehavior.AfterDelay)
+            foreach (var notification in _notifications.Where(x => !x.IsRead)) ScheduleAutoRead(notification);
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void ApplyNotificationPreferences(NotificationPreferencesDto preferences)
+    {
+        _readBehavior = preferences.ReadBehavior;
+        _autoReadSeconds = Math.Clamp(preferences.AutoReadSeconds, 10, 3600);
+        _readPreferenceVersion++;
+    }
+
+    private void ScheduleAutoRead(NotificationDto notification)
+    {
+        if (_readBehavior != NotificationReadBehavior.AfterDelay || notification.IsRead) return;
+        _ = AutoReadAsync(notification.Id, notification.CreatedAt, _autoReadSeconds, _readPreferenceVersion);
+    }
+
+    private async Task AutoReadAsync(int notificationId, DateTime createdAt, int delaySeconds, int preferenceVersion)
+    {
+        try
+        {
+            var dueAt = createdAt.ToUniversalTime().AddSeconds(delaySeconds);
+            var delay = dueAt - DateTime.UtcNow;
+            if (delay > TimeSpan.Zero) await Task.Delay(delay, _notificationLifetime.Token);
+            if (_notificationLifetime.IsCancellationRequested) return;
+            await InvokeAsync(async () =>
+            {
+                var notification = _notifications.FirstOrDefault(x => x.Id == notificationId);
+                if (notification is not null && !notification.IsRead
+                    && _readBehavior == NotificationReadBehavior.AfterDelay
+                    && preferenceVersion == _readPreferenceVersion)
+                    await MarkRead(notification);
+            });
+        }
+        catch (OperationCanceledException) { }
+        catch { /* notification auto-read must never tear down the layout circuit */ }
+    }
+
+    private static string RelativeTime(DateTime createdAt)
+    {
+        var elapsed = DateTime.UtcNow - createdAt.ToUniversalTime();
+        if (elapsed.TotalSeconds < 45) return "Just now";
+        if (elapsed.TotalMinutes < 60) return $"{Math.Max(1, (int)elapsed.TotalMinutes)}m ago";
+        if (elapsed.TotalHours < 24) return $"{Math.Max(1, (int)elapsed.TotalHours)}h ago";
+        if (elapsed.TotalDays < 7) return $"{Math.Max(1, (int)elapsed.TotalDays)}d ago";
+        return createdAt.ToLocalTime().ToString("MMM d");
     }
 
     private void HandleScroll()
@@ -394,6 +503,9 @@
         Navigation.LocationChanged -= HandleLocationChanged;
         AuthStateProvider.AuthenticationStateChanged -= HandleAuthenticationStateChanged;
         Broker.Notified -= OnNotified;
+        NotificationPreferences.Changed -= OnNotificationPreferencesChanged;
+        _notificationLifetime.Cancel();
+        _notificationLifetime.Dispose();
     }
 
     protected override void OnParametersSet()

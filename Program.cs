@@ -1,4 +1,5 @@
 using PlexRequestsHosted.Components;
+using MudBlazor;
 using MudBlazor.Services;
 using Blazored.LocalStorage;
 using Blazored.SessionStorage;
@@ -102,7 +103,20 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 // UI and storage services for client interactivity
-builder.Services.AddMudServices();
+builder.Services.AddMudServices(config =>
+{
+    // Feedback belongs away from the primary header controls. Bottom-left keeps short-lived actions from
+    // covering the notification bell/avatar and the compact styling prevents a toast stack becoming a wall.
+    config.SnackbarConfiguration.PositionClass = Defaults.Classes.Position.BottomLeft;
+    config.SnackbarConfiguration.PreventDuplicates = true;
+    config.SnackbarConfiguration.NewestOnTop = false;
+    config.SnackbarConfiguration.ShowCloseIcon = true;
+    config.SnackbarConfiguration.VisibleStateDuration = 4500;
+    config.SnackbarConfiguration.ShowTransitionDuration = 180;
+    config.SnackbarConfiguration.HideTransitionDuration = 180;
+    config.SnackbarConfiguration.SnackbarVariant = Variant.Filled;
+    config.SnackbarConfiguration.MaxDisplayedSnackbars = 3;
+});
 builder.Services.AddBlazoredLocalStorage();
 builder.Services.AddBlazoredSessionStorage();
 // HTTP client for services that depend on HttpClient

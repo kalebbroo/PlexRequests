@@ -241,6 +241,15 @@ public class NotificationService(
             .ExecuteUpdateAsync(s => s.SetProperty(n => n.IsRead, true));
     }
 
+    public async Task MarkCreatedBeforeReadAsync(int userId, DateTime cutoffUtc)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Notifications
+            .Where(n => n.UserId == userId && !n.IsRead && n.CreatedAt <= cutoffUtc)
+            .ExecuteUpdateAsync(s => s.SetProperty(n => n.IsRead, true));
+    }
+
     private static NotificationDto Map(NotificationEntity n) => new()
     {
         Id = n.Id,

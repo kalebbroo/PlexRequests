@@ -1212,6 +1212,8 @@ public sealed class NotificationPreferencesDto
     public long WebTypeMask { get; set; }
     /// <summary>Bit N enables <see cref="NotificationType"/> N for a linked Discord account.</summary>
     public long DiscordTypeMask { get; set; }
+    public NotificationReadBehavior ReadBehavior { get; set; } = NotificationReadBehavior.Manual;
+    public int AutoReadSeconds { get; set; } = 30;
 
     public bool IsEnabled(NotificationChannel channel, NotificationType type) =>
         ((channel == NotificationChannel.Web ? WebTypeMask : DiscordTypeMask) & Bit(type)) != 0;
