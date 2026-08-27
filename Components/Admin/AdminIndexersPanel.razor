@@ -6,83 +6,12 @@
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 @inject IDialogService Dialogs
 
-<div class="d-flex justify-content-end align-items-center mb-2">
-    <div class="d-flex gap-2">
-        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Add"
-                   OnClick="() => OpenDialog(null)">Add indexer</MudButton>
-        <MudButton Color="Color.Primary" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" OnClick="Load" Disabled="_loading">Refresh</MudButton>
-    </div>
-</div>
-<MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-4">
-    Every source Plex Requests can use to acquire media. Direct providers deliver media themselves; release
-    indexers return torrent or Usenet candidates for the downloader. Toggle a source off to skip it. For release
-    indexers, priority (1 = highest) gives otherwise comparable candidates a small ranking edge, while coverage
-    combines live results and durable catalog ingestion.
-</MudText>
+<MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mb-4">
+    Built-in release sources need no API keys. Leave at least one enabled, then add a private or Torznab-compatible
+    indexer only if you already use one through an app such as Prowlarr or Jackett.
+</MudAlert>
 
 <AdminDirectAcquisitionSourcesPanel />
-
-@if (_catalog is { Enabled: true })
-{
-    <MudPaper Class="pa-3 mb-4" Elevation="0" Outlined="true">
-        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
-            <div>
-                <MudText Typo="Typo.subtitle2">Release catalog · @CatalogMode(_catalog)</MudText>
-                <MudText Typo="Typo.caption" Color="Color.Tertiary">
-                    @CatalogModeHelp(_catalog)
-                </MudText>
-            </div>
-            <div class="d-flex flex-wrap gap-2">
-                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                           StartIcon="@Icons.Material.Filled.ManageSearch" Disabled="@(_catalog.Releases == 0)"
-                           OnClick="OpenCatalogExplorer">
-                    Search catalog
-                </MudButton>
-                <MudChip T="string" Size="Size.Small" Color="Color.Primary">@_catalog.Releases releases</MudChip>
-                <MudChip T="string" Size="Size.Small">@_catalog.Sightings sightings</MudChip>
-                @if (_catalog.UnresolvedSightings > 0)
-                {
-                    <MudChip T="string" Size="Size.Small" Color="Color.Warning">@_catalog.UnresolvedSightings awaiting detail</MudChip>
-                }
-                <MudChip T="string" Size="Size.Small">@FormatBytes(_catalog.DatabaseSizeBytes)</MudChip>
-            </div>
-        </div>
-        <MudDivider Class="my-3" />
-        <div class="d-flex flex-wrap gap-4 align-items-center">
-            <MudSwitch T="bool" Value="@(_preferences?.UseCatalogForSearch ?? false)"
-                       ValueChanged="SetCatalogSearch" Color="Color.Primary"
-                       Disabled="@(_savingCatalog || _catalog.Releases == 0)"
-                       Label="Use catalog in fulfillment searches" />
-            <MudSwitch T="bool" Value="@(_preferences?.UseCatalogForMonitoring ?? false)"
-                       ValueChanged="SetCatalogMonitoring" Color="Color.Primary"
-                       Disabled="@(_savingCatalog || _catalog.Releases == 0)"
-                       Label="Use catalog for new-episode monitoring" />
-        </div>
-        <MudText Typo="Typo.caption" Color="Color.Tertiary">
-            Search assist supplements live indexers. Catalog monitoring avoids repeated upstream searches and
-            falls back to them if the local catalog API is unavailable. Changes reach the downloader within two minutes.
-        </MudText>
-        @if (_catalog.Sources.Any(source => source.Sightings > 0))
-        {
-            <MudStack Row="true" Spacing="1" Class="mt-3 flex-wrap">
-                @foreach (var source in _catalog.Sources.Where(source => source.Sightings > 0))
-                {
-                    <MudTooltip Text="@CatalogSourceHelp(source)">
-                        <MudChip T="string" Size="Size.Small" Color="@CatalogSourceColor(source)">
-                            @source.Source · @source.Sightings
-                        </MudChip>
-                    </MudTooltip>
-                }
-            </MudStack>
-        }
-    </MudPaper>
-}
-else if (!_loading)
-{
-    <MudAlert Severity="Severity.Info" Variant="Variant.Text" dense="true" Class="mb-3">
-        The optional release catalog is off. Live indexer search and automatic monitoring continue normally.
-    </MudAlert>
-}
 
 @if (_loading)
 {
@@ -90,84 +19,68 @@ else if (!_loading)
 }
 else
 {
-    <MudText Typo="Typo.subtitle1" Class="mb-2">Release indexers</MudText>
-    <MudPaper Class="pa-2" Elevation="1">
+    <div class="source-section-heading">
+        <div>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <MudText Typo="Typo.h6">Release indexers</MudText>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@EnabledCount of @_items.Count enabled</MudChip>
+            </div>
+            <MudText Typo="Typo.body2" Class="text-muted">
+                Sites that provide torrent or Usenet candidates. Turn off any source you do not want searched.
+            </MudText>
+        </div>
+        <div class="source-section-actions">
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.Add" OnClick="() => OpenDialog(null)">Add indexer</MudButton>
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small" OnClick="Load" Disabled="_loading"
+                           aria-label="Refresh source status" />
+        </div>
+    </div>
+
+    <div class="source-table-shell">
+      <MudPaper Class="pa-2" Elevation="1">
         <MudTable T="IndexerSettingDto" Items="_items" dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
             <HeaderContent>
-                <MudTh>Indexer</MudTh>
-                <MudTh>Catalog coverage</MudTh>
-                <MudTh>Activity</MudTh>
-                <MudTh>Health</MudTh>
-                <MudTh>Enabled</MudTh>
-                <MudTh></MudTh>
+                <MudTh>Source</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Use source</MudTh>
+                <MudTh>Setup</MudTh>
             </HeaderContent>
             <RowTemplate>
                 @{ var coverage = Coverage(context); }
-                <MudTd DataLabel="Indexer">
+                <MudTd DataLabel="Source">
                     <b>@context.Name</b>
-                    @if (!string.IsNullOrWhiteSpace(context.Url))
+                    @if (!context.IsBuiltIn && !string.IsNullOrWhiteSpace(context.Url))
                     {
                         <div class="text-muted small">@context.Url</div>
                     }
                     <div class="d-flex flex-wrap gap-1 mt-1">
                         <MudChip T="string" Size="Size.Small" Color="@(context.IsBuiltIn ? Color.Default : Color.Info)">
-                            @(context.IsBuiltIn ? "Built-in" : context.Implementation)
+                            @(context.IsBuiltIn ? "Public source" : "Connected API")
                         </MudChip>
-                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Priority @context.Priority</MudChip>
                     </div>
                 </MudTd>
-                <MudTd DataLabel="Catalog coverage">
-                    @if (_catalog is not { Enabled: true })
-                    {
-                        <span>Catalog off</span>
-                    }
-                    else if (coverage.Sightings == 0)
-                    {
-                        <span>None captured</span>
-                    }
-                    else
-                    {
-                        <b>@coverage.Sightings @(coverage.BrowserCapture ? "captured" : "indexed")</b>
-                        <div class="text-muted small">
-                            @coverage.Resolved resolved
-                            @if (coverage.Pending > 0)
-                            {
-                                <span> · @coverage.Pending awaiting detail</span>
-                            }
-                        </div>
-                    }
-                </MudTd>
-                <MudTd DataLabel="Activity">
-                    @if (IsFirefoxIndexer(context))
-                    {
-                        <span>Last capture @Relative(LastFirefoxCapture(context) ?? coverage.LastSeenAt)</span>
-                        <div class="text-muted small">@FirefoxActivity(context)</div>
-                    }
-                    else
-                    {
-                        <span>Last search @Relative(context.LastSearchAt)</span>
-                        <div class="text-muted small">
-                            @(context.LastSearchAt is null ? "No live searches" : $"{context.LastResultCount} last · {context.TotalResults} total")
-                        </div>
-                    }
-                </MudTd>
-                <MudTd DataLabel="Health">
+                <MudTd DataLabel="Status">
                     @if (!context.Enabled)
                     {
-                        <MudChip T="string" Color="Color.Default" Size="Size.Small">disabled</MudChip>
+                        <MudChip T="string" Color="Color.Default" Size="Size.Small">Off</MudChip>
                     }
                     else if (IsFirefoxIndexer(context))
                     {
                         <MudTooltip Text="@FirefoxHealthHelp(context, coverage)">
                             <MudChip T="string" Color="@FirefoxHealthColor(context)" Size="Size.Small"
                                      Icon="@FirefoxHealthIcon(context)">
-                                @FirefoxHealthLabel(context)
+                                @FirefoxStatusLabel(context)
                             </MudChip>
                         </MudTooltip>
+                        <div class="text-muted small mt-1">
+                            Last capture @Relative(LastFirefoxCapture(context) ?? coverage.LastSeenAt) · @FirefoxActivity(context)
+                        </div>
                     }
                     else if (context.LastSearchAt is null)
                     {
-                        <MudChip T="string" Color="Color.Info" Size="Size.Small">no searches yet</MudChip>
+                        <MudChip T="string" Color="Color.Info" Size="Size.Small">Awaiting first search</MudChip>
+                        <div class="text-muted small mt-1">Health is checked when this source is first used.</div>
                     }
                     else if (context.LastBlockReason != IndexerBlockReason.None)
                     {
@@ -185,40 +98,109 @@ else
                     }
                     else
                     {
-                        <MudChip T="string" Color="Color.Success" Size="Size.Small">ok</MudChip>
+                        <MudChip T="string" Color="Color.Success" Size="Size.Small">Healthy</MudChip>
+                        <div class="text-muted small mt-1">
+                            Searched @Relative(context.LastSearchAt) · @context.LastResultCount results last time
+                        </div>
+                    }
+                    @if (_catalog is { Enabled: true } && coverage.Sightings > 0)
+                    {
+                        <div class="text-muted small mt-1">
+                            @coverage.Sightings catalog @(coverage.BrowserCapture ? "captures" : "sightings")
+                            @if (coverage.Pending > 0) { <span> · @coverage.Pending awaiting detail</span> }
+                        </div>
                     }
                 </MudTd>
-                <MudTd DataLabel="Enabled">
+                <MudTd DataLabel="Use source">
                     <MudSwitch T="bool" Color="Color.Primary" Value="@context.Enabled"
-                               ValueChanged="@(v => SetEnabled(context, v))" />
+                               ValueChanged="@(v => SetEnabled(context, v))"
+                               aria-label="@($"Use {context.Name}")" />
                 </MudTd>
-                <MudTd>
-                    <div class="d-flex">
-                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
-                                       OnClick="() => OpenDialog(context)" />
+                <MudTd DataLabel="Setup">
+                    <div class="source-row-actions">
                         @if (IsFirefoxIndexer(context))
                         {
-                            <MudTooltip Text="Capture release metadata from pages rendered in your paired Firefox profile.">
-                                <MudIconButton Icon="@Icons.Material.Filled.Extension" Size="Size.Small" Color="Color.Primary"
-                                               aria-label="Firefox browser capture"
-                                               OnClick="() => OpenFirefoxCapture(context)" />
-                            </MudTooltip>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.Extension"
+                                       OnClick="() => OpenFirefoxCapture(context)">
+                                @(FirefoxHealthState(context) == FirefoxCaptureHealthState.NotPaired ? "Pair Firefox" : "Firefox")
+                            </MudButton>
                         }
-                        <MudTooltip Text="@(context.IsBuiltIn ? "Built-in indexers can only be disabled." : "Delete this indexer.")">
-                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
-                                           Disabled="context.IsBuiltIn" OnClick="() => Delete(context)" />
+                        <MudTooltip Text="Review categories, search behavior, and advanced limits.">
+                            <MudIconButton Icon="@Icons.Material.Filled.Settings" Size="Size.Small"
+                                           aria-label="@($"Settings for {context.Name}")" OnClick="() => OpenDialog(context)" />
                         </MudTooltip>
+                        @if (!context.IsBuiltIn)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           aria-label="@($"Delete {context.Name}")" OnClick="() => Delete(context)" />
+                        }
                     </div>
                 </MudTd>
             </RowTemplate>
         </MudTable>
-    </MudPaper>
-    <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
-        Standards-compatible endpoints are managed here — add as many as you like, each with its own categories, priority
-        and health. Any left configured in the downloader's environment are imported automatically on its next
-        start; you can remove the <code>Indexer__Torznab__*</code> variables afterwards. Built-in public
-        sources can be disabled or re-prioritised but not deleted.
+      </MudPaper>
+    </div>
+    <MudText Typo="Typo.caption" Class="text-muted mt-2 d-block">
+        Source settings contain media categories, search behavior, priority, and rate limits. Built-in sources can be
+        adjusted or turned off but cannot be deleted.
     </MudText>
+
+    <div class="optional-source-tools">
+        <MudText Typo="Typo.subtitle2">Optional tools</MudText>
+        @if (_catalog is { Enabled: true })
+        {
+            <MudExpansionPanel Text="@($"Local release catalog · {CatalogMode(_catalog)}")" Class="mt-2">
+                <MudText Typo="Typo.body2" Class="text-muted mb-3">@CatalogModeHelp(_catalog)</MudText>
+                <div class="catalog-summary">
+                    <div class="d-flex flex-wrap gap-2">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary">@_catalog.Releases releases</MudChip>
+                        <MudChip T="string" Size="Size.Small">@_catalog.Sightings sightings</MudChip>
+                        @if (_catalog.UnresolvedSightings > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning">@_catalog.UnresolvedSightings awaiting detail</MudChip>
+                        }
+                        <MudChip T="string" Size="Size.Small">@FormatBytes(_catalog.DatabaseSizeBytes)</MudChip>
+                    </div>
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.ManageSearch" Disabled="@(_catalog.Releases == 0)"
+                               OnClick="OpenCatalogExplorer">Browse catalog</MudButton>
+                </div>
+                <div class="d-flex flex-wrap gap-4 align-items-center mt-3">
+                    <MudSwitch T="bool" Value="@(_preferences?.UseCatalogForSearch ?? false)"
+                               ValueChanged="SetCatalogSearch" Color="Color.Primary"
+                               Disabled="@(_savingCatalog || _catalog.Releases == 0)"
+                               Label="Help fulfillment searches" />
+                    <MudSwitch T="bool" Value="@(_preferences?.UseCatalogForMonitoring ?? false)"
+                               ValueChanged="SetCatalogMonitoring" Color="Color.Primary"
+                               Disabled="@(_savingCatalog || _catalog.Releases == 0)"
+                               Label="Help new-episode monitoring" />
+                </div>
+                <MudText Typo="Typo.caption" Class="text-muted">
+                    The local catalog supplements live sources and falls back to them if unavailable. Changes reach the downloader within two minutes.
+                </MudText>
+                @if (_catalog.Sources.Any(source => source.Sightings > 0))
+                {
+                    <MudStack Row="true" Spacing="1" Class="mt-3 flex-wrap">
+                        @foreach (var source in _catalog.Sources.Where(source => source.Sightings > 0))
+                        {
+                            <MudTooltip Text="@CatalogSourceHelp(source)">
+                                <MudChip T="string" Size="Size.Small" Color="@CatalogSourceColor(source)">
+                                    @source.Source · @source.Sightings
+                                </MudChip>
+                            </MudTooltip>
+                        }
+                    </MudStack>
+                }
+            </MudExpansionPanel>
+        }
+        else
+        {
+            <MudText Typo="Typo.caption" Class="text-muted d-block mt-1">
+                The local release catalog is not enabled on this server. Nothing needs attention; live searches work normally.
+            </MudText>
+        }
+    </div>
 }
 
 @code {
@@ -253,6 +235,7 @@ else
     private DownloadPreferencesDto? _preferences;
     private bool _savingCatalog;
     private Dictionary<int, FirefoxCaptureAdminStatusDto> _firefoxStatuses = new();
+    private int EnabledCount => _items.Count(item => item.Enabled);
 
     protected override async Task OnInitializedAsync() => await Load();
 
@@ -389,6 +372,8 @@ else
     private string FirefoxHealthIcon(IndexerSettingDto indexer) => FirefoxCaptureHealth.Icon(FirefoxHealthState(indexer));
     private string FirefoxHealthLabel(IndexerSettingDto indexer) =>
         FirefoxCaptureHealth.Label(FirefoxHealthState(indexer));
+    private string FirefoxStatusLabel(IndexerSettingDto indexer) =>
+        FirefoxHealthState(indexer) == FirefoxCaptureHealthState.NotPaired ? "Needs setup" : FirefoxHealthLabel(indexer);
     private string FirefoxHealthHelp(IndexerSettingDto indexer, IndexerCoverage coverage)
     {
         var device = FirefoxDevice(indexer);

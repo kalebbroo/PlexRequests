@@ -2,87 +2,50 @@
 @inject PlexRequestsHosted.Services.Abstractions.IMusicSettingsService Settings
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 
-<MudPaper Class="pa-2 mb-4" Elevation="1">
-    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap pa-2">
-        <div>
-            <MudText Typo="Typo.subtitle1">Direct acquisition sources</MudText>
-            <MudText Typo="Typo.body2" Color="Color.Tertiary">
-                Built-in sources that deliver media directly instead of returning torrent or Usenet releases.
-            </MudText>
-        </div>
-        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">1 source</MudChip>
-    </div>
+<section class="direct-source-section">
+    <MudText Typo="Typo.h6">Direct downloads</MudText>
+    <MudText Typo="Typo.body2" Class="text-muted mb-2">
+        Providers that deliver the media file themselves, without a torrent or Usenet client.
+    </MudText>
 
     @if (_loading || _settings is null)
     {
-        <div class="d-flex justify-content-center py-4">
+        <MudPaper Class="pa-4 text-center" Outlined="true">
             <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Small" />
-        </div>
+        </MudPaper>
     }
     else
     {
-        <MudTable T="MusicSettingsDto" Items="DirectSources" dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
-            <HeaderContent>
-                <MudTh>Source</MudTh>
-                <MudTh>Media</MudTh>
-                <MudTh>Delivery</MudTh>
-                <MudTh>Health</MudTh>
-                <MudTh>Enabled</MudTh>
-                <MudTh></MudTh>
-            </HeaderContent>
-            <RowTemplate>
-                <MudTd DataLabel="Source">
-                    <div class="d-flex align-items-center gap-2">
-                        <MudIcon Icon="@Icons.Material.Filled.LibraryMusic" Color="Color.Primary" />
-                        <div>
-                            <b>YouTube Music</b>
-                            <div class="text-muted small">Built-in acquisition provider</div>
-                        </div>
-                    </div>
-                </MudTd>
-                <MudTd DataLabel="Media">
-                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Music</MudChip>
-                </MudTd>
-                <MudTd DataLabel="Delivery">
-                    <b>Direct audio</b>
-                    <div class="text-muted small">Native AAC with Plex metadata</div>
-                </MudTd>
-                <MudTd DataLabel="Health">
-                    @if (context.DirectDownloadsEnabled)
-                    {
-                        <MudTooltip Text="Resolved on demand by the downloader; torrent indexer circuits do not affect this source.">
-                            <MudChip T="string" Color="Color.Success" Size="Size.Small"
-                                     Icon="@Icons.Material.Filled.CheckCircle">ready on demand</MudChip>
-                        </MudTooltip>
-                    }
-                    else
-                    {
-                        <MudChip T="string" Color="Color.Default" Size="Size.Small">disabled</MudChip>
-                    }
-                </MudTd>
-                <MudTd DataLabel="Enabled">
-                    <MudSwitch T="bool" Color="Color.Primary" Value="@context.DirectDownloadsEnabled"
-                               ValueChanged="SetEnabled" Disabled="_saving"
-                               aria-label="Enable YouTube Music direct acquisition" />
-                </MudTd>
-                <MudTd>
-                    <MudTooltip Text="Configure the music catalog and request pipeline.">
-                        <MudIconButton Icon="@Icons.Material.Filled.Settings" Size="Size.Small"
-                                       Href="/admin?tab=library&sub=catalogs"
-                                       aria-label="Configure YouTube Music" />
-                    </MudTooltip>
-                </MudTd>
-            </RowTemplate>
-        </MudTable>
+        <MudPaper Class="direct-source-card" Outlined="true">
+            <div class="direct-source-identity">
+                <span class="direct-source-icon"><MudIcon Icon="@Icons.Material.Filled.LibraryMusic" /></span>
+                <div>
+                    <MudText Typo="Typo.subtitle1"><b>YouTube Music</b></MudText>
+                    <MudText Typo="Typo.body2" Class="text-muted">
+                        Music downloads in native AAC with Plex metadata.
+                    </MudText>
+                </div>
+            </div>
+            <div class="direct-source-actions">
+                <MudChip T="string" Size="Size.Small"
+                         Color="@(_settings.DirectDownloadsEnabled ? Color.Success : Color.Default)"
+                         Icon="@(_settings.DirectDownloadsEnabled ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.PauseCircle)">
+                    @(_settings.DirectDownloadsEnabled ? "Ready" : "Off")
+                </MudChip>
+                <MudSwitch T="bool" Color="Color.Primary" Value="@_settings.DirectDownloadsEnabled"
+                           ValueChanged="SetEnabled" Disabled="_saving" Label="Use source"
+                           aria-label="Enable YouTube Music direct acquisition" />
+                <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Settings"
+                           Href="/admin?tab=library&sub=catalogs">Music settings</MudButton>
+            </div>
+        </MudPaper>
     }
-</MudPaper>
+</section>
 
 @code {
     private MusicSettingsDto? _settings;
     private bool _loading = true;
     private bool _saving;
-
-    private IEnumerable<MusicSettingsDto> DirectSources => _settings is null ? [] : [_settings];
 
     protected override async Task OnInitializedAsync()
     {
