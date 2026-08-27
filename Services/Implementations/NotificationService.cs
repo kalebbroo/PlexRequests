@@ -167,10 +167,16 @@ public class NotificationService(
 
     private async Task PersistAndPublishAsync(int userId, NotificationType type, string title, string message, int? relatedRequestId)
     {
-        NotificationDto dto;
+        NotificationDto? dto = null;
         using (var scope = _scopeFactory.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var enabledTypes = await db.UserProfiles
+                .Where(x => x.UserId == userId)
+                .Select(x => x.WebNotificationTypes)
+                .FirstOrDefaultAsync();
+            if ((enabledTypes & NotificationPreferencesDto.Bit(type)) == 0) return;
+
             var entity = new NotificationEntity
             {
                 UserId = userId,
@@ -185,7 +191,7 @@ public class NotificationService(
             await db.SaveChangesAsync();
             dto = Map(entity);
         }
-        _broker.Publish(dto);
+        if (dto is not null) _broker.Publish(dto);
     }
 
     public async Task<List<NotificationDto>> GetForUserAsync(int userId, int take = 20)

@@ -36,7 +36,7 @@ public sealed class BridgeIntegrationTests
             UserId = user.Id,
             PlexUsername = user.Username,
             DiscordUserId = "123456789012345678",
-            DiscordDmOptIn = true
+            DiscordNotificationTypes = NotificationPreferencesDto.Bit(NotificationType.RequestAvailable)
         });
         var request = new MediaRequestEntity
         {
@@ -114,6 +114,8 @@ public sealed class BridgeIntegrationTests
         Assert.True((await links.CompleteLinkAsync(secondCode, discordId, "listener")).Success);
         var owners = await db.UserProfiles.Where(x => x.DiscordUserId == discordId).ToListAsync();
         Assert.Equal(secondUser.Id, Assert.Single(owners).UserId);
+        Assert.False(Assert.Single(owners).DiscordDmOptIn);
+        Assert.Equal(0, Assert.Single(owners).DiscordNotificationTypes);
         Assert.False(await db.UserProfiles.Where(x => x.UserId == firstUser.Id)
             .Select(x => x.DiscordDmOptIn).SingleAsync());
     }

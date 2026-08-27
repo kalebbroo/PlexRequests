@@ -79,14 +79,17 @@ public sealed class BridgeOutboxService(
 
         var requesterIds = rows.Where(x => x.RequesterUserId.HasValue)
             .Select(x => x.RequesterUserId!.Value).Distinct().ToList();
-        var discordRecipients = requesterIds.Count == 0
-            ? new Dictionary<int, string>()
+        var recipientProfiles = requesterIds.Count == 0
+            ? []
             : await _db.UserProfiles.AsNoTracking()
-                .Where(x => requesterIds.Contains(x.UserId) && x.DiscordDmOptIn && x.DiscordUserId != null
+                .Where(x => requesterIds.Contains(x.UserId) && x.DiscordUserId != null
                             && (x.AccountStatus == UserAccountStatus.Active
                                 || x.AccountStatus == UserAccountStatus.Suspended
                                 && x.SuspendedUntil != null && x.SuspendedUntil <= DateTime.UtcNow))
-                .ToDictionaryAsync(x => x.UserId, x => x.DiscordUserId!, cancellationToken);
+                .Select(x => new DiscordRecipient(x.UserId, x.DiscordUserId!, x.DiscordNotificationTypes,
+                    x.DiscordDmOptIn))
+                .ToListAsync(cancellationToken);
+        var discordRecipients = recipientProfiles.ToDictionary(x => x.UserId);
 
         var events = new List<BridgeEventDto>(rows.Count);
         foreach (var row in rows)
@@ -108,7 +111,8 @@ public sealed class BridgeOutboxService(
                 Detail = row.Detail,
                 RequesterName = row.RequesterName,
                 RequesterDiscordId = row.RequesterUserId is int userId
-                    && discordRecipients.TryGetValue(userId, out var discordId) ? discordId : null,
+                    && discordRecipients.TryGetValue(userId, out var recipient)
+                    && DiscordEnabled(recipient, row.EventType) ? recipient.DiscordUserId : null,
                 CreatedAt = row.CreatedAt
             };
 
@@ -224,6 +228,30 @@ public sealed class BridgeOutboxService(
             RequestStatus.Cancelled => (BridgeEventType.Cancelled, null),
             _ => (BridgeEventType.Created, null)
         };
+
+    private static bool DiscordEnabled(DiscordRecipient recipient, BridgeEventType type)
+    {
+        // A legacy aggregate true value is an explicit all-events choice. Production migration resets the
+        // historical auto-enabled rows; the fallback keeps rolling-version and API clients compatible.
+        if (recipient.TypeMask == 0 && recipient.LegacyOptIn) return true;
+        return (recipient.TypeMask & NotificationPreferencesDto.Bit(NotificationTypeFor(type))) != 0;
+    }
+
+    private static NotificationType NotificationTypeFor(BridgeEventType type) => type switch
+    {
+        BridgeEventType.Created => NotificationType.RequestCreated,
+        BridgeEventType.Approved => NotificationType.RequestApproved,
+        BridgeEventType.Denied => NotificationType.RequestRejected,
+        BridgeEventType.Available => NotificationType.RequestAvailable,
+        BridgeEventType.Failed => NotificationType.Error,
+        BridgeEventType.Searching => NotificationType.RequestSearchStalled,
+        BridgeEventType.PartiallyAvailable => NotificationType.Warning,
+        BridgeEventType.Upgraded => NotificationType.RequestUpgraded,
+        BridgeEventType.Cancelled => NotificationType.RequestCancelled,
+        _ => NotificationType.Info
+    };
+
+    private sealed record DiscordRecipient(int UserId, string DiscordUserId, long TypeMask, bool LegacyOptIn);
 
     private static BridgeOutboxEntity CreateRow(MediaRequestEntity request, BridgeEventType type,
         string? detail)

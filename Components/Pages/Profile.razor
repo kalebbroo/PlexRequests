@@ -7,6 +7,7 @@
 @inject IUserQuotaService UserQuotas
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IDiscordLinkService DiscordLink
+@inject INotificationPreferenceService NotificationPreferences
 
 <PageTitle>My Profile - Plex Requests</PageTitle>
 
@@ -107,29 +108,74 @@
                 </MudTabs>
             </MudPaper>
 
-            <MudPaper Class="pa-4 mt-4" Elevation="2">
-                <MudText Typo="Typo.h6" Class="mb-2">Discord</MudText>
-                @if (_discordLinked)
+            <MudPaper Class="pa-4 mt-4 notification-settings" Elevation="2">
+                <div class="notification-settings-heading">
+                    <div>
+                        <MudText Typo="Typo.h6" HtmlTag="h2">Notifications</MudText>
+                        <MudText Typo="Typo.body2" Class="text-secondary">
+                            Choose each update you want and where it should arrive. Everything is off until you opt in.
+                        </MudText>
+                    </div>
+                    @if (_savingNotifications)
+                    {
+                        <span class="notification-save-state"><MudProgressCircular Indeterminate="true" Size="Size.Small" /> Saving</span>
+                    }
+                    else if (_notificationPreferences is not null)
+                    {
+                        <span class="notification-save-state saved"><MudIcon Icon="@Icons.Material.Filled.Check" Size="Size.Small" /> Saved automatically</span>
+                    }
+                </div>
+
+                @if (_notificationPreferences is null)
                 {
-                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
-                        <MudText>Linked as <b>@_discordUsername</b></MudText>
-                        <MudSpacer />
-                        <MudSwitch T="bool" Value="_dmOptIn" ValueChanged="ToggleDm" Color="Color.Primary" />
-                        <MudText Typo="Typo.body2">DM me on request updates</MudText>
-                        <MudButton Variant="Variant.Text" Color="Color.Error" OnClick="Unlink">Unlink</MudButton>
-                    </MudStack>
-                }
-                else if (!string.IsNullOrEmpty(_linkCode))
-                {
-                    <MudAlert Severity="Severity.Info" Class="mb-2">
-                        In Discord, run <b>/request link @_linkCode</b> within 10 minutes to connect your account.
-                    </MudAlert>
-                    <MudText Typo="Typo.h4" Style="letter-spacing:0.35em;">@_linkCode</MudText>
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-4" />
                 }
                 else
                 {
-                    <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">Link your Discord account to search &amp; request from the bot and get DMs when your requests update.</MudText>
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Link" OnClick="GenerateCode">Link Discord</MudButton>
+                    <div class="notification-channel-headings" aria-hidden="true">
+                        <span>Update</span><span>Web</span><span>Discord DM</span>
+                    </div>
+
+                    @PreferenceGroup("My request updates", "Decisions and progress for media you requested.", RequestOptions)
+                    @PreferenceGroup("My issue reports", "What happens after you report a bad file, episode, or playback problem.", IssueOptions)
+                    @if (_access?.IsAdmin == true)
+                    {
+                        @PreferenceGroup("Administrator alerts", "New work or failures that may need an administrator.", AdminOptions)
+                    }
+
+                    <section class="discord-connection" aria-labelledby="discord-connection-title">
+                        <div class="discord-mark"><MudIcon Icon="@Icons.Material.Filled.Forum" /></div>
+                        <div class="discord-copy">
+                            <MudText Typo="Typo.subtitle1" HtmlTag="h3" id="discord-connection-title">Discord connection</MudText>
+                            @if (_discordLinked)
+                            {
+                                <MudText Typo="Typo.body2" Class="text-secondary">
+                                    Linked as <b>@_discordUsername</b>. Linking enables bot commands; only the DM switches above control messages.
+                                </MudText>
+                            }
+                            else if (!string.IsNullOrEmpty(_linkCode))
+                            {
+                                <MudText Typo="Typo.body2" Class="text-secondary">Run <b>/request link @_linkCode</b> in Discord within 10 minutes.</MudText>
+                                <div class="discord-link-code">@_linkCode</div>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.body2" Class="text-secondary">
+                                    Link Discord to use bot commands and make the DM choices above available. Linking does not turn any notification on.
+                                </MudText>
+                            }
+                        </div>
+                        <div class="discord-action">
+                            @if (_discordLinked)
+                            {
+                                <MudButton Variant="Variant.Text" Color="Color.Error" OnClick="Unlink">Unlink</MudButton>
+                            }
+                            else if (string.IsNullOrEmpty(_linkCode))
+                            {
+                                <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Link" OnClick="GenerateCode">Link Discord</MudButton>
+                            }
+                        </div>
+                    </section>
                 }
             </MudPaper>
         </MudItem>
@@ -146,8 +192,36 @@
     private int _userId;
     private bool _discordLinked;
     private string? _discordUsername;
-    private bool _dmOptIn;
     private string? _linkCode;
+    private NotificationPreferencesDto? _notificationPreferences;
+    private bool _savingNotifications;
+
+    private static readonly NotificationOption[] RequestOptions =
+    [
+        new(NotificationType.RequestCreated, "Request submitted", "A Discord confirmation when your request enters the queue.", false, true),
+        new(NotificationType.RequestApproved, "Request approved", "An administrator approved your request and searching can begin.", true, true),
+        new(NotificationType.RequestRejected, "Request denied", "An administrator denied your request, including their reason.", true, true),
+        new(NotificationType.RequestAvailable, "Ready to watch", "The requested title or episodes are available in Plex.", true, true),
+        new(NotificationType.Warning, "Partially available", "Some requested episodes are ready while others are still missing.", true, true),
+        new(NotificationType.RequestUpgraded, "Quality upgraded", "An available title was replaced with a preferred-quality copy.", true, true),
+        new(NotificationType.RequestReplaced, "Reported file replaced", "A replacement for a file you requested or reported is ready.", true, false),
+        new(NotificationType.RequestCancelled, "Request cancelled", "A Discord confirmation when a request is cancelled.", false, true)
+    ];
+
+    private static readonly NotificationOption[] IssueOptions =
+    [
+        new(NotificationType.MediaIssueApproved, "Replacement approved", "An administrator approved the replacement you requested.", true, false),
+        new(NotificationType.MediaIssueResolved, "Report resolved", "An administrator marked your report resolved.", true, false),
+        new(NotificationType.MediaIssueDismissed, "Report closed", "An administrator reviewed and closed your report.", true, false)
+    ];
+
+    private static readonly NotificationOption[] AdminOptions =
+    [
+        new(NotificationType.RequestCreated, "New request", "A user submitted a request that may need approval.", true, false),
+        new(NotificationType.RequestSearchStalled, "Search needs attention", "A request has retried repeatedly without finding an acceptable release.", true, false),
+        new(NotificationType.Error, "Download failure", "A request could not be fulfilled and needs investigation.", true, false),
+        new(NotificationType.MediaIssueReported, "New media problem", "A user reported a playback, quality, file, or episode problem.", true, false)
+    ];
 
     // Load after first render so the page shell paints immediately.
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -165,6 +239,7 @@
         // Sequential: these share the circuit's single AppDbContext (EF forbids concurrent ops).
         await LoadRequestsAndStats();
         await LoadDiscordStatus();
+        _notificationPreferences = await NotificationPreferences.GetCurrentAsync();
         await InvokeAsync(StateHasChanged);
     }
 
@@ -205,15 +280,75 @@
         var status = await DiscordLink.GetCurrentStatusAsync();
         _discordLinked = status.Linked;
         _discordUsername = status.DiscordUsername;
-        _dmOptIn = status.DmOptIn;
     }
 
     private async Task GenerateCode() => _linkCode = await DiscordLink.GenerateLinkCodeAsync();
 
-    private async Task ToggleDm(bool v)
+    private RenderFragment PreferenceGroup(string title, string description, IReadOnlyList<NotificationOption> options) => @<section class="notification-preference-group">
+        <div class="notification-group-heading">
+            <MudText Typo="Typo.subtitle1" HtmlTag="h3">@title</MudText>
+            <MudText Typo="Typo.caption" Class="text-secondary">@description</MudText>
+        </div>
+        <div class="notification-option-list">
+            @foreach (var option in options)
+            {
+                <div class="notification-option-row">
+                    <div class="notification-option-copy">
+                        <strong>@option.Label</strong>
+                        <span>@option.Description</span>
+                    </div>
+                    <div class="notification-channel-toggle">
+                        <span>Web</span>
+                        @if (option.Web)
+                        {
+                            <MudSwitch T="bool" Value="@_notificationPreferences!.IsEnabled(NotificationChannel.Web, option.Type)"
+                                       ValueChanged="@(v => ToggleNotification(NotificationChannel.Web, option.Type, v))"
+                                       Color="Color.Primary" Disabled="@_savingNotifications"
+                                       aria-label="@($"Web notification: {option.Label}")" />
+                        }
+                        else
+                        {
+                            <span class="channel-unavailable" aria-label="Not available on web">—</span>
+                        }
+                    </div>
+                    <div class="notification-channel-toggle">
+                        <span>Discord</span>
+                        @if (option.Discord)
+                        {
+                            <MudSwitch T="bool" Value="@_notificationPreferences!.IsEnabled(NotificationChannel.Discord, option.Type)"
+                                       ValueChanged="@(v => ToggleNotification(NotificationChannel.Discord, option.Type, v))"
+                                       Color="Color.Primary" Disabled="@(_savingNotifications || !_discordLinked)"
+                                       aria-label="@($"Discord notification: {option.Label}")" />
+                        }
+                        else
+                        {
+                            <span class="channel-unavailable" aria-label="Not available by Discord DM">—</span>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </section>;
+
+    private async Task ToggleNotification(NotificationChannel channel, NotificationType type, bool enabled)
     {
-        if (await DiscordLink.SetCurrentUserDmOptInAsync(v))
-            _dmOptIn = v;
+        if (_notificationPreferences is null || _savingNotifications) return;
+        var previousWeb = _notificationPreferences.WebTypeMask;
+        var previousDiscord = _notificationPreferences.DiscordTypeMask;
+        _notificationPreferences.SetEnabled(channel, type, enabled);
+        _savingNotifications = true;
+        try
+        {
+            if (!await NotificationPreferences.UpdateCurrentAsync(_notificationPreferences))
+            {
+                _notificationPreferences.WebTypeMask = previousWeb;
+                _notificationPreferences.DiscordTypeMask = previousDiscord;
+            }
+        }
+        finally
+        {
+            _savingNotifications = false;
+        }
     }
 
     private async Task Unlink()
@@ -221,6 +356,11 @@
         await DiscordLink.UnlinkCurrentUserAsync();
         _linkCode = null;
         await LoadDiscordStatus();
+        if (_notificationPreferences is not null)
+        {
+            _notificationPreferences.DiscordTypeMask = 0;
+            await NotificationPreferences.UpdateCurrentAsync(_notificationPreferences);
+        }
     }
 
     private async Task LoadRequestsAndStats()
@@ -240,4 +380,6 @@
             _stats = new UserStatsDto();
         }
     }
+
+    private sealed record NotificationOption(NotificationType Type, string Label, string Description, bool Web, bool Discord);
 }

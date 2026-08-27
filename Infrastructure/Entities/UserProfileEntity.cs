@@ -92,5 +92,12 @@ public class UserProfileEntity
     public string? DiscordUserId { get; set; }
     [MaxLength(128)]
     public string? DiscordUsername { get; set; }
+    /// <summary>Legacy aggregate retained for bridge/API compatibility. New code keeps it equal to whether
+    /// any per-event Discord notification is enabled.</summary>
     public bool DiscordDmOptIn { get; set; }
+
+    // Notification delivery is explicit opt-in per event and per channel. Zero is deliberately the default
+    // for both masks, including existing accounts after migration.
+    public long WebNotificationTypes { get; set; }
+    public long DiscordNotificationTypes { get; set; }
 }

@@ -1206,6 +1206,28 @@ public class NotificationDto
     public int? RelatedRequestId { get; set; }
 }
 
+public sealed class NotificationPreferencesDto
+{
+    /// <summary>Bit N enables <see cref="NotificationType"/> N for the in-app notification center.</summary>
+    public long WebTypeMask { get; set; }
+    /// <summary>Bit N enables <see cref="NotificationType"/> N for a linked Discord account.</summary>
+    public long DiscordTypeMask { get; set; }
+
+    public bool IsEnabled(NotificationChannel channel, NotificationType type) =>
+        ((channel == NotificationChannel.Web ? WebTypeMask : DiscordTypeMask) & Bit(type)) != 0;
+
+    public void SetEnabled(NotificationChannel channel, NotificationType type, bool enabled)
+    {
+        var bit = Bit(type);
+        if (channel == NotificationChannel.Web)
+            WebTypeMask = enabled ? WebTypeMask | bit : WebTypeMask & ~bit;
+        else
+            DiscordTypeMask = enabled ? DiscordTypeMask | bit : DiscordTypeMask & ~bit;
+    }
+
+    public static long Bit(NotificationType type) => 1L << (int)type;
+}
+
 public class UserPreferencesDto
 {
     public bool DarkMode { get; set; } = true;
