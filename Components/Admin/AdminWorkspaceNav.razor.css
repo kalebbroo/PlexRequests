@@ -1,0 +1,85 @@
+.workspace-nav {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.65rem;
+    margin-bottom: var(--spacing-xl);
+    padding-bottom: var(--spacing-lg);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.workspace-nav-item {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    align-items: start;
+    gap: 0.65rem;
+    min-height: 72px;
+    padding: 0.8rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.018);
+    color: var(--text-secondary);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.workspace-nav-item:hover {
+    border-color: rgba(229, 160, 13, 0.32);
+    background: rgba(229, 160, 13, 0.055);
+    color: var(--text-primary);
+}
+
+.workspace-nav-item:focus-visible {
+    outline: 2px solid var(--plex-orange);
+    outline-offset: 2px;
+}
+
+.workspace-nav-item.active {
+    border-color: rgba(229, 160, 13, 0.45);
+    background: rgba(229, 160, 13, 0.1);
+    color: var(--plex-orange);
+}
+
+.workspace-nav-copy {
+    display: grid;
+    gap: 0.2rem;
+}
+
+.workspace-nav-label {
+    color: inherit;
+    font-size: 0.88rem;
+    font-weight: 700;
+}
+
+.workspace-nav-description {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    line-height: 1.35;
+}
+
+@media (max-width: 600px) {
+    .workspace-nav {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: var(--spacing-sm);
+        margin-bottom: var(--spacing-lg);
+        padding-bottom: var(--spacing-md);
+    }
+
+    .workspace-nav-item {
+        display: flex;
+        align-items: center;
+        min-height: 48px;
+        padding: 0.65rem;
+    }
+
+    .workspace-nav-description {
+        display: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .workspace-nav-item {
+        transition: none;
+    }
+}
