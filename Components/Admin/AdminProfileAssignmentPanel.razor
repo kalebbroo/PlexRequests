@@ -16,8 +16,8 @@ else
 {
     <div class="d-flex justify-content-between align-items-center mb-3">
         <MudText Typo="Typo.body2" Class="text-muted">
-            Rules are evaluated top to bottom; the first match wins. Leave a condition blank to mean "any" —
-            but at least one condition is required before a rule can be enabled.
+            Use rules only when certain media should automatically receive a different quality profile.
+            Rules run from top to bottom, and the first matching rule wins.
         </MudText>
         <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
                    StartIcon="@Icons.Material.Filled.Add" OnClick="AddRule">New rule</MudButton>
@@ -31,87 +31,105 @@ else
     }
     else
     {
-        <MudTable Items="_rules" dense="true" Hover="true" Class="elevation-1">
-            <HeaderContent>
-                <MudTh Style="width:60px;">Order</MudTh>
-                <MudTh>Name</MudTh>
-                <MudTh>Media type</MudTh>
-                <MudTh>Content</MudTh>
-                <MudTh>Genre</MudTh>
-                <MudTh>TMDb id</MudTh>
-                <MudTh>Profile</MudTh>
-                <MudTh Style="width:110px;">Enabled</MudTh>
-                <MudTh Style="width:120px;"></MudTh>
-            </HeaderContent>
-            <RowTemplate>
-                <MudTd DataLabel="Order">
-                    <div class="d-flex">
-                        <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small"
-                                       OnClick="() => Move(context, true)" />
-                        <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small"
-                                       OnClick="() => Move(context, false)" />
-                    </div>
-                </MudTd>
-                <MudTd DataLabel="Name">
-                    <MudTextField T="string" Value="context.Name" Variant="Variant.Outlined" Margin="Margin.Dense"
-                                  Style="min-width:150px;" ValueChanged="@(v => { context.Name = v; return Save(context); })" />
-                </MudTd>
-                <MudTd DataLabel="Media type">
-                    <MudSelect T="MediaType?" Value="context.MatchMediaType" Clearable="true" Variant="Variant.Outlined"
-                               Margin="Margin.Dense" Style="min-width:130px;"
-                               ValueChanged="@(v => { context.MatchMediaType = v; return Save(context); })">
-                        <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.Movie)">Movie</MudSelectItem>
-                        <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.TvShow)">TV show</MudSelectItem>
-                        <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.Anime)">Anime TV (legacy)</MudSelectItem>
-                    </MudSelect>
-                </MudTd>
-                <MudTd DataLabel="Content">
-                    <MudSelect T="bool?" Value="context.MatchAnime" Clearable="true" Variant="Variant.Outlined"
-                               Margin="Margin.Dense" Style="min-width:130px;"
-                               ValueChanged="@(v => { context.MatchAnime = v; return Save(context); })">
-                        <MudSelectItem T="bool?" Value="@((bool?)true)">Anime only</MudSelectItem>
-                        <MudSelectItem T="bool?" Value="@((bool?)false)">Non-anime</MudSelectItem>
-                    </MudSelect>
-                </MudTd>
-                <MudTd DataLabel="Genre">
-                    <MudTextField T="string" Value="context.MatchGenre" Variant="Variant.Outlined" Margin="Margin.Dense"
-                                  Placeholder="any" Style="min-width:130px;"
-                                  ValueChanged="@(v => { context.MatchGenre = v; return Save(context); })" />
-                </MudTd>
-                <MudTd DataLabel="TMDb id">
-                    <MudNumericField T="int?" Value="context.MatchTmdbId" Clearable="true" Variant="Variant.Outlined"
-                                     Margin="Margin.Dense" Style="max-width:120px;"
-                                     ValueChanged="@(v => { context.MatchTmdbId = v; return Save(context); })" />
-                </MudTd>
-                <MudTd DataLabel="Profile">
-                    <MudSelect T="int" Value="context.QualityProfileId" Variant="Variant.Outlined" Margin="Margin.Dense"
-                               Style="min-width:150px;"
-                               ValueChanged="@(v => { context.QualityProfileId = v; return Save(context); })">
-                        @foreach (var p in _profiles)
-                        {
-                            <MudSelectItem Value="p.Id">@p.Name</MudSelectItem>
-                        }
-                    </MudSelect>
-                </MudTd>
-                <MudTd DataLabel="Enabled">
-                    @if (context.IsUnconditional)
-                    {
-                        <MudTooltip Text="Add a condition first — with none set this rule would apply to every title in the library.">
-                            <MudSwitch T="bool" Value="false" Disabled="true" Color="Color.Primary" />
-                        </MudTooltip>
-                    }
-                    else
-                    {
-                        <MudSwitch T="bool" Value="context.Enabled" Color="Color.Primary"
-                                   ValueChanged="@(v => { context.Enabled = v; return Save(context); })" />
-                    }
-                </MudTd>
-                <MudTd>
-                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
-                                   OnClick="() => Delete(context)" />
-                </MudTd>
-            </RowTemplate>
-        </MudTable>
+        <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mb-3">
+            All filled-in conditions on a rule must match. Leave a field blank for “any.” A rule needs at least one condition before it can be enabled.
+        </MudAlert>
+
+        <MudExpansionPanels Class="assignment-rule-list" MultiExpansion="false" Elevation="0">
+            @for (var index = 0; index < _rules.Count; index++)
+            {
+                var rule = _rules[index];
+                var ruleIndex = index;
+                <MudExpansionPanel @key="rule.Id"
+                                   Expanded="@(_expandedRuleId == rule.Id)"
+                                   ExpandedChanged="@(expanded => SetExpanded(rule.Id, expanded))">
+                    <TitleContent>
+                        <div class="assignment-rule-summary">
+                            <span class="assignment-rule-order">@(ruleIndex + 1)</span>
+                            <span class="assignment-rule-copy">
+                                <b>@rule.Name</b>
+                                <small>@RuleSummary(rule)</small>
+                            </span>
+                            @if (rule.IsUnconditional)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">Needs a condition</MudChip>
+                            }
+                            else if (rule.Enabled)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">Enabled</MudChip>
+                            }
+                            else
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Disabled</MudChip>
+                            }
+                        </div>
+                    </TitleContent>
+                    <ChildContent>
+                        <div class="assignment-rule-editor">
+                            <div class="assignment-rule-actions">
+                                <div class="d-flex align-items-center gap-1">
+                                    <MudText Typo="Typo.caption" Class="text-muted">Priority</MudText>
+                                    <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small"
+                                                   Disabled="@(ruleIndex == 0)" aria-label="Move rule earlier"
+                                                   OnClick="() => Move(rule, true)" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small"
+                                                   Disabled="@(ruleIndex == _rules.Count - 1)" aria-label="Move rule later"
+                                                   OnClick="() => Move(rule, false)" />
+                                </div>
+                                @if (rule.IsUnconditional)
+                                {
+                                    <MudTooltip Text="Add a condition first so this rule cannot silently apply to every title.">
+                                        <MudSwitch T="bool" Value="false" Disabled="true" Color="Color.Primary" Label="Enabled" />
+                                    </MudTooltip>
+                                }
+                                else
+                                {
+                                    <MudSwitch T="bool" Value="rule.Enabled" Color="Color.Primary" Label="Enabled"
+                                               ValueChanged="@(v => { rule.Enabled = v; return Save(rule); })" />
+                                }
+                            </div>
+
+                            <div class="assignment-rule-core">
+                                <MudTextField T="string" Label="Rule name" Value="rule.Name" Variant="Variant.Outlined"
+                                              ValueChanged="@(v => { rule.Name = v; return Save(rule); })" />
+                                <MudSelect T="int" Label="Apply quality profile" Value="rule.QualityProfileId" Variant="Variant.Outlined"
+                                           ValueChanged="@(v => { rule.QualityProfileId = v; return Save(rule); })">
+                                    @foreach (var p in _profiles)
+                                    {
+                                        <MudSelectItem Value="p.Id">@p.Name</MudSelectItem>
+                                    }
+                                </MudSelect>
+                            </div>
+
+                            <MudText Typo="Typo.subtitle2" Class="mt-4 mb-2">Match when all selected conditions are true</MudText>
+                            <div class="assignment-rule-conditions">
+                                <MudSelect T="MediaType?" Label="Media type" Value="rule.MatchMediaType" Clearable="true" Variant="Variant.Outlined"
+                                           ValueChanged="@(v => { rule.MatchMediaType = v; return Save(rule); })">
+                                    <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.Movie)">Movie</MudSelectItem>
+                                    <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.TvShow)">TV show</MudSelectItem>
+                                    <MudSelectItem T="MediaType?" Value="@((MediaType?)MediaType.Anime)">Anime TV (legacy)</MudSelectItem>
+                                </MudSelect>
+                                <MudSelect T="bool?" Label="Anime" Value="rule.MatchAnime" Clearable="true" Variant="Variant.Outlined"
+                                           ValueChanged="@(v => { rule.MatchAnime = v; return Save(rule); })">
+                                    <MudSelectItem T="bool?" Value="@((bool?)true)">Anime only</MudSelectItem>
+                                    <MudSelectItem T="bool?" Value="@((bool?)false)">Exclude anime</MudSelectItem>
+                                </MudSelect>
+                                <MudTextField T="string" Label="Genre contains" Value="rule.MatchGenre" Variant="Variant.Outlined"
+                                              Placeholder="e.g. Animation"
+                                              ValueChanged="@(v => { rule.MatchGenre = v; return Save(rule); })" />
+                                <MudNumericField T="int?" Label="Specific TMDb title ID" Value="rule.MatchTmdbId" Clearable="true" Variant="Variant.Outlined"
+                                                 ValueChanged="@(v => { rule.MatchTmdbId = v; return Save(rule); })" />
+                            </div>
+
+                            <div class="d-flex justify-content-end mt-4">
+                                <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined"
+                                           StartIcon="@Icons.Material.Filled.Delete" OnClick="() => Delete(rule)">Delete rule</MudButton>
+                            </div>
+                        </div>
+                    </ChildContent>
+                </MudExpansionPanel>
+            }
+        </MudExpansionPanels>
     }
 }
 
@@ -119,6 +137,7 @@ else
     private bool _loading = true;
     private List<ProfileAssignmentRuleDto> _rules = new();
     private List<QualityProfileDto> _profiles = new();
+    private int? _expandedRuleId;
 
     protected override async Task OnInitializedAsync() => await Load();
 
@@ -142,6 +161,7 @@ else
         await Profiles.CreateAssignmentRuleAsync();
         await Toasts.ShowInfoAsync("Rule created disabled — add a condition, then enable it.");
         await Load();
+        _expandedRuleId = _rules.LastOrDefault()?.Id;
     }
 
     private async Task Move(ProfileAssignmentRuleDto rule, bool up)
@@ -153,6 +173,29 @@ else
     private async Task Delete(ProfileAssignmentRuleDto rule)
     {
         if (await Profiles.DeleteAssignmentRuleAsync(rule.Id)) await Toasts.ShowSuccessAsync($"Deleted '{rule.Name}'.");
+        if (_expandedRuleId == rule.Id) _expandedRuleId = null;
         await Load();
     }
+
+    private void SetExpanded(int ruleId, bool expanded) => _expandedRuleId = expanded ? ruleId : null;
+
+    private string RuleSummary(ProfileAssignmentRuleDto rule)
+    {
+        var conditions = new List<string>();
+        if (rule.MatchMediaType.HasValue) conditions.Add(rule.MatchMediaType.Value switch
+        {
+            MediaType.Movie => "movies",
+            MediaType.TvShow => "TV shows",
+            MediaType.Anime => "legacy anime TV",
+            _ => rule.MatchMediaType.Value.ToString()
+        });
+        if (rule.MatchAnime.HasValue) conditions.Add(rule.MatchAnime.Value ? "anime" : "non-anime");
+        if (!string.IsNullOrWhiteSpace(rule.MatchGenre)) conditions.Add($"genre contains “{rule.MatchGenre.Trim()}”");
+        if (rule.MatchTmdbId.HasValue) conditions.Add($"TMDb title {rule.MatchTmdbId.Value}");
+
+        var match = conditions.Count == 0 ? "No conditions yet" : string.Join(" + ", conditions);
+        return $"{match} → {ProfileName(rule.QualityProfileId)}";
+    }
+
+    private string ProfileName(int profileId) => _profiles.FirstOrDefault(p => p.Id == profileId)?.Name ?? "Missing profile";
 }
