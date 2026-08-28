@@ -1,3 +1,5 @@
+using PlexRequestsHosted.Shared.Enums;
+
 namespace PlexRequestsHosted.Shared.Navigation;
 
 /// <summary>Builds and validates the local return path carried through nested music pages.</summary>
@@ -43,5 +45,15 @@ public static class MusicNavigationContext
         var safeLabel = ValidateLabel(returnLabel);
         var separator = href.Contains('?', StringComparison.Ordinal) ? '&' : '?';
         return $"{href}{separator}returnUrl={Uri.EscapeDataString(safeUrl)}&returnLabel={Uri.EscapeDataString(safeLabel)}";
+    }
+
+    public static string BuildSearchUrl(string? query, MediaKind? kind = null)
+    {
+        var parameters = new List<string>();
+        if (!string.IsNullOrWhiteSpace(query))
+            parameters.Add($"q={Uri.EscapeDataString(query.Trim())}");
+        if (kind is MediaKind.Artist or MediaKind.Album or MediaKind.Track)
+            parameters.Add($"kind={kind.Value.ToString().ToLowerInvariant()}");
+        return parameters.Count == 0 ? DefaultUrl : $"{DefaultUrl}?{string.Join('&', parameters)}";
     }
 }

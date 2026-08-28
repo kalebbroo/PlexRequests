@@ -11,6 +11,19 @@ public sealed class MusicBrowseHubDto
     public List<MusicCategoryDto> Categories { get; set; } = new();
 }
 
+/// <summary>A grouped music search response. Keeping kinds separate lets the Music page lead with an
+/// exact artist match without burying albums and songs in one ambiguous poster grid.</summary>
+public sealed class MusicCatalogSearchResultDto
+{
+    public string Query { get; set; } = string.Empty;
+    public List<MediaCardDto> Artists { get; set; } = new();
+    public List<MediaCardDto> Albums { get; set; } = new();
+    public List<MediaCardDto> Tracks { get; set; } = new();
+    public int TotalCount => Artists.Count + Albums.Count + Tracks.Count;
+
+    public IEnumerable<MediaCardDto> AllItems() => Artists.Concat(Albums).Concat(Tracks);
+}
+
 public sealed class MusicCategoryDto
 {
     public string Title { get; set; } = string.Empty;

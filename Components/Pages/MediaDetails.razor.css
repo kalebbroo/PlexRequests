@@ -86,6 +86,16 @@
     box-shadow: 0 10px 40px rgba(0,0,0,0.8);
 }
 
+.music-details .details-hero { min-height: 520px; }
+.music-details .poster { aspect-ratio: 1; object-fit: cover; }
+.music-details .hero-grid { grid-template-columns: minmax(220px, 300px) 1fr; }
+.music-details .info-section { padding-top: 1rem; }
+.music-details .tagline { margin-bottom: .75rem; font-style: normal; }
+.music-context { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 var(--spacing-lg); }
+.music-kind-badge, .music-context a { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 5px 11px; border: 1px solid rgba(255,255,255,.15); border-radius: 999px; color: var(--text-secondary); background: rgba(0,0,0,.24); font-size: var(--font-size-sm); text-decoration: none; }
+.music-kind-badge { border-color: rgba(229,160,13,.55); color: var(--plex-orange); font-weight: 800; text-transform: capitalize; }
+.music-context a:hover { border-color: var(--plex-orange); color: #fff; }
+
 .poster-placeholder {
     display: grid;
     aspect-ratio: 2 / 3;
@@ -323,6 +333,13 @@
     cursor: pointer;
 }
 
+.music-related-section { margin: var(--spacing-2xl) 0 var(--spacing-3xl); padding-top: var(--spacing-xl); border-top: 1px solid var(--divider); }
+.music-related-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--spacing-md); margin-bottom: var(--spacing-lg); }
+.music-related-head span { color: var(--plex-orange); font-size: .72rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.music-related-head h2 { margin: 3px 0 0; font-size: clamp(1.5rem, 3vw, 2rem); }
+.music-related-head > a { display: inline-flex; align-items: center; gap: 3px; color: var(--text-secondary); font-weight: 700; text-decoration: none; }
+.music-related-head > a:hover { color: var(--plex-orange); }
+
 .desktop-only {
     display: flex;
 }
@@ -347,6 +364,10 @@
         margin: 0 auto;
     }
 
+    .music-details .details-hero { min-height: auto; }
+    .music-details .hero-grid { grid-template-columns: 1fr; }
+    .music-details .poster-section { max-width: min(72vw, 280px); }
+
     .desktop-only {
         display: none;
     }
@@ -370,6 +391,8 @@
     .similar-grid {
         grid-template-columns: repeat(3, 1fr);
     }
+
+    .music-related-head { align-items: flex-start; flex-direction: column; }
 }
 
 @media (max-width: 480px) {

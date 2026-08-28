@@ -18,7 +18,8 @@
                 @foreach (var item in Items)
                 {
                     <div class="media-row-item">
-                        <MediaCard Media="item" OnRequest="OnRequest" OnPlay="OnPlay" />
+                        <MediaCard Media="item" OnRequest="OnRequest" OnPlay="OnPlay"
+                                   ReturnUrl="@ReturnUrl" ReturnLabel="@ReturnLabel" />
                     </div>
                 }
             </div>
@@ -33,6 +34,8 @@
     [Parameter] public string? SeeAllHref { get; set; }
     [Parameter] public EventCallback<MediaCardDto> OnRequest { get; set; }
     [Parameter] public EventCallback<MediaCardDto> OnPlay { get; set; }
+    [Parameter] public string? ReturnUrl { get; set; }
+    [Parameter] public string? ReturnLabel { get; set; }
 
     private ElementReference _track;
 

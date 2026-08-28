@@ -393,6 +393,7 @@ builder.Services.AddHttpClient<YouTubeMusicMetadataProvider>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
 });
 builder.Services.AddScoped<IMusicDiscoveryService, MusicDiscoveryService>();
+builder.Services.AddScoped<IMusicCatalogSearchService, MusicCatalogSearchService>();
 builder.Services.AddScoped<MetadataRouter>();
 builder.Services.AddScoped<IMetadataProviderFactory, MetadataProviderFactory>();
 

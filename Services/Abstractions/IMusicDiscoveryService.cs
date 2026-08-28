@@ -1,4 +1,5 @@
 using PlexRequestsHosted.Shared.DTOs;
+using PlexRequestsHosted.Shared.Enums;
 
 namespace PlexRequestsHosted.Services.Abstractions;
 
@@ -13,4 +14,12 @@ public interface IMusicDiscoveryService
         CancellationToken cancellationToken = default);
     Task<MusicPlaylistDto?> GetPlaylistAsync(string playlistId,
         CancellationToken cancellationToken = default);
+}
+
+/// <summary>Dedicated music search boundary used by the Music experience. It returns provider-backed,
+/// requestable identities grouped by their real kind instead of mixing music into the movie search UI.</summary>
+public interface IMusicCatalogSearchService
+{
+    Task<MusicCatalogSearchResultDto> SearchAsync(string query, MediaKind? kind = null,
+        int pageSizePerKind = 16, CancellationToken cancellationToken = default);
 }
