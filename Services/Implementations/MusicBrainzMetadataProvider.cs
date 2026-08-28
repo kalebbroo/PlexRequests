@@ -51,9 +51,17 @@ public sealed class MusicBrainzMetadataProvider(
             MediaKind.Track => "recording",
             _ => "release-group"
         };
-        var searchText = kind == MediaKind.Album
-            ? $"(releasegroup:\"{EscapeLucene(query.Query.Trim())}\" OR artist:\"{EscapeLucene(query.Query.Trim())}\") AND primarytype:album"
-            : query.Query.Trim();
+        var escaped = EscapeLucene(query.Query.Trim());
+        var searchText = kind switch
+        {
+            MediaKind.Album => $"(releasegroup:\"{escaped}\" OR artist:\"{escaped}\") AND primarytype:album",
+            MediaKind.Artist => $"artist:\"{escaped}\"",
+            // A plain MusicBrainz recording query strongly favors songs literally named after the artist
+            // (often by unrelated performers). Search both the recording and artist fields explicitly so an
+            // artist search yields that artist's songs, while an exact song-title search remains supported.
+            MediaKind.Track => $"(recording:\"{escaped}\" OR artist:\"{escaped}\")",
+            _ => escaped
+        };
         var url = BuildUrl($"ws/2/{entity}", ("query", searchText), ("fmt", "json"),
             ("limit", take.ToString(CultureInfo.InvariantCulture)),
             ("offset", offset.ToString(CultureInfo.InvariantCulture)));

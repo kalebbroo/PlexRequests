@@ -91,6 +91,20 @@
             </div>
         </div>
     </div>
+    @if (Media.MediaType == MediaType.Music)
+    {
+        <div class="mcard-caption">
+            <div class="mcard-caption-title">@Media.Title</div>
+            @if (!string.IsNullOrWhiteSpace(Media.Subtitle))
+            {
+                <div class="mcard-caption-subtitle">@Media.Subtitle</div>
+            }
+            <div class="mcard-caption-meta">
+                @if (Media.Year.HasValue) { <span>@Media.Year</span> }
+                <span>@GetTypeLabel()</span>
+            </div>
+        </div>
+    }
 </div>
 
 @code {

@@ -1,4 +1,5 @@
 using PlexRequestsHosted.Shared.Navigation;
+using PlexRequestsHosted.Shared.Enums;
 using Xunit;
 
 namespace PlexRequests.Tests;
@@ -45,4 +46,11 @@ public sealed class MusicNavigationContextTests
     [Fact]
     public void ResolveReturnLabel_DoesNotHonorALabelForARejectedTarget()
         => Assert.Equal("Music", MusicNavigationContext.ResolveReturnLabel("https://example.com", "Example"));
+
+    [Theory]
+    [InlineData(null, null, "/music")]
+    [InlineData("Daft Punk", null, "/music?q=Daft%20Punk")]
+    [InlineData(" R&B ", MediaKind.Track, "/music?q=R%26B&kind=track")]
+    public void BuildSearchUrl_PreservesDedicatedMusicSearch(string? query, MediaKind? kind, string expected)
+        => Assert.Equal(expected, MusicNavigationContext.BuildSearchUrl(query, kind));
 }

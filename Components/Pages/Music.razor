@@ -1,32 +1,54 @@
 @page "/music"
+@attribute [Authorize]
 @inject IMusicDiscoveryService Discovery
+@inject IMusicCatalogSearchService CatalogSearch
 @inject IMusicSettingsService MusicSettings
 @inject IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Implementations.IPlexMusicService PlexMusic
 @inject IToastService ToastService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@inject ILogger<Music> Logger
+@using PlexRequestsHosted.Shared.Navigation
+@implements IDisposable
 
-<PageTitle>Music - Plex Requests</PageTitle>
+<PageTitle>@(HasSearch ? $"{SearchQuery} - Music" : "Music") - Plex Requests</PageTitle>
 
 <div class="music-page">
     <section class="music-hero" style="@HeroStyle">
         <div class="music-hero-scrim"></div>
         <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="music-hero-content">
-            <span class="music-kicker">@(_hub?.SourceLabel ?? "Music discovery")</span>
-            <h1>Find your next favorite.</h1>
-            <p>Browse albums, artists, songs, charts, playlists, moods, and genres—then request the music you want on Plex.</p>
-            <div class="music-search">
+            <span class="music-kicker">@(_hub?.SourceLabel ?? "Music catalog")</span>
+            <h1>@(HasSearch ? "Search music" : "Music for every moment")</h1>
+            <p>@(HasSearch
+                ? "Search albums, artists, and songs without leaving the Music experience."
+                : "Discover something new, explore a favorite artist, or request exactly what you want to hear.")</p>
+            <form class="music-search" @onsubmit="SubmitSearch" @onsubmit:preventDefault>
                 <MudIcon Icon="@Icons.Material.Filled.Search" />
-                <input aria-label="Search music" placeholder="Search albums, artists, and tracks" @bind="_search"
-                       @bind:event="oninput" @onkeydown="SearchKeyDown" />
-                <button type="button" @onclick="Search">Search</button>
+                <input aria-label="Search music" placeholder="Artist, album, or song" @bind="_searchInput"
+                       @bind:event="oninput" autocomplete="off" spellcheck="false" />
+                @if (!string.IsNullOrWhiteSpace(_searchInput))
+                {
+                    <button class="music-search-clear" type="button" title="Clear search" aria-label="Clear music search"
+                            @onclick="ClearSearch"><MudIcon Icon="@Icons.Material.Filled.Close" Size="Size.Small" /></button>
+                }
+                <button class="music-search-submit" type="submit">Search</button>
+            </form>
+            <div class="music-kind-filter" aria-label="Music search type">
+                <button type="button" class="@(SelectedKind is null ? "selected" : null)" aria-pressed="@(SelectedKind is null)"
+                        @onclick="() => SetKind(null)">Everything</button>
+                <button type="button" class="@(SelectedKind == MediaKind.Artist ? "selected" : null)" aria-pressed="@(SelectedKind == MediaKind.Artist)"
+                        @onclick="() => SetKind(MediaKind.Artist)">Artists</button>
+                <button type="button" class="@(SelectedKind == MediaKind.Album ? "selected" : null)" aria-pressed="@(SelectedKind == MediaKind.Album)"
+                        @onclick="() => SetKind(MediaKind.Album)">Albums</button>
+                <button type="button" class="@(SelectedKind == MediaKind.Track ? "selected" : null)" aria-pressed="@(SelectedKind == MediaKind.Track)"
+                        @onclick="() => SetKind(MediaKind.Track)">Songs</button>
             </div>
         </MudContainer>
     </section>
 
     <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="music-content">
-        @if (_loading)
+        @if (!_catalogLoaded)
         {
             <PosterGridSkeleton Count="18" />
         }
@@ -34,19 +56,74 @@
         {
             <MudAlert Severity="Severity.Info">Music browsing is disabled. An administrator can enable the music catalog under Admin → Media &amp; Automation.</MudAlert>
         }
+        else if (HasSearch)
+        {
+            <section class="music-results" aria-live="polite">
+                <div class="music-results-head">
+                    <div>
+                        <span>Music search</span>
+                        <h2>Results for “@SearchQuery”</h2>
+                        @if (!_searching && _searchResults is not null)
+                        {
+                            <p>@_searchResults.TotalCount @(_searchResults.TotalCount == 1 ? "result" : "results")</p>
+                        }
+                    </div>
+                    <a href="/music">Back to discovery</a>
+                </div>
+
+                @if (_searching)
+                {
+                    <div class="music-searching"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /><span>Searching the music catalog…</span></div>
+                }
+                else if (_searchFailed)
+                {
+                    <div class="music-empty compact">
+                        <MudIcon Icon="@Icons.Material.Filled.CloudOff" />
+                        <h2>Search is temporarily unavailable</h2>
+                        <p>Your search is still here. Try it again in a moment.</p>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunSearchAsync">Try again</MudButton>
+                    </div>
+                }
+                else if (_searchResults?.TotalCount > 0)
+                {
+                    @if (_searchResults.Artists.Count > 0)
+                    {
+                        <MediaRow Title="Artists" Items="_searchResults.Artists" OnRequest="Request" OnPlay="Play"
+                                  SeeAllHref="@(SelectedKind is null ? KindHref(MediaKind.Artist) : null)" ReturnUrl="@CurrentMusicUrl" ReturnLabel="@SearchReturnLabel" />
+                    }
+                    @if (_searchResults.Albums.Count > 0)
+                    {
+                        <MediaRow Title="Albums" Items="_searchResults.Albums" OnRequest="Request" OnPlay="Play"
+                                  SeeAllHref="@(SelectedKind is null ? KindHref(MediaKind.Album) : null)" ReturnUrl="@CurrentMusicUrl" ReturnLabel="@SearchReturnLabel" />
+                    }
+                    @if (_searchResults.Tracks.Count > 0)
+                    {
+                        <MediaRow Title="Songs" Items="_searchResults.Tracks" OnRequest="Request" OnPlay="Play"
+                                  SeeAllHref="@(SelectedKind is null ? KindHref(MediaKind.Track) : null)" ReturnUrl="@CurrentMusicUrl" ReturnLabel="@SearchReturnLabel" />
+                    }
+                }
+                else
+                {
+                    <div class="music-empty compact">
+                        <MudIcon Icon="@Icons.Material.Filled.SearchOff" />
+                        <h2>No music found</h2>
+                        <p>Try a shorter artist name, an album title, or a different song.</p>
+                    </div>
+                }
+            </section>
+        }
         else if (_failed || _hub is null)
         {
             <div class="music-empty">
                 <MudIcon Icon="@Icons.Material.Filled.CloudOff" />
                 <h2>Music discovery is unavailable right now</h2>
-                <p>The catalog will retry automatically. You can still search for music.</p>
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ReloadAsync">Try again</MudButton>
+                <p>Search is still available above while the discovery shelves recover.</p>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ReloadAsync">Try discovery again</MudButton>
             </div>
         }
         else
         {
             <nav class="music-jump" aria-label="Music sections">
-                <a href="/search?type=music">Search</a>
                 @if (_hub.TrendingTracks.Count > 0) { <a href="/music#trending" @onclick="@(() => ScrollToSectionAsync("trending"))" @onclick:preventDefault>Trending</a> }
                 @if (_hub.NewReleases.Count > 0) { <a href="/music#new-releases" @onclick="@(() => ScrollToSectionAsync("new-releases"))" @onclick:preventDefault>New releases</a> }
                 @if (_hub.PopularArtists.Count > 0) { <a href="/music#artists" @onclick="@(() => ScrollToSectionAsync("artists"))" @onclick:preventDefault>Artists</a> }
@@ -56,24 +133,24 @@
 
             @if (_hub.TrendingTracks.Count > 0)
             {
-                <div id="trending" class="music-scroll-target"><MediaRow Title="Trending tracks" Items="_hub.TrendingTracks" OnRequest="Request" OnPlay="Play" /></div>
+                <div id="trending" class="music-scroll-target"><MediaRow Title="Trending songs" Items="_hub.TrendingTracks" OnRequest="Request" OnPlay="Play" ReturnUrl="/music" ReturnLabel="Music" /></div>
             }
             @if (_hub.NewReleases.Count > 0)
             {
-                <div id="new-releases" class="music-scroll-target"><MediaRow Title="New albums & singles" Items="_hub.NewReleases" OnRequest="Request" OnPlay="Play" /></div>
+                <div id="new-releases" class="music-scroll-target"><MediaRow Title="New albums & singles" Items="_hub.NewReleases" OnRequest="Request" OnPlay="Play" ReturnUrl="/music" ReturnLabel="Music" /></div>
             }
             @if (_hub.PopularArtists.Count > 0)
             {
-                <div id="artists" class="music-scroll-target"><MediaRow Title="Popular artists" Items="_hub.PopularArtists" OnRequest="Request" OnPlay="Play" /></div>
+                <div id="artists" class="music-scroll-target"><MediaRow Title="Popular artists" Items="_hub.PopularArtists" OnRequest="Request" OnPlay="Play" ReturnUrl="/music" ReturnLabel="Music" /></div>
             }
             @if (_hub.FeaturedPlaylists.Count > 0)
             {
                 <section id="playlists" class="music-section">
-                    <div class="music-section-head"><h2>Charts & playlists</h2><span>Browse first; request individual songs from inside.</span></div>
+                    <div class="music-section-head"><div><span>Made for exploring</span><h2>Charts &amp; playlists</h2></div><p>Open a collection, then request any song inside.</p></div>
                     <div class="playlist-grid">
                         @foreach (var playlist in _hub.FeaturedPlaylists)
                         {
-                            <MusicPlaylistCard Playlist="playlist" />
+                            <MusicPlaylistCard Playlist="playlist" ReturnUrl="/music" ReturnLabel="Music" />
                         }
                     </div>
                 </section>
@@ -81,7 +158,7 @@
             @if (_hub.Categories.Count > 0)
             {
                 <section id="genres" class="music-section">
-                    <div class="music-section-head"><h2>Genres & moods</h2><span>Jump into a curated collection.</span></div>
+                    <div class="music-section-head"><div><span>Pick a direction</span><h2>Genres &amp; moods</h2></div><p>Explore a curated collection or search the genre directly.</p></div>
                     @foreach (var group in _hub.Categories.GroupBy(x => x.Group))
                     {
                         <h3 class="category-group">@group.Key</h3>
@@ -99,56 +176,132 @@
 </div>
 
 @code {
+    [SupplyParameterFromQuery(Name = "q")] public string? Q { get; set; }
+    [SupplyParameterFromQuery(Name = "kind")] public string? QueryKind { get; set; }
+
     private MusicBrowseHubDto? _hub;
-    private bool _loading = true;
+    private MusicCatalogSearchResultDto? _searchResults;
+    private bool _catalogLoaded;
     private bool _enabled;
     private bool _failed;
-    private bool _loaded;
-    private string _search = string.Empty;
-    private string HeroStyle => _hub?.NewReleases.FirstOrDefault()?.BackdropUrl is { Length: > 0 } image
+    private bool _searching;
+    private bool _searchFailed;
+    private bool _rendered;
+    private string _searchInput = string.Empty;
+    private string? _loadedSearchKey;
+    private int _searchVersion;
+    private CancellationTokenSource? _searchCts;
+
+    private string SearchQuery => Q?.Trim() ?? string.Empty;
+    private bool HasSearch => SearchQuery.Length > 0;
+    private MediaKind? SelectedKind => Enum.TryParse<MediaKind>(QueryKind, true, out var kind)
+        && kind is MediaKind.Artist or MediaKind.Album or MediaKind.Track ? kind : null;
+    private string CurrentMusicUrl => MusicNavigationContext.BuildSearchUrl(SearchQuery, SelectedKind);
+    private string SearchReturnLabel => $"Search: {SearchQuery}";
+    private string HeroStyle => !HasSearch && _hub?.NewReleases.FirstOrDefault()?.BackdropUrl is { Length: > 0 } image
         ? $"background-image: url('{image}')" : string.Empty;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _searchInput = SearchQuery;
+        if (_rendered && SearchKey != _loadedSearchKey)
+            await RunSearchAsync();
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender || _loaded) return;
-        _loaded = true;
+        if (!firstRender) return;
+        _rendered = true;
         await ReloadAsync();
     }
 
     private async Task ReloadAsync()
     {
-        _loading = true;
         _failed = false;
-        await InvokeAsync(StateHasChanged);
         try
         {
             _enabled = (await MusicSettings.GetAsync()).CatalogEnabled;
-            _hub = _enabled ? await Discovery.GetHubAsync() : null;
-            if (_hub is not null)
-            {
-                var cards = _hub.TrendingTracks.Concat(_hub.NewReleases).Concat(_hub.PopularArtists).ToList();
-                await PlexMusic.AnnotatePresenceAsync(cards);
-                var statuses = await MediaRequestService.GetMyRequestStatusesAsync(
-                    cards.Select(x => x.ResolveMediaRef()));
-                foreach (var card in cards)
-                    if (statuses.TryGetValue(card.ResolveMediaRef().StableKey, out var status))
-                        card.RequestStatus = status;
-            }
-            _failed = _enabled && _hub is not null
-                && _hub.TrendingTracks.Count + _hub.NewReleases.Count + _hub.PopularArtists.Count == 0;
+            _catalogLoaded = true;
+            await InvokeAsync(StateHasChanged);
+            if (!_enabled) return;
+
+            var hubTask = Discovery.GetHubAsync();
+            if (HasSearch) await RunSearchAsync();
+            _hub = await hubTask;
+            await AnnotateAsync(_hub.TrendingTracks.Concat(_hub.NewReleases).Concat(_hub.PopularArtists).ToList());
+            _failed = _hub.TrendingTracks.Count + _hub.NewReleases.Count + _hub.PopularArtists.Count
+                + _hub.FeaturedPlaylists.Count + _hub.Categories.Count == 0;
         }
-        catch { _failed = true; }
-        finally { _loading = false; await InvokeAsync(StateHasChanged); }
+        catch (Exception ex)
+        {
+            _failed = true;
+            Logger.LogWarning(ex, "Music discovery could not be loaded");
+        }
+        finally
+        {
+            _catalogLoaded = true;
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
-    private void SearchKeyDown(KeyboardEventArgs e) { if (e.Key == "Enter") Search(); }
-    private ValueTask ScrollToSectionAsync(string id) => JS.InvokeVoidAsync("plexui.scrollToId", id);
-
-    private void Search()
+    private async Task RunSearchAsync()
     {
-        if (!string.IsNullOrWhiteSpace(_search))
-            Navigation.NavigateTo($"/search?type=music&q={Uri.EscapeDataString(_search.Trim())}");
+        var key = SearchKey;
+        _loadedSearchKey = key;
+        var version = Interlocked.Increment(ref _searchVersion);
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _searchCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
+        _searchResults = null;
+        _searchFailed = false;
+        if (!HasSearch) { _searching = false; return; }
+        _searching = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var result = await CatalogSearch.SearchAsync(SearchQuery, SelectedKind, 20, cts.Token);
+            if (version != _searchVersion) return;
+            await AnnotateAsync(result.AllItems().ToList(), cts.Token);
+            if (version == _searchVersion) _searchResults = result;
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (version != _searchVersion) return;
+            _searchFailed = true;
+            Logger.LogWarning(ex, "Music search failed for {Query}", SearchQuery);
+        }
+        finally
+        {
+            if (version == _searchVersion)
+            {
+                _searching = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
     }
+
+    private async Task AnnotateAsync(List<MediaCardDto> cards, CancellationToken cancellationToken = default)
+    {
+        if (cards.Count == 0) return;
+        await PlexMusic.AnnotatePresenceAsync(cards, cancellationToken);
+        var statuses = await MediaRequestService.GetMyRequestStatusesAsync(cards.Select(x => x.ResolveMediaRef()));
+        foreach (var card in cards)
+            if (statuses.TryGetValue(card.ResolveMediaRef().StableKey, out var status)) card.RequestStatus = status;
+    }
+
+    private string SearchKey => $"{SearchQuery}:{SelectedKind}";
+    private void SubmitSearch()
+    {
+        if (string.IsNullOrWhiteSpace(_searchInput)) { ClearSearch(); return; }
+        Navigation.NavigateTo(MusicNavigationContext.BuildSearchUrl(_searchInput, SelectedKind));
+    }
+    private void ClearSearch() { _searchInput = string.Empty; Navigation.NavigateTo("/music"); }
+    private void SetKind(MediaKind? kind) => Navigation.NavigateTo(
+        MusicNavigationContext.BuildSearchUrl(HasSearch ? SearchQuery : _searchInput, kind));
+    private string KindHref(MediaKind kind) => MusicNavigationContext.BuildSearchUrl(SearchQuery, kind);
+    private ValueTask ScrollToSectionAsync(string id) => JS.InvokeVoidAsync("plexui.scrollToId", id);
 
     private async Task Request(MediaCardDto media)
     {
@@ -168,6 +321,13 @@
 
     private static string CategoryHref(MusicCategoryDto category)
         => category.Token.StartsWith("search:", StringComparison.Ordinal)
-            ? $"/search?type=music&q={Uri.EscapeDataString(category.Token[7..])}"
+            ? MusicNavigationContext.BuildSearchUrl(category.Token[7..])
             : $"/music/category?token={Uri.EscapeDataString(category.Token)}&name={Uri.EscapeDataString(category.Title)}";
+
+    public void Dispose()
+    {
+        Interlocked.Increment(ref _searchVersion);
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+    }
 }

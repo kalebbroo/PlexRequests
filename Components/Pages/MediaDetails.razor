@@ -39,15 +39,15 @@ else if (_media == null)
             <MudText Typo="Typo.body1" Class="text-secondary">
                 This title isn't available right now.
             </MudText>
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/browse" Class="mt-4">
-                Browse Home
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="@(Type?.Equals("music", StringComparison.OrdinalIgnoreCase) == true ? "/music" : "/browse")" Class="mt-4">
+                @(Type?.Equals("music", StringComparison.OrdinalIgnoreCase) == true ? "Back to Music" : "Browse Home")
             </MudButton>
         </div>
     </MudContainer>
 }
 else
 {
-    <div class="details-container">
+    <div class="details-container @(_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music ? "music-details" : null)">
         <!-- Hero Section -->
         <section class="details-hero">
             <div class="hero-background">
@@ -123,6 +123,21 @@ else
                             @if (!string.IsNullOrWhiteSpace(_media.Subtitle))
                             {
                                 <p class="tagline">@_media.Subtitle</p>
+                            }
+
+                            @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music && _media.Music is not null)
+                            {
+                                <div class="music-context" aria-label="Music relationships">
+                                    <span class="music-kind-badge">@MusicKindLabel</span>
+                                    @if (RelatedArtistHref is not null && !string.IsNullOrWhiteSpace(_media.Music.ArtistCredit))
+                                    {
+                                        <a href="@RelatedArtistHref"><MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" /> @_media.Music.ArtistCredit</a>
+                                    }
+                                    @if (RelatedAlbumHref is not null && !string.IsNullOrWhiteSpace(_media.Music.AlbumTitle))
+                                    {
+                                        <a href="@RelatedAlbumHref"><MudIcon Icon="@Icons.Material.Filled.Album" Size="Size.Small" /> @_media.Music.AlbumTitle</a>
+                                    }
+                                </div>
                             }
                             
                             @if (!string.IsNullOrEmpty(_media.Tagline))
@@ -241,7 +256,7 @@ else
                                     {
                                         @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music)
                                         {
-                                            <span class="genre-link">@genre</span>
+                                            <a href="@MusicNavigationContext.BuildSearchUrl(genre)" class="genre-link">@genre</a>
                                         }
                                         else
                                         {
@@ -275,7 +290,8 @@ else
                             </div>
                         </MudTabPanel>
                     }
-                    @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music && _media.Music?.Tracks.Count > 0)
+                    @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music
+                        && _media.Music?.Kind != MediaKind.Track && _media.Music?.Tracks.Count > 0)
                     {
                         <MudTabPanel Text="Tracks">
                             <div class="episodes-section">
@@ -528,8 +544,7 @@ else
                         </div>
                     </MudTabPanel>
                     
-                    @if (_media.MediaType != PlexRequestsHosted.Shared.Enums.MediaType.Music
-                        || _media.Music?.Kind != MediaKind.Artist)
+                    @if (_media.MediaType != PlexRequestsHosted.Shared.Enums.MediaType.Music)
                     {
                         <MudTabPanel Text="Similar">
                             <div class="similar-section">
@@ -550,6 +565,29 @@ else
                         </MudTabPanel>
                     }
                 </MudTabs>
+                @if (_media.MediaType == PlexRequestsHosted.Shared.Enums.MediaType.Music
+                    && _similarMedia?.Any() == true)
+                {
+                    <section class="music-related-section">
+                        <div class="music-related-head">
+                            <div>
+                                <span>Keep exploring</span>
+                                <h2>@RelatedSectionTitle</h2>
+                            </div>
+                            @if (RelatedArtistHref is not null)
+                            {
+                                <a href="@RelatedArtistHref">View artist <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" /></a>
+                            }
+                        </div>
+                        <div class="similar-grid music-related-grid">
+                            @foreach (var related in _similarMedia)
+                            {
+                                <PlexRequestsHosted.Components.Shared.MediaCard Media="related" OnRequest="RequestSimilar" OnPlay="PlayCard"
+                                    ReturnUrl="@CurrentDetailsUrl" ReturnLabel="@_media.Title" />
+                            }
+                        </div>
+                    </section>
+                }
             </MudContainer>
         </section>
     </div>
@@ -654,11 +692,33 @@ else
     private string BackUrl => MusicNavigationContext.ValidateReturnUrl(ReturnUrl);
     private string BackLabel => MusicNavigationContext.ResolveReturnLabel(ReturnUrl, ReturnLabel);
     private string CurrentDetailsUrl => $"/{Navigation.ToBaseRelativePath(Navigation.Uri)}";
+    private string MusicKindLabel => _media?.Music?.Kind switch
+    {
+        MediaKind.Artist => "Artist",
+        MediaKind.Track => "Song",
+        _ => _media?.Music?.PrimaryType ?? "Album"
+    };
+    private string? RelatedArtistHref => _media?.Music is { Kind: not MediaKind.Artist, ArtistId.Length: > 0 } music
+        ? MusicDetailHref(MediaKind.Artist, music.ArtistId)
+        : null;
+    private string? RelatedAlbumHref => _media?.Music is { Kind: MediaKind.Track, ReleaseGroupId.Length: > 0 } music
+        ? MusicDetailHref(MediaKind.Album, music.ReleaseGroupId)
+        : null;
+    private string RelatedSectionTitle => !string.IsNullOrWhiteSpace(_media?.Music?.ArtistCredit)
+        ? $"More from {_media.Music.ArtistCredit}"
+        : "Related music";
     private string? _loadedKey;
     private int _loadVersion;
     private bool CanRequest => _media is not null && MediaModules.IsEnabled(_media.MediaType)
         && MediaModules.Get(_media.MediaType).Capabilities.HasFlag(MediaModuleCapabilities.Request)
         && (_media.MediaType != PlexRequestsHosted.Shared.Enums.MediaType.Music || _musicRequestsEnabled);
+
+    private string MusicDetailHref(MediaKind kind, string id)
+    {
+        var provider = _media?.ResolveMediaRef().Provider ?? Provider ?? "musicbrainz";
+        var href = $"/media/music/{kind.ToString().ToLowerInvariant()}/{Uri.EscapeDataString(provider)}/{Uri.EscapeDataString(id)}";
+        return MusicNavigationContext.AddReturnContext(href, CurrentDetailsUrl, _media?.Title);
+    }
 
     // Load after first render (shell/skeleton paints instantly), and again when the route id/type
     // changes on the same component instance (e.g. clicking a "Similar" title).

@@ -114,6 +114,21 @@ public sealed class MusicMetadataTests
     }
 
     [Fact]
+    public async Task TrackSearch_QueriesRecordingAndArtistFieldsInsteadOfOnlyTheLiteralTitle()
+    {
+        var handler = new QueueHandler("{\"recordings\":[]}");
+        var provider = CreateProvider(handler);
+
+        await provider.SearchAsync(new MediaSearchQuery
+        {
+            Query = "Daft Punk", MediaType = MediaType.Music, Kind = MediaKind.Track
+        });
+
+        Assert.Contains("recording%3A%22Daft%20Punk%22", handler.Requests[0], StringComparison.Ordinal);
+        Assert.Contains("artist%3A%22Daft%20Punk%22", handler.Requests[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ListenBrainzDiscovery_DeduplicatesAndRanksAlbumsByListeningCount()
     {
         const string json = """
