@@ -43,6 +43,7 @@ public class DelugeErrorTests
     [InlineData("Unknown torrent")]
     [InlineData("torrent not found")]
     [InlineData("InvalidTorrentError: Invalid torrent id")]
+    [InlineData("Failure: <class 'deluge.error.InvalidTorrentError'>: torrent_id abc not in session.")]
     public void A_vanished_torrent_is_its_own_category(string message) =>
         Assert.Equal(DelugeErrorKind.UnknownTorrent, DelugeError.Classify(message));
 

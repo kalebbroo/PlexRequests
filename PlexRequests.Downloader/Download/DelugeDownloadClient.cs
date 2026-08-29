@@ -102,8 +102,21 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
     public async Task<bool> RemoveAsync(string torrentId, bool removeData, CancellationToken ct)
     {
         await EnsureAuthAsync(ct);
-        var result = await RpcAsync("core.remove_torrent", new object[] { torrentId, removeData }, ct);
-        return result.ValueKind == JsonValueKind.True;
+        try
+        {
+            var result = await RpcAsync("core.remove_torrent", new object[] { torrentId, removeData }, ct);
+            return result.ValueKind == JsonValueKind.True;
+        }
+        catch (DelugeUnknownTorrentException)
+        {
+            // DELETE semantics are idempotent: if Deluge no longer knows this exact transfer, the desired
+            // client state already holds. This is also the safe restart boundary after a prior removal
+            // succeeded but the worker stopped before it could persist the imported state.
+            _logger.LogInformation(
+                "Torrent {TorrentId} is already absent from Deluge; treating removal as complete (removeData={RemoveData})",
+                torrentId, removeData);
+            return true;
+        }
     }
 
     public async Task<bool> SetWantedFilesAsync(string torrentId, IReadOnlyList<bool> keep, CancellationToken ct)
