@@ -54,6 +54,18 @@ public sealed class CatalogHydrationPageDto
     public List<CatalogItemDto> Items { get; set; } = new();
 }
 
+/// <summary>A source-scoped, terminal detail-page observation such as an immutable torrent id that the
+/// source now reports as deleted. Transient timeouts and challenges must never use this contract.</summary>
+public sealed class CatalogHydrationFailureDto
+{
+    public int IndexerId { get; set; }
+    public string Source { get; set; } = string.Empty;
+    public string ExternalId { get; set; } = string.Empty;
+    public string SourceUrl { get; set; } = string.Empty;
+    public string Error { get; set; } = string.Empty;
+    public DateTime OccurredAt { get; set; }
+}
+
 public sealed class CatalogStatsDto
 {
     public bool Enabled { get; set; }

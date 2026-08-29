@@ -165,3 +165,39 @@ test("recognizes category and category-search page layouts", () => {
   assert.equal(parser.inferCategory("https://1337x.to/cat/Movies/1/", document), "Movies");
   assert.equal(parser.inferCategory("https://1337x.to/category-search/example/TV/1/", document), "TV");
 });
+
+test("classifies the exact 1337x removed-detail response as terminal", () => {
+  const document = {
+    title: "Bad Torrent ID | 1337x",
+    body: { textContent: "Bad Torrent ID" },
+    querySelector: () => null,
+    querySelectorAll: () => []
+  };
+
+  const parsed = parser.parsePage(
+    document,
+    "https://1337x.to/torrent/7654321/example/");
+
+  assert.equal(parsed.sourceKey, "1337x");
+  assert.equal(parsed.pageType, "missing-detail");
+  assert.deepEqual(parsed.items, []);
+});
+
+test("generic missing magnets and EXT text remain retryable rather than terminal", () => {
+  const document = {
+    title: "Bad Torrent ID",
+    body: { textContent: "Bad Torrent ID" },
+    querySelector: () => null,
+    querySelectorAll: () => []
+  };
+
+  assert.equal(parser.parsePage(
+    document,
+    "https://ext.to/example-release-10000002/").pageType, "unsupported");
+
+  document.title = "Example release | 1337x";
+  document.body.textContent = "This page has not finished rendering.";
+  assert.equal(parser.parsePage(
+    document,
+    "https://1337x.to/torrent/7654321/example/").pageType, "unsupported");
+});

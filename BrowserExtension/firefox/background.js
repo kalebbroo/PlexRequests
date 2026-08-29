@@ -695,6 +695,30 @@ async function failWorker(tabId, reason) {
   scheduleHydration();
 }
 
+async function rejectMissingWorker(tabId, pageUrl) {
+  const state = await workerState();
+  if (state.hydrationWorkerTabId !== tabId || !state.hydrationWorkerExternalId) return;
+  try {
+    const response = await apiFetch("/api/browser-capture/hydration-failures", {
+      method: "POST",
+      body: JSON.stringify({
+        externalId: state.hydrationWorkerExternalId,
+        pageUrl,
+        failureCode: "not-found"
+      })
+    }, state.hydrationWorkerSourceKey);
+    if (!response.ok) {
+      await failWorker(tabId, `Could not record removed detail: ${await safeError(response)}`);
+      return;
+    }
+    // The server has removed this immutable id from its durable backlog. Completing the local row keeps
+    // browser storage and server state convergent instead of resurrecting it after the next cursor wrap.
+    await finishWorker(tabId, [{ externalId: state.hydrationWorkerExternalId }]);
+  } catch (error) {
+    await failWorker(tabId, `Could not record removed detail: ${error.message}`);
+  }
+}
+
 async function pauseForChallenge(tabId) {
   const state = await workerState();
   if (state.hydrationWorkerTabId !== tabId) return;
@@ -861,6 +885,9 @@ browser.runtime.onMessage.addListener((message, sender) => {
       });
     case "page-observation":
       if (message.pageType === "challenge") return pauseForChallenge(sender.tab && sender.tab.id);
+      if (message.pageType === "missing-detail") {
+        return rejectMissingWorker(sender.tab && sender.tab.id, message.pageUrl);
+      }
       if (message.pageType === "unsupported-detail") {
         return failWorker(sender.tab && sender.tab.id, "The detail page loaded without a usable magnet link.");
       }

@@ -103,9 +103,21 @@ public sealed class ReleaseCatalogService(
                 sighting.PublishedAt = item.PublishedAt?.ToUniversalTime();
                 sighting.LastSeenAt = observedAt;
                 var isResolved = release is not null || sighting.ReleaseId is not null;
-                sighting.HydrationState = isResolved
-                    ? CatalogHydrationState.Hydrated
-                    : item.NeedsHydration ? CatalogHydrationState.Pending : CatalogHydrationState.NotRequired;
+                if (isResolved)
+                {
+                    sighting.HydrationState = CatalogHydrationState.Hydrated;
+                    sighting.LastHydratedAt = observedAt;
+                    sighting.HydrationError = null;
+                }
+                else if (sighting.HydrationState != CatalogHydrationState.Failed)
+                {
+                    // A repeated listing observation must not revive an immutable source id whose detail
+                    // page authoritatively reported deletion. A later detail carrying a real hash still
+                    // enters the resolved branch above and self-heals the row.
+                    sighting.HydrationState = item.NeedsHydration
+                        ? CatalogHydrationState.Pending
+                        : CatalogHydrationState.NotRequired;
+                }
                 if (!isResolved) result.UnresolvedSightings++;
             }
 
@@ -195,6 +207,46 @@ public sealed class ReleaseCatalogService(
                 NeedsHydration = true
             }).ToList()
         };
+    }
+
+    public async Task<bool> MarkHydrationFailedAsync(
+        CatalogHydrationFailureDto failure,
+        CancellationToken cancellationToken)
+    {
+        if (!options.Value.Enabled) return false;
+        if (failure.IndexerId <= 0)
+            throw new ArgumentException("IndexerId must be positive.");
+        if (string.IsNullOrWhiteSpace(failure.Source) || failure.Source.Length > 128
+            || string.IsNullOrWhiteSpace(failure.ExternalId) || failure.ExternalId.Length > 512
+            || string.IsNullOrWhiteSpace(failure.SourceUrl) || failure.SourceUrl.Length > 2048
+            || string.IsNullOrWhiteSpace(failure.Error) || failure.Error.Length > 512)
+            throw new ArgumentException("A hydration failure has invalid or oversized fields.");
+
+        var occurredAt = failure.OccurredAt == default
+            ? DateTime.UtcNow
+            : failure.OccurredAt.ToUniversalTime();
+        await _writeGate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+            var sighting = await db.Sightings.SingleOrDefaultAsync(x =>
+                x.IndexerId == failure.IndexerId
+                && x.Source == failure.Source.Trim()
+                && x.ExternalId == failure.ExternalId.Trim(), cancellationToken);
+            if (sighting is null || sighting.ReleaseId is not null
+                || sighting.HydrationState == CatalogHydrationState.Hydrated)
+                return false;
+
+            sighting.HydrationState = CatalogHydrationState.Failed;
+            sighting.HydrationError = failure.Error.Trim();
+            sighting.LastHydratedAt = occurredAt;
+            await db.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
     }
 
     public async Task<CatalogStatsDto> GetStatsAsync(CancellationToken cancellationToken)

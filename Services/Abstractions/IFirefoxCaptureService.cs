@@ -24,6 +24,10 @@ public interface IFirefoxCaptureService
         string token,
         FirefoxCaptureBatchDto batch,
         CancellationToken cancellationToken = default);
+    Task<bool?> ReportHydrationFailureAsync(
+        string token,
+        FirefoxCaptureHydrationFailureDto failure,
+        CancellationToken cancellationToken = default);
     Task<FirefoxCaptureAdminStatusDto> GetAdminStatusAsync(
         int indexerId,
         CancellationToken cancellationToken = default);

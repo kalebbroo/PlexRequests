@@ -49,6 +49,14 @@ public sealed class FirefoxCaptureIngestResponseDto
     public int UnresolvedSightings { get; set; }
 }
 
+/// <summary>A rendered detail page that authoritatively says its immutable source id no longer exists.</summary>
+public sealed class FirefoxCaptureHydrationFailureDto
+{
+    public string ExternalId { get; set; } = string.Empty;
+    public string PageUrl { get; set; } = string.Empty;
+    public string FailureCode { get; set; } = string.Empty;
+}
+
 public sealed class FirefoxCaptureConnectionDto
 {
     public bool Connected { get; set; }

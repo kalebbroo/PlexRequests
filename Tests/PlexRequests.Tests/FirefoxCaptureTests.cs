@@ -319,6 +319,76 @@ public sealed class FirefoxCaptureTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Removed_1337x_detail_becomes_terminal_and_cannot_reenter_the_backlog()
+    {
+        var token = await PairAsync();
+        await _capture.IngestAsync(token, Batch("removed-listing", "listing", Item()));
+
+        var accepted = await _capture.ReportHydrationFailureAsync(token, new FirefoxCaptureHydrationFailureDto
+        {
+            ExternalId = "1337x:torrent:1",
+            PageUrl = "https://1337x.to/torrent/1/example/",
+            FailureCode = "not-found"
+        });
+
+        Assert.True(accepted);
+        Assert.Empty((await _capture.GetPendingDetailsAsync(token, 0, 250))!.Items);
+        await using (var catalog = await _catalogFactory.CreateDbContextAsync())
+        {
+            var sighting = await catalog.Sightings.SingleAsync();
+            Assert.Equal(CatalogHydrationState.Failed, sighting.HydrationState);
+            Assert.Equal("1337x reported Bad Torrent ID.", sighting.HydrationError);
+            Assert.Equal(_clock.GetUtcNow().UtcDateTime, sighting.LastHydratedAt);
+        }
+
+        // Seeing the same stale listing again must not revive it. Only actual detail evidence can do that.
+        await _capture.IngestAsync(token, Batch("removed-listing-again", "listing", Item()));
+        Assert.Empty((await _capture.GetPendingDetailsAsync(token, 0, 250))!.Items);
+
+        var detail = Item();
+        detail.MagnetUri = $"magnet:?xt=urn:btih:{new string('D', 40)}&dn=Example.Movie";
+        detail.NeedsHydration = false;
+        await _capture.IngestAsync(token, Batch("removed-detail-recovered", "detail", detail));
+        await using var recoveredCatalog = await _catalogFactory.CreateDbContextAsync();
+        var recovered = await recoveredCatalog.Sightings.SingleAsync();
+        Assert.Equal(CatalogHydrationState.Hydrated, recovered.HydrationState);
+        Assert.Null(recovered.HydrationError);
+    }
+
+    [Fact]
+    public async Task Terminal_failure_report_is_token_scoped_and_id_must_match_the_rendered_url()
+    {
+        var token = await PairAsync();
+        await _capture.IngestAsync(token, Batch("scoped-listing", "listing", Item()));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => _capture.ReportHydrationFailureAsync(token,
+            new FirefoxCaptureHydrationFailureDto
+            {
+                ExternalId = "1337x:torrent:2",
+                PageUrl = "https://1337x.to/torrent/1/example/",
+                FailureCode = "not-found"
+            }));
+        Assert.Null(await _capture.ReportHydrationFailureAsync("invalid-token",
+            new FirefoxCaptureHydrationFailureDto
+            {
+                ExternalId = "1337x:torrent:1",
+                PageUrl = "https://1337x.to/torrent/1/example/",
+                FailureCode = "not-found"
+            }));
+
+        var extToken = await PairAsync(38);
+        await Assert.ThrowsAsync<ArgumentException>(() => _capture.ReportHydrationFailureAsync(extToken,
+            new FirefoxCaptureHydrationFailureDto
+            {
+                ExternalId = "extto:torrent:10000002",
+                PageUrl = "https://ext.to/example-show-10000002/",
+                FailureCode = "not-found"
+            }));
+
+        Assert.Single((await _capture.GetPendingDetailsAsync(token, 0, 250))!.Items);
+    }
+
+    [Fact]
     public async Task Indexer_rename_does_not_orphan_the_devices_existing_hydration_backlog()
     {
         var token = await PairAsync();
