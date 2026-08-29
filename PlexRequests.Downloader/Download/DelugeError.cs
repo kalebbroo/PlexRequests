@@ -61,7 +61,8 @@ public static partial class DelugeError
         RegexOptions.IgnoreCase)]
     private static partial Regex NotAuthenticated();
 
-    [GeneratedRegex(@"unknown\s+torrent|torrent\s+not\s+found|invalid\s+torrent(?:\s+id)?", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"unknown\s+torrent|torrent\s+not\s+found|invalid\s*torrent(?:\s+id|error)?|torrent_id\s+[^\s]+\s+not\s+in\s+session",
+        RegexOptions.IgnoreCase)]
     private static partial Regex UnknownTorrent();
 
     [GeneratedRegex(@"\(([0-9a-f]{40}|[0-9a-f]{64})\)", RegexOptions.IgnoreCase)]

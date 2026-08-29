@@ -48,6 +48,46 @@ public sealed class PostImportCleanupTests
     }
 
     [Fact]
+    public async Task Concurrent_callers_share_one_successful_backend_removal()
+    {
+        var destination = NewTempFile("verified-media");
+        try
+        {
+            var backend = new RecordingBackend(canKeepSourceData: true, removalDelay: TimeSpan.FromMilliseconds(50));
+            var cleanup = Create(backend, TransferMode.Move);
+            var result = SuccessfulResult(destination);
+
+            var first = cleanup.RunAsync(AcquisitionProtocol.Torrent, "shared-id", result, CancellationToken.None);
+            var second = cleanup.RunAsync(AcquisitionProtocol.Torrent, "shared-id", result, CancellationToken.None);
+
+            Assert.True(await first);
+            Assert.True(await second);
+            Assert.Equal(1, backend.RemoveCallCount);
+            Assert.Equal(new[] { true }, backend.RemoveDataCalls);
+        }
+        finally { File.Delete(destination); }
+    }
+
+    [Fact]
+    public async Task Declined_cleanup_is_not_cached_and_can_be_retried()
+    {
+        var destination = NewTempFile("verified-media");
+        try
+        {
+            var backend = new RecordingBackend(canKeepSourceData: true, removalResults: new[] { false, true });
+            var cleanup = Create(backend, TransferMode.Move);
+            var result = SuccessfulResult(destination);
+
+            Assert.False(await cleanup.RunAsync(
+                AcquisitionProtocol.Torrent, "retry-id", result, CancellationToken.None));
+            Assert.True(await cleanup.RunAsync(
+                AcquisitionProtocol.Torrent, "retry-id", result, CancellationToken.None));
+            Assert.Equal(2, backend.RemoveCallCount);
+        }
+        finally { File.Delete(destination); }
+    }
+
+    [Fact]
     public async Task Copy_import_keeps_payload_when_delete_source_is_disabled()
     {
         var destination = NewTempFile("verified-media");
@@ -150,19 +190,27 @@ public sealed class PostImportCleanupTests
         public Task RefreshAsync(CancellationToken ct) => Task.CompletedTask;
     }
 
-    private sealed class RecordingBackend(bool canKeepSourceData) : IAcquisitionBackend
+    private sealed class RecordingBackend(
+        bool canKeepSourceData,
+        TimeSpan? removalDelay = null,
+        IReadOnlyList<bool>? removalResults = null) : IAcquisitionBackend
     {
+        private int _removeCallCount;
+        private readonly Queue<bool> _removalResults = new(removalResults ?? new[] { true });
         public List<bool> RemoveDataCalls { get; } = new();
+        public int RemoveCallCount => Volatile.Read(ref _removeCallCount);
         public AcquisitionProtocol Protocol => AcquisitionProtocol.Torrent;
         public AcquisitionBackendCapabilities Capabilities { get; } = new(false, false, canKeepSourceData);
         public Task<string?> EnqueueAsync(AcquisitionRequest request, CancellationToken ct) => Task.FromResult<string?>("id");
         public Task<TransferStatus?> GetStatusAsync(string transferId, CancellationToken ct) => Task.FromResult<TransferStatus?>(null);
         public TransferHealthDecision EvaluateHealth(TransferStatus? status, DateTime addedAt,
             DateTime? progressChangedAt, DateTime now) => new(TransferVerdict.Wait);
-        public Task<bool> RemoveAsync(string transferId, bool removeData, CancellationToken ct)
+        public async Task<bool> RemoveAsync(string transferId, bool removeData, CancellationToken ct)
         {
+            Interlocked.Increment(ref _removeCallCount);
             RemoveDataCalls.Add(removeData);
-            return Task.FromResult(true);
+            if (removalDelay is not null) await Task.Delay(removalDelay.Value, ct);
+            return _removalResults.Count > 0 ? _removalResults.Dequeue() : true;
         }
         public Task<bool> SetWantedFilesAsync(string transferId, IReadOnlyList<bool> keep, CancellationToken ct) =>
             Task.FromResult(false);
