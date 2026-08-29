@@ -12,6 +12,9 @@ public interface IReleaseCatalogService
         long afterId,
         int limit,
         CancellationToken cancellationToken);
+    Task<bool> MarkHydrationFailedAsync(
+        CatalogHydrationFailureDto failure,
+        CancellationToken cancellationToken);
     Task<CatalogStatsDto> GetStatsAsync(CancellationToken cancellationToken);
     Task<CatalogCheckpointDto> GetCheckpointAsync(int indexerId, CancellationToken cancellationToken);
     Task<CatalogCheckpointDto> ReportFailureAsync(CatalogFailureDto failure, CancellationToken cancellationToken);

@@ -56,4 +56,13 @@
     <PackageReference Include="TMDbLib" Version="2.2.0" />
   </ItemGroup>
 
+  <!-- The repository's existing workflow builds this project but historically never exercised the
+       extension runtime. Keep that gate coupled to the build without requiring a workflow-file update
+       (or running Node inside production Docker builds). GitHub's hosted runner already supplies Node. -->
+  <Target Name="TestFirefoxExtensionInGitHubActions"
+          BeforeTargets="Build"
+          Condition="'$(GITHUB_ACTIONS)' == 'true' and '$(DesignTimeBuild)' != 'true'">
+    <Exec Command="bash &quot;$(MSBuildProjectDirectory)/scripts/test-firefox-extension.sh&quot;" />
+  </Target>
+
 </Project>

@@ -1,6 +1,7 @@
 (function startCapture() {
   "use strict";
 
+  const sources = globalThis.PlexRequestsCaptureSources;
   const parser = globalThis.PlexRequestsCaptureParser;
   const captureQueue = globalThis.PlexRequestsCaptureQueue;
   let timer = null;
@@ -79,6 +80,13 @@
       }
       return;
     }
+    if (parsed.pageType === "missing-detail") {
+      clearTimeout(challengeTimer);
+      clearTimeout(unsupportedTimer);
+      challengeTimer = null;
+      await observe("missing-detail", pageUrl.toString());
+      return;
+    }
     clearTimeout(challengeTimer);
     challengeTimer = null;
     if (!parsed.items.length || !["listing", "detail"].includes(parsed.pageType)) {
@@ -129,7 +137,7 @@
 
   function scheduleCapture(delay = 1200) {
     clearTimeout(timer);
-    timer = setTimeout(() => void capture(), delay);
+    timer = setTimeout(capture, delay);
   }
 
   scheduleCapture();

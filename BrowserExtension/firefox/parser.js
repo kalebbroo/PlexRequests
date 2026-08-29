@@ -8,7 +8,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createParser(sources) {
   "use strict";
 
-  const PARSER_VERSION = 3;
+  const PARSER_VERSION = 4;
 
   function cleanText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
@@ -240,6 +240,16 @@
       || Boolean(document.querySelector("#challenge-form, .cf-challenge-running"));
   }
 
+  function looksLikeMissingDetail(document, source) {
+    if (source?.key !== "1337x") return false;
+    const title = cleanText(document.title);
+    const text = cleanText(document.body && document.body.textContent).slice(0, 1500);
+    const heading = firstText(document, ["main h1", "h1", ".box-info-heading h1"]);
+    return /^bad torrent id[.!]?$/i.test(heading || "")
+      || /^bad torrent id(?:\s*[|\-].*)?$/i.test(title)
+      || (text.length <= 200 && /\bbad torrent id\b/i.test(text));
+  }
+
   function deduplicate(items) {
     const byId = new Map();
     for (const item of items.filter(Boolean)) {
@@ -254,6 +264,8 @@
     if (!source) return { sourceKey: null, pageType: "unsupported", items: [] };
     if (looksLikeChallenge(document)) return { sourceKey: source.key, pageType: "challenge", items: [] };
     if (sources.isDetailUrl(pageUrl, source.key)) {
+      if (looksLikeMissingDetail(document, source))
+        return { sourceKey: source.key, pageType: "missing-detail", items: [] };
       const item = parseDetail(document, pageUrl);
       return { sourceKey: source.key, pageType: item ? "detail" : "unsupported", items: item ? [item] : [] };
     }
@@ -279,6 +291,7 @@
     parseListingRow,
     parseExtListingLink,
     parseDetail,
+    looksLikeMissingDetail,
     parsePage
   };
 });

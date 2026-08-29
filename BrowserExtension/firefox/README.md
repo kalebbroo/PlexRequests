@@ -32,11 +32,12 @@ catalog backlog every five minutes. This rebuilds missing local detail work afte
 browser storage loss, or interrupted profile. Only public detail URLs are stored by Plex Requests; cookies,
 CSRF tokens, and other browser session material remain inside Firefox and are never uploaded.
 
-Hydration failures are never permanently abandoned. Interrupted work is recovered after Firefox restarts;
-ordinary failures retry with capped exponential backoff, while repeated failures and expired site sessions
-move to a slower “Needs attention” cadence. Revisiting a listing refreshes its session-bound data and moves it
-back to the fast queue. Challenge pauses are scoped to one indexer, so EXT.to can keep resolving while 1337x
-is waiting for verification, and vice versa.
+Transient hydration failures are never permanently abandoned. Interrupted work is recovered after Firefox
+restarts; ordinary failures retry with capped exponential backoff, while repeated failures and expired site
+sessions move to a slower “Needs attention” cadence. A rendered 1337x **Bad Torrent ID** response is different:
+the immutable id has been removed, so Firefox records that terminal state with Plex Requests and removes it
+from both queues. Challenge pauses are scoped to one indexer, so EXT.to can keep resolving while 1337x is
+waiting for verification, and vice versa.
 
 The detail queue always reserves at least 1,600 of its 2,000 slots for fresh or actively recoverable work.
 Needs-attention diagnostics are retained for up to 14 days, capped at 200 per source and 400 overall. Evicted

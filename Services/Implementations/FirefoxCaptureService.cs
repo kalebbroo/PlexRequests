@@ -224,6 +224,48 @@ public sealed class FirefoxCaptureService(
         };
     }
 
+    public async Task<bool?> ReportHydrationFailureAsync(
+        string token,
+        FirefoxCaptureHydrationFailureDto failure,
+        CancellationToken cancellationToken = default)
+    {
+        if (!captureOptions.Value.Enabled || !catalogOptions.Value.Enabled || string.IsNullOrWhiteSpace(token))
+            return null;
+        var now = UtcNow;
+        await using var db = await appFactory.CreateDbContextAsync(cancellationToken);
+        var device = await FindActiveDeviceAsync(db, token, now, cancellationToken);
+        if (device is null) return null;
+
+        var indexer = device.Indexer!;
+        if (!indexer.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(failure.FailureCode, "not-found", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Only a rendered 1337x not-found detail can be marked terminal.");
+        if (string.IsNullOrWhiteSpace(failure.ExternalId) || failure.ExternalId.Length > 512
+            || !TryAllowedUri(failure.PageUrl, indexer, out var pageUri)
+            || !string.Equals(failure.ExternalId.Trim(), DetailExternalId(pageUri!, indexer), StringComparison.Ordinal))
+            throw new ArgumentException("The terminal detail URL does not match its external ID.");
+
+        var changed = await catalog.MarkHydrationFailedAsync(new CatalogHydrationFailureDto
+        {
+            IndexerId = device.IndexerId,
+            Source = SourceName(indexer),
+            ExternalId = failure.ExternalId.Trim(),
+            SourceUrl = pageUri!.ToString(),
+            Error = "1337x reported Bad Torrent ID.",
+            OccurredAt = now
+        }, cancellationToken);
+
+        device.LastSeenAt = now;
+        device.LastCaptureAt = now;
+        device.LastPageUrl = Clean(failure.PageUrl, 2048);
+        RenewLeaseIfNeeded(device, now);
+        await db.SaveChangesAsync(cancellationToken);
+        logger.LogInformation(
+            "Firefox capture marked removed detail {ExternalId} terminal for indexer {IndexerId} (changed={Changed})",
+            failure.ExternalId, device.IndexerId, changed);
+        return changed;
+    }
+
     public async Task<FirefoxCaptureAdminStatusDto> GetAdminStatusAsync(
         int indexerId,
         CancellationToken cancellationToken = default)
@@ -431,6 +473,16 @@ public sealed class FirefoxCaptureService(
     private static bool IsSupportedIndexer(IndexerEntity? indexer) =>
         indexer is not null && (indexer.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase)
             || indexer.Implementation.Equals("ext.to", StringComparison.OrdinalIgnoreCase));
+
+    private static string? DetailExternalId(Uri uri, IndexerEntity indexer)
+    {
+        if (!indexer.Implementation.Equals("1337x", StringComparison.OrdinalIgnoreCase)) return null;
+        var parts = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2 || !parts[0].Equals("torrent", StringComparison.OrdinalIgnoreCase)
+            || parts[1].Length == 0 || !parts[1].All(char.IsAsciiDigit))
+            return null;
+        return $"1337x:torrent:{parts[1]}";
+    }
 
     private DateTime UtcNow => clock.GetUtcNow().UtcDateTime;
     // Catalog Source is an identity, not a display label. Indexer names are admin-editable; using one here

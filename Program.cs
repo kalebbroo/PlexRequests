@@ -661,6 +661,30 @@ app.MapPost("/api/browser-capture/batches", async (
     .WithMetadata(new RequestSizeLimitAttribute(512 * 1024))
     .RequireRateLimiting("firefox-capture-ingest");
 
+app.MapPost("/api/browser-capture/hydration-failures", async (
+    FirefoxCaptureHydrationFailureDto body,
+    PlexRequestsHosted.Services.Abstractions.IFirefoxCaptureService capture,
+    HttpContext context,
+    CancellationToken cancellationToken) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    var token = CaptureBearerToken(context);
+    if (token is null) return Results.Unauthorized();
+    try
+    {
+        var changed = await capture.ReportHydrationFailureAsync(token, body, cancellationToken);
+        return changed is null ? Results.Unauthorized() : Results.Ok(new { accepted = changed.Value });
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+    .AllowAnonymous()
+    .DisableAntiforgery()
+    .WithMetadata(new RequestSizeLimitAttribute(8 * 1024))
+    .RequireRateLimiting("firefox-capture-ingest");
+
 // Simple health endpoint for Plex connectivity
 app.MapGet("/api/plex/health", async (IPlexApiService plex) =>
 {
