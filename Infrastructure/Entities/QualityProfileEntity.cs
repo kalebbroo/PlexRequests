@@ -80,6 +80,11 @@ public class QualityProfileEntity
     [MaxLength(16)] public string? PreferredSubtitleLanguage { get; set; } = "en";
     public bool PreferForcedSubtitles { get; set; } = true;
 
+    /// <summary>When enabled, the importer rewrites playback-default flags on supported containers.
+    /// Smart profiles use Japanese audio plus preferred-language subtitles for anime and preferred audio
+    /// plus forced subtitles for ordinary media.</summary>
+    public bool SetPreferredTracksAsDefault { get; set; } = true;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

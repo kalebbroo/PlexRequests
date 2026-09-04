@@ -974,6 +974,7 @@ public class QualityProfileDto
     public string? PreferredAudioLanguage { get; set; } = "en";
     public string? PreferredSubtitleLanguage { get; set; } = "en";
     public bool PreferForcedSubtitles { get; set; } = true;
+    public bool SetPreferredTracksAsDefault { get; set; } = true;
     /// <summary>True when a request or assignment rule references this profile, so deletion is blocked.</summary>
     public bool InUse { get; set; }
 }
@@ -1499,6 +1500,8 @@ public class MediaLanguagePolicyDto
     public List<string> RequiredSubtitleLanguages { get; set; } = new();
     public bool RequireForcedSubtitle { get; set; }
     public bool AllowUnknownTrackLanguage { get; set; } = true;
+    /// <summary>Rewrite supported containers so the desired tracks become the playback defaults.</summary>
+    public bool SetPreferredTracksAsDefault { get; set; } = true;
 }
 
 /// <summary>One audio or subtitle stream reported by MediaInfo (or a paired sidecar subtitle).</summary>
@@ -1517,6 +1520,7 @@ public class MediaTrackDto
 /// <summary>Machine-observed track inventory for one selected media file.</summary>
 public class MediaTrackSummaryDto
 {
+    public bool HasVideo { get; set; }
     public List<MediaTrackDto> Audio { get; set; } = new();
     public List<MediaTrackDto> Subtitles { get; set; } = new();
 }

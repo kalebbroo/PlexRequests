@@ -129,7 +129,8 @@ public class LibraryOrganizer(
 
         var inspected = await InspectSelectionAsync(job, [best], allFiles, prefs, ct);
         var dest = naming.BuildMoviePath(prefs, job, Path.GetExtension(best));
-        TransferOne(best, dest, null, null, "video", records, prefs, inspected.GetValueOrDefault(best));
+        TransferOne(best, dest, null, null, "video", records, prefs, inspected.GetValueOrDefault(best),
+            playbackJob: job);
         PairSubtitle(job, best, dest, allFiles, prefs, null, null, records);
         return records;
     }
@@ -283,7 +284,8 @@ public class LibraryOrganizer(
             var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, s, e, CancellationToken.None).GetAwaiter().GetResult();
             var dest = naming.BuildEpisodePath(prefs, job, s, e, title, Path.GetExtension(best));
             var coverage = Coverage(s, [e]);
-            TransferOne(best, dest, s, e, "video", records, prefs, inspected.GetValueOrDefault(best), coverage);
+            TransferOne(best, dest, s, e, "video", records, prefs, inspected.GetValueOrDefault(best), coverage,
+                job);
             PairSubtitle(job, best, dest, allFiles, prefs, s, e, records, coverage);
             return records;
         }
@@ -356,7 +358,7 @@ public class LibraryOrganizer(
 
                 var coverage = mapping.Coverage;
                 TransferOne(file, dest, season, first, "video", records, prefs,
-                    inspected.GetValueOrDefault(file), coverage);
+                    inspected.GetValueOrDefault(file), coverage, job);
                 PairSubtitle(job, file, dest, allFiles, prefs, season, first, records, coverage);
             }
             return records;
@@ -397,7 +399,7 @@ public class LibraryOrganizer(
                         Path.GetExtension(file))
                     : naming.BuildEpisodeRangePath(prefs, job, canonicalSeason, first, episodes[^1], Path.GetExtension(file));
                 TransferOne(file, dest, canonicalSeason, first, "video", records, prefs,
-                    inspection.GetValueOrDefault(file), mapping.Coverage);
+                    inspection.GetValueOrDefault(file), mapping.Coverage, job);
                 PairSubtitle(job, file, dest, allFiles, prefs, canonicalSeason, first, records, mapping.Coverage);
             }
             return records;
@@ -442,7 +444,7 @@ public class LibraryOrganizer(
                     mapping.Episodes[^1], Path.GetExtension(file));
             var coverage = Coverage(mapping.Season, mapping.Episodes);
             TransferOne(file, dest, mapping.Season, first, "video", records, prefs,
-                wholeSeriesInspection.GetValueOrDefault(file), coverage);
+                wholeSeriesInspection.GetValueOrDefault(file), coverage, job);
             PairSubtitle(job, file, dest, allFiles, prefs, mapping.Season, first, records, coverage);
         }
         return records;
@@ -514,12 +516,31 @@ public class LibraryOrganizer(
 
     private void TransferOne(string source, string dest, int? season, int? episode, string fileType,
         List<ImportedFileRecord> records, EffectiveLibraryOrganization prefs,
-        MediaTrackSummaryDto? mediaTracks = null, IReadOnlyList<EpisodeRef>? episodeCoverage = null)
+        MediaTrackSummaryDto? mediaTracks = null, IReadOnlyList<EpisodeRef>? episodeCoverage = null,
+        FulfillmentJobDto? playbackJob = null)
     {
-        var size = SafeLength(source);
-        FileTransfer.Transfer(source, dest, prefs.TransferMode, prefs.DeleteSourceAfterImport, logger);
-        records.Add(new ImportedFileRecord(source, dest, fileType, season, episode, size, mediaTracks,
+        var selection = mediaTracks is null || playbackJob is null
+            ? null
+            : MediaTrackDefaultSelection.Create(playbackJob.MediaLanguagePolicy, mediaTracks, playbackJob.IsAnime);
+        var defaultsApplied = false;
+        Action<string>? prepare = selection is null ? null : staged =>
+            defaultsApplied = trackInspector.SetDefaults(staged, Path.GetExtension(source), selection);
+        FileTransfer.Transfer(source, dest, prefs.TransferMode, prefs.DeleteSourceAfterImport, logger, prepare);
+        if (defaultsApplied && mediaTracks is not null && selection is not null)
+            RecordAppliedDefaults(mediaTracks, selection);
+        records.Add(new ImportedFileRecord(source, dest, fileType, season, episode, SafeLength(dest), mediaTracks,
             episodeCoverage));
+    }
+
+    private static void RecordAppliedDefaults(MediaTrackSummaryDto tracks, MediaTrackDefaultSelection selection)
+    {
+        var audioOrdinal = 0;
+        foreach (var track in tracks.Audio.Where(x => !x.IsExternal))
+            track.IsDefault = ++audioOrdinal == selection.AudioOrdinal;
+        if (!selection.EditSubtitles) return;
+        var subtitleOrdinal = 0;
+        foreach (var track in tracks.Subtitles.Where(x => !x.IsExternal))
+            track.IsDefault = ++subtitleOrdinal == selection.SubtitleOrdinal;
     }
 
     private async Task<Dictionary<string, MediaTrackSummaryDto>> InspectSelectionAsync(FulfillmentJobDto job,
@@ -527,7 +548,6 @@ public class LibraryOrganizer(
         CancellationToken ct)
     {
         var results = new Dictionary<string, MediaTrackSummaryDto>(StringComparer.OrdinalIgnoreCase);
-        if (!MediaLanguagePolicy.IsActive(job.MediaLanguagePolicy)) return results;
 
         foreach (var file in selectedFiles.Distinct(StringComparer.OrdinalIgnoreCase))
         {
@@ -544,6 +564,9 @@ public class LibraryOrganizer(
                     $"Could not verify media tracks for '{Path.GetFileName(file)}': {ex.Message}", ex);
             }
 
+            if (!tracks.HasVideo)
+                throw new MediaPolicyViolationException(
+                    $"'{Path.GetFileName(file)}' contains no readable video stream and appears corrupt or incomplete");
             var decision = MediaLanguagePolicy.Evaluate(job.MediaLanguagePolicy, tracks);
             if (!decision.Accepted)
                 throw new MediaPolicyViolationException(

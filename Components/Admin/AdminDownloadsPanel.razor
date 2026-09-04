@@ -85,12 +85,15 @@ else
             }
             <MudSwitch T="bool" @bind-Value="_defaultProfile.PreferForcedSubtitles" Color="Color.Primary"
                        Label="Prefer forced subtitles when available" />
+            <MudSwitch T="bool" @bind-Value="_defaultProfile.SetPreferredTracksAsDefault" Color="Color.Primary"
+                       Label="Set preferred playback tracks automatically" />
             <MudSwitch T="bool" @bind-Value="_p.PreferHigherQualitySource" Color="Color.Primary"
                        Label="Prefer clean sources such as WEB-DL and Blu-ray" />
         </div>
         <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mt-3">
-            Smart mode defaults to English for ordinary media. For anime it prefers English + Japanese dual audio,
-            then Japanese with preferred-language subtitles, then the best usable fallback. A missing ideal release does not strand the request.
+            Smart mode prefers English releases for ordinary media and Japanese audio with English subtitles for anime.
+            When automatic playback tracks are enabled, imported MKV files receive those defaults without changing the torrent payload.
+            A missing ideal release does not strand the request.
         </MudAlert>
     </MudPaper>
 

@@ -111,6 +111,12 @@ are stored in the release blocklist. This lets an admin see why a release was ac
 exposes stream metadata and MKVToolNix exposes machine-readable track identification and BCP 47/ISO language tags:
 <https://ffmpeg.org/ffprobe.html>, <https://mkvtoolnix.download/doc/mkvmerge.html>.
 
+For MKV imports, profiles can also set playback defaults automatically. Smart mode selects English audio for
+ordinary media, retaining a forced English subtitle when present. Anime selects Japanese audio and the best
+full English subtitle track, avoiding forced/signs-only, SDH, and commentary tracks when a normal translation
+exists. The edit runs on a private staged library copy before the atomic commit, so hardlinked torrent data and
+the previous Plex file are never modified.
+
 ## Phase 4 — numbering and multi-episode files
 
 Series get an explicit numbering scheme. TMDB episode groups can represent original-air-date, absolute, DVD,

@@ -8,7 +8,8 @@ public static partial class FileTransfer
 {
     private static volatile bool _warnedNonLinuxHardlink;
 
-    public static void Transfer(string source, string dest, TransferMode mode, bool deleteSourceAfterImport, ILogger logger)
+    public static void Transfer(string source, string dest, TransferMode mode, bool deleteSourceAfterImport,
+        ILogger logger, Action<string>? prepareStaged = null)
     {
         var sourceFullPath = Path.GetFullPath(source);
         var destinationFullPath = Path.GetFullPath(dest);
@@ -29,7 +30,7 @@ public static partial class FileTransfer
         try
         {
             var staged = false;
-            if (mode == TransferMode.Hardlink)
+            if (mode == TransferMode.Hardlink && prepareStaged is null)
             {
                 if (OperatingSystem.IsLinux() && link(sourceFullPath, stagingPath) == 0)
                 {
@@ -58,13 +59,21 @@ public static partial class FileTransfer
             if (stagedLength != expectedLength)
                 throw new IOException($"Staged file size mismatch for '{dest}': expected {expectedLength} bytes, copied {stagedLength} bytes");
 
+            // Container metadata edits are made only on this private staged copy. When Hardlink is
+            // configured, the presence of this callback deliberately forced the copy path above so the
+            // torrent payload remains byte-for-byte intact for seeding and client verification.
+            prepareStaged?.Invoke(stagingPath);
+            var preparedLength = new FileInfo(stagingPath).Length;
+            if (preparedLength <= 0)
+                throw new IOException($"Staged file became empty while preparing '{dest}'");
+
             // stagingPath is in the destination directory, so this is a same-filesystem atomic rename. The
             // previous library copy remains intact until this exact operation succeeds.
             File.Move(stagingPath, destinationFullPath, overwrite: true);
 
             var committedLength = new FileInfo(destinationFullPath).Length;
-            if (committedLength != expectedLength)
-                throw new IOException($"Committed file size mismatch for '{dest}': expected {expectedLength} bytes, found {committedLength} bytes");
+            if (committedLength != preparedLength)
+                throw new IOException($"Committed file size mismatch for '{dest}': expected {preparedLength} bytes, found {committedLength} bytes");
 
             if (mode == TransferMode.Move || (mode == TransferMode.Copy && deleteSourceAfterImport))
                 TryDelete(sourceFullPath, logger);

@@ -111,6 +111,7 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
             PreferredAudioLanguage = template?.PreferredAudioLanguage ?? "en",
             PreferredSubtitleLanguage = template?.PreferredSubtitleLanguage ?? "en",
             PreferForcedSubtitles = template?.PreferForcedSubtitles ?? true,
+            SetPreferredTracksAsDefault = template?.SetPreferredTracksAsDefault ?? true,
             AppliesToMediaTypes = (int)MediaTypeFlags.All,
             ItemsJson = template?.ItemsJson ?? "[]",
             CutoffQualityDefinitionId = template?.CutoffQualityDefinitionId
@@ -145,6 +146,7 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
         p.PreferredAudioLanguage = MediaLanguagePolicy.Normalize(dto.PreferredAudioLanguage);
         p.PreferredSubtitleLanguage = MediaLanguagePolicy.Normalize(dto.PreferredSubtitleLanguage);
         p.PreferForcedSubtitles = dto.PreferForcedSubtitles;
+        p.SetPreferredTracksAsDefault = dto.SetPreferredTracksAsDefault;
         p.MinCustomFormatScore = dto.MinCustomFormatScore;
         p.CutoffFormatScore = dto.CutoffFormatScore;
         if (dto.Items is { Count: > 0 }) p.ItemsJson = JsonSerializer.Serialize(dto.Items, Json);
@@ -325,6 +327,7 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
         PreferredAudioLanguage = p.PreferredAudioLanguage,
         PreferredSubtitleLanguage = p.PreferredSubtitleLanguage,
         PreferForcedSubtitles = p.PreferForcedSubtitles,
+        SetPreferredTracksAsDefault = p.SetPreferredTracksAsDefault,
         InUse = inUse,
         Items = JsonSerializer.Deserialize<List<QualityProfileItemDto>>(p.ItemsJson, Json) ?? new()
     };

@@ -135,6 +135,7 @@ public class QualityProfileSeeder(IDbContextFactory<AppDbContext> dbFactory, ILo
             catchAll.PreferredAudioLanguage = "en";
             catchAll.PreferredSubtitleLanguage = "en";
             catchAll.PreferForcedSubtitles = true;
+            catchAll.SetPreferredTracksAsDefault = true;
             // The previous English preset was a hard requirement. Smart keeps English first without
             // stranding foreign films or Japanese-only anime.
             catchAll.RequiredAudioLanguagesCsv = null;
@@ -244,7 +245,8 @@ public class QualityProfileSeeder(IDbContextFactory<AppDbContext> dbFactory, ILo
             LanguagePreference = ReleaseLanguagePreference.Smart,
             PreferredAudioLanguage = "en",
             PreferredSubtitleLanguage = "en",
-            PreferForcedSubtitles = true
+            PreferForcedSubtitles = true,
+            SetPreferredTracksAsDefault = true
         };
     }
 
