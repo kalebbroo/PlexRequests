@@ -164,6 +164,24 @@ public class QualityProfileSeeder(IDbContextFactory<AppDbContext> dbFactory, ILo
             legacy.UpdatedAt = DateTime.UtcNow;
         }
 
+        // PR #127 exposed a legacy-install edge case: a default Quality.Any rule could create this derived
+        // row after Any had already been renamed, then make it default. It never represented an intentional
+        // custom profile. Retire that orphan and restore Everyday once; referenced imported profiles are
+        // left alone because they may represent a real historical override.
+        var everydayProfile = catchAll ?? profiles.FirstOrDefault(p => p.Name == "Everyday");
+        var importedAny = profiles.FirstOrDefault(p => p.Name == "Unknown (imported)" && p.IsDefault);
+        if (everydayProfile is not null && importedAny is not null)
+        {
+            var referenced = await db.MediaRequests.AnyAsync(r => r.QualityProfileId == importedAny.Id, ct)
+                             || await db.ProfileAssignmentRules.AnyAsync(r => r.QualityProfileId == importedAny.Id, ct);
+            if (!referenced)
+            {
+                foreach (var profile in profiles) profile.IsDefault = profile.Id == everydayProfile.Id;
+                importedAny.IsUserSelectable = false;
+                importedAny.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
         if (db.ChangeTracker.HasChanges())
         {
             await db.SaveChangesAsync(ct);
@@ -251,7 +269,8 @@ public class QualityProfileSeeder(IDbContextFactory<AppDbContext> dbFactory, ILo
         // deployment that ends up with profiles before this runs would silently never import its rules.
         // Caveat: deleting every assignment rule by hand and restarting re-imports them (unconditional ones
         // still arrive disabled). That's a rare, benign and visible outcome, so it doesn't warrant a marker table.
-        if (await db.ProfileAssignmentRules.AnyAsync(ct)) return;
+        if (await db.ProfileAssignmentRules.AnyAsync(ct)
+            || await db.QualityProfiles.AnyAsync(p => p.Name.EndsWith(" (imported)"), ct)) return;
 
         var legacy = await db.QualityRules.OrderBy(r => r.Order).ThenBy(r => r.Id).ToListAsync(ct);
         if (legacy.Count == 0) return;
@@ -268,7 +287,7 @@ public class QualityProfileSeeder(IDbContextFactory<AppDbContext> dbFactory, ILo
             {
                 Quality.FullHD => profiles.FirstOrDefault(p => p.Name is "Everyday" or "HD-1080p"),
                 Quality.UHD4K => profiles.FirstOrDefault(p => p.Name == "Ultra-HD"),
-                Quality.Any => profiles.FirstOrDefault(p => p.Name == "Any"),
+                Quality.Any => profiles.FirstOrDefault(p => p.Name is "Everyday" or "Any"),
                 _ => null
             };
             if (stock is not null) { byTarget[target] = stock; continue; }

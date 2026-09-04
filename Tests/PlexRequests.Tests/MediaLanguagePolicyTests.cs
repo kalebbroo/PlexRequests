@@ -32,6 +32,12 @@ public sealed class MediaLanguagePolicyTests
                 new QualityProfileEntity { Name = "Any", IsDefault = true, IsUserSelectable = true },
                 new QualityProfileEntity { Name = "HD-1080p", IsUserSelectable = true },
                 new QualityProfileEntity { Name = "Ultra-HD", IsUserSelectable = true });
+            db.QualityRules.Add(new QualityRuleEntity
+            {
+                Name = "Legacy default",
+                IsDefault = true,
+                TargetQuality = Quality.Any
+            });
             await db.SaveChangesAsync();
         }
 
@@ -44,8 +50,36 @@ public sealed class MediaLanguagePolicyTests
         Assert.True(everyday.IsUserSelectable);
         Assert.Equal(ReleaseLanguagePreference.Smart, everyday.LanguagePreference);
         Assert.Equal("en", everyday.PreferredAudioLanguage);
+        Assert.DoesNotContain(profiles, x => x.Name == "Unknown (imported)");
         Assert.All(profiles.Where(x => x.Name is "HD-1080p" or "Ultra-HD"),
             profile => Assert.False(profile.IsUserSelectable));
+    }
+
+    [Fact]
+    public async Task Seeder_RepairsOrphanImportedAnyDefaultFromInterruptedLegacyUpgrade()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var factory = new PooledDbContextFactory<PlexRequestsHosted.Infrastructure.Data.AppDbContext>(
+            new DbContextOptionsBuilder<PlexRequestsHosted.Infrastructure.Data.AppDbContext>()
+                .UseSqlite(connection).Options);
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            await db.Database.EnsureCreatedAsync();
+            db.QualityProfiles.AddRange(
+                new QualityProfileEntity { Name = "Everyday", IsDefault = false, IsUserSelectable = true },
+                new QualityProfileEntity { Name = "Unknown (imported)", IsDefault = true, IsUserSelectable = true });
+            await db.SaveChangesAsync();
+        }
+
+        await new QualityProfileSeeder(factory, NullLogger<QualityProfileSeeder>.Instance).SeedAsync();
+
+        await using var verify = await factory.CreateDbContextAsync();
+        var everyday = await verify.QualityProfiles.SingleAsync(x => x.Name == "Everyday");
+        var orphan = await verify.QualityProfiles.SingleAsync(x => x.Name == "Unknown (imported)");
+        Assert.True(everyday.IsDefault);
+        Assert.False(orphan.IsDefault);
+        Assert.False(orphan.IsUserSelectable);
     }
 
     [Fact]
