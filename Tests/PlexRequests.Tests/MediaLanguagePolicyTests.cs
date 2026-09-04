@@ -1,4 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using PlexRequests.Downloader.Configuration;
 using PlexRequests.Downloader.Organize;
 using PlexRequests.Downloader.Worker;
@@ -14,6 +17,37 @@ namespace PlexRequests.Tests;
 
 public sealed class MediaLanguagePolicyTests
 {
+    [Fact]
+    public async Task Seeder_CollapsesLegacyStockChoicesWithoutBreakingHistoricalProfiles()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var factory = new PooledDbContextFactory<PlexRequestsHosted.Infrastructure.Data.AppDbContext>(
+            new DbContextOptionsBuilder<PlexRequestsHosted.Infrastructure.Data.AppDbContext>()
+                .UseSqlite(connection).Options);
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            await db.Database.EnsureCreatedAsync();
+            db.QualityProfiles.AddRange(
+                new QualityProfileEntity { Name = "Any", IsDefault = true, IsUserSelectable = true },
+                new QualityProfileEntity { Name = "HD-1080p", IsUserSelectable = true },
+                new QualityProfileEntity { Name = "Ultra-HD", IsUserSelectable = true });
+            await db.SaveChangesAsync();
+        }
+
+        await new QualityProfileSeeder(factory, NullLogger<QualityProfileSeeder>.Instance).SeedAsync();
+
+        await using var verify = await factory.CreateDbContextAsync();
+        var profiles = await verify.QualityProfiles.OrderBy(x => x.Id).ToListAsync();
+        var everyday = Assert.Single(profiles, x => x.Name == "Everyday");
+        Assert.True(everyday.IsDefault);
+        Assert.True(everyday.IsUserSelectable);
+        Assert.Equal(ReleaseLanguagePreference.Smart, everyday.LanguagePreference);
+        Assert.Equal("en", everyday.PreferredAudioLanguage);
+        Assert.All(profiles.Where(x => x.Name is "HD-1080p" or "Ultra-HD"),
+            profile => Assert.False(profile.IsUserSelectable));
+    }
+
     [Fact]
     public void DualAudio_RequiresEnglishAndJapaneseOnTheSameFile()
     {
@@ -65,6 +99,47 @@ public sealed class MediaLanguagePolicyTests
         Assert.False(MediaLanguagePolicy.Evaluate(policy, tracks).Accepted);
         tracks.Subtitles[0].IsForced = true;
         Assert.True(MediaLanguagePolicy.Evaluate(policy, tracks).Accepted);
+    }
+
+    [Fact]
+    public void SmartPreference_AllowsOriginalLanguageFallback()
+    {
+        var policy = new MediaLanguagePolicyDto
+        {
+            Preference = ReleaseLanguagePreference.Smart,
+            PreferredAudioLanguage = "en",
+            PreferredSubtitleLanguage = "en"
+        };
+
+        var result = MediaLanguagePolicy.Evaluate(policy, Tracks(audio: ["ja"], subtitles: ["en"]));
+
+        Assert.True(result.Accepted);
+    }
+
+    [Fact]
+    public void EnglishOnly_IsARealInspectedTrackRequirement()
+    {
+        var policy = new MediaLanguagePolicyDto
+        {
+            Preference = ReleaseLanguagePreference.EnglishOnly,
+            PreferredAudioLanguage = "en"
+        };
+
+        Assert.False(MediaLanguagePolicy.Evaluate(policy, Tracks(audio: ["it"])).Accepted);
+        Assert.True(MediaLanguagePolicy.Evaluate(policy, Tracks(audio: ["it", "eng"])).Accepted);
+    }
+
+    [Fact]
+    public void OriginalAudioMode_RequiresPreferredSubtitles()
+    {
+        var policy = new MediaLanguagePolicyDto
+        {
+            Preference = ReleaseLanguagePreference.OriginalWithEnglishSubtitles,
+            PreferredSubtitleLanguage = "en"
+        };
+
+        Assert.False(MediaLanguagePolicy.Evaluate(policy, Tracks(audio: ["it"])).Accepted);
+        Assert.True(MediaLanguagePolicy.Evaluate(policy, Tracks(audio: ["it"], subtitles: ["eng"])).Accepted);
     }
 
     [Fact]

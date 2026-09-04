@@ -144,8 +144,12 @@ else
     private async Task Load()
     {
         _loading = true;
-        _profiles = await Profiles.GetProfilesAsync();
         _rules = await Profiles.GetAssignmentRulesAsync();
+        var profiles = await Profiles.GetProfilesAsync();
+        var assigned = _rules.Select(r => r.QualityProfileId).ToHashSet();
+        _profiles = profiles.Where(p => p.IsDefault || p.IsUserSelectable || assigned.Contains(p.Id)
+                                        || p.Name is not ("HD-1080p" or "Ultra-HD"))
+            .ToList();
         _loading = false;
     }
 

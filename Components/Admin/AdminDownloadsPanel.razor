@@ -1,127 +1,242 @@
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
 @inject PlexRequestsHosted.Services.Implementations.IDownloadPreferencesService Prefs
+@inject PlexRequestsHosted.Services.Implementations.IQualityProfileService Profiles
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 
-<div class="d-flex justify-content-end align-items-center mb-2">
-    <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="Save" Disabled="_loading">Save changes</MudButton>
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <MudText Typo="Typo.body2" Color="Color.Tertiary">
+        These defaults cover normal movies, TV, foreign films, and anime. Add a special profile only when a title truly needs different rules.
+    </MudText>
+    <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save"
+               OnClick="Save" Disabled="@(_loading || _saving)">Save defaults</MudButton>
 </div>
-<MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-4">
-    Set safe fallback rules for new downloads. Quality profiles can override size and seeder limits for
-    specific kinds of media; users do not see these settings.
-</MudText>
 
-@if (_loading || _p is null)
+@if (_loading)
 {
     <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else if (_p is null || _defaultProfile is null)
+{
+    <MudAlert Severity="Severity.Error">The default release policy could not be loaded.</MudAlert>
 }
 else
 {
     <MudPaper Class="pa-4 mb-4" Elevation="1">
-        <MudText Typo="Typo.h6" Class="mb-1">TV automation</MudText>
-        <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-            Choose how seasons are downloaded and whether full-series requests should keep following new episodes.
-        </MudText>
-        <div class="d-flex gap-3 flex-wrap align-items-center">
-            <MudSelect T="SeasonPackStrategy" @bind-Value="_p.SeasonPackStrategy" Label="When a season is needed" dense="true" Variant="Variant.Outlined" Style="min-width:280px;">
-                <MudSelectItem Value="SeasonPackStrategy.Auto">Automatic (recommended)</MudSelectItem>
-                <MudSelectItem Value="SeasonPackStrategy.PreferPack">Prefer one season pack</MudSelectItem>
-                <MudSelectItem Value="SeasonPackStrategy.PreferEpisodes">Prefer separate episodes</MudSelectItem>
-            </MudSelect>
-            <MudSwitch T="bool" @bind-Value="_p.AllowEpisodeFallback" Color="Color.Primary" Label="Use separate episodes if no acceptable pack is found" />
+        <div class="d-flex align-items-center gap-2 mb-1">
+            <MudIcon Icon="@Icons.Material.Filled.AutoAwesome" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">Everyday release</MudText>
+            <MudChip T="string" Size="Size.Small" Color="Color.Primary">Default</MudChip>
         </div>
-        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
-            @SeasonStrategyDescription()
+        <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-4">
+            Prefer a compact, compatible release without failing when the ideal edition does not exist.
         </MudText>
-        <MudDivider Class="my-4" />
-        <div>
-            <MudSwitch T="bool" @bind-Value="_p.AutoMonitorEntireSeriesRequests" Color="Color.Primary" Label="Auto-monitor new episodes when a user requests an entire series" />
+
+        <MudGrid Spacing="3">
+            <MudItem xs="12" md="4">
+                <MudSelect T="int" Label="Preferred picture quality" Value="PreferredResolution"
+                           ValueChanged="SetPreferredResolution" Variant="Variant.Outlined" FullWidth="true">
+                    <MudSelectItem Value="720">720p</MudSelectItem>
+                    <MudSelectItem Value="1080">1080p (recommended)</MudSelectItem>
+                    <MudSelectItem Value="2160">4K / 2160p</MudSelectItem>
+                </MudSelect>
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">Lower quality remains a fallback; larger quality is not downloaded accidentally.</MudText>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudSelect T="string" Label="Video encoding" Value="@(_p.PreferX265 ? "hevc" : "compatible")"
+                           ValueChanged="SetEncoding" Variant="Variant.Outlined" FullWidth="true">
+                    <MudSelectItem T="string" Value='@("hevc")'>Prefer HEVC / x265</MudSelectItem>
+                    <MudSelectItem T="string" Value='@("compatible")'>Prefer broad compatibility</MudSelectItem>
+                </MudSelect>
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">A preference, not a hard block, so uncommon titles can still complete.</MudText>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudSelect T="ReleaseLanguagePreference" Label="Audio and subtitle behavior"
+                           Value="_defaultProfile.LanguagePreference" ValueChanged="SetLanguagePreference"
+                           Variant="Variant.Outlined" FullWidth="true">
+                    <MudSelectItem Value="ReleaseLanguagePreference.Smart">Smart language fallback (recommended)</MudSelectItem>
+                    <MudSelectItem Value="ReleaseLanguagePreference.EnglishPreferred">Prefer selected language, allow original</MudSelectItem>
+                    <MudSelectItem Value="ReleaseLanguagePreference.EnglishOnly">Require selected audio language</MudSelectItem>
+                    <MudSelectItem Value="ReleaseLanguagePreference.OriginalWithEnglishSubtitles">Original audio + selected subtitles</MudSelectItem>
+                    <MudSelectItem Value="ReleaseLanguagePreference.DualAudioPreferred">Prefer dual audio</MudSelectItem>
+                    <MudSelectItem Value="ReleaseLanguagePreference.Any">No language preference</MudSelectItem>
+                </MudSelect>
+                <MudText Typo="Typo.caption" Color="Color.Tertiary">@LanguageHelp()</MudText>
+            </MudItem>
+        </MudGrid>
+
+        <div class="d-flex flex-wrap gap-3 mt-4 align-items-center">
+            @if (_defaultProfile.LanguagePreference != ReleaseLanguagePreference.Any)
+            {
+                <MudSelect T="string" Label="Preferred audio language" Value="@(_defaultProfile.PreferredAudioLanguage ?? "en")"
+                           ValueChanged="SetPreferredAudioLanguage" Variant="Variant.Outlined" Style="min-width:220px;">
+                    @foreach (var language in LanguageOptions)
+                    {
+                        <MudSelectItem T="string" Value="@language.Code">@language.Name</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudSelect T="string" Label="Preferred subtitle language" Value="@(_defaultProfile.PreferredSubtitleLanguage ?? "en")"
+                           ValueChanged="SetPreferredSubtitleLanguage" Variant="Variant.Outlined" Style="min-width:230px;">
+                    @foreach (var language in LanguageOptions)
+                    {
+                        <MudSelectItem T="string" Value="@language.Code">@language.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            }
+            <MudSwitch T="bool" @bind-Value="_defaultProfile.PreferForcedSubtitles" Color="Color.Primary"
+                       Label="Prefer forced subtitles when available" />
+            <MudSwitch T="bool" @bind-Value="_p.PreferHigherQualitySource" Color="Color.Primary"
+                       Label="Prefer clean sources such as WEB-DL and Blu-ray" />
         </div>
-        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
-            When enabled, newly aired episodes are downloaded automatically after a user requests the full series.
-        </MudText>
+        <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mt-3">
+            Smart mode defaults to English for ordinary media. For anime it prefers English + Japanese dual audio,
+            then Japanese with preferred-language subtitles, then the best usable fallback. A missing ideal release does not strand the request.
+        </MudAlert>
     </MudPaper>
 
     <MudPaper Class="pa-4 mb-4" Elevation="1">
-        <MudText Typo="Typo.h6" Class="mb-1">Fallback download limits</MudText>
+        <MudText Typo="Typo.h6" Class="mb-1">TV and seasons</MudText>
         <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
-            These limits apply when the selected quality profile does not provide its own value.
+            Download one season pack when possible and use individual episodes only when needed.
         </MudText>
         <div class="d-flex gap-3 flex-wrap align-items-center">
-            <MudNumericField T="int" @bind-Value="_p.MinSeeders" Label="Minimum seeders" Variant="Variant.Outlined" dense="true" Min="0" Style="max-width:180px;" />
-            <MudNumericField T="double" @bind-Value="_p.MaxSizeGb" Label="Largest single download (GB)" Variant="Variant.Outlined" dense="true" Min="0.05" Style="max-width:230px;" />
-            <MudNumericField T="double" @bind-Value="_p.MaxSeasonPackSizeGb" Label="Largest season pack (GB)" Variant="Variant.Outlined" dense="true" Min="0.05" Style="max-width:230px;" />
+            <MudSelect T="SeasonPackStrategy" @bind-Value="_p.SeasonPackStrategy" Label="Season download style"
+                       Variant="Variant.Outlined" Style="min-width:280px;">
+                <MudSelectItem Value="SeasonPackStrategy.PreferPack">Season pack first (recommended)</MudSelectItem>
+                <MudSelectItem Value="SeasonPackStrategy.Auto">Balance pack size and episodes</MudSelectItem>
+                <MudSelectItem Value="SeasonPackStrategy.PreferEpisodes">Separate episodes first</MudSelectItem>
+            </MudSelect>
+            <MudSwitch T="bool" @bind-Value="_p.AllowEpisodeFallback" Color="Color.Primary"
+                       Label="Use individual episodes when no complete pack is available" />
+            <MudSwitch T="bool" @bind-Value="_p.AutoMonitorEntireSeriesRequests" Color="Color.Primary"
+                       Label="Keep entire-series requests up to date" />
         </div>
-        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
-            Seeder limits avoid stalled downloads. Size limits prevent unexpectedly large transfers; quality-specific
-            limits belong under Quality.
-        </MudText>
     </MudPaper>
 
     <details class="release-advanced">
         <summary>
             <MudIcon Icon="@Icons.Material.Filled.Tune" Size="Size.Small" />
-            <span><b>Advanced release matching</b><small>Quality timing, title protection, episode safety, release groups, codec, HDR, and source ranking.</small></span>
+            <span><b>Advanced safeguards</b><small>Size limits, seeders, matching thresholds, HDR, and release groups.</small></span>
         </summary>
         <div class="release-advanced-content">
-        <MudText Typo="Typo.h6" Class="mb-3">Search safeguards</MudText>
-        <div class="d-flex gap-3 flex-wrap align-items-center">
-            <MudSwitch T="bool" @bind-Value="_p.EnforceQualityFloor" Color="Color.Primary" Label="Hold out for preferred quality first" />
-            <MudNumericField T="double" @bind-Value="_p.MinTitleSimilarity" Label="Minimum title match (0–1)" Variant="Variant.Outlined" dense="true" Min="0" Max="1" Step="0.05" Style="max-width:220px;" />
-            <MudNumericField T="int" @bind-Value="_p.MaxEpisodesForFanout" Label="Maximum separate episodes per job" Variant="Variant.Outlined" dense="true" Min="1" Max="500" Style="max-width:280px;" />
-        </div>
-        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
-            Holding out waits one search cycle for the preferred quality, then accepts the best available release and
-            upgrades later. Title matching protects free-text searches from wrong-show results. The episode maximum
-            prevents one missing pack from creating an excessive number of downloads.
-        </MudText>
+            <MudText Typo="Typo.subtitle1" Class="mb-3">Download safety</MudText>
+            <div class="d-flex gap-3 flex-wrap align-items-center">
+                <MudNumericField T="int" @bind-Value="_p.MinSeeders" Label="Minimum seeders" Variant="Variant.Outlined" Min="0" Style="max-width:180px;" />
+                <MudNumericField T="double" @bind-Value="_p.MaxSizeGb" Label="Largest file (GB)" Variant="Variant.Outlined" Min="0.05" Style="max-width:190px;" />
+                <MudNumericField T="double" @bind-Value="_p.MaxSeasonPackSizeGb" Label="Largest season pack (GB)" Variant="Variant.Outlined" Min="0.05" Style="max-width:230px;" />
+                <MudNumericField T="int" @bind-Value="_p.MaxEpisodesForFanout" Label="Episode fallback limit" Variant="Variant.Outlined" Min="1" Max="500" Style="max-width:220px;" />
+            </div>
 
-        <MudDivider Class="my-4" />
-        <MudText Typo="Typo.h6" Class="mb-3">Release ranking</MudText>
-        <div class="d-flex gap-3 flex-wrap align-items-center">
-            <MudTextField @bind-Value="_p.PreferredGroupsCsv" Label="Preferred groups (comma-separated)" Placeholder="e.g. NTb, FLUX" Variant="Variant.Outlined" dense="true" Style="min-width:280px;" />
-            <MudSwitch T="bool" @bind-Value="_p.PreferX265" Color="Color.Primary" Label="Prefer x265/HEVC" />
-            <MudSwitch T="bool" @bind-Value="_p.PreferHdr" Color="Color.Primary" Label="Prefer HDR" />
-            <MudSwitch T="bool" @bind-Value="_p.PreferHigherQualitySource" Color="Color.Primary" Label="Prefer higher-quality source (BluRay > WebDL)" />
-        </div>
-        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
-            These are preferences, not requirements. Use Custom formats when a release must be rejected or given an exact score.
-        </MudText>
+            <MudDivider Class="my-4" />
+            <MudText Typo="Typo.subtitle1" Class="mb-3">Matching and ranking</MudText>
+            <div class="d-flex gap-3 flex-wrap align-items-center">
+                <MudSwitch T="bool" @bind-Value="_p.EnforceQualityFloor" Color="Color.Primary" Label="Wait for preferred quality before relaxing" />
+                <MudNumericField T="double" @bind-Value="_p.MinTitleSimilarity" Label="Minimum title match (0–1)" Variant="Variant.Outlined" Min="0" Max="1" Step="0.05" Style="max-width:220px;" />
+                <MudSwitch T="bool" @bind-Value="_p.PreferHdr" Color="Color.Primary" Label="Prefer HDR" />
+                <MudTextField @bind-Value="_p.PreferredGroupsCsv" Label="Preferred release groups" Placeholder="NTb, FLUX" Variant="Variant.Outlined" Style="min-width:250px;" />
+            </div>
         </div>
     </details>
 
     <div class="d-flex justify-content-end mt-4">
-        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="Save">Save changes</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save"
+                   OnClick="Save" Disabled="_saving">Save defaults</MudButton>
     </div>
 }
 
 @code {
     private bool _loading = true;
+    private bool _saving;
     private DownloadPreferencesDto? _p;
+    private QualityProfileDto? _defaultProfile;
+    private List<QualityDefinitionDto> _definitions = new();
+    private static readonly (string Code, string Name)[] LanguageOptions =
+    [
+        ("en", "English"), ("es", "Spanish"), ("fr", "French"), ("de", "German"),
+        ("it", "Italian"), ("pt", "Portuguese"), ("ja", "Japanese"), ("ko", "Korean"),
+        ("zh", "Chinese"), ("hi", "Hindi"), ("ar", "Arabic"), ("ru", "Russian")
+    ];
 
-    protected override async Task OnInitializedAsync()
-    {
-        await Load();
-    }
+    private int PreferredResolution => _definitions
+        .FirstOrDefault(d => d.Id == _defaultProfile?.CutoffQualityDefinitionId)?.Resolution ?? 1080;
+
+    protected override async Task OnInitializedAsync() => await Load();
 
     private async Task Load()
     {
-        _loading = true; StateHasChanged();
-        try { _p = await Prefs.GetAsync(); }
-        finally { _loading = false; StateHasChanged(); }
+        _loading = true;
+        try
+        {
+            _p = await Prefs.GetAsync();
+            _definitions = await Profiles.GetDefinitionsAsync();
+            var profiles = await Profiles.GetProfilesAsync();
+            _defaultProfile = profiles.FirstOrDefault(p => p.IsDefault) ?? profiles.FirstOrDefault();
+        }
+        finally { _loading = false; }
     }
+
+    private void SetPreferredResolution(int resolution)
+    {
+        if (_defaultProfile is null) return;
+        var candidates = _definitions.Where(d => d.Resolution == resolution).ToList();
+        var chosen = candidates.FirstOrDefault(d => d.Source == ReleaseSource.WebDl)
+                     ?? candidates.FirstOrDefault();
+        if (chosen is null) return;
+
+        _defaultProfile.CutoffQualityDefinitionId = chosen.Id;
+        foreach (var item in _defaultProfile.Items)
+        {
+            var ids = item.Members is { Length: > 0 } ? item.Members : ParseItemId(item.K);
+            var itemResolutions = ids.Select(id => _definitions.FirstOrDefault(d => d.Id == id)?.Resolution ?? 0);
+            item.Allowed = itemResolutions.Any(r => r >= 720 && r <= resolution);
+        }
+    }
+
+    private static int[] ParseItemId(string key) => key.StartsWith("q:") && int.TryParse(key[2..], out var id) ? [id] : [];
+
+    private void SetEncoding(string value) => _p!.PreferX265 = value == "hevc";
+
+    private void SetLanguagePreference(ReleaseLanguagePreference value)
+    {
+        if (_defaultProfile is null) return;
+        _defaultProfile.LanguagePreference = value;
+        _defaultProfile.PreferredAudioLanguage ??= "en";
+        _defaultProfile.PreferredSubtitleLanguage ??= "en";
+        _defaultProfile.RequiredAudioLanguagesCsv = null;
+        _defaultProfile.AllowedLanguagesCsv = null;
+        _defaultProfile.RequiredSubtitleLanguagesCsv = null;
+        _defaultProfile.RequireForcedSubtitle = false;
+        _defaultProfile.AllowUnknownTrackLanguage = true;
+    }
+
+    private void SetPreferredAudioLanguage(string value) => _defaultProfile!.PreferredAudioLanguage = value;
+    private void SetPreferredSubtitleLanguage(string value) => _defaultProfile!.PreferredSubtitleLanguage = value;
+
+    private string LanguageHelp() => _defaultProfile?.LanguagePreference switch
+    {
+        ReleaseLanguagePreference.EnglishOnly => "Rejects files whose inspected audio tracks do not contain English.",
+        ReleaseLanguagePreference.OriginalWithEnglishSubtitles => "Requires inspected English subtitles and favors original-language audio.",
+        ReleaseLanguagePreference.DualAudioPreferred => "Ranks multi-language releases first but accepts a single-language fallback.",
+        ReleaseLanguagePreference.Any => "Language does not affect selection.",
+        _ => "English is preferred, while original-language and anime fallbacks remain available."
+    };
 
     private async Task Save()
     {
-        if (_p is null) return;
-        if (await Prefs.UpdateAsync(_p)) await Toast.ShowSuccessAsync("Download preferences saved.");
-        else await Toast.ShowErrorAsync("Save failed.");
+        if (_p is null || _defaultProfile is null || _saving) return;
+        _saving = true;
+        try
+        {
+            await Prefs.UpdateAsync(_p);
+            if (await Profiles.UpdateProfileAsync(_defaultProfile))
+                await Toast.ShowSuccessAsync("Everyday release defaults saved.");
+            else
+                await Toast.ShowErrorAsync("The default release profile could not be saved.");
+        }
+        catch (Exception ex)
+        {
+            await Toast.ShowErrorAsync($"Save failed: {ex.Message}");
+        }
+        finally { _saving = false; }
     }
-
-    private string SeasonStrategyDescription() => _p!.SeasonPackStrategy switch
-    {
-        SeasonPackStrategy.Auto => "Automatic uses a season pack when it fits the limit below, then safely falls back to individual episodes.",
-        SeasonPackStrategy.PreferPack => "Plex Requests looks for one season pack first, then uses separate episodes when fallback is enabled and no acceptable pack exists.",
-        _ => "Plex Requests looks for separate episodes first, which can help when season packs do not match the episodes Plex expects."
-    };
 }

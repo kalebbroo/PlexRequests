@@ -40,6 +40,7 @@ public class QualityProfileSeeder(IDbContextFactory<AppDbContext> dbFactory, ILo
 
         var definitions = await SeedDefinitionsAsync(db, ct);
         await SeedProfilesAsync(db, definitions, ct);
+        await SimplifyStockProfilesAsync(db, definitions, ct);
         await PortQualityRulesAsync(db, definitions, ct);
         await BackfillAsync(db, ct);
     }
@@ -98,16 +99,76 @@ public class QualityProfileSeeder(IDbContextFactory<AppDbContext> dbFactory, ILo
 
     // ---- Profiles -----------------------------------------------------------------------------------
 
-    /// <summary>Seeds the three stock profiles, once.</summary>
+    /// <summary>Seeds one useful default. Extra profiles are for genuine exceptions, not basic setup.</summary>
     private async Task SeedProfilesAsync(AppDbContext db, List<QualityDefinitionEntity> defs, CancellationToken ct)
     {
         if (await db.QualityProfiles.AnyAsync(ct)) return;
 
-        db.QualityProfiles.Add(BuildProfile("Any", defs, floor: Quality.SD, cutoff: Quality.FullHD, isDefault: false, sortOrder: 0));
-        db.QualityProfiles.Add(BuildProfile("HD-1080p", defs, floor: Quality.HD, cutoff: Quality.FullHD, isDefault: true, sortOrder: 1));
-        db.QualityProfiles.Add(BuildProfile("Ultra-HD", defs, floor: Quality.FullHD, cutoff: Quality.UHD4K, isDefault: false, sortOrder: 2));
+        db.QualityProfiles.Add(BuildProfile("Everyday", defs, floor: Quality.HD,
+            cutoff: Quality.FullHD, isDefault: true, sortOrder: 0));
         await db.SaveChangesAsync(ct);
-        logger.LogInformation("Seeded the stock quality profiles (Any, HD-1080p, Ultra-HD)");
+        logger.LogInformation("Seeded the Everyday release profile");
+    }
+
+    /// <summary>
+    /// Earlier versions exposed three overlapping stock profiles even though almost every request used one.
+    /// Collapse that choice for new requests without rewriting historical request assignments: the catch-all
+    /// becomes Everyday and the two legacy alternatives remain valid but stop appearing in the requester UI.
+    /// Name checks make this a one-time, conservative migration that never touches administrator-created rows.
+    /// </summary>
+    private async Task SimplifyStockProfilesAsync(AppDbContext db,
+        List<QualityDefinitionEntity> definitions, CancellationToken ct)
+    {
+        var profiles = await db.QualityProfiles.ToListAsync(ct);
+        var catchAll = profiles.FirstOrDefault(p => p.Name == "Any");
+        if (catchAll is not null)
+        {
+            var everyday = BuildProfile("Everyday", definitions, floor: Quality.HD,
+                cutoff: Quality.FullHD, isDefault: true, sortOrder: catchAll.SortOrder);
+            catchAll.Name = "Everyday";
+            catchAll.IsDefault = true;
+            catchAll.IsUserSelectable = true;
+            catchAll.ItemsJson = everyday.ItemsJson;
+            catchAll.CutoffQualityDefinitionId = everyday.CutoffQualityDefinitionId;
+            catchAll.UpgradeAllowed = true;
+            catchAll.LanguagePreference = ReleaseLanguagePreference.Smart;
+            catchAll.PreferredAudioLanguage = "en";
+            catchAll.PreferredSubtitleLanguage = "en";
+            catchAll.PreferForcedSubtitles = true;
+            // The previous English preset was a hard requirement. Smart keeps English first without
+            // stranding foreign films or Japanese-only anime.
+            catchAll.RequiredAudioLanguagesCsv = null;
+            catchAll.AllowedLanguagesCsv = null;
+            catchAll.RequiredSubtitleLanguagesCsv = null;
+            catchAll.RequireForcedSubtitle = false;
+            catchAll.AllowUnknownTrackLanguage = true;
+            catchAll.UpdatedAt = DateTime.UtcNow;
+
+            foreach (var profile in profiles.Where(p => p.Id != catchAll.Id))
+                profile.IsDefault = false;
+        }
+
+        foreach (var legacy in profiles.Where(p => p.Name is "HD-1080p" or "Ultra-HD"))
+        {
+            var needsUpdate = legacy.IsUserSelectable
+                              || legacy.LanguagePreference != ReleaseLanguagePreference.Smart
+                              || legacy.PreferredAudioLanguage is null
+                              || legacy.PreferredSubtitleLanguage is null
+                              || !legacy.PreferForcedSubtitles;
+            if (!needsUpdate) continue;
+            legacy.IsUserSelectable = false;
+            legacy.LanguagePreference = ReleaseLanguagePreference.Smart;
+            legacy.PreferredAudioLanguage ??= "en";
+            legacy.PreferredSubtitleLanguage ??= "en";
+            legacy.PreferForcedSubtitles = true;
+            legacy.UpdatedAt = DateTime.UtcNow;
+        }
+
+        if (db.ChangeTracker.HasChanges())
+        {
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation("Simplified legacy stock profiles into the Everyday default");
+        }
     }
 
     /// <summary>
@@ -161,7 +222,11 @@ public class QualityProfileSeeder(IDbContextFactory<AppDbContext> dbFactory, ILo
             SortOrder = sortOrder,
             ItemsJson = JsonSerializer.Serialize(items, Json),
             CutoffQualityDefinitionId = cutoffDefId,
-            UpgradeAllowed = true
+            UpgradeAllowed = true,
+            LanguagePreference = ReleaseLanguagePreference.Smart,
+            PreferredAudioLanguage = "en",
+            PreferredSubtitleLanguage = "en",
+            PreferForcedSubtitles = true
         };
     }
 
@@ -201,7 +266,7 @@ public class QualityProfileSeeder(IDbContextFactory<AppDbContext> dbFactory, ILo
         {
             var stock = target switch
             {
-                Quality.FullHD => profiles.FirstOrDefault(p => p.Name == "HD-1080p"),
+                Quality.FullHD => profiles.FirstOrDefault(p => p.Name is "Everyday" or "HD-1080p"),
                 Quality.UHD4K => profiles.FirstOrDefault(p => p.Name == "Ultra-HD"),
                 Quality.Any => profiles.FirstOrDefault(p => p.Name == "Any"),
                 _ => null

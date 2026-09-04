@@ -18,14 +18,14 @@ else
 {
     <div class="d-flex justify-content-between align-items-center mb-3">
         <MudText Typo="Typo.body2" Class="text-muted">
-            Profiles answer two questions: what quality is acceptable, and when should Plex Requests stop
-            looking for an upgrade? Start with a built-in profile and choose an audio/subtitle preset.
+            Most libraries only need the Everyday default. Add a special profile for a strict 4K, language,
+            anime, or compatibility exception and let users choose it when requesting.
         </MudText>
         <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
                    StartIcon="@Icons.Material.Filled.Add" OnClick="AddProfile">New profile</MudButton>
     </div>
 
-    @foreach (var p in _profiles)
+    @foreach (var p in VisibleProfiles)
     {
         <MudExpansionPanel Class="mb-2">
             <TitleContent>
@@ -77,22 +77,38 @@ else
                 </div>
 
                 <MudPaper Class="pa-3 mb-3" Outlined="true">
-                    <MudText Typo="Typo.subtitle2">Audio and subtitles</MudText>
+                    <MudText Typo="Typo.subtitle2">Language behavior</MudText>
                     <MudText Typo="Typo.caption" Class="text-muted d-block mb-2">
-                        Choose a common policy. Plex Requests verifies the actual tracks before importing files into Plex.
+                        Preferences rank the best release but retain fallbacks. Strict custom rules verify actual tracks before import.
                     </MudText>
-                    <MudSelect T="string" Label="Required language policy" Value="@LanguagePreset(p)"
+                    <MudSelect T="string" Label="Language behavior" Value="@LanguagePreset(p)"
                                ValueChanged="@(v => ApplyLanguagePreset(p, v))" Variant="Variant.Outlined"
                                Style="max-width:360px;">
-                        <MudSelectItem T="string" Value='@("any")'>Any language / original audio</MudSelectItem>
-                        <MudSelectItem T="string" Value='@("dual")'>Dual audio — English + Japanese</MudSelectItem>
-                        <MudSelectItem T="string" Value='@("sub")'>Japanese audio + English subtitles</MudSelectItem>
-                        <MudSelectItem T="string" Value='@("dub")'>English audio</MudSelectItem>
+                        <MudSelectItem T="string" Value='@("smart")'>Smart English + anime fallback</MudSelectItem>
+                        <MudSelectItem T="string" Value='@("english-preferred")'>Prefer English, allow original</MudSelectItem>
+                        <MudSelectItem T="string" Value='@("english-only")'>Require English audio</MudSelectItem>
+                        <MudSelectItem T="string" Value='@("original-subs")'>Original audio + English subtitles</MudSelectItem>
+                        <MudSelectItem T="string" Value='@("dual-preferred")'>Prefer dual audio</MudSelectItem>
+                        <MudSelectItem T="string" Value='@("any")'>No language preference</MudSelectItem>
                         @if (LanguagePreset(p) == "custom")
                         {
                             <MudSelectItem T="string" Value='@("custom")' Disabled="true">Custom language rules</MudSelectItem>
                         }
                     </MudSelect>
+
+                    @if (LanguagePreset(p) is not ("any" or "custom"))
+                    {
+                        <div class="d-flex flex-wrap gap-3 align-items-center mt-3">
+                            <MudTextField T="string" Label="Preferred audio language" Value="p.PreferredAudioLanguage"
+                                          Placeholder="en" Variant="Variant.Outlined" Style="max-width:220px;"
+                                          ValueChanged="@(v => SetPreferredLanguage(p, true, v))" />
+                            <MudTextField T="string" Label="Preferred subtitle language" Value="p.PreferredSubtitleLanguage"
+                                          Placeholder="en" Variant="Variant.Outlined" Style="max-width:230px;"
+                                          ValueChanged="@(v => SetPreferredLanguage(p, false, v))" />
+                            <MudSwitch T="bool" Label="Prefer forced subtitles" Value="p.PreferForcedSubtitles"
+                                       Color="Color.Primary" ValueChanged="@(v => SetPreferredForcedSubtitle(p, v))" />
+                        </div>
+                    }
 
                     <details class="profile-option" open="@(LanguagePreset(p) == "custom")">
                         <summary>
@@ -164,7 +180,7 @@ else
                         <MudNumericField T="int?" Label="Minimum seeders" Value="p.MinSeeders" Clearable="true"
                                          Variant="Variant.Outlined" Style="max-width:170px;"
                                          ValueChanged="@(v => SetSeeders(p, v))" />
-                        <MudText Typo="Typo.caption" Class="text-muted w-100">Leave blank to use the Basic rules fallback limits.</MudText>
+                        <MudText Typo="Typo.caption" Class="text-muted w-100">Leave blank to use the Everyday defaults.</MudText>
                     </div>
                 </details>
 
@@ -211,6 +227,12 @@ else
             </ChildContent>
         </MudExpansionPanel>
     }
+    @if (_profiles.Count - VisibleProfiles.Count > 0)
+    {
+        <MudText Typo="Typo.caption" Class="text-muted d-block mt-2">
+            @(_profiles.Count - VisibleProfiles.Count) retired built-in profile(s) are hidden. Historical requests keep their original assignment.
+        </MudText>
+    }
 }
 
 @code {
@@ -218,6 +240,9 @@ else
     private List<QualityProfileDto> _profiles = new();
     private List<QualityDefinitionDto> _definitions = new();
     private Dictionary<int, List<CustomFormatDto>> _formatsByProfile = new();
+    private List<QualityProfileDto> VisibleProfiles => _profiles
+        .Where(p => p.IsDefault || p.IsUserSelectable || p.Name is not ("HD-1080p" or "Ultra-HD"))
+        .ToList();
 
     protected override async Task OnInitializedAsync() => await Load();
 
@@ -280,74 +305,55 @@ else
 
     private async Task ApplyLanguagePreset(QualityProfileDto profile, string preset)
     {
-        switch (preset)
+        profile.LanguagePreference = preset switch
         {
-            case "dual":
-                profile.RequiredAudioLanguagesCsv = "en,ja";
-                profile.AllowedLanguagesCsv = null;
-                profile.RequiredSubtitleLanguagesCsv = null;
-                profile.RequireForcedSubtitle = false;
-                profile.AllowUnknownTrackLanguage = false;
-                break;
-            case "sub":
-                profile.RequiredAudioLanguagesCsv = "ja";
-                profile.AllowedLanguagesCsv = null;
-                profile.RequiredSubtitleLanguagesCsv = "en";
-                profile.RequireForcedSubtitle = false;
-                profile.AllowUnknownTrackLanguage = false;
-                break;
-            case "dub":
-                profile.RequiredAudioLanguagesCsv = "en";
-                profile.AllowedLanguagesCsv = null;
-                profile.RequiredSubtitleLanguagesCsv = null;
-                profile.RequireForcedSubtitle = false;
-                profile.AllowUnknownTrackLanguage = false;
-                break;
-            default:
-                profile.RequiredAudioLanguagesCsv = null;
-                profile.AllowedLanguagesCsv = null;
-                profile.RequiredSubtitleLanguagesCsv = null;
-                profile.RequireForcedSubtitle = false;
-                profile.AllowUnknownTrackLanguage = true;
-                break;
+            "english-preferred" => ReleaseLanguagePreference.EnglishPreferred,
+            "english-only" => ReleaseLanguagePreference.EnglishOnly,
+            "original-subs" => ReleaseLanguagePreference.OriginalWithEnglishSubtitles,
+            "dual-preferred" => ReleaseLanguagePreference.DualAudioPreferred,
+            "any" => ReleaseLanguagePreference.Any,
+            "custom" => ReleaseLanguagePreference.Custom,
+            _ => ReleaseLanguagePreference.Smart
+        };
+        profile.PreferredAudioLanguage = "en";
+        profile.PreferredSubtitleLanguage = "en";
+        if (preset != "custom")
+        {
+            profile.RequiredAudioLanguagesCsv = null;
+            profile.AllowedLanguagesCsv = null;
+            profile.RequiredSubtitleLanguagesCsv = null;
+            profile.RequireForcedSubtitle = false;
+            profile.AllowUnknownTrackLanguage = true;
         }
         await Save(profile, "media language preset");
     }
 
     private static string LanguagePreset(QualityProfileDto profile)
     {
-        if (CsvEquals(profile.RequiredAudioLanguagesCsv, "en", "ja")
-            && string.IsNullOrWhiteSpace(profile.AllowedLanguagesCsv)
-            && string.IsNullOrWhiteSpace(profile.RequiredSubtitleLanguagesCsv)
-            && !profile.RequireForcedSubtitle && !profile.AllowUnknownTrackLanguage) return "dual";
-        if (CsvEquals(profile.RequiredAudioLanguagesCsv, "ja")
-            && string.IsNullOrWhiteSpace(profile.AllowedLanguagesCsv)
-            && CsvEquals(profile.RequiredSubtitleLanguagesCsv, "en")
-            && !profile.RequireForcedSubtitle && !profile.AllowUnknownTrackLanguage) return "sub";
-        if (CsvEquals(profile.RequiredAudioLanguagesCsv, "en")
-            && string.IsNullOrWhiteSpace(profile.AllowedLanguagesCsv)
-            && string.IsNullOrWhiteSpace(profile.RequiredSubtitleLanguagesCsv)
-            && !profile.RequireForcedSubtitle && !profile.AllowUnknownTrackLanguage) return "dub";
-        if (string.IsNullOrWhiteSpace(profile.RequiredAudioLanguagesCsv)
-            && string.IsNullOrWhiteSpace(profile.AllowedLanguagesCsv)
-            && string.IsNullOrWhiteSpace(profile.RequiredSubtitleLanguagesCsv)
-            && !profile.RequireForcedSubtitle && profile.AllowUnknownTrackLanguage) return "any";
-        return "custom";
-    }
-
-    private static bool CsvEquals(string? value, params string[] expected)
-    {
-        var actual = (value ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(x => x.ToLowerInvariant()).Order().ToArray();
-        return actual.SequenceEqual(expected.Select(x => x.ToLowerInvariant()).Order());
+        if (!string.IsNullOrWhiteSpace(profile.RequiredAudioLanguagesCsv)
+            || !string.IsNullOrWhiteSpace(profile.AllowedLanguagesCsv)
+            || !string.IsNullOrWhiteSpace(profile.RequiredSubtitleLanguagesCsv)
+            || profile.RequireForcedSubtitle || profile.LanguagePreference == ReleaseLanguagePreference.Custom)
+            return "custom";
+        return profile.LanguagePreference switch
+        {
+            ReleaseLanguagePreference.EnglishPreferred => "english-preferred",
+            ReleaseLanguagePreference.EnglishOnly => "english-only",
+            ReleaseLanguagePreference.OriginalWithEnglishSubtitles => "original-subs",
+            ReleaseLanguagePreference.DualAudioPreferred => "dual-preferred",
+            ReleaseLanguagePreference.Any => "any",
+            _ => "smart"
+        };
     }
 
     private static string LanguagePolicySummary(QualityProfileDto profile) => LanguagePreset(profile) switch
     {
-        "dual" => "Dual audio",
-        "sub" => "Japanese + English subs",
-        "dub" => "English audio",
-        "any" => "Any / original",
+        "smart" => "Smart fallback",
+        "english-preferred" => "English preferred",
+        "english-only" => "English required",
+        "original-subs" => "Original + English subs",
+        "dual-preferred" => "Dual preferred",
+        "any" => "No preference",
         _ => "Custom"
     };
 
@@ -362,6 +368,7 @@ else
 
     private async Task SetLanguageValue(QualityProfileDto profile, string field, string? value)
     {
+        profile.LanguagePreference = ReleaseLanguagePreference.Custom;
         if (field == "required-audio") profile.RequiredAudioLanguagesCsv = value;
         else if (field == "allowed-audio") profile.AllowedLanguagesCsv = value;
         else profile.RequiredSubtitleLanguagesCsv = value;
@@ -370,14 +377,29 @@ else
 
     private async Task SetForcedSubtitle(QualityProfileDto profile, bool value)
     {
+        profile.LanguagePreference = ReleaseLanguagePreference.Custom;
         profile.RequireForcedSubtitle = value;
         await Save(profile, "forced subtitle policy");
     }
 
     private async Task SetUnknownLanguage(QualityProfileDto profile, bool value)
     {
+        profile.LanguagePreference = ReleaseLanguagePreference.Custom;
         profile.AllowUnknownTrackLanguage = value;
         await Save(profile, "untagged track policy");
+    }
+
+    private async Task SetPreferredForcedSubtitle(QualityProfileDto profile, bool value)
+    {
+        profile.PreferForcedSubtitles = value;
+        await Save(profile, "forced subtitle preference");
+    }
+
+    private async Task SetPreferredLanguage(QualityProfileDto profile, bool audio, string? value)
+    {
+        if (audio) profile.PreferredAudioLanguage = value;
+        else profile.PreferredSubtitleLanguage = value;
+        await Save(profile, audio ? "preferred audio language" : "preferred subtitle language");
     }
 
     private async Task MakeDefault(QualityProfileDto p)

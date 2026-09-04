@@ -73,6 +73,13 @@ public class QualityProfileEntity
     public bool RequireForcedSubtitle { get; set; }
     public bool AllowUnknownTrackLanguage { get; set; } = true;
 
+    /// <summary>Simple preference used by the normal UI. Unlike the strict fields above, Smart and
+    /// Preferred modes rank desirable releases without rejecting viable original-language fallbacks.</summary>
+    public ReleaseLanguagePreference LanguagePreference { get; set; } = ReleaseLanguagePreference.Smart;
+    [MaxLength(16)] public string? PreferredAudioLanguage { get; set; } = "en";
+    [MaxLength(16)] public string? PreferredSubtitleLanguage { get; set; } = "en";
+    public bool PreferForcedSubtitles { get; set; } = true;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

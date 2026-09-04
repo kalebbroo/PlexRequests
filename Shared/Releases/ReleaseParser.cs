@@ -75,8 +75,10 @@ public partial class ReleaseParser : IReleaseParser
             ObjectBasedAudio = objectAudio,
             Languages = languages,
             MultiLanguage = languages.Contains("multi") || languages.Contains("dual"),
-            Subbed = languages.Contains("subbed") || languages.Contains("vostfr") || languages.Contains("subfrench"),
+            Subbed = languages.Contains("subbed") || languages.Contains("vostfr") || languages.Contains("subfrench")
+                     || Rx(name, @"\bsubs?\b"),
             Dubbed = languages.Contains("dubbed"),
+            ForcedSubtitles = Rx(name, @"\bforced\b"),
             Edition = edition,
             Flags = flags,
             ProperOrRepack = proper,

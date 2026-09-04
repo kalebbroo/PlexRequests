@@ -25,6 +25,7 @@ public record ParsedRelease
     public bool MultiLanguage { get; init; }
     public bool Subbed { get; init; }
     public bool Dubbed { get; init; }
+    public bool ForcedSubtitles { get; init; }
 
     /// <summary>Audio codec, normalised ("DTS-HD MA", "TrueHD", "EAC3"). Null when absent.</summary>
     public string? AudioCodec { get; init; }

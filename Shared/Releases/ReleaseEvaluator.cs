@@ -228,7 +228,19 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
                     $"explicit language hint(s) [{string.Join(", ", explicitLanguages)}] aren't in the profile's allowed set"));
         }
 
-        var score = Score(c, parsed, resolution, rank, isPack, context, idMatch, titleRecall, formatScore);
+        if (context.Profile?.LanguagePreference == ReleaseLanguagePreference.EnglishOnly)
+        {
+            var preferred = MediaLanguagePolicy.Normalize(context.Profile.PreferredAudioLanguage) ?? "en";
+            var explicitLanguages = parsed.Languages.Select(MediaLanguagePolicy.NormalizeExplicitLanguage)
+                .Where(x => x is not null).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (explicitLanguages.Count > 0 && !explicitLanguages.Contains(preferred, StringComparer.OrdinalIgnoreCase)
+                && !parsed.MultiLanguage)
+                rejections.Add(new Rejection(RejectionReason.LanguageNotAllowed,
+                    $"release advertises [{string.Join(", ", explicitLanguages)}], not required {preferred} audio"));
+        }
+
+        var score = Score(c, parsed, resolution, rank, isPack, context, idMatch, titleRecall, formatScore,
+            job.IsAnime || job.MediaType == MediaType.Anime);
 
         return new RankedCandidate
         {
@@ -297,7 +309,7 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
 
     private static (double Total, List<ScoreComponent> Components) Score(
         ReleaseCandidate c, ParsedRelease p, int resolution, int? profileRank, bool isPack,
-        RankingContext context, bool idMatch, double titleRecall, int formatScore)
+        RankingContext context, bool idMatch, double titleRecall, int formatScore, bool isAnime)
     {
         var prefs = context.Preferences;
         var parts = new List<ScoreComponent>();
@@ -313,8 +325,10 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         else Add("Seeders unknown", -25);
 
         if (p.ProperOrRepack) Add("PROPER/REPACK", 20);
-        if (prefs.PreferX265 && p.Codec == "x265") Add("x265", 15);
+        if (prefs.PreferX265 && p.Codec == "x265") Add("HEVC/x265 preference", 45);
         if (prefs.PreferHdr && p.Hdr) Add("HDR", 10);
+        foreach (var preference in LanguagePreferenceScore(p, context.Profile, isAnime))
+            Add(preference.Name, preference.Points);
         if (p.Group is not null && prefs.PreferredGroupsCsv is { Length: > 0 } groups
             && groups.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                      .Contains(p.Group, StringComparer.OrdinalIgnoreCase))
@@ -330,6 +344,66 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
             Add("Indexer priority", Math.Clamp(50 - priority, 0, 49));
 
         return (parts.Sum(x => x.Points), parts);
+    }
+
+    /// <summary>
+    /// Filename language markers are hints, so normal preferences only affect ordering. Hard requirements
+    /// are still proved from the actual streams during import. Smart deliberately has a graceful ladder:
+    /// English first for ordinary media; dual audio first for anime, then Japanese with subtitles, then a
+    /// usable dub or original-language copy rather than no download at all.
+    /// </summary>
+    internal static IReadOnlyList<ScoreComponent> LanguagePreferenceScore(
+        ParsedRelease release, QualityProfileDto? profile, bool isAnime)
+    {
+        if (profile is null || profile.LanguagePreference is ReleaseLanguagePreference.Any or ReleaseLanguagePreference.Custom)
+            return [];
+
+        var parts = new List<ScoreComponent>();
+        var explicitLanguages = release.Languages.Select(MediaLanguagePolicy.NormalizeExplicitLanguage)
+            .Where(x => x is not null).Select(x => x!)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var preferred = MediaLanguagePolicy.Normalize(profile.PreferredAudioLanguage) ?? "en";
+        bool hasPreferred = explicitLanguages.Contains(preferred);
+        bool hasJapanese = explicitLanguages.Contains("ja");
+        bool hasOther = explicitLanguages.Any(x => !x.Equals(preferred, StringComparison.OrdinalIgnoreCase));
+        bool looksDual = release.MultiLanguage || explicitLanguages.Count > 1;
+
+        void Add(string name, double points) => parts.Add(new ScoreComponent(name, points));
+
+        switch (profile.LanguagePreference)
+        {
+            case ReleaseLanguagePreference.Smart when isAnime:
+                if (looksDual && hasPreferred && hasJapanese) Add("Smart anime: dual audio", 240);
+                else if (hasJapanese && release.Subbed) Add("Smart anime: original audio with subtitles", 170);
+                else if (hasPreferred) Add("Smart anime: preferred-language dub", 120);
+                else if (hasJapanese) Add("Smart anime: original audio fallback", 40);
+                else if (explicitLanguages.Count == 0) Add("Smart anime: unlabelled fallback", 25);
+                break;
+            case ReleaseLanguagePreference.Smart:
+            case ReleaseLanguagePreference.EnglishPreferred:
+                if (hasPreferred) Add("Preferred audio language", hasOther ? 80 : 180);
+                // English-language scene releases usually omit ENG entirely; an unlabelled release should
+                // outrank one explicitly advertising a foreign-first multilingual edition.
+                else if (explicitLanguages.Count == 0) Add("Unlabelled/default-language release", 120);
+                else Add("Original-language fallback", -80);
+                break;
+            case ReleaseLanguagePreference.EnglishOnly:
+                if (hasPreferred) Add("Required audio language hint", 80);
+                break;
+            case ReleaseLanguagePreference.OriginalWithEnglishSubtitles:
+                if (isAnime && hasJapanese) Add("Original Japanese audio", 70);
+                else if (hasOther) Add("Original-language audio", 50);
+                if (release.Subbed) Add("Preferred subtitles", 35);
+                break;
+            case ReleaseLanguagePreference.DualAudioPreferred:
+                if (looksDual) Add("Dual audio", 100);
+                if (hasPreferred) Add("Preferred audio language", 35);
+                break;
+        }
+
+        if (profile.PreferForcedSubtitles && release.ForcedSubtitles)
+            Add("Forced subtitles", 30);
+        return parts;
     }
 
     private int EffectiveResolution(ReleaseCandidate c, ParsedRelease parsed)
