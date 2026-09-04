@@ -57,6 +57,55 @@ public sealed class FileTransferTests
         }
     }
 
+    [Fact]
+    public void Staged_metadata_edit_does_not_change_hardlinked_torrent_source()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var source = Path.Combine(root, "download.mkv");
+            var destination = Path.Combine(root, "library", "episode.mkv");
+            File.WriteAllText(source, "torrent-payload");
+
+            FileTransfer.Transfer(source, destination, TransferMode.Hardlink,
+                deleteSourceAfterImport: false, NullLogger.Instance,
+                staged => File.AppendAllText(staged, "-defaults-updated"));
+
+            Assert.Equal("torrent-payload", File.ReadAllText(source));
+            Assert.Equal("torrent-payload-defaults-updated", File.ReadAllText(destination));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Failed_staged_metadata_edit_preserves_existing_library_file()
+    {
+        var root = NewTempDirectory();
+        try
+        {
+            var source = Path.Combine(root, "download.mkv");
+            var destination = Path.Combine(root, "library", "episode.mkv");
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.WriteAllText(source, "new-copy");
+            File.WriteAllText(destination, "known-good-copy");
+
+            Assert.Throws<InvalidOperationException>(() => FileTransfer.Transfer(
+                source, destination, TransferMode.Copy, deleteSourceAfterImport: false,
+                NullLogger.Instance, _ => throw new InvalidOperationException("editor failed")));
+
+            Assert.Equal("known-good-copy", File.ReadAllText(destination));
+            Assert.Equal("new-copy", File.ReadAllText(source));
+            Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(destination)!, "*.partial"));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static string NewTempDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), $"plexrequests-transfer-{Guid.NewGuid():N}");

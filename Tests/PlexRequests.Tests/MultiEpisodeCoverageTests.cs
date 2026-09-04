@@ -451,6 +451,6 @@ public sealed class MultiEpisodeCoverageTests
     {
         public Task<MediaTrackSummaryDto> InspectAsync(string mediaPath,
             IReadOnlyList<string> companionSubtitles, CancellationToken ct) =>
-            Task.FromResult(new MediaTrackSummaryDto());
+            Task.FromResult(new MediaTrackSummaryDto { HasVideo = true });
     }
 }

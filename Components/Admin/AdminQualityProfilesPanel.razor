@@ -110,6 +110,16 @@ else
                         </div>
                     }
 
+                    <div class="mt-3">
+                        <MudSwitch T="bool" Label="Set preferred playback tracks automatically"
+                                   Value="p.SetPreferredTracksAsDefault" Color="Color.Primary"
+                                   ValueChanged="@(v => SetPlaybackDefaults(p, v))" />
+                        <MudText Typo="Typo.caption" Class="text-muted d-block">
+                            Smart mode defaults ordinary media to English audio (and forced English subtitles when present).
+                            Anime defaults to Japanese audio with full embedded English subtitles on MKV files. The original download remains unchanged.
+                        </MudText>
+                    </div>
+
                     <details class="profile-option" open="@(LanguagePreset(p) == "custom")">
                         <summary>
                             <span><b>Custom language rules</b><small>Use only when the presets above do not describe this profile.</small></span>
@@ -393,6 +403,12 @@ else
     {
         profile.PreferForcedSubtitles = value;
         await Save(profile, "forced subtitle preference");
+    }
+
+    private async Task SetPlaybackDefaults(QualityProfileDto profile, bool value)
+    {
+        profile.SetPreferredTracksAsDefault = value;
+        await Save(profile, "playback defaults");
     }
 
     private async Task SetPreferredLanguage(QualityProfileDto profile, bool audio, string? value)

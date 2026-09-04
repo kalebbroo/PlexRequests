@@ -40,13 +40,15 @@ public static class MediaLanguagePolicy
         AllowedAudioLanguages = ParseCsv(profile?.AllowedLanguagesCsv),
         RequiredSubtitleLanguages = ParseCsv(profile?.RequiredSubtitleLanguagesCsv),
         RequireForcedSubtitle = profile?.RequireForcedSubtitle == true,
-        AllowUnknownTrackLanguage = profile?.AllowUnknownTrackLanguage ?? true
+        AllowUnknownTrackLanguage = profile?.AllowUnknownTrackLanguage ?? true,
+        SetPreferredTracksAsDefault = profile?.SetPreferredTracksAsDefault ?? true
     };
 
     public static bool IsActive(MediaLanguagePolicyDto? policy) => policy is not null &&
         (policy.Preference != ReleaseLanguagePreference.Any
          || policy.RequiredAudioLanguages.Count > 0 || policy.AllowedAudioLanguages.Count > 0
-         || policy.RequiredSubtitleLanguages.Count > 0 || policy.RequireForcedSubtitle);
+         || policy.RequiredSubtitleLanguages.Count > 0 || policy.RequireForcedSubtitle
+         || policy.SetPreferredTracksAsDefault);
 
     public static string? Normalize(string? value)
     {

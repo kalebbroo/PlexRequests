@@ -182,6 +182,7 @@ public sealed class MediaLanguagePolicyTests
         const string json = """
             {"media":{"track":[
               {"@type":"General","Format":"Matroska"},
+              {"@type":"Video","Format":"AVC"},
               {"@type":"Audio","Format":"AAC","Language":"jpn","Title":"Main","Default":"Yes","Forced":"No"},
               {"@type":"Text","Format":"ASS","Language":"eng","Default":"No","Forced":"Yes"}
             ]}}
@@ -191,10 +192,70 @@ public sealed class MediaLanguagePolicyTests
             ["/downloads/Show.S01E01.ja.forced.srt"]);
 
         var audio = Assert.Single(result.Audio);
+        Assert.True(result.HasVideo);
         Assert.Equal("ja", audio.Language);
         Assert.True(audio.IsDefault);
         Assert.Contains(result.Subtitles, x => x.Language == "en" && x.IsForced && !x.IsExternal);
         Assert.Contains(result.Subtitles, x => x.Language == "ja" && x.IsForced && x.IsExternal);
+    }
+
+    [Fact]
+    public void SmartOrdinaryPlayback_SelectsEnglishAndForcedEnglishSubtitle()
+    {
+        var tracks = Tracks(audio: ["it", "en"], subtitles: ["en", "en"]);
+        tracks.Audio[0].IsDefault = true;
+        tracks.Subtitles[0].Title = "English full";
+        tracks.Subtitles[1].Title = "English forced";
+        tracks.Subtitles[1].IsForced = true;
+
+        var selected = MediaTrackDefaultSelection.Create(new MediaLanguagePolicyDto
+        {
+            Preference = ReleaseLanguagePreference.Smart,
+            PreferredAudioLanguage = "en",
+            PreferredSubtitleLanguage = "en",
+            PreferForcedSubtitles = true,
+            SetPreferredTracksAsDefault = true
+        }, tracks, isAnime: false);
+
+        Assert.NotNull(selected);
+        Assert.Equal(2, selected.AudioOrdinal);
+        Assert.Equal(2, selected.SubtitleOrdinal);
+        Assert.True(selected.EditSubtitles);
+    }
+
+    [Fact]
+    public void SmartAnimePlayback_SelectsJapaneseAndFullEnglishSubtitle()
+    {
+        var tracks = Tracks(audio: ["en", "ja"], subtitles: ["en", "en"]);
+        tracks.Audio[0].IsDefault = true;
+        tracks.Subtitles[0].Title = "Signs & songs";
+        tracks.Subtitles[0].IsForced = true;
+        tracks.Subtitles[1].Title = "English full subtitles";
+
+        var selected = MediaTrackDefaultSelection.Create(new MediaLanguagePolicyDto
+        {
+            Preference = ReleaseLanguagePreference.Smart,
+            PreferredAudioLanguage = "en",
+            PreferredSubtitleLanguage = "en",
+            SetPreferredTracksAsDefault = true
+        }, tracks, isAnime: true);
+
+        Assert.NotNull(selected);
+        Assert.Equal(2, selected.AudioOrdinal);
+        Assert.Equal(2, selected.SubtitleOrdinal);
+        Assert.True(selected.EditSubtitles);
+    }
+
+    [Fact]
+    public void PlaybackDefaultsCanPreserveReleaseFlags()
+    {
+        var selected = MediaTrackDefaultSelection.Create(new MediaLanguagePolicyDto
+        {
+            Preference = ReleaseLanguagePreference.Smart,
+            SetPreferredTracksAsDefault = false
+        }, Tracks(audio: ["it", "en"]), isAnime: false);
+
+        Assert.Null(selected);
     }
 
     [Fact]
@@ -254,6 +315,53 @@ public sealed class MediaLanguagePolicyTests
             var video = Assert.Single(result.Files, x => x.FileType == "video");
             Assert.Same(observed, video.MediaTracks);
             Assert.True(File.Exists(video.DestinationPath));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OrganizerRejectsAFileWithNoReadableVideoStream()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "source.mkv");
+            await File.WriteAllBytesAsync(source, [0, 0, 0, 0]);
+            var tracks = Tracks(audio: ["en", "ja"]);
+            tracks.HasVideo = false;
+
+            var result = await CreateOrganizer(new FixedInspector(tracks)).OrganizeAsync(MovieJob(Path.Combine(root, "library")),
+                new TransferItem("transfer", null, null, false), source, Preferences(), CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Equal(BlocklistReason.MediaPolicyMismatch, result.BlocklistReason);
+            Assert.Contains("no readable video", result.FailReason, StringComparison.OrdinalIgnoreCase);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OrganizerAppliesDefaultsOnlyToStagedLibraryCopyAndAuditsNewFlags()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "source.mkv");
+            await File.WriteAllTextAsync(source, "torrent-payload");
+            var observed = Tracks(audio: ["it", "en", "ja"]);
+            observed.Audio[0].IsDefault = true;
+            var inspector = new ApplyingInspector(observed);
+
+            var result = await CreateOrganizer(inspector).OrganizeAsync(MovieJob(Path.Combine(root, "library")),
+                new TransferItem("transfer", null, null, false), source, Preferences(), CancellationToken.None);
+
+            Assert.True(result.Success, result.FailReason);
+            Assert.Equal("torrent-payload", await File.ReadAllTextAsync(source));
+            var video = Assert.Single(result.Files, x => x.FileType == "video");
+            Assert.Equal("torrent-payload-defaults-updated", await File.ReadAllTextAsync(video.DestinationPath));
+            Assert.False(video.MediaTracks!.Audio[0].IsDefault);
+            Assert.True(video.MediaTracks.Audio[1].IsDefault);
+            Assert.Equal(2, inspector.Selection?.AudioOrdinal);
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -322,6 +430,7 @@ public sealed class MediaLanguagePolicyTests
     private static MediaTrackSummaryDto Tracks(IEnumerable<string?>? audio = null,
         IEnumerable<string?>? subtitles = null) => new()
     {
+        HasVideo = true,
         Audio = (audio ?? []).Select(language => new MediaTrackDto
             { Type = "audio", Language = language }).ToList(),
         Subtitles = (subtitles ?? []).Select(language => new MediaTrackDto
@@ -346,6 +455,21 @@ public sealed class MediaLanguagePolicyTests
         }
     }
 
+    private sealed class ApplyingInspector(MediaTrackSummaryDto tracks) : IMediaTrackInspector
+    {
+        public MediaTrackDefaultSelection? Selection { get; private set; }
+
+        public Task<MediaTrackSummaryDto> InspectAsync(string mediaPath,
+            IReadOnlyList<string> companionSubtitles, CancellationToken ct) => Task.FromResult(tracks);
+
+        public bool SetDefaults(string stagedPath, string sourceExtension, MediaTrackDefaultSelection selection)
+        {
+            Selection = selection;
+            File.AppendAllText(stagedPath, "-defaults-updated");
+            return true;
+        }
+    }
+
     private sealed class SidecarInspector : IMediaTrackInspector
     {
         public IReadOnlyList<string> Companions { get; private set; } = [];
@@ -356,6 +480,7 @@ public sealed class MediaLanguagePolicyTests
             Companions = companionSubtitles;
             const string json = """
                 {"media":{"track":[
+                  {"@type":"Video","Format":"AVC"},
                   {"@type":"Audio","Format":"AAC","Language":"eng"},
                   {"@type":"Audio","Format":"AAC","Language":"jpn"}
                 ]}}

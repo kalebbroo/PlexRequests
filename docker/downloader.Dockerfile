@@ -35,7 +35,7 @@ COPY --from=deno --chmod=0755 /out/deno /usr/local/bin/deno
 # (granted in docker-compose.yml); harmless if the feature is unused. The headless MediaInfo CLI proves
 # strict audio/subtitle requirements from real streams before a file is allowed into any Plex root.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends cifs-utils nfs-common ca-certificates mediainfo \
+    && apt-get install -y --no-install-recommends cifs-utils nfs-common ca-certificates mediainfo mkvtoolnix \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app .
 ENTRYPOINT ["dotnet", "PlexRequests.Downloader.dll"]
