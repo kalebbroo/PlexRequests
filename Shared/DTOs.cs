@@ -970,6 +970,10 @@ public class QualityProfileDto
     public bool RequireForcedSubtitle { get; set; }
     /// <summary>Whether an untagged audio/subtitle track is acceptable when this profile is strict.</summary>
     public bool AllowUnknownTrackLanguage { get; set; } = true;
+    public ReleaseLanguagePreference LanguagePreference { get; set; } = ReleaseLanguagePreference.Smart;
+    public string? PreferredAudioLanguage { get; set; } = "en";
+    public string? PreferredSubtitleLanguage { get; set; } = "en";
+    public bool PreferForcedSubtitles { get; set; } = true;
     /// <summary>True when a request or assignment rule references this profile, so deletion is blocked.</summary>
     public bool InUse { get; set; }
 }
@@ -1486,6 +1490,10 @@ public class ImportedFileDto
 /// <summary>Strict language contract evaluated against actual files, never just a release name.</summary>
 public class MediaLanguagePolicyDto
 {
+    public ReleaseLanguagePreference Preference { get; set; } = ReleaseLanguagePreference.Any;
+    public string? PreferredAudioLanguage { get; set; }
+    public string? PreferredSubtitleLanguage { get; set; }
+    public bool PreferForcedSubtitles { get; set; }
     public List<string> RequiredAudioLanguages { get; set; } = new();
     public List<string> AllowedAudioLanguages { get; set; } = new();
     public List<string> RequiredSubtitleLanguages { get; set; } = new();

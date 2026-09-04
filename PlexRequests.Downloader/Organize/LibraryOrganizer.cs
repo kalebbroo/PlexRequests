@@ -594,7 +594,10 @@ public class LibraryOrganizer(
 
     private static bool ShouldKeepSubtitles(FulfillmentJobDto job, EffectiveLibraryOrganization prefs) =>
         prefs.KeepSubtitles || job.MediaLanguagePolicy is
-            { RequiredSubtitleLanguages.Count: > 0 } or { RequireForcedSubtitle: true };
+            { RequiredSubtitleLanguages.Count: > 0 }
+            or { RequireForcedSubtitle: true }
+            or { PreferForcedSubtitles: true }
+            or { Preference: ReleaseLanguagePreference.OriginalWithEnglishSubtitles };
 
     private static List<EpisodeRef> Coverage(int season, IEnumerable<int> episodes) => episodes
         .Distinct().OrderBy(x => x).Select(x => new EpisodeRef { Season = season, Episode = x }).ToList();

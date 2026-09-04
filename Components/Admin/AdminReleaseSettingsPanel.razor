@@ -1,7 +1,7 @@
 @inject NavigationManager Navigation
 
 <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mb-4">
-    Start with Basic rules and Quality. Automatic choices and Advanced matching are optional and can be added later.
+    Everyday defaults are enough for most libraries. Special profiles and filename rules are optional overrides.
 </MudAlert>
 
 <AdminWorkspaceNav AriaLabel="Release settings view"
@@ -30,10 +30,10 @@
 @code {
     private static readonly AdminWorkspaceSection[] Sections =
     [
-        new("basics", "Basic rules", "Season packs, minimum seeders, and global preferences.", Icons.Material.Filled.Download, "/admin?tab=downloads&sub=preferences"),
-        new("quality", "Quality", "Allowed resolutions, size limits, audio, and subtitles.", Icons.Material.Filled.HighQuality, "/admin?tab=downloads&sub=quality"),
-        new("assignment", "Automatic choices", "Apply a quality profile by media type, genre, or title.", Icons.Material.Filled.AutoAwesome, "/admin?tab=downloads&sub=assignment"),
-        new("formats", "Advanced matching", "Prefer or reject releases using reusable filename rules.", Icons.Material.Filled.Tune, "/admin?tab=downloads&sub=formats")
+        new("basics", "Everyday defaults", "Quality, language, encoding, season packs, and safe fallbacks.", Icons.Material.Filled.AutoAwesome, "/admin?tab=downloads&sub=preferences"),
+        new("quality", "Special profiles", "Optional strict policies for 4K, language, anime, or device exceptions.", Icons.Material.Filled.Tune, "/admin?tab=downloads&sub=quality"),
+        new("assignment", "Automatic overrides", "Apply a special profile by media type, genre, or title.", Icons.Material.Filled.CallSplit, "/admin?tab=downloads&sub=assignment"),
+        new("formats", "Filename rules", "Advanced scoring or rejection rules for release names.", Icons.Material.Filled.DataObject, "/admin?tab=downloads&sub=formats")
     ];
 
     [Parameter]

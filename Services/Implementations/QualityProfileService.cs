@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 
@@ -106,6 +107,10 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
             SortOrder = maxOrder + 1,
             IsDefault = false,
             IsUserSelectable = true,
+            LanguagePreference = template?.LanguagePreference ?? ReleaseLanguagePreference.Smart,
+            PreferredAudioLanguage = template?.PreferredAudioLanguage ?? "en",
+            PreferredSubtitleLanguage = template?.PreferredSubtitleLanguage ?? "en",
+            PreferForcedSubtitles = template?.PreferForcedSubtitles ?? true,
             AppliesToMediaTypes = (int)MediaTypeFlags.All,
             ItemsJson = template?.ItemsJson ?? "[]",
             CutoffQualityDefinitionId = template?.CutoffQualityDefinitionId
@@ -136,6 +141,10 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
             ? null : dto.RequiredSubtitleLanguagesCsv.Trim();
         p.RequireForcedSubtitle = dto.RequireForcedSubtitle;
         p.AllowUnknownTrackLanguage = dto.AllowUnknownTrackLanguage;
+        p.LanguagePreference = dto.LanguagePreference;
+        p.PreferredAudioLanguage = MediaLanguagePolicy.Normalize(dto.PreferredAudioLanguage);
+        p.PreferredSubtitleLanguage = MediaLanguagePolicy.Normalize(dto.PreferredSubtitleLanguage);
+        p.PreferForcedSubtitles = dto.PreferForcedSubtitles;
         p.MinCustomFormatScore = dto.MinCustomFormatScore;
         p.CutoffFormatScore = dto.CutoffFormatScore;
         if (dto.Items is { Count: > 0 }) p.ItemsJson = JsonSerializer.Serialize(dto.Items, Json);
@@ -312,6 +321,10 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
         RequiredSubtitleLanguagesCsv = p.RequiredSubtitleLanguagesCsv,
         RequireForcedSubtitle = p.RequireForcedSubtitle,
         AllowUnknownTrackLanguage = p.AllowUnknownTrackLanguage,
+        LanguagePreference = p.LanguagePreference,
+        PreferredAudioLanguage = p.PreferredAudioLanguage,
+        PreferredSubtitleLanguage = p.PreferredSubtitleLanguage,
+        PreferForcedSubtitles = p.PreferForcedSubtitles,
         InUse = inUse,
         Items = JsonSerializer.Deserialize<List<QualityProfileItemDto>>(p.ItemsJson, Json) ?? new()
     };

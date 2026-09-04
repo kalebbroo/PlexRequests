@@ -46,6 +46,50 @@ public class ReleaseEvaluatorTests
         Assert.Equal(rejected, Rejected(ranked, RejectionReason.LanguageNotAllowed));
     }
 
+    [Fact]
+    public void Smart_default_PrefersNormalUnlabelledReleaseOverItalianFirstMultilingualRelease()
+    {
+        var defs = TestData.Definitions();
+        var profile = TestData.Profile(defs);
+        profile.LanguagePreference = ReleaseLanguagePreference.Smart;
+        profile.PreferredAudioLanguage = "en";
+
+        var english = _eval.Evaluate(TestData.Release("Elle.S01E02.1080p.WEB-DL-FLUX"),
+            TestData.Job(title: "Elle"), TestData.Context(profile, defs: defs));
+        var italianFirst = _eval.Evaluate(TestData.Release("Elle.S01E02.1080p.WEB-DL.ITA.ENG"),
+            TestData.Job(title: "Elle"), TestData.Context(profile, defs: defs));
+
+        Assert.True(english.Score > italianFirst.Score);
+    }
+
+    [Fact]
+    public void Smart_anime_PrefersDualThenSubbedWithoutRejectingFallbacks()
+    {
+        var defs = TestData.Definitions();
+        var profile = new QualityProfileDto
+        {
+            Id = 1,
+            Name = "Smart anime",
+            Items = TestData.Profile(defs).Items,
+            CutoffQualityDefinitionId = TestData.TierId(defs, Quality.FullHD, ReleaseSource.WebDl),
+            LanguagePreference = ReleaseLanguagePreference.Smart,
+            PreferredAudioLanguage = "en",
+            PreferForcedSubtitles = true
+        };
+        var job = TestData.Job(title: "Anime");
+        job.IsAnime = true;
+        var context = TestData.Context(profile, defs: defs);
+
+        var dual = _eval.Evaluate(TestData.Release("Anime.S01E01.1080p.WEB-DL.DUAL.ENG.JPN"), job, context).Score;
+        var subbed = _eval.Evaluate(TestData.Release("Anime.S01E01.1080p.WEB-DL.JPN.SUB"), job, context).Score;
+        var dub = _eval.Evaluate(TestData.Release("Anime.S01E01.1080p.WEB-DL.ENG.DUBBED"), job, context).Score;
+        var original = _eval.Evaluate(TestData.Release("Anime.S01E01.1080p.WEB-DL.JPN"), job, context).Score;
+
+        Assert.True(dual > subbed);
+        Assert.True(subbed > dub);
+        Assert.True(dub > original);
+    }
+
     // The headline behaviour of this phase: quality is judged against the profile's allowed tier list,
     // not just a pixel-height floor.
     [Fact]

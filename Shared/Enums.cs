@@ -444,6 +444,22 @@ public enum SeasonPackStrategy
     Auto = 2
 }
 
+/// <summary>
+/// Human-facing language behavior for release selection. Most installations should use Smart: preferences
+/// influence ranking but do not strand foreign films or sub-only anime. Custom retains the older strict
+/// audio/subtitle contract for administrators who genuinely need hard requirements.
+/// </summary>
+public enum ReleaseLanguagePreference
+{
+    Smart = 0,
+    EnglishPreferred = 1,
+    EnglishOnly = 2,
+    OriginalWithEnglishSubtitles = 3,
+    DualAudioPreferred = 4,
+    Any = 5,
+    Custom = 6
+}
+
 /// <summary>The numbering used by release names before translating to Plex's canonical season/episode order.</summary>
 public enum EpisodeOrderType
 {

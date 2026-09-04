@@ -1,4 +1,5 @@
 using PlexRequestsHosted.Shared.DTOs;
+using PlexRequestsHosted.Shared.Enums;
 
 namespace PlexRequestsHosted.Shared;
 
@@ -31,6 +32,10 @@ public static class MediaLanguagePolicy
 
     public static MediaLanguagePolicyDto FromProfile(QualityProfileDto? profile) => new()
     {
+        Preference = profile?.LanguagePreference ?? ReleaseLanguagePreference.Any,
+        PreferredAudioLanguage = Normalize(profile?.PreferredAudioLanguage),
+        PreferredSubtitleLanguage = Normalize(profile?.PreferredSubtitleLanguage),
+        PreferForcedSubtitles = profile?.PreferForcedSubtitles == true,
         RequiredAudioLanguages = ParseCsv(profile?.RequiredAudioLanguagesCsv),
         AllowedAudioLanguages = ParseCsv(profile?.AllowedLanguagesCsv),
         RequiredSubtitleLanguages = ParseCsv(profile?.RequiredSubtitleLanguagesCsv),
@@ -39,7 +44,8 @@ public static class MediaLanguagePolicy
     };
 
     public static bool IsActive(MediaLanguagePolicyDto? policy) => policy is not null &&
-        (policy.RequiredAudioLanguages.Count > 0 || policy.AllowedAudioLanguages.Count > 0
+        (policy.Preference != ReleaseLanguagePreference.Any
+         || policy.RequiredAudioLanguages.Count > 0 || policy.AllowedAudioLanguages.Count > 0
          || policy.RequiredSubtitleLanguages.Count > 0 || policy.RequireForcedSubtitle);
 
     public static string? Normalize(string? value)
@@ -75,6 +81,14 @@ public static class MediaLanguagePolicy
         var subtitles = tracks.Subtitles.Select(t => Normalize(t.Language)).ToList();
         var knownAudio = audio.Where(x => x is not null).Select(x => x!).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var knownSubtitles = subtitles.Where(x => x is not null).Select(x => x!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var preferredAudio = Normalize(p.PreferredAudioLanguage) ?? "en";
+        var preferredSubtitle = Normalize(p.PreferredSubtitleLanguage) ?? "en";
+        if (p.Preference == ReleaseLanguagePreference.EnglishOnly && !knownAudio.Contains(preferredAudio))
+            return (false, $"missing required {preferredAudio} audio; found: {Found(knownAudio)}");
+        if (p.Preference == ReleaseLanguagePreference.OriginalWithEnglishSubtitles
+            && !knownSubtitles.Contains(preferredSubtitle))
+            return (false, $"missing required {preferredSubtitle} subtitles; found: {Found(knownSubtitles)}");
 
         var missingAudio = p.RequiredAudioLanguages.Select(Normalize).Where(x => x is not null)
             .Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase)
