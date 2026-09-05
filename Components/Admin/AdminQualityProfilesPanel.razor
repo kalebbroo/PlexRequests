@@ -115,8 +115,9 @@ else
                                    Value="p.SetPreferredTracksAsDefault" Color="Color.Primary"
                                    ValueChanged="@(v => SetPlaybackDefaults(p, v))" />
                         <MudText Typo="Typo.caption" Class="text-muted d-block">
-                            Smart mode defaults ordinary media to English audio (and forced English subtitles when present).
-                            Anime defaults to Japanese audio with full embedded English subtitles on MKV files. The original download remains unchanged.
+                            Smart mode puts English audio first for ordinary media (and forced English subtitles when present).
+                            Anime puts Japanese audio and full embedded English subtitles first on MKV files. Default flags are also set,
+                            and the original download remains unchanged.
                         </MudText>
                     </div>
 
