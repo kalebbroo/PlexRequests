@@ -127,6 +127,7 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        ConfigureUtf8Locale(start);
         start.ArgumentList.Add("--Output=JSON");
         start.ArgumentList.Add(mediaPath);
 
@@ -210,6 +211,7 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        ConfigureUtf8Locale(start);
         start.ArgumentList.Add(stagedPath);
         if (selection.AudioOrdinal is not null)
             AddEdits(start, "a", selection.AudioOrdinal, selection.AudioCount);
@@ -233,6 +235,7 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            ConfigureUtf8Locale(start);
             start.ArgumentList.Add("--output");
             start.ArgumentList.Add(remuxPath);
             start.ArgumentList.Add("--track-order");
@@ -303,6 +306,7 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        ConfigureUtf8Locale(start);
         start.ArgumentList.Add("--identify");
         start.ArgumentList.Add("--identification-format");
         start.ArgumentList.Add("json");
@@ -424,6 +428,15 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
     {
         var clean = value.Replace('\r', ' ').Replace('\n', ' ').Trim();
         return clean.Length > 500 ? clean[..500] : clean;
+    }
+
+    private static void ConfigureUtf8Locale(ProcessStartInfo start)
+    {
+        // MKVToolNix 82 can truncate its JSON output mid-string when legacy metadata contains non-ASCII
+        // characters and the worker inherited the POSIX locale. Force its built-in UTF-8 locale for every
+        // probe/edit/remux so malformed display metadata cannot make a valid media inventory unreadable.
+        start.Environment["LANG"] = "C.UTF-8";
+        start.Environment["LC_ALL"] = "C.UTF-8";
     }
 
     private static readonly HashSet<string> LanguageFilenameTokens = new(StringComparer.OrdinalIgnoreCase)
