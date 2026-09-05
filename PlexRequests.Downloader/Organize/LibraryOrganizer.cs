@@ -534,13 +534,32 @@ public class LibraryOrganizer(
 
     private static void RecordAppliedDefaults(MediaTrackSummaryDto tracks, MediaTrackDefaultSelection selection)
     {
-        var audioOrdinal = 0;
-        foreach (var track in tracks.Audio.Where(x => !x.IsExternal))
-            track.IsDefault = ++audioOrdinal == selection.AudioOrdinal;
-        if (!selection.EditSubtitles) return;
-        var subtitleOrdinal = 0;
-        foreach (var track in tracks.Subtitles.Where(x => !x.IsExternal))
-            track.IsDefault = ++subtitleOrdinal == selection.SubtitleOrdinal;
+        tracks.Audio = RecordAppliedOrder(tracks.Audio, selection.AudioOrdinal,
+            editDefaults: selection.AudioOrdinal is not null);
+        if (selection.EditSubtitles)
+            tracks.Subtitles = RecordAppliedOrder(tracks.Subtitles, selection.SubtitleOrdinal,
+                editDefaults: true);
+    }
+
+    private static List<MediaTrackDto> RecordAppliedOrder(IReadOnlyList<MediaTrackDto> tracks,
+        int? selectedOrdinal, bool editDefaults)
+    {
+        var embedded = tracks.Where(track => !track.IsExternal).ToList();
+        var external = tracks.Where(track => track.IsExternal).ToList();
+        MediaTrackDto? selected = null;
+        if (selectedOrdinal is int ordinal && ordinal >= 1 && ordinal <= embedded.Count)
+        {
+            selected = embedded[ordinal - 1];
+            embedded.RemoveAt(ordinal - 1);
+            embedded.Insert(0, selected);
+        }
+
+        for (var index = 0; index < embedded.Count; index++)
+        {
+            embedded[index].Index = index + 1;
+            if (editDefaults) embedded[index].IsDefault = ReferenceEquals(embedded[index], selected);
+        }
+        return embedded.Concat(external).ToList();
     }
 
     private async Task<Dictionary<string, MediaTrackSummaryDto>> InspectSelectionAsync(FulfillmentJobDto job,

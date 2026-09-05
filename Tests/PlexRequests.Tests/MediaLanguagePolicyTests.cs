@@ -247,6 +247,70 @@ public sealed class MediaLanguagePolicyTests
     }
 
     [Fact]
+    public void MkvTrackPlan_MovesPreferredAudioAndSubtitleAheadOfForeignTracks()
+    {
+        const string json = """
+            {
+              "container":{"recognized":true,"supported":true},
+              "attachments":[{"id":1}], "chapters":[{"num_entries":2}],
+              "global_tags":[{}], "track_tags":[{}],
+              "tracks":[
+                {"id":0,"type":"video","codec":"AVC","properties":{"default_track":true}},
+                {"id":1,"type":"audio","codec":"E-AC-3","properties":{"language":"ita","default_track":true}},
+                {"id":2,"type":"audio","codec":"E-AC-3","properties":{"language_ietf":"en-US","default_track":false}},
+                {"id":3,"type":"subtitles","codec":"SubRip/SRT","properties":{"language":"ita","default_track":false}},
+                {"id":4,"type":"subtitles","codec":"SubRip/SRT","properties":{"language":"eng","default_track":false}}
+              ]
+            }
+            """;
+        var probe = MkvProbe.Parse(json);
+
+        var plan = MkvTrackPlan.Create(probe,
+            new MediaTrackDefaultSelection(2, 2, 2, 2, EditSubtitles: true));
+
+        Assert.Equal([0, 2, 1, 4, 3], plan.OrderedTrackIds);
+        Assert.True(plan.RequiresRemux);
+        Assert.Equal(1, probe.Attachments);
+        Assert.Equal(1, probe.Chapters);
+        Assert.Contains(2, plan.DefaultTrackIds);
+        Assert.Contains(4, plan.DefaultTrackIds);
+        Assert.DoesNotContain(1, plan.DefaultTrackIds);
+    }
+
+    [Fact]
+    public void MkvTrackPlan_AvoidsRemuxWhenPreferredStreamsAreAlreadyFirst()
+    {
+        var probe = new MkvProbe(
+            [
+                new MkvTrack(0, "video", "AVC", null, true),
+                new MkvTrack(1, "audio", "AAC", "en", false),
+                new MkvTrack(2, "audio", "AAC", "it", true),
+                new MkvTrack(3, "subtitle", "SRT", "en", false)
+            ], 0, 0, 0, 0);
+
+        var plan = MkvTrackPlan.Create(probe,
+            new MediaTrackDefaultSelection(2, 1, 1, null, EditSubtitles: true));
+
+        Assert.False(plan.RequiresRemux);
+        Assert.Equal([0, 1, 2, 3], plan.OrderedTrackIds);
+        Assert.Equal([1], plan.DefaultTrackIds.Where(id => probe.Audio.Any(track => track.Id == id)));
+        Assert.DoesNotContain(3, plan.DefaultTrackIds);
+    }
+
+    [Fact]
+    public void MkvTrackPlan_RejectsInspectorInventoryMismatch()
+    {
+        var probe = new MkvProbe(
+            [new MkvTrack(0, "video", "AVC", null, true), new MkvTrack(1, "audio", "AAC", "en", true)],
+            0, 0, 0, 0);
+
+        var error = Assert.Throws<InvalidOperationException>(() => MkvTrackPlan.Create(probe,
+            new MediaTrackDefaultSelection(2, 1, 0, null, EditSubtitles: false)));
+
+        Assert.Contains("inventory mismatch", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void PlaybackDefaultsCanPreserveReleaseFlags()
     {
         var selected = MediaTrackDefaultSelection.Create(new MediaLanguagePolicyDto
@@ -359,8 +423,11 @@ public sealed class MediaLanguagePolicyTests
             Assert.Equal("torrent-payload", await File.ReadAllTextAsync(source));
             var video = Assert.Single(result.Files, x => x.FileType == "video");
             Assert.Equal("torrent-payload-defaults-updated", await File.ReadAllTextAsync(video.DestinationPath));
-            Assert.False(video.MediaTracks!.Audio[0].IsDefault);
-            Assert.True(video.MediaTracks.Audio[1].IsDefault);
+            Assert.Equal("en", video.MediaTracks!.Audio[0].Language);
+            Assert.True(video.MediaTracks.Audio[0].IsDefault);
+            Assert.Equal("it", video.MediaTracks.Audio[1].Language);
+            Assert.False(video.MediaTracks.Audio[1].IsDefault);
+            Assert.Equal([1, 2, 3], video.MediaTracks.Audio.Select(track => track.Index));
             Assert.Equal(2, inspector.Selection?.AudioOrdinal);
         }
         finally { Directory.Delete(root, recursive: true); }

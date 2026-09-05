@@ -92,7 +92,8 @@ else
         </div>
         <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mt-3">
             Smart mode prefers English releases for ordinary media and Japanese audio with English subtitles for anime.
-            When automatic playback tracks are enabled, imported MKV files receive those defaults without changing the torrent payload.
+            When automatic playback tracks are enabled, imported MKV files put those streams first and set their default flags,
+            without changing the torrent payload. This provides a reliable fallback across Plex accounts and clients.
             A missing ideal release does not strand the request.
         </MudAlert>
     </MudPaper>

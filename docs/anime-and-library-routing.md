@@ -111,11 +111,13 @@ are stored in the release blocklist. This lets an admin see why a release was ac
 exposes stream metadata and MKVToolNix exposes machine-readable track identification and BCP 47/ISO language tags:
 <https://ffmpeg.org/ffprobe.html>, <https://mkvtoolnix.download/doc/mkvmerge.html>.
 
-For MKV imports, profiles can also set playback defaults automatically. Smart mode selects English audio for
-ordinary media, retaining a forced English subtitle when present. Anime selects Japanese audio and the best
-full English subtitle track, avoiding forced/signs-only, SDH, and commentary tracks when a normal translation
-exists. The edit runs on a private staged library copy before the atomic commit, so hardlinked torrent data and
-the previous Plex file are never modified.
+For MKV imports, profiles can also prepare playback order automatically. Smart mode physically puts English audio
+first for ordinary media, retaining a forced English subtitle when present. Anime puts Japanese audio and the best
+full English subtitle first, avoiding forced/signs-only, SDH, and commentary tracks when a normal translation
+exists. It also sets Matroska default flags, but does not rely on those flags alone because Plex may ignore them.
+The remux runs on a private staged library copy and its track/attachment/chapter/tag inventory is verified before
+the atomic commit, so hardlinked torrent data and the previous Plex file are never modified. If preparation or
+verification fails, the import fails safely and searches another release rather than publishing an ambiguous file.
 
 ## Phase 4 — numbering and multi-episode files
 

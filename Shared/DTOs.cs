@@ -974,6 +974,7 @@ public class QualityProfileDto
     public string? PreferredAudioLanguage { get; set; } = "en";
     public string? PreferredSubtitleLanguage { get; set; } = "en";
     public bool PreferForcedSubtitles { get; set; } = true;
+    /// <summary>Order preferred streams first and set their container default flags on supported imports.</summary>
     public bool SetPreferredTracksAsDefault { get; set; } = true;
     /// <summary>True when a request or assignment rule references this profile, so deletion is blocked.</summary>
     public bool InUse { get; set; }
@@ -1500,7 +1501,7 @@ public class MediaLanguagePolicyDto
     public List<string> RequiredSubtitleLanguages { get; set; } = new();
     public bool RequireForcedSubtitle { get; set; }
     public bool AllowUnknownTrackLanguage { get; set; } = true;
-    /// <summary>Rewrite supported containers so the desired tracks become the playback defaults.</summary>
+    /// <summary>Order preferred streams first and set their container default flags on supported imports.</summary>
     public bool SetPreferredTracksAsDefault { get; set; } = true;
 }
 
