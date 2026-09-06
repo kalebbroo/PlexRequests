@@ -136,6 +136,25 @@ public sealed class MediaLanguagePolicyTests
     }
 
     [Fact]
+    public void ForcedSubtitleRequirement_MatchesThePreferredSubtitleLanguage()
+    {
+        var policy = new MediaLanguagePolicyDto
+        {
+            PreferredSubtitleLanguage = "en",
+            RequireForcedSubtitle = true
+        };
+        var tracks = Tracks(subtitles: ["en", "ru"]);
+        tracks.Subtitles[1].IsForced = true;
+
+        var rejected = MediaLanguagePolicy.Evaluate(policy, tracks);
+
+        Assert.False(rejected.Accepted);
+        Assert.Contains("en forced", rejected.Reason);
+        tracks.Subtitles[0].IsForced = true;
+        Assert.True(MediaLanguagePolicy.Evaluate(policy, tracks).Accepted);
+    }
+
+    [Fact]
     public void SmartPreference_AllowsOriginalLanguageFallback()
     {
         var policy = new MediaLanguagePolicyDto

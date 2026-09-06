@@ -121,8 +121,20 @@ public static class MediaLanguagePolicy
                 return (false, "one or more subtitle tracks have no language tag");
         }
 
-        if (p.RequireForcedSubtitle && !tracks.Subtitles.Any(t => t.IsForced))
-            return (false, "no forced subtitle track was found");
+        if (p.RequireForcedSubtitle)
+        {
+            var forcedSubtitles = tracks.Subtitles.Where(t => t.IsForced).ToList();
+            if (forcedSubtitles.Count == 0)
+                return (false, "no forced subtitle track was found");
+
+            // When an admin names a preferred subtitle language, "forced required" means a forced track
+            // in that language. A release with English full subtitles plus (for example) Russian forced
+            // subtitles must not pass an English replacement policy.
+            var forcedLanguage = Normalize(p.PreferredSubtitleLanguage);
+            if (forcedLanguage is not null && !forcedSubtitles.Any(t =>
+                    string.Equals(Normalize(t.Language), forcedLanguage, StringComparison.OrdinalIgnoreCase)))
+                return (false, $"missing required {forcedLanguage} forced subtitles");
+        }
 
         return (true, null);
     }
