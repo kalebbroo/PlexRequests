@@ -19,6 +19,18 @@ public sealed class MultiEpisodeCoverageTests
     private readonly ReleaseParser _parser = new();
 
     [Theory]
+    [InlineData(true, 2, 2, true)]
+    [InlineData(true, 1, 2, false)]
+    [InlineData(false, 2, 2, false)]
+    [InlineData(true, 0, 0, false)]
+    public void ReplacementOnlyFinalizesAfterEveryTargetImports(
+        bool coversAllTargets, int importedCount, int transferCount, bool expected)
+    {
+        Assert.Equal(expected, FulfillmentPipeline.ReplacementReadyToFinalize(
+            coversAllTargets, importedCount, transferCount));
+    }
+
+    [Theory]
     [InlineData("Show.S02E18-E19.1080p.mkv")]
     [InlineData("Show.S02E18-S02E19.1080p.mkv")]
     [InlineData("Show.S02E18E19.1080p.mkv")]

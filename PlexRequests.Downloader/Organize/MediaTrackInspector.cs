@@ -399,7 +399,10 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
                 Language = MediaLanguagePolicy.Normalize(stream.Language),
                 Title = stream.Title,
                 IsDefault = IsYes(stream.Default),
-                IsForced = IsYes(stream.Forced)
+                // Some otherwise-complete WEB releases label narrative tracks "Forced" but leave the
+                // Matroska forced disposition unset. Treat the explicit track title as authoritative too;
+                // otherwise strict policy rejects a real forced track and preferred playback leaves it off.
+                IsForced = IsYes(stream.Forced) || (type == "subtitle" && IsForcedTitle(stream.Title))
             };
             if (type == "audio") result.Audio.Add(track); else result.Subtitles.Add(track);
         }
@@ -458,6 +461,10 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
     private static bool IsYes(string? value) => value is not null
         && (value.Equals("yes", StringComparison.OrdinalIgnoreCase)
             || value.Equals("true", StringComparison.OrdinalIgnoreCase) || value == "1");
+
+    private static bool IsForcedTitle(string? value) => value is not null
+        && value.Split([' ', '.', '_', '-', '(', ')', '[', ']'], StringSplitOptions.RemoveEmptyEntries)
+            .Any(token => token.Equals("forced", StringComparison.OrdinalIgnoreCase));
 
     private sealed class MediaInfoDocument
     {
