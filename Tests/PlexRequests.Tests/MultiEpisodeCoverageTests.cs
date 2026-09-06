@@ -30,6 +30,18 @@ public sealed class MultiEpisodeCoverageTests
             coversAllTargets, importedCount, transferCount));
     }
 
+    [Fact]
+    public void MissingTransferRequiresTheWholeGraceWindowBeforeFailure()
+    {
+        var firstSeen = new DateTime(2026, 9, 6, 12, 0, 0, DateTimeKind.Utc);
+        var grace = TimeSpan.FromSeconds(30);
+
+        Assert.False(FulfillmentPipeline.MissingTransferGraceExpired(
+            firstSeen, firstSeen.AddSeconds(29), grace));
+        Assert.True(FulfillmentPipeline.MissingTransferGraceExpired(
+            firstSeen, firstSeen.AddSeconds(30), grace));
+    }
+
     [Theory]
     [InlineData("Show.S02E18-E19.1080p.mkv")]
     [InlineData("Show.S02E18-S02E19.1080p.mkv")]

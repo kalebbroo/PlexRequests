@@ -19,6 +19,48 @@ namespace PlexRequests.Tests;
 public sealed class MediaIssueReplacementTests
 {
     [Fact]
+    public async Task Cleanup_disappearance_cannot_blocklist_a_successfully_imported_transfer()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity
+        {
+            MediaId = 10, MediaType = MediaType.TvShow, Title = "Imported show"
+        };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var job = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId,
+            MediaType = request.MediaType, Title = request.Title
+        };
+        db.FulfillmentJobs.Add(job);
+        await db.SaveChangesAsync();
+        const string hash = "0123456789abcdef0123456789abcdef01234567";
+        db.ImportedFiles.Add(new ImportedFileEntity
+        {
+            FulfillmentJobId = job.Id, Protocol = AcquisitionProtocol.Torrent,
+            TransferId = hash, InfoHash = hash, SourcePath = "/downloads/imported.mkv",
+            DestinationPath = "/library/imported.mkv", FileType = "video"
+        });
+        await db.SaveChangesAsync();
+        var blocklist = new ReleaseBlocklistService(db, NullLogger<ReleaseBlocklistService>.Instance);
+
+        var blocked = await blocklist.BlockAsync(job.Id, new BlocklistRequestDto
+        {
+            Protocol = AcquisitionProtocol.Torrent, SourceId = hash, InfoHash = hash,
+            ReleaseName = "Imported.Show.S01E01", Reason = BlocklistReason.DownloadFailed,
+            Detail = "A transfer disappeared from its acquisition backend"
+        });
+
+        Assert.False(blocked);
+        Assert.Empty(await db.ReleaseBlocklist.ToListAsync());
+    }
+
+    [Fact]
     public async Task Admin_report_expands_combined_file_replacement_and_blocklists_bad_source()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

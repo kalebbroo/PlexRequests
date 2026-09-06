@@ -542,6 +542,28 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         if (j is null) return new DeferResult(false, false, 0, null, false);
 
         var now = DateTime.UtcNow;
+        if (j.IsReplacement && !string.IsNullOrWhiteSpace(j.RequestedEpisodesCsv))
+        {
+            var requested = ParseEpisodes(j.RequestedEpisodesCsv)
+                .Select(x => (x.Season, x.Episode)).Distinct().ToList();
+            var importedFiles = await _db.ImportedFiles.AsNoTracking().Include(f => f.EpisodeCoverage)
+                .Where(f => f.FulfillmentJobId == j.Id && f.FileType == "video")
+                .ToListAsync();
+            var imported = importedFiles.SelectMany(AuditCoverage).ToHashSet();
+            var remaining = requested.Where(x => !imported.Contains(x)).ToList();
+            // Never turn an empty episode list into null: null means "whole title" to the worker. The normal
+            // path finalizes an all-imported replacement; retaining the current scope is the safe fallback if
+            // a caller asks to defer after everything already landed.
+            if (remaining.Count > 0 && remaining.Count < requested.Count)
+            {
+                j.RequestedEpisodesCsv = string.Join(",", remaining
+                    .OrderBy(x => x.Season).ThenBy(x => x.Episode)
+                    .Select(x => $"S{x.Season}E{x.Episode}"));
+                _logger.LogInformation(
+                    "Replacement job {JobId}: {Imported} target(s) already imported; next search narrowed to {Remaining}",
+                    j.Id, requested.Count - remaining.Count, j.RequestedEpisodesCsv);
+            }
+        }
         j.DeferCount++;
         // Only an empty-handed search against a real candidate pool counts toward relaxing the quality floor.
         if (candidatesRejected) j.EmptySearchCount++;
@@ -885,6 +907,13 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         }
         return list;
     }
+
+    private static IEnumerable<(int Season, int Episode)> AuditCoverage(ImportedFileEntity file) =>
+        file.EpisodeCoverage.Count > 0
+            ? file.EpisodeCoverage.Select(x => (x.SeasonNumber, x.EpisodeNumber))
+            : file.SeasonNumber is int season && file.EpisodeNumber is int episode
+                ? [(season, episode)]
+                : [];
 
     /// <summary>
     /// Read a job without touching its status. Deliberately NOT a claim: the reconciler imports torrents

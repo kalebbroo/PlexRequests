@@ -214,11 +214,16 @@ public class FulfillmentPipeline(
         var interval = TimeSpan.FromSeconds(Math.Max(5, worker.Value.MonitorIntervalSeconds));
         var stallTimeout = TimeSpan.FromMinutes(Math.Max(5, worker.Value.StallTimeoutMinutes));
         var finishSettle = TimeSpan.FromSeconds(Math.Max(5, worker.Value.FinishSettleSeconds));
+        var missingGrace = TimeSpan.FromSeconds(Math.Max(
+            finishSettle.TotalSeconds, interval.TotalSeconds * 2));
         // Per-torrent stall tracking: last progress value seen + when it last changed.
         var lastProgress = new Dictionary<string, (double Progress, DateTime ChangedAt)>();
         // Per-torrent finish-settle tracking: when the torrent first reported finished (to grace the
         // is_finished-before-flush race before declaring a path-resolution failure).
         var finishedSince = new Dictionary<string, DateTime>();
+        // Backend cleanup deliberately makes a successfully imported transfer disappear. Give the durable
+        // import audit time to become visible before treating absence as a real failure.
+        var missingSince = new Dictionary<string, DateTime>();
         // Torrents that hit a terminal failure — dropped, but do not abort the rest of the batch.
         var failed = new HashSet<string>();
         var failReasons = new List<string>();
@@ -228,11 +233,43 @@ public class FulfillmentPipeline(
         // Latest raw client status per torrent, kept so we can assemble a live telemetry snapshot for the
         // admin downloads panel at any point in the tick (including right before a blocking import).
         var latest = new Dictionary<(AcquisitionProtocol, string), TransferStatus>();
-        // Every library destination path written this run — used (upgrade jobs only) to avoid deleting an old
-        // file that the new import just overwrote in place.
+        // Every library destination written across this job's retries — used by replacement cleanup to avoid
+        // deleting a new file that overwrote the old path in an earlier partial attempt.
         var importedDestinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var now0 = DateTime.UtcNow;
         foreach (var it in items) lastProgress[TransferKey(it)] = (0, now0);
+
+        async Task<bool> AdoptDurableImportsAsync()
+        {
+            var audit = await api.GetImportedFilesAsync(job.Id, ct);
+            if (audit is null) return false;
+
+            foreach (var file in audit)
+                if (!string.IsNullOrWhiteSpace(file.DestinationPath))
+                    importedDestinations.Add(file.DestinationPath);
+
+            var importedTransfers = audit
+                .Where(file => !string.IsNullOrWhiteSpace(file.TransferId))
+                .Select(file => TransferKey(file.Protocol, file.TransferId!))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var changed = false;
+            for (var i = 0; i < items.Count; i++)
+            {
+                if (items[i].Imported || !importedTransfers.Contains(TransferKey(items[i]))) continue;
+                items[i] = items[i] with { Imported = true };
+                missingSince.Remove(TransferKey(items[i]));
+                changed = true;
+                logger.LogInformation(
+                    "Job {JobId} transfer {TransferId}: adopted durable import completed by another observer",
+                    job.Id, items[i].TransferId);
+            }
+
+            if (changed)
+                await stateStore.SaveAsync(record with { Transfers = items.ToList() }, ct);
+            return true;
+        }
+
+        await AdoptDurableImportsAsync();
 
         // Assemble the per-torrent telemetry snapshot pushed up with each progress report. Failed torrents
         // are omitted; a torrent named in importingId is forced to the Importing stage (it's mid-move). This
@@ -309,6 +346,10 @@ public class FulfillmentPipeline(
         {
             ct.ThrowIfCancellationRequested();
 
+            // The reconciler may have completed an import between monitor ticks. Adopt it before asking the
+            // backend, because successful cleanup means the backend is expected to return "not found".
+            var auditAvailable = await AdoptDurableImportsAsync();
+
             // Re-check VPN health during the in-flight job too, not just at claim time — if it drops
             // mid-download, hold off driving more indexer/Deluge/API traffic through it this tick rather
             // than plowing ahead as if nothing happened.
@@ -335,7 +376,29 @@ public class FulfillmentPipeline(
                     continue;
                 }
                 var status = await backend.GetStatusAsync(it.TransferId, ct);
-                if (status is null) { await FailTransferAsync(it, "A transfer disappeared from its acquisition backend", BlocklistReason.DownloadFailed); continue; }
+                if (status is null)
+                {
+                    var firstMissing = missingSince.TryGetValue(transferKey, out var seen)
+                        ? seen
+                        : (missingSince[transferKey] = DateTime.UtcNow);
+                    // Unknown audit state is not evidence of failure. When it is reachable, require the
+                    // transfer to remain absent for more than one monitor cycle, then re-read once at the
+                    // destructive boundary to close the last cleanup race window.
+                    if (!auditAvailable || !MissingTransferGraceExpired(firstMissing, DateTime.UtcNow, missingGrace))
+                        continue;
+                    var finalAuditAvailable = await AdoptDurableImportsAsync();
+                    if (!finalAuditAvailable) continue;
+                    if (items[i].Imported)
+                    {
+                        progressSum += 100;
+                        continue;
+                    }
+                    await FailTransferAsync(it,
+                        $"A transfer remained absent from its acquisition backend for {missingGrace.TotalSeconds:F0}s",
+                        BlocklistReason.DownloadFailed);
+                    continue;
+                }
+                missingSince.Remove(transferKey);
                 latest[(it.Protocol, it.TransferId)] = status;
                 if (string.Equals(status.State, "Error", StringComparison.OrdinalIgnoreCase))
                 {
@@ -475,11 +538,21 @@ public class FulfillmentPipeline(
             await SafeReportProgress(job.Id, (int)Math.Round(progressSum / Math.Max(1, items.Count)), BuildTelemetry());
 
             // Terminal when every torrent has either imported or failed — no early abort on a single failure.
-            if (items.All(x => x.Imported || failed.Contains(TransferKey(x)))) break;
+            if (items.All(x => x.Imported || failed.Contains(TransferKey(x))))
+            {
+                // A complete replacement needs the lifetime audit (including earlier partial attempts)
+                // before old paths can be cleaned. Keep the monitor alive during a transient API outage.
+                if (job.IsReplacement && items.All(x => x.Imported) && !await AdoptDurableImportsAsync())
+                {
+                    logger.LogWarning("Job {JobId}: all replacements imported but the durable audit is unavailable; retaining old paths and retrying", job.Id);
+                }
+                else break;
+            }
 
             await Task.Delay(interval, ct);
         }
 
+        await AdoptDurableImportsAsync();
         var importedCount = items.Count(x => x.Imported);
 
         if (job.IsUpgrade)
@@ -640,7 +713,10 @@ public class FulfillmentPipeline(
         return new DownloadPlan(isPack ? DownloadPlanKind.SeasonPack : DownloadPlanKind.Episodes, new[] { item });
     }
 
-    private static string TransferKey(TransferItem transfer) => $"{(int)transfer.Protocol}:{transfer.TransferId}";
+    private static string TransferKey(TransferItem transfer) => TransferKey(transfer.Protocol, transfer.TransferId);
+
+    private static string TransferKey(AcquisitionProtocol protocol, string transferId) =>
+        $"{(int)protocol}:{transferId}";
 
     internal static HashSet<(int Season, int Episode)> CanonicalTargets(TransferItem transfer)
     {
@@ -658,6 +734,9 @@ public class FulfillmentPipeline(
 
     internal static bool ReplacementReadyToFinalize(bool coversAllTargets, int importedCount, int transferCount) =>
         coversAllTargets && transferCount > 0 && importedCount == transferCount;
+
+    internal static bool MissingTransferGraceExpired(DateTime firstSeen, DateTime now, TimeSpan grace) =>
+        now - firstSeen >= grace;
 
     private async Task SafeBlocklist(int jobId, BlocklistRequestDto request)
     {

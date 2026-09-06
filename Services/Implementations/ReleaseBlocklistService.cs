@@ -45,6 +45,23 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
             ? null
             : ReleaseBlocklistEntity.Normalize(request.ReleaseName);
 
+        // The import audit is written before backend cleanup. If another observer sees the cleaned-up
+        // transfer as missing/stalled, that is a successful lifecycle transition—not a broken release.
+        // Deliberate content/policy blocks remain allowed so an admin can replace a previously imported but
+        // genuinely wrong file.
+        var disappearanceReason = request.Reason is BlocklistReason.DownloadFailed
+            or BlocklistReason.Stalled or BlocklistReason.TorrentError or BlocklistReason.PathUnresolvable;
+        if (disappearanceReason && await db.ImportedFiles.AsNoTracking().AnyAsync(f =>
+                f.FulfillmentJobId == job.Id && f.Protocol == request.Protocol
+                && ((sourceId != null && f.TransferId == sourceId)
+                    || (hash != null && f.InfoHash == hash))))
+        {
+            logger.LogInformation(
+                "Ignored {Reason} block for imported transfer {SourceId} on job {JobId}",
+                request.Reason, sourceId ?? hash, job.Id);
+            return false;
+        }
+
         if (sourceId is null && normalizedName is null)
         {
             logger.LogDebug("Blocklist entry skipped for job {JobId}: neither a source id nor a release name", fulfillmentJobId);
