@@ -486,16 +486,20 @@ public class FulfillmentPipeline(
         {
             // Upgrade/replacement job: keep the old file until a new import succeeds. Routine upgrades stop
             // quietly when exhausted; issue replacements defer and search again because the old file is known bad.
-            if (importedCount > 0)
+            if (importedCount > 0 && (!job.IsReplacement || ReplacementReadyToFinalize(
+                    record.CoversAllTargets, importedCount, items.Count)))
             {
                 DeleteReplacedFiles(job, importedDestinations);
                 await SafeMarkUpgraded(job.Id);
             }
             else if (job.IsReplacement)
             {
-                await SafeDefer(job.Id, failReasons.Count > 0
-                    ? $"Replacement downloads failed: {string.Join("; ", failReasons.Distinct())}"
-                    : "No replacement imported; searching again later");
+                var detail = importedCount > 0
+                    ? $"{importedCount}/{items.Count} replacement downloads imported; keeping the replacement open until every requested target is covered"
+                    : failReasons.Count > 0
+                        ? $"Replacement downloads failed: {string.Join("; ", failReasons.Distinct())}"
+                        : "No replacement imported; searching again later";
+                await SafeDefer(job.Id, detail);
             }
             else
             {
@@ -651,6 +655,9 @@ public class FulfillmentPipeline(
     private static string DescribeTargets(IEnumerable<(int Season, int Episode)> targets) =>
         string.Join(",", targets.OrderBy(x => x.Season).ThenBy(x => x.Episode)
             .Select(x => $"S{x.Season:D2}E{x.Episode:D2}"));
+
+    internal static bool ReplacementReadyToFinalize(bool coversAllTargets, int importedCount, int transferCount) =>
+        coversAllTargets && transferCount > 0 && importedCount == transferCount;
 
     private async Task SafeBlocklist(int jobId, BlocklistRequestDto request)
     {

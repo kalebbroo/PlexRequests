@@ -200,6 +200,26 @@ public sealed class MediaLanguagePolicyTests
     }
 
     [Fact]
+    public void MediaInfoJson_RecognizesForcedSubtitleTitle_WhenContainerFlagIsMissing()
+    {
+        const string json = """
+            {"media":{"track":[
+              {"@type":"Video","Format":"AVC"},
+              {"@type":"Audio","Format":"E-AC-3","Language":"eng","Default":"No"},
+              {"@type":"Text","Format":"UTF-8","Language":"eng","Title":"Forced","Default":"No","Forced":"No"},
+              {"@type":"Text","Format":"UTF-8","Language":"eng","Title":"English SDH","Default":"No","Forced":"No"}
+            ]}}
+            """;
+
+        var result = MediaInfoTrackInspector.ParseOutput(json, []);
+
+        Assert.True(result.Subtitles[0].IsForced);
+        Assert.False(result.Subtitles[1].IsForced);
+        Assert.True(MediaLanguagePolicy.Evaluate(
+            new MediaLanguagePolicyDto { RequireForcedSubtitle = true }, result).Accepted);
+    }
+
+    [Fact]
     public void SmartOrdinaryPlayback_SelectsEnglishAndForcedEnglishSubtitle()
     {
         var tracks = Tracks(audio: ["it", "en"], subtitles: ["en", "en"]);
