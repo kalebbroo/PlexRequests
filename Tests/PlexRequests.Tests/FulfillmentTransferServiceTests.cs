@@ -13,6 +13,53 @@ namespace PlexRequests.Tests;
 public sealed class FulfillmentTransferServiceTests
 {
     [Fact]
+    public async Task Missing_backend_transfer_with_an_import_audit_is_recorded_as_imported()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity { MediaId = 7, MediaType = MediaType.TvShow, Title = "Show" };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var job = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId,
+            MediaType = request.MediaType, Title = request.Title
+        };
+        db.FulfillmentJobs.Add(job);
+        await db.SaveChangesAsync();
+        const string transferId = "imported-transfer";
+        db.FulfillmentTransfers.Add(new FulfillmentTransferEntity
+        {
+            FulfillmentJobId = job.Id, TransferId = transferId,
+            Protocol = AcquisitionProtocol.Torrent, State = TransferTrackingState.Active
+        });
+        db.ImportedFiles.Add(new ImportedFileEntity
+        {
+            FulfillmentJobId = job.Id, TransferId = transferId,
+            Protocol = AcquisitionProtocol.Torrent, SourcePath = "/downloads/show.mkv",
+            DestinationPath = "/library/show.mkv", FileType = "video"
+        });
+        await db.SaveChangesAsync();
+        var service = new FulfillmentTransferService(db, NullLogger<FulfillmentTransferService>.Instance);
+
+        await service.ApplyAsync([
+            new TransferStateUpdateDto
+            {
+                TransferId = transferId, Protocol = AcquisitionProtocol.Torrent,
+                State = TransferTrackingState.Missing, Reason = "gone after cleanup"
+            }
+        ]);
+
+        var transfer = await db.FulfillmentTransfers.SingleAsync();
+        Assert.Equal(TransferTrackingState.Imported, transfer.State);
+        Assert.Null(transfer.FailReason);
+        Assert.NotNull(transfer.ImportedAt);
+    }
+
+    [Fact]
     public async Task Canonical_cross_season_targets_round_trip_through_durable_tracking()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

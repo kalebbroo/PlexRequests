@@ -78,6 +78,9 @@ public interface IPlexRequestsApiClient
     Task<bool> MarkPartiallyCompletedAsync(int requestId, string reason, CancellationToken ct);
     /// <summary>Persist the durable audit trail of what got imported for a job.</summary>
     Task<bool> ReportImportedFilesAsync(int jobId, IReadOnlyList<ImportedFileDto> files, CancellationToken ct);
+    /// <summary>Read the durable import audit for a job. The per-job monitor uses this to adopt work
+    /// completed by the reconciler instead of misclassifying its subsequent backend cleanup as a failure.</summary>
+    Task<List<ImportedFileDto>?> GetImportedFilesAsync(int jobId, CancellationToken ct);
     /// <summary>Ask Plex to rescan the library section for this media type. Best-effort; client-side
     /// debounced so a large season-pack fan-out doesn't hammer Plex with one refresh per file.</summary>
     Task<bool> RefreshLibraryAsync(MediaType mediaType, CancellationToken ct);

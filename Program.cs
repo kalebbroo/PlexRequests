@@ -1071,7 +1071,36 @@ app.MapGet("/api/fulfillment/episodes", async (int tmdbId, int season, HttpConte
 // Both downloader observers can report the same coordinated import at nearly the same instant. Serialize
 // this tiny write boundary so the read-before-insert dedupe remains atomic within the web process.
 var importedFilesWriteLock = new SemaphoreSlim(1, 1);
-app.MapPost("/api/fulfillment/{jobId:int}/imported-files", async (int jobId, List<PlexRequestsHosted.Shared.DTOs.ImportedFileDto> files, HttpContext ctx, IConfiguration cfg, AppDbContext db) =>
+app.MapGet("/api/fulfillment/{jobId:int}/imported-files", async (int jobId, HttpContext ctx, IConfiguration cfg, AppDbContext db) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    if (!await db.FulfillmentJobs.AnyAsync(j => j.Id == jobId)) return Results.NotFound();
+
+    var imported = await db.ImportedFiles.AsNoTracking().Include(f => f.EpisodeCoverage)
+        .Where(f => f.FulfillmentJobId == jobId)
+        .Select(f => new PlexRequestsHosted.Shared.DTOs.ImportedFileDto
+        {
+            TransferId = f.TransferId,
+            Protocol = f.Protocol,
+            SourcePath = f.SourcePath,
+            DestinationPath = f.DestinationPath,
+            FileType = f.FileType,
+            SeasonNumber = f.SeasonNumber,
+            EpisodeNumber = f.EpisodeNumber,
+            SizeBytes = f.SizeBytes,
+            ResolutionHeight = f.ResolutionHeight,
+            ReleaseName = f.ReleaseName,
+            SourceId = f.InfoHash ?? f.TransferId,
+            EpisodeCoverage = f.EpisodeCoverage.Select(c => new EpisodeRef
+            {
+                Season = c.SeasonNumber,
+                Episode = c.EpisodeNumber
+            }).ToList()
+        }).ToListAsync(ctx.RequestAborted);
+    return Results.Ok(imported);
+});
+
+app.MapPost("/api/fulfillment/{jobId:int}/imported-files", async (int jobId, List<PlexRequestsHosted.Shared.DTOs.ImportedFileDto> files, HttpContext ctx, IConfiguration cfg, AppDbContext db, PlexRequestsHosted.Services.Implementations.IFulfillmentTransferService transfers) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     if (!await db.FulfillmentJobs.AnyAsync(j => j.Id == jobId)) return Results.NotFound();
@@ -1128,6 +1157,23 @@ app.MapPost("/api/fulfillment/{jobId:int}/imported-files", async (int jobId, Lis
         }
 
         if (added > 0) await db.SaveChangesAsync(ctx.RequestAborted);
+
+        // Persisting the audit and retiring its transfer belong to one ordered boundary: cleanup may now
+        // remove the backend payload, so no other observer should continue treating this transfer as live.
+        // ApplyAsync also repairs a row another observer raced to Missing because the audit is authoritative.
+        var importedTransfers = files
+            .Where(f => !string.IsNullOrWhiteSpace(f.TransferId))
+            .Select(f => (f.Protocol, TransferId: f.TransferId!))
+            .Distinct()
+            .Select(f => new PlexRequestsHosted.Shared.DTOs.TransferStateUpdateDto
+            {
+                Protocol = f.Protocol,
+                TransferId = f.TransferId,
+                State = TransferTrackingState.Imported,
+                Progress = 100
+            }).ToList();
+        if (importedTransfers.Count > 0)
+            await transfers.ApplyAsync(importedTransfers);
         return Results.Ok(new { added });
     }
     finally

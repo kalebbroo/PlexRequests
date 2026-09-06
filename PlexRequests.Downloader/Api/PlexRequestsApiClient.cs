@@ -440,6 +440,23 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         }
     }
 
+    public async Task<List<ImportedFileDto>?> GetImportedFilesAsync(int jobId, CancellationToken ct)
+    {
+        try
+        {
+            return await _http.GetFromJsonAsync<List<ImportedFileDto>>(
+                $"/api/fulfillment/{jobId}/imported-files", ct) ?? new();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Null means "unknown", deliberately distinct from a successful empty audit. A caller must
+            // never declare a disappeared transfer failed while it cannot ask whether another observer
+            // already imported it.
+            _logger.LogDebug(ex, "Could not read imported-files audit for job {JobId}", jobId);
+            return null;
+        }
+    }
+
     public async Task<bool> RefreshLibraryAsync(MediaType mediaType, CancellationToken ct)
     {
         var now = DateTime.UtcNow;

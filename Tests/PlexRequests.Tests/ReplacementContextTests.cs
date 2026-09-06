@@ -17,6 +17,54 @@ namespace PlexRequests.Tests;
 public sealed class ReplacementContextTests
 {
     [Fact]
+    public async Task Deferred_replacement_retries_only_episodes_without_a_durable_import()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity
+        {
+            MediaId = 55, MediaType = MediaType.TvShow, RequestScopeKind = RequestScopeKind.Series,
+            Title = "Repair Show", Status = RequestStatus.Available
+        };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var job = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
+            MediaKind = MediaKind.Series, RequestScopeKind = RequestScopeKind.Episodes,
+            Title = request.Title, Status = FulfillmentStatus.Downloading,
+            IsUpgrade = true, IsReplacement = true,
+            RequestedEpisodesCsv = "S2E1,S2E2,S3E1"
+        };
+        db.FulfillmentJobs.Add(job);
+        await db.SaveChangesAsync();
+        db.ImportedFiles.AddRange(
+            new ImportedFileEntity
+            {
+                FulfillmentJobId = job.Id, TransferId = "done-1", SourcePath = "/downloads/1.mkv",
+                DestinationPath = "/library/S02E01.mkv", FileType = "video",
+                SeasonNumber = 2, EpisodeNumber = 1
+            },
+            new ImportedFileEntity
+            {
+                FulfillmentJobId = job.Id, TransferId = "done-2", SourcePath = "/downloads/2.mkv",
+                DestinationPath = "/library/S03E01.mkv", FileType = "video",
+                EpisodeCoverage = [new() { SeasonNumber = 3, EpisodeNumber = 1 }]
+            });
+        await db.SaveChangesAsync();
+        var queue = Queue(db, new FixedMetadata(null), Preferences());
+
+        var result = await queue.MarkDeferredAsync(job.Id, "partial replacement");
+
+        Assert.True(result.Found);
+        Assert.Equal(FulfillmentStatus.Deferred, job.Status);
+        Assert.Equal("S2E2", job.RequestedEpisodesCsv);
+    }
+
+    [Fact]
     public async Task Legacy_anime_replacement_rehydrates_routing_language_and_episode_order_snapshots()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
