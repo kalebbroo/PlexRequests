@@ -172,11 +172,21 @@ The decision ladder is deliberately fail-closed:
    rejection reasons and require a configured episode map before it allows an explicit force-download. Even then,
    the organizer enforces the mapping and target set before any Plex write.
 
-The first slice implements steps 1, 2, and 6, including numbered story-arc folders and preservation of every
-canonical season target during a forced collection download. Step 3 is the next bounded change: it needs a
-paused-metadata acquisition state, a persisted manifest decision, resume/cancel operations in the torrent backend,
-and restart-safe reconciliation. Until that exists, an unscoped collection is labelled `PackScopeUnknown` and is
-never selected automatically.
+The qualification slice implements steps 1, 2, and 6, including numbered story-arc folders and preservation of
+every canonical season target during a forced collection download. The manifest slice implements steps 3 and 4
+with Deluge's purpose-built `prefetch_magnet_metadata` operation: Deluge retrieves the content-addressed metadata in upload
+mode without retaining a session torrent, the worker verifies the raw info dictionary against the magnet's SHA-1,
+and the accepted file-priority list is applied while adding that exact metadata. An unscoped collection remains
+labelled `PackScopeUnknown`; it becomes a provisional automatic fallback only when an immutable episode map covers
+the whole job, and no payload starts unless the manifest independently proves every target exactly once. Deluge's
+implementation describes this RPC as downloading magnet metadata for file selection before adding it:
+<https://github.com/deluge-torrent/deluge/blob/develop/deluge/core/core.py>.
+
+Manifest parsing is bounded by byte, file, node, and nesting limits. It rejects a hash mismatch, malformed bencode,
+unsafe paths, duplicate canonical episodes, mixed target/non-target multi-episode files, missing targets, unknown
+selected file lengths, and a selected payload above the profile's pack limit. Non-video extras and mapped episodes
+outside the request stay at priority zero. A timeout is retryable; a structurally invalid collection is blocklisted
+for that request so retries advance to another candidate instead of looping.
 
 Release aliases should eventually come from a durable identity table populated from metadata aliases and AniDB's
 title dump, not an ever-growing stop-word list. Alias matches are ranking evidence only; canonical provider IDs and

@@ -18,18 +18,47 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
     private readonly ILogger<DelugeDownloadClient> _logger = logger;
     private int _id;
 
-    public async Task<string?> AddMagnetAsync(string magnet, string? label, CancellationToken ct)
+    public async Task<string?> AddMagnetAsync(string magnet, string? label, CancellationToken ct,
+        AcquisitionManifest? manifest = null, IReadOnlyList<bool>? wantedFiles = null)
     {
         await EnsureAuthAsync(ct);
 
         string? hash;
         try
         {
-            var result = await RpcAsync("core.add_torrent_magnet", new object[] { magnet, new Dictionary<string, object>() }, ct);
+            JsonElement result;
+            if (manifest?.NativeMetadata is { Length: > 0 } info && wantedFiles is { Count: > 0 })
+            {
+                if (wantedFiles.Count != manifest.Files.Count)
+                    throw new InvalidDataException("Torrent manifest selection length does not match its file list.");
+                var torrent = TorrentMetadata.BuildTorrentFile(info, magnet);
+                var options = new Dictionary<string, object>
+                {
+                    ["file_priorities"] = wantedFiles.Select(keep => keep ? 4 : 0).ToArray()
+                };
+                var filename = $"{MagnetHash(magnet) ?? "preflight"}.torrent";
+                result = await RpcAsync("core.add_torrent_file",
+                    new object[] { filename, Convert.ToBase64String(torrent), options }, ct);
+            }
+            else
+            {
+                result = await RpcAsync("core.add_torrent_magnet",
+                    new object[] { magnet, new Dictionary<string, object>() }, ct);
+            }
             hash = result.ValueKind == JsonValueKind.String ? result.GetString() : null;
         }
         catch (DelugeDuplicateTorrentException dup)
         {
+            if (manifest is not null && wantedFiles is { Count: > 0 })
+            {
+                // Never narrow a shared in-session torrent to this job's selection: another active job may
+                // need different files from the same pack. The caller defers and availability reconciliation
+                // can adopt the other job's eventual imports.
+                _logger.LogWarning(
+                    "Preflighted torrent {Hash} is already owned by another Deluge session entry; not adopting it with an unverifiable shared file selection",
+                    dup.Hash ?? MagnetHash(magnet));
+                return null;
+            }
             // Adding is idempotent by intent: "make Deluge be downloading this" is already satisfied. This
             // happens routinely — a job retried after a downloader restart, an upgrade re-grabbing the same
             // release, two episodes served by one pack. Treating it as failure is what stranded jobs at 0%
@@ -57,6 +86,35 @@ public class DelugeDownloadClient(HttpClient http, IOptions<DelugeOptions> optio
             catch (Exception ex) { _logger.LogDebug(ex, "Deluge label assignment skipped"); }
         }
         return hash;
+    }
+
+    public async Task<AcquisitionManifest?> GetMagnetManifestAsync(string magnet, CancellationToken ct)
+    {
+        await EnsureAuthAsync(ct);
+        try
+        {
+            // Keep the server timeout below this HttpClient's 30-second boundary so Deluge can remove its
+            // temporary upload-mode handle and return a clean "unavailable" result first.
+            var result = await RpcAsync("core.prefetch_magnet_metadata", new object[] { magnet, 20 }, ct);
+            if (result.ValueKind != JsonValueKind.Array || result.GetArrayLength() < 2) return null;
+            var returnedHash = result[0].ValueKind == JsonValueKind.String ? result[0].GetString() : null;
+            var expectedHash = MagnetHash(magnet);
+            if (expectedHash is null || !string.Equals(returnedHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Deluge returned metadata for a different torrent hash.");
+            var encoded = result[1].ValueKind == JsonValueKind.String ? result[1].GetString() : null;
+            if (string.IsNullOrWhiteSpace(encoded)) return null;
+            if (encoded.Length > 12 * 1024 * 1024)
+                throw new InvalidDataException("Deluge returned an oversized torrent metadata response.");
+            return TorrentMetadata.ParseInfo(Convert.FromBase64String(encoded), magnet);
+        }
+        catch (DelugeDuplicateTorrentException duplicate)
+        {
+            // A prior job owns this hash. Inspecting its paths and then changing its priorities would race
+            // that owner's target contract, so leave it alone and retry after reconciliation.
+            _logger.LogInformation("Manifest preflight skipped for in-session torrent {Hash}",
+                duplicate.Hash ?? MagnetHash(magnet));
+            return null;
+        }
     }
 
     public async Task<DownloadStatus?> GetStatusAsync(string torrentId, CancellationToken ct)

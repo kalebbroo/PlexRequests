@@ -374,6 +374,7 @@ public sealed class MultiEpisodeCoverageTests
     public void ForcedCollectionRetainsEveryCanonicalSeasonTarget()
     {
         var job = TvJob("/library");
+        job.IsAnime = true;
         job.IsManualGrab = true;
         job.ForcedMagnet = "magnet:?xt=urn:btih:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
         job.ForcedReleaseName = "[Group] Anime Collection";
@@ -389,6 +390,7 @@ public sealed class MultiEpisodeCoverageTests
         var item = Assert.Single(plan.Items);
         Assert.Null(item.Season);
         Assert.Null(item.NeededEpisodes);
+        Assert.True(item.RequiresManifestPreflight);
         Assert.Equal([(1, 1), (1, 2), (2, 1)],
             item.NeededEpisodeRefs!.Select(target => (target.Season, target.Episode)).ToList());
     }

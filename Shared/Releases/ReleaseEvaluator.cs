@@ -95,15 +95,18 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         var singleFileLimit = context.Profile?.MaxSizeGb ?? p.MaxSizeGb;
         var packLimit = context.Profile?.MaxSeasonPackSizeGb ?? p.MaxSeasonPackSizeGb;
         // Anime collections commonly omit Sxx/Exx from the outer torrent name and reveal their real shape
-        // only in the internal file tree. A release larger than the single-file ceiling but still within the
-        // configured pack ceiling is strong evidence of that shape. Classify it as a pack for the correct
-        // size policy, but reject it explicitly below until a manifest preflight can prove its coverage.
+        // only in the internal file tree. Treat that ambiguity as a provisional pack regardless of its
+        // reported total size; metadata preflight applies the byte ceiling to the selected files, not to
+        // unrelated arcs that will remain at priority zero.
         bool unscopedAnimeCollection = job.IsAnime
             && job.MediaType is MediaType.TvShow or MediaType.Anime
             && sourceSeason is null && sourceEpisode is null
-            && !parsed.LooksLikeCompleteSeries
-            && c.SizeKnown && c.SizeGb > singleFileLimit && c.SizeGb <= packLimit;
-        bool isPack = sourceEpisode is null && (parsed.IsSeasonPack || sourceSeason is not null || unscopedAnimeCollection);
+            && !parsed.LooksLikeCompleteSeries;
+        bool declaredCompleteAnimeCollection = job.IsAnime && parsed.LooksLikeCompleteSeries
+            && sourceSeason is null && sourceEpisode is null;
+        bool unverifiedAnimeCollection = unscopedAnimeCollection || declaredCompleteAnimeCollection;
+        bool isPack = sourceEpisode is null && (parsed.IsSeasonPack || parsed.LooksLikeCompleteSeries
+            || sourceSeason is not null || unscopedAnimeCollection);
         var canonicalCoverage = new List<EpisodeRef>();
         int? season = sourceSeason;
         int? episode = sourceEpisode;
@@ -156,9 +159,13 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
             canonicalCoverage.AddRange(sourceEpisodes.Select(x => new EpisodeRef { Season = identitySeason, Episode = x }));
         }
 
-        if (unscopedAnimeCollection)
+        if (unverifiedAnimeCollection)
             rejections.Add(new Rejection(RejectionReason.PackScopeUnknown,
-                $"{c.SizeGb:F1} GB anime collection has no season/episode scope; map and verify its internal file manifest before selecting it"));
+                declaredCompleteAnimeCollection
+                    ? "anime release claims to be a complete series, but its internal episode manifest must prove that coverage"
+                    : c.SizeKnown
+                        ? $"{c.SizeGb:F1} GB anime collection has no season/episode scope; map and verify its internal file manifest before selecting it"
+                        : "anime collection has no season/episode scope or trustworthy size; map and verify its internal file manifest before selecting it"));
 
         // ---- Seeders, size ---------------------------------------------------------------------------
         int minSeeders = context.Profile?.MinSeeders ?? p.MinSeeders;
@@ -171,7 +178,10 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         {
             if (c.SizeGb < 0.05)
                 rejections.Add(new Rejection(RejectionReason.SizeTooSmall, $"{c.SizeGb:F2} GB looks like a fake or empty torrent"));
-            else if (c.SizeGb > maxSize)
+            // An unscoped/complete anime collection may be much larger than the requested subset. Its
+            // content-addressed manifest is the authority for selected bytes; every other release still
+            // uses the outer total here.
+            else if (c.SizeGb > maxSize && !unverifiedAnimeCollection)
                 rejections.Add(new Rejection(RejectionReason.SizeTooLarge, $"{c.SizeGb:F1} GB exceeds the {maxSize:F0} GB limit"));
         }
         // Size unknown is NOT a rejection. The HTML scrapers frequently fail to parse it, and treating that
