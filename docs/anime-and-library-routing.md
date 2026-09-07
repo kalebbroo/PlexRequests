@@ -148,6 +148,40 @@ another candidate; it never enters a Plex root.
 Kids cartoons use the same mapping machinery. They differ by destination/classification and often exercise
 DVD/digital or multi-episode mappings; they are not a separate hard-coded media type.
 
+## Phase 5 — release qualification and collection preflight
+
+Anime release names are not scene-TV names. They commonly have a leading release group, romanized or alternate
+titles, absolute episode numbers, version suffixes, edition/source shorthand such as `BD`, and franchise batches
+whose only usable season or story-arc identity is in numbered parent folders. Treating every unmatched token as
+part of the title makes good releases invisible; treating every unnumbered batch as a complete series risks a
+wrong import.
+
+The decision ladder is deliberately fail-closed:
+
+1. Normalize anime-only identity conventions without weakening ordinary movie/TV identity matching. Retain the
+   original title and release group for audit and custom-format scoring.
+2. Prefer candidates whose outer name proves canonical episode coverage. For alternate orders, translate through
+   the immutable per-series map before planning.
+3. For an unscoped collection, fetch torrent metadata before payload data and parse every video path into a
+   proposed manifest: source identity, canonical identity, duplicate/overlap state, extras, and selected bytes.
+4. Accept automatically only when that manifest uniquely covers the outstanding canonical episodes, stays within
+   the pack byte limit, and every selected video can be mapped. Apply file priorities before resuming payload.
+5. Inspect actual audio/subtitle tracks before import as already required by the language policy. A title hint can
+   improve ranking but never proves a dual-audio or English-subtitle requirement.
+6. If no candidate is provably safe after retries, notify an admin once. The review screen must show the real
+   rejection reasons and require a configured episode map before it allows an explicit force-download. Even then,
+   the organizer enforces the mapping and target set before any Plex write.
+
+The first slice implements steps 1, 2, and 6, including numbered story-arc folders and preservation of every
+canonical season target during a forced collection download. Step 3 is the next bounded change: it needs a
+paused-metadata acquisition state, a persisted manifest decision, resume/cancel operations in the torrent backend,
+and restart-safe reconciliation. Until that exists, an unscoped collection is labelled `PackScopeUnknown` and is
+never selected automatically.
+
+Release aliases should eventually come from a durable identity table populated from metadata aliases and AniDB's
+title dump, not an ever-growing stop-word list. Alias matches are ranking evidence only; canonical provider IDs and
+the manifest mapping remain the authority.
+
 ## End-to-end acceptance criteria
 
 - Anime search returns both movies and series with correct detail pages and request scopes.
@@ -158,3 +192,5 @@ DVD/digital or multi-episode mappings; they are not a separate hard-coded media 
 - A multi-episode file records coverage for every logical episode and receives Plex-compatible range naming.
 - Kids, anime, and normal TV can use aired/absolute/DVD/custom mappings without duplicating files.
 - Routing, track inspection, episode coverage, import, Plex scan, and verification are visible in one audit trail.
+- An unscoped anime collection never starts automatically until its internal manifest proves unique canonical
+  coverage; the last-resort admin path preserves the same import and target safeguards.

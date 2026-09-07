@@ -18,7 +18,7 @@ public sealed class ReleaseCatalogService(
     IOptions<CatalogOptions> options,
     ILogger<ReleaseCatalogService> logger) : IReleaseCatalogService
 {
-    public const int ParserVersion = 1;
+    public const int ParserVersion = 2;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
 
     public async Task<CatalogUpsertResultDto> UpsertBatchAsync(
@@ -388,7 +388,12 @@ public sealed class ReleaseCatalogService(
                 && (query.Year == null || x.Year == null || x.Year == query.Year)
                 && ((imdb != null && x.ImdbId == imdb)
                     || x.NormalizedTitle == normalized
-                    || x.NormalizedTitle.StartsWith(normalized + " ")))
+                    || x.NormalizedTitle.StartsWith(normalized + " ")
+                    // Anime indexes conventionally prefix release-group tags ("[MTBB] TITLE"). They are
+                    // deliberately retained in the parser because bracketed text can be a real non-anime
+                    // title; the anime-aware evaluator removes provenance and still rejects coincidental
+                    // mid-title matches.
+                    || x.NormalizedTitle.Contains(normalized)))
             .OrderByDescending(x => x.LastSeenAt)
             .Take(limit)
             .ToListAsync(cancellationToken);
@@ -601,7 +606,7 @@ public sealed class ReleaseCatalogService(
         };
     }
 
-    private static void MergeRelease(CatalogReleaseEntity release, CatalogItemDto item, DateTime observedAt)
+    private void MergeRelease(CatalogReleaseEntity release, CatalogItemDto item, DateTime observedAt)
     {
         release.LastSeenAt = observedAt > release.LastSeenAt ? observedAt : release.LastSeenAt;
         release.MagnetUri ??= Clean(item.MagnetUri, 4096);
@@ -610,6 +615,23 @@ public sealed class ReleaseCatalogService(
         if (release.PublishedAt is null && item.PublishedAt is not null)
             release.PublishedAt = item.PublishedAt.Value.ToUniversalTime();
         release.MediaType ??= item.MediaType;
+        if (release.ParserVersion < ParserVersion)
+        {
+            var parsed = parser.Parse(release.ReleaseName);
+            release.NormalizedTitle = parsed.Title.ToUpperInvariant();
+            release.ParserVersion = ParserVersion;
+            release.Year = parsed.Year;
+            release.Season = parsed.Season;
+            release.SeasonEnd = parsed.SeasonEnd;
+            release.Episode = parsed.Episode;
+            release.EpisodeStart = parsed.EpisodeStart;
+            release.EpisodeEnd = parsed.EpisodeEnd;
+            release.IsSeasonPack = parsed.IsSeasonPack;
+            release.IsCompleteSeries = parsed.LooksLikeCompleteSeries;
+            release.Resolution = parsed.Resolution;
+            release.ReleaseSource = parsed.Source;
+            release.Codec = parsed.Codec;
+        }
     }
 
     internal static string? NormalizeInfoHash(string? explicitHash, string? magnetUri)

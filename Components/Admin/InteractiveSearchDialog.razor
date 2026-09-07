@@ -3,6 +3,8 @@
 @implements IDisposable
 @inject PlexRequestsHosted.Services.Implementations.IInteractiveSearchService Search
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
+@inject IDialogService Dialogs
+@inject NavigationManager Navigation
 
 @* Every acquisition source result for a title, with the verdict and the reasoning.
    Rejected rows are shown BY DEFAULT and greyed rather than hidden — seeing why the release you expected
@@ -80,7 +82,16 @@
                         </MudTooltip>
                     </MudTd>
                     <MudTd>
-                        @if (context.Protocol == AcquisitionProtocol.Torrent)
+                        @if (context.RequiresEpisodeMapping)
+                        {
+                            <MudTooltip Text="Configure an alternate episode order before downloading this collection.">
+                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning"
+                                           Disabled="_grabbing" OnClick="ConfigureEpisodeOrder">
+                                    Map first
+                                </MudButton>
+                            </MudTooltip>
+                        }
+                        else if (context.Protocol == AcquisitionProtocol.Torrent)
                         {
                             <MudButton Size="Size.Small" Variant="@(context.Accepted ? Variant.Filled : Variant.Outlined)"
                                        Color="@(context.Accepted ? Color.Primary : Color.Warning)"
@@ -157,6 +168,19 @@
 
     private async Task Grab(SearchResultDto result)
     {
+        if (!result.Accepted)
+        {
+            var warning = result.RequiresManifestReview
+                ? "This collection's internal file layout has not been verified automatically. The configured episode map will be enforced during import, but a mismatch can waste the download and will be rejected before Plex is changed."
+                : "This release failed the automatic checks. Import safeguards still apply, but forcing it may waste a download or fail during import.";
+            var reasons = result.Rejections.Count == 0
+                ? string.Empty
+                : $"\n\nAutomatic checks: {string.Join(" · ", result.Rejections)}";
+            var confirmed = await Dialogs.ShowMessageBox("Force a rejected release?",
+                $"{warning}{reasons}", yesText: "Force download", cancelText: "Keep searching");
+            if (confirmed != true) return;
+        }
+
         _grabbing = true;
         var (ok, error) = await Search.GrabAsync(_taskId, result.Magnet, result.ReleaseName, result.IndexerId, null);
         _grabbing = false;
@@ -164,6 +188,12 @@
         if (!ok) { await Toasts.ShowErrorAsync(error ?? "Could not grab that release."); return; }
         await Toasts.ShowSuccessAsync($"Grabbing \"{result.ReleaseName}\".");
         MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    private void ConfigureEpisodeOrder()
+    {
+        MudDialog.Close();
+        Navigation.NavigateTo("/admin?tab=library&sub=organization#episode-order");
     }
 
     private static string Age(SearchResultDto r)

@@ -33,6 +33,9 @@ public enum RejectionReason
     EpisodeMappingMissing,
     /// <summary>A season pack that demonstrably doesn't cover the episodes still missing.</summary>
     PackIncomplete,
+    /// <summary>A likely multi-season anime collection has no declared season/episode scope. It may be a
+    /// strong release, but selecting it before its internal file manifest is mapped would be a guess.</summary>
+    PackScopeUnknown,
     Blocklisted,
     /// <summary>Scored below the profile's minimum custom-format score.</summary>
     CustomFormatScoreTooLow,

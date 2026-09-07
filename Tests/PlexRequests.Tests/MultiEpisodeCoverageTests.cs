@@ -331,6 +331,69 @@ public sealed class MultiEpisodeCoverageTests
     }
 
     [Fact]
+    public async Task OrganizerUsesNumberedAnimeArcFolderWithExplicitEpisodeGroupMapping()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "pack");
+            var arc = Path.Combine(source, "01 - Bakemonogatari");
+            Directory.CreateDirectory(arc);
+            await File.WriteAllBytesAsync(Path.Combine(arc, "[MTBB] Bakemonogatari - 01v2 [346DABB1].mkv"), [1, 2, 3, 4]);
+            var library = Path.Combine(root, "library");
+            var job = TvJob(library);
+            job.Title = "Monogatari";
+            job.EpisodeOrderProfile = OrderProfile("S01E01 -> S01E01");
+            job.EpisodeOrderProfile.SourceOrder = EpisodeOrderType.Custom;
+
+            var result = await CreateOrganizer().OrganizeAsync(job,
+                new TransferItem("transfer", null, null, true, NeededEpisodeRefs:
+                [new EpisodeRef { Season = 1, Episode = 1 }]), source,
+                Preferences(), CancellationToken.None);
+
+            Assert.True(result.Success, result.FailReason);
+            var video = Assert.Single(result.Files, x => x.FileType == "video");
+            Assert.Equal((1, 1), (video.Season, video.Episode));
+            Assert.True(video.DestinationPath.EndsWith("Monogatari - s01e01.mkv",
+                StringComparison.OrdinalIgnoreCase), video.DestinationPath);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void NumberedFolderAndAbsoluteEvidenceMustNotDisagree()
+    {
+        var profile = OrderProfile("A1 -> S01E01\nS01E01 -> S02E01");
+        profile.SourceOrder = EpisodeOrderType.Custom;
+
+        Assert.False(EpisodeOrderMapping.TryTranslateFile(profile,
+            Path.Combine("01 - Arc", "Show - 01.mkv"), 0, 1, out _));
+    }
+
+    [Fact]
+    public void ForcedCollectionRetainsEveryCanonicalSeasonTarget()
+    {
+        var job = TvJob("/library");
+        job.IsManualGrab = true;
+        job.ForcedMagnet = "magnet:?xt=urn:btih:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        job.ForcedReleaseName = "[Group] Anime Collection";
+        job.RequestedSeasons = [1, 2];
+        job.SeasonTargets =
+        [
+            new SeasonTarget { Season = 1, EpisodeCount = 2, MissingEpisodes = [1, 2] },
+            new SeasonTarget { Season = 2, EpisodeCount = 1, MissingEpisodes = [1] }
+        ];
+
+        var plan = FulfillmentPipeline.BuildForcedPlan(job);
+
+        var item = Assert.Single(plan.Items);
+        Assert.Null(item.Season);
+        Assert.Null(item.NeededEpisodes);
+        Assert.Equal([(1, 1), (1, 2), (2, 1)],
+            item.NeededEpisodeRefs!.Select(target => (target.Season, target.Episode)).ToList());
+    }
+
+    [Fact]
     public async Task OrganizerRejectsCrossSeasonPackMissingACanonicalTargetBeforeWriting()
     {
         var root = NewRoot();

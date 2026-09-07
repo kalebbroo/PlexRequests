@@ -16,6 +16,10 @@ public interface IReleaseRanker
     /// <summary>True when the last plan had candidates to work with but rejected all of them — as opposed to
     /// the indexers returning nothing at all. Drives the empty-search counter that relaxes the quality floor.</summary>
     bool LastSearchRejectedCandidates { get; }
+
+    /// <summary>The planner's actionable explanation when no download could be formed. This includes
+    /// coverage/mapping failures that a generic "quality filter" message would hide.</summary>
+    string? LastFailureSummary { get; }
 }
 
 /// <summary>
@@ -38,9 +42,11 @@ public class ReleaseRankerAdapter(
     ILogger<ReleaseRankerAdapter> logger) : IReleaseRanker
 {
     public bool LastSearchRejectedCandidates { get; private set; }
+    public string? LastFailureSummary { get; private set; }
 
     public DownloadPlan PlanDownload(IReadOnlyList<ReleaseCandidate> candidates, FulfillmentJobDto job)
     {
+        LastFailureSummary = null;
         var context = BuildContext(job, relaxFloor: false);
         var ranked = evaluator.EvaluateAll(candidates, job, context);
 
@@ -64,6 +70,8 @@ public class ReleaseRankerAdapter(
         LastSearchRejectedCandidates = candidates.Count > 0 && !ranked.Any(r => r.Accepted);
 
         var result = planner.Plan(ranked, job, context);
+        if (result.IsEmpty)
+            LastFailureSummary = string.Join("; ", result.Notes.Where(note => !string.IsNullOrWhiteSpace(note)).Take(8));
         LogOutcome(job, candidates.Count, ranked, result);
         return result.Plan;
     }

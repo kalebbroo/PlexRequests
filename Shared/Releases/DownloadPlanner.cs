@@ -387,6 +387,7 @@ public class DownloadPlanner : IDownloadPlanner
         RejectionReason.YearMismatch => "from the wrong year",
         RejectionReason.MediaTypeMismatch => "of the wrong media type",
         RejectionReason.PackIncomplete => "incomplete season packs",
+        RejectionReason.PackScopeUnknown => "whose internal episode layout needs review",
         RejectionReason.EpisodeMappingMissing => "without a configured episode translation",
         RejectionReason.Blocklisted => "previously failed",
         RejectionReason.TooOld => "too old",

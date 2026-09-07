@@ -25,7 +25,7 @@ public partial class ReleaseParser : IReleaseParser
 
         ReleaseSource source =
             Rx(name, @"\bremux\b") ? ReleaseSource.Remux :
-            Rx(name, @"\b(bluray|blu-ray|bdrip|brrip)\b") ? ReleaseSource.BluRay :
+            Rx(name, @"\b(bd|bluray|blu-ray|bdrip|brrip)\b") ? ReleaseSource.BluRay :
             Rx(name, @"\b(web[\s._-]*dl|webdl|amzn|nf|dsnp|hmax)\b") ? ReleaseSource.WebDl :
             Rx(name, @"\bweb[\s._-]*rip\b") ? ReleaseSource.WebRip :
             Rx(name, @"\b(hdtv|pdtv)\b") ? ReleaseSource.Hdtv :
@@ -47,10 +47,17 @@ public partial class ReleaseParser : IReleaseParser
         var edition = ParseEdition(name);
         var flags = ParseFlags(name);
 
-        // Group: trailing "-GROUP" token.
+        // Scene releases usually suffix "-GROUP"; anime releases overwhelmingly prefix "[Group]".
+        // Preserve either form for scoring. The evaluator removes the leading form only for anime identity
+        // comparison, because a blanket parser rule would damage legitimate bracketed movie titles ([REC]).
         string? group = null;
-        var m = GroupRegex().Match(original);
-        if (m.Success) group = m.Groups[1].Value;
+        var leadingGroup = LeadingGroupRegex().Match(original);
+        if (leadingGroup.Success) group = leadingGroup.Groups[1].Value;
+        else
+        {
+            var trailingGroup = GroupRegex().Match(original);
+            if (trailingGroup.Success) group = trailingGroup.Groups[1].Value;
+        }
 
         var (season, seasonEnd, episode, episodeNumbers, isPack, looksLikeComplete, epStart, epEnd) =
             ParseSeasonEpisode(name);
@@ -335,4 +342,7 @@ public partial class ReleaseParser : IReleaseParser
 
     [GeneratedRegex(@"(?:-|_)([A-Za-z0-9]+)(?:\.[A-Za-z0-9]+)?$")]
     private static partial Regex GroupRegex();
+
+    [GeneratedRegex(@"^\s*\[([^\[\]\r\n]{1,64})\]")]
+    private static partial Regex LeadingGroupRegex();
 }

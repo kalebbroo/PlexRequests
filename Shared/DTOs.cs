@@ -1763,6 +1763,12 @@ public class SearchResultDto
     public int? Season { get; set; }
     public int? Episode { get; set; }
     public bool IsPack { get; set; }
+    /// <summary>The candidate appears to be an unscoped anime collection and no episode-order mapping is
+    /// configured. A force-grab would download bytes that the importer cannot place safely.</summary>
+    public bool RequiresEpisodeMapping { get; set; }
+    /// <summary>The outer release name could not prove the collection's internal coverage. Even with a
+    /// mapping configured, forcing it is an explicit admin acknowledgement pending manifest preflight.</summary>
+    public bool RequiresManifestReview { get; set; }
 
     public bool Accepted { get; set; }
     /// <summary>Every reason this was rejected, human-readable. Empty when accepted.</summary>

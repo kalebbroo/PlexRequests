@@ -200,7 +200,9 @@ public class InteractiveSearchService(
             : null;
         if (request is null) return (false, "A forced grab needs an existing request to attach to.");
 
-        // Close any job already working this request; the admin's explicit choice supersedes it.
+        // Close any job already working this request; the admin's explicit choice supersedes it. Preserve
+        // its immutable target contract below: forcing a multi-season collection must not quietly collapse
+        // the request to the first season or import episodes that were not requested.
         var existing = await db.FulfillmentJobs
             .Where(j => j.MediaRequestId == request.Id
                         && (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed
@@ -208,6 +210,7 @@ public class InteractiveSearchService(
             .ToListAsync();
         if (existing.Any(j => j.IsReplacement))
             return (false, "This request has a protected issue replacement in progress. Wait for that replacement to finish before forcing another release.");
+        var jobSnapshot = existing.OrderByDescending(j => j.Id).FirstOrDefault();
         foreach (var j in existing)
         {
             j.Status = FulfillmentStatus.Cancelled;
@@ -246,8 +249,13 @@ public class InteractiveSearchService(
             TmdbId = string.IsNullOrWhiteSpace(request.ExternalId) ? request.MediaId : null,
             Quality = task.QualityProfileId is int pid ? await profiles.GetCutoffQualityAsync(pid) : Quality.Any,
             QualityProfileId = task.QualityProfileId,
-            RequestedSeasonsCsv = task.Season?.ToString(),
-            RequestedEpisodesCsv = task is { Season: int s, Episode: int e } ? $"S{s}E{e}" : null,
+            RequestedSeasonsCsv = task.Season?.ToString()
+                ?? jobSnapshot?.RequestedSeasonsCsv
+                ?? request.RequestedSeasonsCsv,
+            RequestedEpisodesCsv = task is { Season: int s, Episode: int e }
+                ? $"S{s}E{e}"
+                : jobSnapshot?.RequestedEpisodesCsv,
+            SeasonTargetsJson = jobSnapshot?.SeasonTargetsJson,
             MediaLanguagePolicyJson = policyJson,
             EpisodeOrderProfileJson = episodeOrderJson,
             LibraryDestinationId = routingSnapshot?.LibraryDestinationId,
