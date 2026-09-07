@@ -61,6 +61,7 @@ public partial class ReleaseParser : IReleaseParser
 
         var (season, seasonEnd, episode, episodeNumbers, isPack, looksLikeComplete, epStart, epEnd) =
             ParseSeasonEpisode(name);
+        var fractionalEpisodeNumber = HasFractionalEpisodeNumber(name);
 
         int? year = null;
         var yearMatch = Regex.Match(name, @"\b(19\d{2}|20\d{2})\b", RxOpts);
@@ -96,6 +97,7 @@ public partial class ReleaseParser : IReleaseParser
             EpisodeNumbers = episodeNumbers,
             EpisodeStart = epStart,
             EpisodeEnd = epEnd,
+            FractionalEpisodeNumber = fractionalEpisodeNumber,
             IsSeasonPack = isPack,
             LooksLikeCompleteSeries = looksLikeComplete,
             Year = year
@@ -123,6 +125,12 @@ public partial class ReleaseParser : IReleaseParser
     private static (int? season, int? seasonEnd, int? episode, IReadOnlyList<int> episodeNumbers,
         bool isPack, bool looksLikeCompleteSeries, int? epStart, int? epEnd) ParseSeasonEpisode(string name)
     {
+        // Fractional anime/special notation is not an integer episode followed by a harmless delimiter.
+        // Returning no canonical identity prevents S01E06.5 from overwriting S01E06; an explicit future
+        // mapping model can represent it without weakening ordinary episode parsing.
+        if (HasFractionalEpisodeNumber(name))
+            return (null, null, null, [], false, false, null, null);
+
         // Episode RANGE first — it must beat the single-episode pattern, which would otherwise match the
         // start of "S01E01-E06" and report a one-episode release. Telling a partial pack from a full season
         // is what stops a six-episode pack being accepted for a thirteen-episode season.
@@ -167,13 +175,13 @@ public partial class ReleaseParser : IReleaseParser
         }
 
         // Single episode: S01E02 / S1E2 / 1x02.
-        var ep = Regex.Match(name, @"\bS(\d{1,2})[\s._-]*E(\d{1,3})\b", RxOpts);
+        var ep = Regex.Match(name, @"\bS(\d{1,2})[\s._-]*E(\d{1,3})(?:v\d+)?\b", RxOpts);
         if (ep.Success)
         {
             var value = int.Parse(ep.Groups[2].Value);
             return (int.Parse(ep.Groups[1].Value), null, value, [value], false, false, null, null);
         }
-        var alt = Regex.Match(name, @"\b(\d{1,2})x(\d{1,3})\b", RxOpts);
+        var alt = Regex.Match(name, @"\b(\d{1,2})x(\d{1,3})(?:v\d+)?\b", RxOpts);
         if (alt.Success)
         {
             var value = int.Parse(alt.Groups[2].Value);
@@ -215,6 +223,14 @@ public partial class ReleaseParser : IReleaseParser
 
         return (null, null, null, [], false, false, null, null);
     }
+
+    private static bool HasFractionalEpisodeNumber(string name) =>
+        Regex.IsMatch(name,
+            @"\bS\d{1,3}[\s._-]*E\d{1,4}\.\d{1,2}(?:v\d+)?(?=[\s._\-\[\(]|$)", RxOpts)
+        || Regex.IsMatch(name,
+            @"\b\d{1,3}x\d{1,4}\.\d{1,2}(?:v\d+)?(?=[\s._\-\[\(]|$)", RxOpts)
+        || Regex.IsMatch(name,
+            @"(?:^|[\s._])-[\s._]*\d{1,4}\.\d{1,2}(?:v\d+)?(?=[\s._\-\[\(]|$)", RxOpts);
 
     // Where the title ends. Generated from ReleaseTokens rather than hand-maintained, so a token added
     // for scoring automatically becomes a title boundary too.

@@ -199,6 +199,22 @@ public sealed class AnimeManifestPreflightTests
     }
 
     [Fact]
+    public void FractionalNamedSeasonEpisodeCannotSatisfyTheIntegerTarget()
+    {
+        var (job, item) = NamedSeasonAbsoluteJobAndItem();
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(
+                ("[MTBB] Monogatari Series Off & Monster Season - 01.5 (BD 1080p).mkv", GiB(1)),
+                ("[MTBB] Monogatari Series Off & Monster Season - 02 (BD 1080p).mkv", GiB(1))),
+            job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.False(result.Accepted);
+        Assert.Contains("fractional/special episode", result.Detail);
+        Assert.DoesNotContain(true, result.WantedFiles);
+    }
+
+    [Fact]
     public void PostAddSelectionKeepsOnlyNamedSeasonAbsoluteEpisodes()
     {
         var (job, _) = NamedSeasonAbsoluteJobAndItem();

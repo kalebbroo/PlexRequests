@@ -159,6 +159,27 @@ public class ReleaseEvaluatorTests
     }
 
     [Fact]
+    public void FractionalAnimeEpisodeCannotImpersonateTheIntegerTarget()
+    {
+        var job = TestData.Job("Monogatari", MediaType.TvShow,
+            episodes: [new EpisodeRef { Season = 5, Episode = 6 }]);
+        job.IsAnime = true;
+        var candidate = TestData.Release(
+            "MONOGATARI Series OFF and MONSTER Season S01E06.5 1080p CR WEB-DL") with
+        {
+            Season = 1,
+            Episode = 6
+        };
+
+        var ranked = _eval.Evaluate(candidate, job, TestData.Context());
+
+        Assert.False(ranked.Accepted);
+        Assert.Contains(ranked.Rejections, rejection =>
+            rejection.Reason == RejectionReason.EpisodeMappingMissing
+            && rejection.Detail.Contains("fractional", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void AlreadySatisfiedCanonicalSeasonNameStillPreventsAnotherTargetFromImpersonatingIt()
     {
         var job = TestData.Job("Monogatari", MediaType.TvShow, seasonTargets:

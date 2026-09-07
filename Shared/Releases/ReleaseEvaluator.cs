@@ -96,6 +96,9 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         // ---- Season / episode ------------------------------------------------------------------------
         int? sourceSeason = c.Season ?? parsed.Season;
         int? sourceEpisode = c.Episode ?? parsed.Episode;
+        if (parsed.FractionalEpisodeNumber)
+            rejections.Add(new Rejection(RejectionReason.EpisodeMappingMissing,
+                "fractional/special episode notation requires an explicit canonical mapping; it cannot be truncated to an integer episode"));
         var seasonIdentity = isAnime && !EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile)
             ? job.CanonicalSeasons.Count > 0
                 ? AnimeSeasonIdentity.Match(c.ReleaseName, job.Title, job.CanonicalSeasons, sourceSeason)

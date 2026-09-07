@@ -79,6 +79,35 @@ public sealed class MultiEpisodeCoverageTests
         Assert.Equal("[Group] Show", parsed.Title);
     }
 
+    [Theory]
+    [InlineData("Show.S01E06.5.1080p.mkv")]
+    [InlineData("Show.1x06.5.1080p.mkv")]
+    [InlineData("[Group] Show - 06.5 (1080p).mkv")]
+    [InlineData("[Group] Show - 06.5v2 (1080p).mkv")]
+    public void ParserNeverTruncatesFractionalSpecialsToIntegerEpisodes(string name)
+    {
+        var parsed = _parser.Parse(name);
+
+        Assert.True(parsed.FractionalEpisodeNumber);
+        Assert.Null(parsed.Season);
+        Assert.Null(parsed.Episode);
+        Assert.Empty(parsed.EpisodeNumbers);
+    }
+
+    [Theory]
+    [InlineData("Show.S01E06.1080p.mkv")]
+    [InlineData("Show.S01E06v2.1080p.mkv")]
+    [InlineData("Show.1x06v2.1080p.mkv")]
+    public void ParserKeepsOrdinaryAndVersionedEpisodesDistinctFromFractions(string name)
+    {
+        var parsed = _parser.Parse(name);
+
+        Assert.False(parsed.FractionalEpisodeNumber);
+        Assert.Equal(1, parsed.Season);
+        Assert.Equal(6, parsed.Episode);
+        Assert.Equal([6], parsed.EpisodeNumbers);
+    }
+
     [Fact]
     public void ParserRetainsAnimeAbsoluteRangeAsOneCombinedFile()
     {
@@ -205,6 +234,27 @@ public sealed class MultiEpisodeCoverageTests
 
             var result = await CreateOrganizer().OrganizeAsync(TvJob(library),
                 new TransferItem("transfer", 1, null, true, NeededEpisodes: [2]), source,
+                Preferences(), CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Equal(BlocklistReason.EpisodeMappingAmbiguous, result.BlocklistReason);
+            Assert.False(Directory.Exists(library));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OrganizerRejectsFractionalSpecialBeforeAnyLibraryWrite()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "Show.S01E01.5.mkv");
+            await File.WriteAllBytesAsync(source, [1, 2, 3, 4]);
+            var library = Path.Combine(root, "library");
+
+            var result = await CreateOrganizer().OrganizeAsync(TvJob(library),
+                new TransferItem("transfer", 1, null, true, NeededEpisodes: [1]), source,
                 Preferences(), CancellationToken.None);
 
             Assert.False(result.Success);
