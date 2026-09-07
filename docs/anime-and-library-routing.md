@@ -298,3 +298,6 @@ the manifest mapping remain the authority.
   engine can reconsider older parser decisions instead of permanently hiding a now-safe release, while manual
   blocks, confirmed wrong content, and immutable track-policy failures remain durable and cannot be weakened by
   a later automatic rejection. Interactive and background searches apply the same expiry/version policy.
+- The one-time stalled-search notification is the last-resort human handoff. It deep-links an admin to the exact
+  request's interactive results, where accepted and rejected candidates and their reasons remain visible. A
+  manual grab does not bypass manifest mapping, actual-track inspection, atomic import, or Plex verification.

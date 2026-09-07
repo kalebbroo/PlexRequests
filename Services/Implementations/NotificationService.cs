@@ -81,7 +81,7 @@ public class NotificationService(
         // Not a failure — the request is still being searched. Surface it to admins so they can add an
         // indexer or relax quality rules if they want it found sooner.
         await NotifyAdminsAsync(NotificationType.RequestSearchStalled, "Still searching",
-            $"\"{request.Title}\" has been searched {attempts} times without a safe automatic match. It will keep retrying. Open Activity → Search queue → Review results to see rejected releases. Anime collection manifests are tested against official episode orders without downloading payload first, and explicit wrong-language editions stay blocked. Only force a release after reviewing that evidence; its real media tracks are still verified before Plex is changed.",
+            $"\"{request.Title}\" has been searched {attempts} times without a safe automatic match. It will keep retrying. Open this notification to review the exact accepted and rejected releases. Anime collection manifests are tested against official episode orders without downloading payload first, and explicit wrong-language editions stay blocked. Only force a release after reviewing that evidence; its real media tracks are still verified before Plex is changed.",
             request.Id);
         await WriteOutboxAsync(request, BridgeEventType.Searching,
             $"Still searching after {attempts} attempts");

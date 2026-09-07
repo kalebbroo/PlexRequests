@@ -27,6 +27,63 @@ public sealed class NotificationServiceTests
         Assert.Equal(expected, NotificationNavigation.Destination(type));
 
     [Fact]
+    public void Stalled_search_notification_deep_links_to_the_exact_release_review()
+    {
+        Assert.Equal("/admin?tab=jobs&reviewRequest=73",
+            NotificationNavigation.Destination(NotificationType.RequestSearchStalled, 73));
+        Assert.Equal("/admin?tab=jobs",
+            NotificationNavigation.Destination(NotificationType.RequestSearchStalled, null));
+    }
+
+    [Fact]
+    public async Task Stalled_search_escalation_preserves_the_request_for_actionable_admin_review()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(options => options.UseSqlite(connection));
+        services.AddSingleton<IBridgeOutboxService, NoOpOutbox>();
+        services.AddSingleton<IUserAccessService>(new FixedAccess(7, isAdmin: true));
+        await using var provider = services.BuildServiceProvider();
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await db.Database.EnsureCreatedAsync();
+            db.Users.Add(new UserEntity { Id = 7, Username = "admin" });
+            db.UserProfiles.Add(new UserProfileEntity
+            {
+                UserId = 7,
+                WebNotificationTypes = NotificationPreferencesDto.Bit(NotificationType.RequestSearchStalled)
+            });
+            db.MediaRequests.Add(new MediaRequestEntity
+            {
+                Id = 73,
+                MediaId = 46195,
+                MediaType = MediaType.TvShow,
+                Title = "Monogatari",
+                RequestedByUserId = 7
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var notifications = new NotificationService(provider.GetRequiredService<IServiceScopeFactory>(),
+            new NotificationBroker(), NullLogger<NotificationService>.Instance);
+        await notifications.RequestSearchStalledAsync(new MediaRequestDto
+        {
+            Id = 73,
+            MediaId = 46195,
+            MediaType = MediaType.TvShow,
+            Title = "Monogatari"
+        }, attempts: 6);
+
+        await using var verifyScope = provider.CreateAsyncScope();
+        var row = await verifyScope.ServiceProvider.GetRequiredService<AppDbContext>().Notifications.SingleAsync();
+        Assert.Equal(73, row.RelatedRequestId);
+        Assert.Equal(NotificationType.RequestSearchStalled, row.Type);
+        Assert.Contains("Open this notification", row.Message);
+    }
+
+    [Fact]
     public async Task Completed_replacement_notifies_request_owner_and_distinct_issue_reporter_once_each()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -259,12 +316,12 @@ public sealed class NotificationServiceTests
             Task.FromResult(new BridgeEventAckResult(cursor, 0, 0));
     }
 
-    private sealed class FixedAccess(int userId) : IUserAccessService
+    private sealed class FixedAccess(int userId, bool isAdmin = false) : IUserAccessService
     {
         public Task<int?> GetCurrentUserIdAsync() => Task.FromResult<int?>(userId);
         public Task<UserAccessSnapshot> GetAccessAsync(int id) => Task.FromResult(new UserAccessSnapshot(
             id, UserPermission.AllRequests, null, null, null, 7, null, 7, null, 7, null));
         public Task<bool> CanRequestAsync(int id, MediaType mediaType) => Task.FromResult(true);
-        public Task<bool> IsAdminAsync(int id) => Task.FromResult(false);
+        public Task<bool> IsAdminAsync(int id) => Task.FromResult(isAdmin && id == userId);
     }
 }

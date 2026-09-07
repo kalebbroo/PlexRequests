@@ -98,7 +98,7 @@
                         <AdminLibrarySetupPanel Section="@_activeSection" />
                         break;
                     case "activity":
-                        <AdminJobsPanel />
+                        <AdminJobsPanel ReviewRequestId="@ReviewRequest" />
                         break;
                     case "users":
                         <AdminUsersPanel />
@@ -148,6 +148,9 @@
 
     [SupplyParameterFromQuery(Name = "sub")]
     public string? Sub { get; set; }
+
+    [SupplyParameterFromQuery(Name = "reviewRequest")]
+    public int? ReviewRequest { get; set; }
 
     private AdminDestination ActiveDestination => Destinations[_activeKey];
 
