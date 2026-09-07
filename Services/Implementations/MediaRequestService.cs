@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
@@ -470,8 +471,44 @@ public class MediaRequestService(
             return new MediaRequestResult { Success = false, ErrorMessage = "Monitored episodes must be queued one season at a time" };
 
         var season = seasons[0];
-        var csv = string.Join(",", wanted
-            .Select(e => $"S{e.season}E{e.episode}"));
+
+        // Monitoring must not race the request that made the series monitored. A whole-series job can be
+        // downloading one safe pack now while retaining other seasons for its next partial continuation;
+        // spawning per-season children here duplicates payloads and lets two organizers overwrite the same
+        // canonical path. Count Queued/Claimed/Downloading/Deferred ownership plus audit-proven imports.
+        var activeAnchorJobs = await _db.FulfillmentJobs.AsNoTracking()
+            .Where(job => job.MediaRequestId == anchor.Id
+                          && (job.Status == FulfillmentStatus.Queued
+                              || job.Status == FulfillmentStatus.Claimed
+                              || job.Status == FulfillmentStatus.Downloading
+                              || job.Status == FulfillmentStatus.Deferred))
+            .ToListAsync();
+        if (activeAnchorJobs.Count > 0)
+        {
+            var activeIds = activeAnchorJobs.Select(job => job.Id).ToList();
+            var auditRows = await _db.ImportedFiles.AsNoTracking().Include(file => file.EpisodeCoverage)
+                .Where(file => activeIds.Contains(file.FulfillmentJobId) && file.FileType == "video")
+                .ToListAsync();
+            var imported = auditRows.SelectMany(file => file.EpisodeCoverage.Count > 0
+                    ? file.EpisodeCoverage.Select(coverage => (coverage.SeasonNumber, coverage.EpisodeNumber))
+                    : file.SeasonNumber is int importedSeason && file.EpisodeNumber is int importedEpisode
+                        ? [(importedSeason, importedEpisode)]
+                        : Array.Empty<(int, int)>())
+                .ToHashSet();
+            var uncovered = UncoveredMonitoredEpisodes(activeAnchorJobs, imported, wanted,
+                anchor.RequestAllSeasons);
+            if (uncovered.Count == 0)
+                return new MediaRequestResult
+                {
+                    Success = true,
+                    AlreadyCovered = true,
+                    RequestId = anchor.Id,
+                    NewStatus = anchor.Status
+                };
+            wanted = uncovered;
+        }
+
+        var csv = string.Join(",", wanted.Select(e => $"S{e.season}E{e.episode}"));
 
         // One durable request per (anchor, season). The previous append/delete approach consumed a new row
         // on every 15-minute coverage check and, before its delete-on-no-op fix, left hundreds of Approved
@@ -577,6 +614,57 @@ public class MediaRequestService(
             job.NextRetryAt = null;
             job.LastUpdatedAt = now;
         }
+    }
+
+    internal static bool ActiveJobsCoverMonitoredEpisodes(
+        IReadOnlyCollection<FulfillmentJobEntity> jobs,
+        IReadOnlySet<(int season, int episode)> imported,
+        IReadOnlyCollection<(int season, int episode)> wanted,
+        bool anchorRequestsAllSeasons) => wanted.Count > 0
+        && UncoveredMonitoredEpisodes(jobs, imported, wanted, anchorRequestsAllSeasons).Count == 0;
+
+    internal static List<(int season, int episode)> UncoveredMonitoredEpisodes(
+        IReadOnlyCollection<FulfillmentJobEntity> jobs,
+        IReadOnlySet<(int season, int episode)> imported,
+        IReadOnlyCollection<(int season, int episode)> wanted,
+        bool anchorRequestsAllSeasons) => wanted.Where(episode =>
+            !imported.Contains(episode) && !jobs.Any(job => ActiveJobOwnsEpisode(
+                job, episode.season, episode.episode, anchorRequestsAllSeasons))).ToList();
+
+    private static bool ActiveJobOwnsEpisode(FulfillmentJobEntity job, int season, int episode,
+        bool anchorRequestsAllSeasons)
+    {
+        if (job.Status is not (FulfillmentStatus.Queued or FulfillmentStatus.Claimed
+            or FulfillmentStatus.Downloading or FulfillmentStatus.Deferred)) return false;
+
+        var exactEpisodes = ParseEpisodes(job.RequestedEpisodesCsv);
+        if (exactEpisodes.Count > 0) return exactEpisodes.Contains((season, episode));
+
+        if (!string.IsNullOrWhiteSpace(job.SeasonTargetsJson))
+        {
+            try
+            {
+                var targets = JsonSerializer.Deserialize<List<SeasonTarget>>(job.SeasonTargetsJson) ?? [];
+                if (targets.Count > 0)
+                {
+                    var target = targets.FirstOrDefault(candidate => candidate.Season == season);
+                    return target is not null
+                           && (target.MissingEpisodes.Count == 0
+                               || target.MissingEpisodes.Contains(episode));
+                }
+            }
+            catch (JsonException)
+            {
+                // Fall through to the immutable season/scope snapshot. A malformed optional target cache
+                // must not make the monitor throw or erase useful broad ownership evidence.
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(job.RequestedSeasonsCsv))
+            return ParseSeasons(job.RequestedSeasonsCsv).Contains(season);
+
+        return !job.IsUpgrade && !job.IsReplacement
+               && (job.RequestScopeKind == RequestScopeKind.Series || anchorRequestsAllSeasons);
     }
 
     /// <summary>Compatibility entry point; all music requests now use the canonical provider-neutral path.</summary>
