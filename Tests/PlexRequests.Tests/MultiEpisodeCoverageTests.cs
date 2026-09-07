@@ -627,6 +627,67 @@ public sealed class MultiEpisodeCoverageTests
     }
 
     [Fact]
+    public async Task OrganizerRepeatsNamedAnimeCollectionMappingBeforeWriting()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "pack");
+            var firstSeason = Path.Combine(source, "01 - Bakemonogatari");
+            var secondSeason = Path.Combine(source, "02 - Nisemonogatari");
+            Directory.CreateDirectory(firstSeason);
+            Directory.CreateDirectory(secondSeason);
+            await File.WriteAllBytesAsync(Path.Combine(firstSeason, "[MTBB] Bakemonogatari - 01v2.mkv"), [1, 2, 3, 4]);
+            await File.WriteAllBytesAsync(Path.Combine(firstSeason, "[MTBB] Bakemonogatari - 02v2.mkv"), [1, 2, 3, 4]);
+            await File.WriteAllBytesAsync(Path.Combine(secondSeason, "[MTBB] Nisemonogatari - 01.mkv"), [1, 2, 3, 4]);
+            var library = Path.Combine(root, "library");
+            var job = NamedAnimeCollectionJob(library);
+
+            var result = await CreateOrganizer().OrganizeAsync(job,
+                new TransferItem("transfer", null, null, true, NeededEpisodeRefs:
+                [
+                    new EpisodeRef { Season = 1, Episode = 1 },
+                    new EpisodeRef { Season = 1, Episode = 2 },
+                    new EpisodeRef { Season = 2, Episode = 1 }
+                ]), source, Preferences(), CancellationToken.None);
+
+            Assert.True(result.Success, result.FailReason);
+            var videos = result.Files.Where(file => file.FileType == "video")
+                .OrderBy(file => file.Season).ThenBy(file => file.Episode).ToList();
+            Assert.Equal([(1, 1), (1, 2), (2, 1)],
+                videos.Select(file => (file.Season!.Value, file.Episode!.Value)).ToList());
+            Assert.All(videos, file => Assert.True(File.Exists(file.DestinationPath)));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OrganizerRejectsUnmappedNamedCollectionBeforeWritingAnything()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "pack");
+            Directory.CreateDirectory(source);
+            await File.WriteAllBytesAsync(Path.Combine(source, "Bakemonogatari - 01.mkv"), [1, 2, 3, 4]);
+            await File.WriteAllBytesAsync(Path.Combine(source, "Unknown Arc - 01.mkv"), [1, 2, 3, 4]);
+            var library = Path.Combine(root, "library");
+
+            var result = await CreateOrganizer().OrganizeAsync(NamedAnimeCollectionJob(library),
+                new TransferItem("transfer", null, null, true, NeededEpisodeRefs:
+                [
+                    new EpisodeRef { Season = 1, Episode = 1 },
+                    new EpisodeRef { Season = 2, Episode = 1 }
+                ]), source, Preferences(), CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Equal(BlocklistReason.EpisodeMappingAmbiguous, result.BlocklistReason);
+            Assert.False(Directory.Exists(library));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public async Task ImportAuditPersistsOnePhysicalFileToManyEpisodes()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -705,6 +766,19 @@ public sealed class MultiEpisodeCoverageTests
             SeasonPackFolderTemplate = "{ShowTitle} ({Year})/Season {Season:00}"
         }
     };
+
+    private static FulfillmentJobDto NamedAnimeCollectionJob(string library)
+    {
+        var job = TvJob(library);
+        job.Title = "Monogatari";
+        job.IsAnime = true;
+        job.CanonicalSeasons =
+        [
+            new CanonicalSeasonIdentityDto { Season = 1, Name = "Bakemonogatari", EpisodeCount = 2 },
+            new CanonicalSeasonIdentityDto { Season = 2, Name = "Nisemonogatari", EpisodeCount = 1 }
+        ];
+        return job;
+    }
 
     private static SeriesEpisodeOrderProfileDto OrderProfile(string mappings) => new()
     {

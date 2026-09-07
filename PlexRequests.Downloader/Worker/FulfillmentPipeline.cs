@@ -82,7 +82,7 @@ public class FulfillmentPipeline(
             string? episodeOrderDiscoveryDetail = null;
             if (plan.IsEmpty && !job.IsManualGrab && job.IsAnime
                 && job.EpisodeOrderProfile is null
-                && job.EpisodeOrderCandidates.Count > 0
+                && (job.EpisodeOrderCandidates.Count > 0 || job.CanonicalSeasons.Count > 0)
                 && ranker.ManifestFallbackCandidates.Count > 0)
             {
                 (plan, episodeOrderDiscoveryDetail) = await TryResolveAnimeEpisodeOrderAsync(job, ct);
@@ -115,8 +115,9 @@ public class FulfillmentPipeline(
             };
             var transfers = new List<TransferItem>();
             var preflightFailures = new List<string>();
-            foreach (var item in plan.Items)
+            foreach (var plannedItem in plan.Items)
             {
+                var item = plannedItem;
                 var resource = item.Candidate.Acquisition;
                 if (!acquisitionBackends.TryGet(resource.Protocol, out var backend))
                 {
@@ -152,6 +153,25 @@ public class FulfillmentPipeline(
                         var decision = AnimeManifestPreflight.Evaluate(manifest, job, item, parser,
                             libraryPrefs.Current.VideoExtensions, maxPackGb,
                             libraryPrefs.Current.SubtitleExtensions);
+                        if (!decision.Accepted && item.Season is null)
+                        {
+                            // A manually chosen or already-planned collection may prove only some named
+                            // seasons. Keep that safe progress and let the durable partial continuation find
+                            // the remaining arcs; never widen this to individual files from an ambiguous season.
+                            var namedPlan = TryPlanNamedAnimeCollection(manifest, job, item, parser,
+                                libraryPrefs.Current.VideoExtensions, maxPackGb,
+                                libraryPrefs.Current.SubtitleExtensions);
+                            if (namedPlan is not null)
+                            {
+                                item = namedPlan.Value.Plan.Items[0];
+                                decision = namedPlan.Value.Decision;
+                                plan = plan with
+                                {
+                                    CoversAllTargets = plan.CoversAllTargets
+                                                       && namedPlan.Value.Plan.CoversAllTargets
+                                };
+                            }
+                        }
                         if (!decision.Accepted)
                         {
                             var detail = $"{item.Candidate.ReleaseName}: {decision.Detail}";
@@ -858,11 +878,41 @@ public class FulfillmentPipeline(
                 NeededEpisodeRefs = canonicalTargets,
                 RequiresManifestPreflight = true
             };
+
+            var namedPlan = TryPlanNamedAnimeCollection(manifest, job, item, parser,
+                libraryPrefs.Current.VideoExtensions, maxPackGb, libraryPrefs.Current.SubtitleExtensions);
+            if (namedPlan is not null)
+            {
+                var selectedTargets = namedPlan.Value.Plan.Items[0].NeededEpisodeRefs?.Count ?? 0;
+                var namedDetail = namedPlan.Value.Plan.CoversAllTargets
+                    ? "Manifest uniquely matched its named folders to every frozen canonical target. "
+                      + namedPlan.Value.Decision.Detail
+                    : $"Manifest uniquely matched named folders for {selectedTargets} of {canonicalTargets.Count} " +
+                      $"canonical targets; the remaining seasons will continue separately. {namedPlan.Value.Decision.Detail}";
+                logger.LogInformation("Job {JobId}: accepted named anime collection — {Detail}", job.Id, namedDetail);
+                return (namedPlan.Value.Plan, namedDetail);
+            }
+
+            var namedDecision = AnimeManifestPreflight.EvaluateWithEpisodeOrder(manifest, job, item, parser,
+                libraryPrefs.Current.VideoExtensions, maxPackGb, episodeOrderProfile: null,
+                subtitleExtensions: libraryPrefs.Current.SubtitleExtensions);
+
             var resolution = AnimeEpisodeOrderResolver.Resolve(manifest, job, item,
                 job.EpisodeOrderCandidates, parser, libraryPrefs.Current.VideoExtensions, maxPackGb);
             if (!resolution.Resolved || resolution.Profile?.SourceEpisodeGroupId is not { Length: > 0 } groupId)
             {
-                failures.Add($"{candidate.ReleaseName}: {resolution.Detail}");
+                var structuralDetail = $"Named canonical folders: {namedDecision.Detail} | {resolution.Detail}";
+                failures.Add($"{candidate.ReleaseName}: {structuralDetail}");
+                await SafeBlocklist(job.Id, new BlocklistRequestDto
+                {
+                    InfoHash = resource.SourceId ?? MagnetUtil.InfoHashFromMagnet(resource.Locator),
+                    Protocol = resource.Protocol,
+                    SourceId = resource.SourceId,
+                    ReleaseName = candidate.ReleaseName,
+                    Reason = BlocklistReason.EpisodeMappingAmbiguous,
+                    Detail = structuralDetail,
+                    IndexerId = candidate.IndexerId > 0 ? candidate.IndexerId : null
+                });
                 continue;
             }
 
@@ -886,6 +936,53 @@ public class FulfillmentPipeline(
             ? "No safe anime collection was available for episode-order discovery"
             : $"Anime collection metadata could not prove one episode order: {string.Join("; ", failures.Take(3))}";
         return (DownloadPlan.None, detail);
+    }
+
+    /// <summary>Build a full or partial plan from uniquely named canonical season folders. Each canonical
+    /// season must independently prove all of its current targets; a final combined pass then repeats the
+    /// exact coverage, overlap, and selected-byte checks. This lets a collection safely satisfy the seasons
+    /// it can prove while leaving an ambiguous arc for a later release.</summary>
+    internal static (DownloadPlan Plan, ManifestPreflightDecision Decision)? TryPlanNamedAnimeCollection(
+        AcquisitionManifest manifest,
+        FulfillmentJobDto job,
+        DownloadPlanItem item,
+        IReleaseParser parser,
+        IReadOnlyCollection<string> videoExtensions,
+        double maxSelectedGb,
+        IReadOnlyCollection<string> subtitleExtensions)
+    {
+        if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile)
+            || item.NeededEpisodeRefs is not { Count: > 0 }
+            || job.CanonicalSeasons.Count == 0)
+            return null;
+
+        var allDecision = AnimeManifestPreflight.EvaluateWithEpisodeOrder(manifest, job, item, parser,
+            videoExtensions, maxSelectedGb, episodeOrderProfile: null, subtitleExtensions: subtitleExtensions);
+        if (allDecision.Accepted)
+            return (new DownloadPlan(DownloadPlanKind.Single, [item]), allDecision);
+
+        var safeTargets = new List<EpisodeRef>();
+        foreach (var seasonTargets in item.NeededEpisodeRefs
+                     .GroupBy(target => target.Season)
+                     .OrderBy(group => group.Key))
+        {
+            var targets = seasonTargets.OrderBy(target => target.Episode).ToList();
+            var seasonItem = item with { NeededEpisodeRefs = targets };
+            var seasonDecision = AnimeManifestPreflight.EvaluateWithEpisodeOrder(manifest, job, seasonItem,
+                parser, videoExtensions, maxSelectedGb, episodeOrderProfile: null,
+                subtitleExtensions: subtitleExtensions);
+            if (seasonDecision.Accepted) safeTargets.AddRange(targets);
+        }
+        if (safeTargets.Count == 0) return null;
+
+        var partialItem = item with { NeededEpisodeRefs = safeTargets };
+        var combinedDecision = AnimeManifestPreflight.EvaluateWithEpisodeOrder(manifest, job, partialItem,
+            parser, videoExtensions, maxSelectedGb, episodeOrderProfile: null,
+            subtitleExtensions: subtitleExtensions);
+        if (!combinedDecision.Accepted) return null;
+
+        return (new DownloadPlan(DownloadPlanKind.Single, [partialItem],
+            CoversAllTargets: safeTargets.Count == item.NeededEpisodeRefs.Count), combinedDecision);
     }
 
     private static string TransferKey(TransferItem transfer) => TransferKey(transfer.Protocol, transfer.TransferId);
@@ -947,6 +1044,11 @@ public class FulfillmentPipeline(
                             sourceSeason, sourceEpisode, out var target))
                         canonical.Add((target.Season, target.Episode));
             }
+            else if (transfer.Season is null && job.CanonicalSeasons.Count > 0)
+            {
+                if (AnimeNamedCollectionMapper.TryMapFile(file, job, parsed, out var namedCoverage))
+                    canonical.AddRange(namedCoverage.Select(target => (target.Season, target.Episode)));
+            }
             else if (transfer.SourceSeason is int expectedSource
                      && transfer.Season is int remappedSeason
                      && expectedSource != remappedSeason)
@@ -959,7 +1061,7 @@ public class FulfillmentPipeline(
             }
             else if ((parsed.Season ?? transfer.Season) is int canonicalSeason)
                 canonical.AddRange(parsed.EpisodeNumbers.Select(episode => (canonicalSeason, episode)));
-            var selected = canonical.Any(targets.Contains);
+            var selected = canonical.Count > 0 && canonical.All(targets.Contains);
             if (selected) declaredCoverage.UnionWith(canonical);
             return selected;
         }).ToList();

@@ -301,3 +301,7 @@ the manifest mapping remain the authority.
 - The one-time stalled-search notification is the last-resort human handoff. It deep-links an admin to the exact
   request's interactive results, where accepted and rejected candidates and their reasons remain visible. A
   manual grab does not bypass manifest mapping, actual-track inspection, atomic import, or Plex verification.
+- A multi-season anime collection may satisfy only the missing seasons whose internal folders uniquely match
+  frozen canonical season names. Each season must independently prove exact current coverage, and the combined
+  selection is repeated after add and at final import. Ambiguous sibling arcs are left for another release while
+  the same job continues; a structurally rejected collection is versioned-blocklisted so it cannot loop forever.
