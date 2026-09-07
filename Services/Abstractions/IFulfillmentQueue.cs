@@ -39,8 +39,9 @@ public interface IFulfillmentQueue
     /// <summary>Close the job for a request as failed, recording the reason.</summary>
     Task MarkFailedAsync(int mediaRequestId, string reason);
 
-    /// <summary>Close the job as partially completed: some torrents imported before another failed.
-    /// A later retry (re-enqueue) only re-fetches what's still missing.</summary>
+    /// <summary>Record partial progress, subtract audit-proven imported episodes from the immutable target,
+    /// and queue the same job to continue the remainder. Completes the job only when cumulative imports
+    /// already cover every explicit target.</summary>
     Task MarkPartiallyCompletedAsync(int mediaRequestId, string reason);
 
     /// <summary>Park a job whose release isn't findable yet: bump its defer count, set the retry backoff, and

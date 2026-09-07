@@ -665,7 +665,11 @@ public class FulfillmentPipeline(
             var reason = !record.CoversAllTargets && importedCount == items.Count
                 ? $"{importedCount} available download(s) imported, but no release covered every requested season/episode"
                 : $"{importedCount}/{items.Count} downloads imported; the rest failed: {string.Join("; ", failReasons.Distinct())}";
+            // Continuation makes this same job claimable again. Delete the old planner state first so a
+            // crash or a second worker can never resume the already-imported transfer list.
+            await SafeRemoveState(job.Id);
             await SafePartiallyComplete(job.MediaRequestId, reason);
+            return;
         }
         else
         {

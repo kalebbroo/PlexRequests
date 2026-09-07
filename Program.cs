@@ -1291,9 +1291,8 @@ app.MapPost("/api/requests/{id:int}/failed", async (int id, FailRequest body, Ht
     return Results.Ok(new { req.Id, status = req.Status.ToString() });
 });
 
-// Worker reports a partial success: some seasons/episodes imported before another torrent in the same
-// job failed. Distinct from a hard failure so a retry can target only what's still missing, and the UI
-// can say "partially available" instead of implying nothing arrived.
+// Worker reports a partial success. The queue atomically subtracts durable episode coverage and schedules
+// another pass over only the remainder; the request stays visibly partial while that continuation runs.
 app.MapPost("/api/requests/{id:int}/partially-completed", async (int id, FailRequest body, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IPlexApiService plex) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
@@ -1301,13 +1300,18 @@ app.MapPost("/api/requests/{id:int}/partially-completed", async (int id, FailReq
     if (req is null) return Results.NotFound();
 
     var reason = string.IsNullOrWhiteSpace(body.Reason) ? "Some content imported before the rest failed" : body.Reason!;
-    req.Status = RequestStatus.PartiallyAvailable;
-    req.DenialReason = reason.Length > 1000 ? reason[..1000] : reason;
-    req.AvailableAt = DateTime.UtcNow;
-    await db.SaveChangesAsync();
+    var wasPartiallyAvailable = req.Status == RequestStatus.PartiallyAvailable;
     await queue.MarkPartiallyCompletedAsync(id, reason);
     try { await plex.RebuildAvailabilityIndexAsync(); } catch { /* index refresh is best-effort */ }
-    await notify.RequestPartiallyAvailableAsync(ToRequestDto(req), reason);
+    if (req.Status == RequestStatus.Available)
+    {
+        try { await queue.RecomputeAchievedQualityAsync(id); } catch { /* best-effort */ }
+        await notify.RequestAvailableAsync(ToRequestDto(req));
+    }
+    else if (!wasPartiallyAvailable)
+    {
+        await notify.RequestPartiallyAvailableAsync(ToRequestDto(req), reason);
+    }
     return Results.Ok(new { req.Id, status = req.Status.ToString() });
 });
 

@@ -715,9 +715,113 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
     {
         var j = await LatestJobAsync(mediaRequestId);
         if (j is null) return;
-        j.Status = FulfillmentStatus.PartiallyCompleted;
-        j.LastError = reason.Length > 2000 ? reason[..2000] : reason;
-        j.CompletedAt = DateTime.UtcNow;
+
+        var now = DateTime.UtcNow;
+        var importedFiles = await _db.ImportedFiles.AsNoTracking().Include(f => f.EpisodeCoverage)
+            .Where(f => f.FulfillmentJobId == j.Id && f.FileType == "video")
+            .ToListAsync();
+        var imported = importedFiles.SelectMany(AuditCoverage).ToHashSet();
+        var hasExplicitTargets = false;
+        var remainingTargetCount = 0;
+        var remainingSeasons = new List<int>();
+
+        if (!string.IsNullOrWhiteSpace(j.RequestedEpisodesCsv))
+        {
+            var requested = ParseEpisodes(j.RequestedEpisodesCsv)
+                .Select(x => (x.Season, x.Episode)).Distinct().ToList();
+            hasExplicitTargets = requested.Count > 0;
+            var remaining = requested.Where(x => !imported.Contains(x)).ToList();
+            remainingTargetCount = remaining.Count;
+            remainingSeasons = remaining.Select(x => x.Season).Distinct().Order().ToList();
+            if (remaining.Count > 0 && remaining.Count < requested.Count)
+            {
+                j.RequestedEpisodesCsv = string.Join(",", remaining
+                    .OrderBy(x => x.Season).ThenBy(x => x.Episode)
+                    .Select(x => $"S{x.Season}E{x.Episode}"));
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(j.SeasonTargetsJson))
+        {
+            try
+            {
+                var targets = JsonSerializer.Deserialize<List<SeasonTarget>>(j.SeasonTargetsJson) ?? [];
+                hasExplicitTargets = targets.Count > 0;
+                var remaining = targets
+                    .Select(target => new SeasonTarget
+                    {
+                        Season = target.Season,
+                        EpisodeCount = target.EpisodeCount,
+                        MissingEpisodes = target.MissingEpisodes.Distinct().Order()
+                            .Where(episode => !imported.Contains((target.Season, episode))).ToList()
+                    })
+                    .Where(target => target.MissingEpisodes.Count > 0)
+                    .OrderBy(target => target.Season)
+                    .ToList();
+                remainingTargetCount = remaining.Sum(target => target.MissingEpisodes.Count);
+                remainingSeasons = remaining.Select(target => target.Season).ToList();
+                if (remaining.Count > 0 && remainingTargetCount < targets.Sum(x => x.MissingEpisodes.Distinct().Count()))
+                {
+                    j.SeasonTargetsJson = JsonSerializer.Serialize(remaining);
+                    j.RequestedSeasonsCsv = string.Join(",", remainingSeasons);
+                }
+            }
+            catch (JsonException ex)
+            {
+                // A malformed legacy target contract must never be replaced with an inferred/wider scope.
+                // Keep the original job target and let the normal retry/escalation path expose it to admins.
+                _logger.LogWarning(ex, "Job {JobId}: could not narrow malformed season targets after partial import", j.Id);
+            }
+        }
+
+        var req = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == mediaRequestId);
+        if (hasExplicitTargets && remainingTargetCount == 0)
+        {
+            // Earlier partial attempts plus this one can collectively complete the immutable target even
+            // when the current planner record covered only a subset. Do not manufacture another search.
+            j.Status = FulfillmentStatus.Completed;
+            j.Progress = 100;
+            j.CompletedAt = now;
+            j.NextRetryAt = null;
+            j.ClaimedBy = null;
+            j.LastError = null;
+            if (req is not null)
+            {
+                req.Status = RequestStatus.Available;
+                req.AvailableAt = now;
+                req.DenialReason = null;
+            }
+        }
+        else
+        {
+            // A partial pack is useful progress, not an empty search. Queue the same immutable job for a
+            // fresh plan after a short hand-off window, with only audit-proven missing targets remaining.
+            // Keeping this one job also lets the durable import audit prevent duplicate episode downloads.
+            j.Status = FulfillmentStatus.Queued;
+            j.Progress = 0;
+            j.CompletedAt = null;
+            j.ClaimedBy = null;
+            j.ClaimedAt = null;
+            j.NextRetryAt = now.AddMinutes(1);
+            j.LastUpdatedAt = now;
+            j.IsManualGrab = false;
+            j.ForcedMagnet = null;
+            j.ForcedReleaseName = null;
+            j.ForcedIndexerId = null;
+            var continuation = remainingTargetCount > 0
+                ? $" Continuing automatically with {remainingTargetCount} missing episode(s) across season(s) {string.Join(", ", remainingSeasons)}."
+                : " Continuing automatically with the original scope because exact remaining episodes could not be proven.";
+            var detail = reason + continuation;
+            j.LastError = detail.Length > 2000 ? detail[..2000] : detail;
+            if (req is not null)
+            {
+                req.Status = RequestStatus.PartiallyAvailable;
+                req.DenialReason = reason.Length > 1000 ? reason[..1000] : reason;
+                req.AvailableAt ??= now;
+            }
+            _logger.LogInformation(
+                "Job {JobId}: partial import retained {ImportedCount} covered episode(s); queued continuation for {RemainingCount} remaining target(s)",
+                j.Id, imported.Count, remainingTargetCount);
+        }
         await _db.SaveChangesAsync();
     }
 
