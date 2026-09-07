@@ -286,3 +286,6 @@ the manifest mapping remain the authority.
 - Monitoring cannot enqueue a second season/episode job while an active whole-series job already owns that exact
   canonical target. Queued, downloading, and deferred target snapshots plus durable imports are combined before a
   monitor child is allowed, preventing duplicate payloads and two organizers racing the same Plex path.
+- Fractional/special names such as `S01E06.5`, `1x06.5`, and `- 06.5` are never truncated to canonical E06. They
+  remain unselected extras inside an otherwise complete pack, or reject an attempted E06 fulfillment with an
+  explicit mapping/admin-review reason; normal `E06v2` revisions remain valid episode 6 releases.

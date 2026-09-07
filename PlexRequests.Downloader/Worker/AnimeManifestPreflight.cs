@@ -89,6 +89,11 @@ internal static class AnimeManifestPreflight
             if (!extensions.Contains(extension)) continue;
 
             var parsed = parser.Parse(Path.GetFileName(file.Path));
+            if (parsed.FractionalEpisodeNumber)
+            {
+                unmappedVideos.Add($"{file.Path} [fractional/special episode]");
+                continue;
+            }
             var episodes = parsed.EpisodeNumbers.Distinct().OrderBy(number => number).ToList();
             if (parsed.Season is not int sourceSeason || episodes.Count == 0 || !IsContiguous(episodes))
                 continue; // extras and unrelated videos stay at priority zero
