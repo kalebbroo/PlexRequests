@@ -250,6 +250,13 @@ selected filename to use the expected source season, and the organizer applies t
 or writing anything. Already-satisfied season identities remain in the frozen catalog so their releases cannot
 later impersonate a still-missing season. Configured/TMDb episode-order maps remain authoritative when present.
 
+Some named-season packs reset their internal files to absolute `- 01`, `- 02`, … numbering instead of repeating
+the uploader's `Sxx`. That sentinel is accepted only after the outer release uniquely maps a distinctive canonical
+season name and each internal path repeats that same series + season identity. Manifest preflight must then prove
+the exact, gap-free canonical target set; post-add priority selection and the organizer independently repeat the
+same check. A bare number, generic season name, different arc, duplicate, gap, or out-of-range episode still fails
+closed and remains eligible for the normal admin-review escalation rather than being guessed into Plex.
+
 Release aliases should eventually come from a durable identity table populated from metadata aliases and AniDB's
 title dump, not an ever-growing stop-word list. Alias matches are ranking evidence only; canonical provider IDs and
 the manifest mapping remain the authority.
@@ -274,3 +281,5 @@ the manifest mapping remain the authority.
   coverage, replaying a manual grab, or falsely marking a legacy Anime series complete after one episode.
 - A distinctive canonical season name can safely translate an uploader season number, and that source/canonical
   pair survives worker restarts; a generic or conflicting manifest stays blocked for admin review.
+- A uniquely named season pack may use `- 01`-style internal files only when every selected path repeats that same
+  canonical season identity and the manifest proves exact coverage; unscoped absolute numbering remains blocked.

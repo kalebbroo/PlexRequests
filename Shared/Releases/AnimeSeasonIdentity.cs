@@ -62,6 +62,17 @@ public static partial class AnimeSeasonIdentity
         return new AnimeSeasonIdentityMatch(sourceSeason.Value, selected.Season, selected.Name!.Trim());
     }
 
+    /// <summary>Whether a filename/path carries the same unique named-season identity already proven by
+    /// the outer release. This is intentionally stricter than recognizing a bare absolute episode number:
+    /// the series and distinctive canonical season name must both survive into the internal path.</summary>
+    public static bool MatchesCanonicalSeason(string releaseName, string seriesTitle,
+        IReadOnlyCollection<SeasonTarget> targets, int sourceSeason, int canonicalSeason) =>
+        Match(releaseName, seriesTitle, targets, sourceSeason)?.CanonicalSeason == canonicalSeason;
+
+    public static bool MatchesCanonicalSeason(string releaseName, string seriesTitle,
+        IReadOnlyCollection<CanonicalSeasonIdentityDto> targets, int sourceSeason, int canonicalSeason) =>
+        Match(releaseName, seriesTitle, targets, sourceSeason)?.CanonicalSeason == canonicalSeason;
+
     private static HashSet<string> Tokens(string value) => WordRegex().Matches(value.ToLowerInvariant())
         .Select(match => match.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
 

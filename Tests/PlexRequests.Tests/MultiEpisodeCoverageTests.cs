@@ -144,6 +144,15 @@ public sealed class MultiEpisodeCoverageTests
         var wrongSource = splitter.Map(["Anime.S05E01.mkv"],
             season: 3, expectedEpisodeCount: 23, sourceSeason: 4);
         Assert.False(wrongSource.IsUnambiguous);
+
+        var absoluteRejected = splitter.Map(["Anime - 01.mkv"],
+            season: 5, expectedEpisodeCount: 2, sourceSeason: 1);
+        Assert.False(absoluteRejected.IsUnambiguous);
+
+        var namedAbsolute = splitter.Map(["Anime - 01.mkv", "Anime - 02.mkv"],
+            season: 5, expectedEpisodeCount: 2, sourceSeason: 1, allowAbsoluteOrder: true);
+        Assert.True(namedAbsolute.IsUnambiguous);
+        Assert.All(namedAbsolute.Mappings, mapping => Assert.Equal(5, mapping.Season));
     }
 
     [Fact]
@@ -226,6 +235,80 @@ public sealed class MultiEpisodeCoverageTests
             Assert.True(video.DestinationPath.EndsWith("Show - s02e01.mkv", StringComparison.OrdinalIgnoreCase),
                 video.DestinationPath);
             Assert.Equal([(2, 1)], video.EpisodeCoverage!.Select(x => (x.Season, x.Episode)).ToList());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OrganizerImportsNamedSeasonAbsoluteFilesUnderTheCanonicalSeason()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "Monogatari Series Off & Monster Season");
+            Directory.CreateDirectory(source);
+            await File.WriteAllBytesAsync(
+                Path.Combine(source, "Monogatari Series Off & Monster Season - 01.mkv"), [1, 2, 3, 4]);
+            await File.WriteAllBytesAsync(
+                Path.Combine(source, "Monogatari Series Off & Monster Season - 02.mkv"), [1, 2, 3, 4]);
+            var library = Path.Combine(root, "library");
+            var job = TvJob(library);
+            job.Title = "Monogatari";
+            job.IsAnime = true;
+            job.CanonicalSeasons =
+            [
+                new CanonicalSeasonIdentityDto
+                {
+                    Season = 5,
+                    Name = "MONOGATARI Series OFF & MONSTER Season",
+                    EpisodeCount = 2
+                }
+            ];
+
+            var result = await CreateOrganizer().OrganizeAsync(job,
+                new TransferItem("transfer", 5, null, true, NeededEpisodes: [1, 2], SourceSeason: 1),
+                source, Preferences(), CancellationToken.None);
+
+            Assert.True(result.Success, result.FailReason);
+            var videos = result.Files.Where(file => file.FileType == "video")
+                .OrderBy(file => file.Episode).ToList();
+            Assert.Equal([(5, 1), (5, 2)], videos.Select(file =>
+                (file.Season!.Value, file.Episode!.Value)).ToList());
+            Assert.All(videos, file => Assert.Contains("Season 05", file.DestinationPath));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OrganizerRejectsBareAbsoluteFilesWithoutNamedSeasonIdentity()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "pack");
+            Directory.CreateDirectory(source);
+            await File.WriteAllBytesAsync(Path.Combine(source, "Monogatari - 01.mkv"), [1, 2, 3, 4]);
+            var library = Path.Combine(root, "library");
+            var job = TvJob(library);
+            job.Title = "Monogatari";
+            job.IsAnime = true;
+            job.CanonicalSeasons =
+            [
+                new CanonicalSeasonIdentityDto
+                {
+                    Season = 5,
+                    Name = "MONOGATARI Series OFF & MONSTER Season",
+                    EpisodeCount = 2
+                }
+            ];
+
+            var result = await CreateOrganizer().OrganizeAsync(job,
+                new TransferItem("transfer", 5, null, true, NeededEpisodes: [1], SourceSeason: 1),
+                source, Preferences(), CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Equal(BlocklistReason.EpisodeMappingAmbiguous, result.BlocklistReason);
+            Assert.False(Directory.Exists(library));
         }
         finally { Directory.Delete(root, recursive: true); }
     }

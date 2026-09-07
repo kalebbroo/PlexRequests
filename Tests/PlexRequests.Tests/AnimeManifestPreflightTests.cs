@@ -151,6 +151,77 @@ public sealed class AnimeManifestPreflightTests
     }
 
     [Fact]
+    public void NamedSeasonTranslationAcceptsGapFreeAbsoluteEpisodeFilenames()
+    {
+        var (job, item) = NamedSeasonAbsoluteJobAndItem();
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(
+                ("[MTBB] Monogatari Series Off & Monster Season - 01 (BD 1080p).mkv", GiB(1)),
+                ("[MTBB] Monogatari Series Off & Monster Season - 02 (BD 1080p).mkv", GiB(1))),
+            job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.True(result.Accepted, result.Detail);
+        Assert.Equal([(5, 1), (5, 2)], result.CanonicalCoverage
+            .Select(episode => (episode.Season, episode.Episode)).ToList());
+    }
+
+    [Theory]
+    [InlineData("[MTBB] Monogatari - 01 (BD 1080p).mkv")]
+    [InlineData("[MTBB] Monogatari Series Second Season - 01 (BD 1080p).mkv")]
+    [InlineData("[MTBB] Different Show Off & Monster Season - 01 (BD 1080p).mkv")]
+    public void AbsoluteEpisodeFilenameMustRepeatTheUniqueNamedSeasonIdentity(string filename)
+    {
+        var (job, item) = NamedSeasonAbsoluteJobAndItem();
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest((filename, GiB(1)),
+                     ("[MTBB] Monogatari Series Off & Monster Season - 02 (BD 1080p).mkv", GiB(1))),
+            job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.False(result.Accepted);
+        Assert.Contains("did not match", result.Detail);
+    }
+
+    [Fact]
+    public void NamedSeasonAbsoluteEpisodeOutsideCanonicalCountIsRejected()
+    {
+        var (job, item) = NamedSeasonAbsoluteJobAndItem();
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(
+                ("[MTBB] Monogatari Series Off & Monster Season - 01 (BD 1080p).mkv", GiB(1)),
+                ("[MTBB] Monogatari Series Off & Monster Season - 03 (BD 1080p).mkv", GiB(1))),
+            job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.False(result.Accepted);
+        Assert.Contains("outside canonical S05", result.Detail);
+    }
+
+    [Fact]
+    public void PostAddSelectionKeepsOnlyNamedSeasonAbsoluteEpisodes()
+    {
+        var (job, _) = NamedSeasonAbsoluteJobAndItem();
+        var transfer = new TransferItem("hash", 5, null, true,
+            NeededEpisodeRefs:
+            [
+                new EpisodeRef { Season = 5, Episode = 1 },
+                new EpisodeRef { Season = 5, Episode = 2 }
+            ],
+            SourceSeason: 1);
+
+        var selected = FulfillmentPipeline.BuildCanonicalPackFileSelection(job, transfer,
+        [
+            "Monogatari Series Off & Monster Season/Monogatari Series Off & Monster Season - 01.mkv",
+            "Monogatari Series Off & Monster Season/Monogatari Series Off & Monster Season - 02.mkv",
+            "Monogatari Series Second Season/Monogatari Series Second Season - 01.mkv"
+        ], _parser, VideoExtensions, [".ass"]);
+
+        Assert.Empty(selected.MissingCoverage);
+        Assert.Equal([true, true, false], selected.Keep);
+    }
+
+    [Fact]
     public void DuplicateCanonicalEpisodeRejectsTheManifest()
     {
         var (job, item) = JobAndItem();
@@ -441,6 +512,52 @@ public sealed class AnimeManifestPreflightTests
             TestData.Release("[MTBB] Monogatari Series (BD 1080p)", sizeGb: 70.2),
             null, null, true)
         {
+            NeededEpisodeRefs = targets,
+            RequiresManifestPreflight = true
+        };
+        return (job, item);
+    }
+
+    private static (FulfillmentJobDto Job, DownloadPlanItem Item) NamedSeasonAbsoluteJobAndItem()
+    {
+        var targets = new List<EpisodeRef>
+        {
+            new() { Season = 5, Episode = 1 },
+            new() { Season = 5, Episode = 2 }
+        };
+        var job = TestData.Job("Monogatari", MediaType.TvShow, seasonTargets:
+        [
+            new SeasonTarget
+            {
+                Season = 5,
+                Name = "MONOGATARI Series OFF & MONSTER Season",
+                EpisodeCount = 2,
+                MissingEpisodes = [1, 2]
+            }
+        ]);
+        job.IsAnime = true;
+        job.TmdbId = 46195;
+        job.RequestScope = RequestScopeKind.Seasons;
+        job.CanonicalSeasons =
+        [
+            new CanonicalSeasonIdentityDto
+            {
+                Season = 3,
+                Name = "Monogatari Series: Second Season",
+                EpisodeCount = 23
+            },
+            new CanonicalSeasonIdentityDto
+            {
+                Season = 5,
+                Name = "MONOGATARI Series OFF & MONSTER Season",
+                EpisodeCount = 2
+            }
+        ];
+        var item = new DownloadPlanItem(
+            TestData.Release("[MTBB] Monogatari Series Off & Monster Season S1 (BD 1080p)"),
+            5, null, true)
+        {
+            SourceSeason = 1,
             NeededEpisodeRefs = targets,
             RequiresManifestPreflight = true
         };

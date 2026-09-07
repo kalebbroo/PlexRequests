@@ -305,7 +305,13 @@ public class LibraryOrganizer(
                 mapped = MapTranslatedFiles(job, videoFiles);
             else
             {
-                var map = splitter.Map(videoFiles, season, expectedEpisodeCount, transfer.SourceSeason);
+                var allowAbsoluteOrder = transfer.SourceSeason is int expectedSource
+                    && expectedSource != season
+                    && videoFiles.Where(file => parser.Parse(Path.GetFileName(file)).Season == 0)
+                        .All(file => AnimeManifestPreflight.MatchesNamedCanonicalSeason(
+                            job, file, expectedSource, season));
+                var map = splitter.Map(videoFiles, season, expectedEpisodeCount, transfer.SourceSeason,
+                    allowAbsoluteOrder);
                 if (!map.IsUnambiguous)
                     throw new EpisodeMappingException(DescribeMappingFailure(season, map));
                 mapped = map.Mappings.Select(x => new CanonicalFileMapping(x.FilePath,

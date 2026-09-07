@@ -102,12 +102,20 @@ internal static class AnimeManifestPreflight
                     && item.Season is int canonicalSeason
                     && expectedSource != canonicalSeason)
                 {
-                    if (sourceSeason != expectedSource)
+                    var namedAbsoluteEpisode = sourceSeason == 0
+                        && MatchesNamedCanonicalSeason(job, file.Path, expectedSource, canonicalSeason);
+                    if (sourceSeason != expectedSource && !namedAbsoluteEpisode)
                     {
                         unmappedVideos.Add(file.Path);
                         coverage.Clear();
                         break;
                     }
+                    if (namedAbsoluteEpisode
+                        && (CanonicalEpisodeCount(job, canonicalSeason) is not int expectedCount
+                            || sourceEpisode > expectedCount))
+                        return ManifestPreflightDecision.Reject(
+                            $"{file.Path} declares absolute episode {sourceEpisode}, outside canonical " +
+                            $"S{canonicalSeason:D2}'s known episode range.", manifest.Files.Count);
                     target = new EpisodeRef { Season = canonicalSeason, Episode = sourceEpisode };
                 }
                 else if (!EpisodeOrderMapping.TryTranslateFile(episodeOrderProfile, file.Path,
@@ -170,6 +178,20 @@ internal static class AnimeManifestPreflight
         return new ManifestPreflightDecision(true,
             $"Manifest proved {canonical.Count} canonical episode(s); selected {selected.Count(value => value)}/{selected.Length} files ({selectedGb:F1} GB).",
             selected, canonical);
+    }
+
+    internal static bool MatchesNamedCanonicalSeason(FulfillmentJobDto job, string releasePath,
+        int sourceSeason, int canonicalSeason) => job.CanonicalSeasons.Count > 0
+        ? AnimeSeasonIdentity.MatchesCanonicalSeason(releasePath, job.Title, job.CanonicalSeasons,
+            sourceSeason, canonicalSeason)
+        : AnimeSeasonIdentity.MatchesCanonicalSeason(releasePath, job.Title, job.SeasonTargets,
+            sourceSeason, canonicalSeason);
+
+    private static int? CanonicalEpisodeCount(FulfillmentJobDto job, int canonicalSeason)
+    {
+        var count = job.CanonicalSeasons.FirstOrDefault(season => season.Season == canonicalSeason)?.EpisodeCount
+                    ?? job.SeasonTargets.FirstOrDefault(season => season.Season == canonicalSeason)?.EpisodeCount;
+        return count > 0 ? count : null;
     }
 
     private static bool SafeRelativePath(string path)

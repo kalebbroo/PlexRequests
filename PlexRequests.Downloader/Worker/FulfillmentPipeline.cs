@@ -940,7 +940,10 @@ public class FulfillmentPipeline(
                      && transfer.Season is int remappedSeason
                      && expectedSource != remappedSeason)
             {
-                if (parsed.Season == expectedSource)
+                var namedAbsoluteEpisode = parsed.Season == 0
+                    && AnimeManifestPreflight.MatchesNamedCanonicalSeason(job, file,
+                        expectedSource, remappedSeason);
+                if (parsed.Season == expectedSource || namedAbsoluteEpisode)
                     canonical.AddRange(episodes.Select(episode => (remappedSeason, episode)));
             }
             else if ((parsed.Season ?? transfer.Season) is int canonicalSeason)
