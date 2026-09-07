@@ -291,7 +291,10 @@ else
 }
 
 @code {
+    [Parameter] public int? ReviewRequestId { get; set; }
+
     private bool _loading = true;
+    private int? _openedReviewRequestId;
 
     private List<WantedItemDto> _missing = new();
     private List<CutoffUnmetItemDto> _cutoff = new();
@@ -313,6 +316,24 @@ else
     };
 
     protected override async Task OnInitializedAsync() => await Reload();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_loading || ReviewRequestId is not int requestId || requestId <= 0
+            || _openedReviewRequestId == requestId)
+            return;
+
+        // Mark it before opening. Closing the dialog reloads this panel and must not immediately reopen it.
+        _openedReviewRequestId = requestId;
+        var item = _missing.FirstOrDefault(candidate => candidate.RequestId == requestId);
+        if (item is null)
+        {
+            await Toasts.ShowInfoAsync("That request no longer needs release review.");
+            return;
+        }
+
+        await BrowseReleases(item);
+    }
 
     // Reloads every dataset; called on init and after every action so the tables stay in sync.
     private async Task Reload()

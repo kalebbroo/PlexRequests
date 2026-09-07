@@ -379,7 +379,7 @@
     {
         if (_readBehavior == NotificationReadBehavior.WhenNotificationOpened)
             await MarkRead(notification);
-        Navigation.NavigateTo(NotificationNavigation.Destination(notification.Type));
+        Navigation.NavigateTo(NotificationNavigation.Destination(notification.Type, notification.RelatedRequestId));
     }
 
     private void OnNotificationPreferencesChanged(NotificationPreferencesDto preferences)
