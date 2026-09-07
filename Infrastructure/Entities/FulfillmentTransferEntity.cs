@@ -36,6 +36,9 @@ public class FulfillmentTransferEntity
     public int? Season { get; set; }
     /// <summary>Season number used by this release before canonical season-name/order translation.</summary>
     public int? SourceSeason { get; set; }
+    /// <summary>Manifest-proven N.5 insertion contract used to reproduce source-to-canonical mapping after
+    /// worker restarts and again at the final library-write boundary.</summary>
+    public int? FractionalEpisodeInsertionAfter { get; set; }
     public int? Episode { get; set; }
     public bool IsPack { get; set; }
     /// <summary>For a pack restricted to specific episodes, which ones we actually want.</summary>

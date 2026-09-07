@@ -22,7 +22,8 @@ public record TransferItem(
     PlexRequestsHosted.Shared.Enums.AcquisitionProtocol Protocol = PlexRequestsHosted.Shared.Enums.AcquisitionProtocol.Torrent,
     string? SourceId = null,
     IReadOnlyList<EpisodeRef>? NeededEpisodeRefs = null,
-    int? SourceSeason = null);
+    int? SourceSeason = null,
+    int? FractionalEpisodeInsertionAfter = null);
 
 /// <summary>An in-flight download: the claimed job plus its one-or-more transfers. The legacy JSON property
 /// name is deliberately retained so deployments resume existing active-jobs.json files without data loss.</summary>

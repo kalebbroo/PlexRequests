@@ -56,6 +56,7 @@ public sealed class FulfillmentTransferServiceTests
                 ReleaseName = "safe retry",
                 Season = 4,
                 SourceSeason = 6,
+                FractionalEpisodeInsertionAfter = 3,
                 IsPack = true,
                 NeededEpisodes = [1, 2, 3],
                 NeededEpisodeRefs =
@@ -79,10 +80,13 @@ public sealed class FulfillmentTransferServiceTests
         Assert.Equal("safe retry", row.ReleaseName);
         Assert.Equal(4, row.Season);
         Assert.Equal(6, row.SourceSeason);
+        Assert.Equal(3, row.FractionalEpisodeInsertionAfter);
         Assert.Equal("1,2,3", row.NeededEpisodesCsv);
         Assert.Contains("\"Season\":4", row.NeededEpisodeRefsJson);
         Assert.Equal(1080, row.Resolution);
-        Assert.Equal(6, Assert.Single(await service.GetActiveAsync()).SourceSeason);
+        var active = Assert.Single(await service.GetActiveAsync());
+        Assert.Equal(6, active.SourceSeason);
+        Assert.Equal(3, active.FractionalEpisodeInsertionAfter);
     }
 
     [Fact]

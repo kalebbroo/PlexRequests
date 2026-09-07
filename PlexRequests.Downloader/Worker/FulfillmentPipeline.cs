@@ -125,6 +125,7 @@ public class FulfillmentPipeline(
                 }
                 AcquisitionManifest? manifest = null;
                 IReadOnlyList<bool>? wantedFiles = null;
+                int? fractionalEpisodeInsertionAfter = null;
                 if (item.RequiresManifestPreflight)
                 {
                     if (!backend.Capabilities.SupportsManifestPreflight)
@@ -172,6 +173,7 @@ public class FulfillmentPipeline(
                         }
 
                         wantedFiles = decision.WantedFiles;
+                        fractionalEpisodeInsertionAfter = decision.FractionalEpisodeInsertionAfter;
                         logger.LogInformation("Job {JobId}: anime collection preflight accepted \"{Release}\" — {Detail}",
                             job.Id, item.Candidate.ReleaseName, decision.Detail);
                     }
@@ -210,7 +212,8 @@ public class FulfillmentPipeline(
                     Protocol: resource.Protocol,
                     SourceId: resource.SourceId,
                     NeededEpisodeRefs: item.NeededEpisodeRefs,
-                    SourceSeason: item.SourceSeason));
+                    SourceSeason: item.SourceSeason,
+                    FractionalEpisodeInsertionAfter: fractionalEpisodeInsertionAfter));
             }
 
             if (transfers.Count == 0)
@@ -245,6 +248,7 @@ public class FulfillmentPipeline(
                 IndexerId = t.IndexerId,
                 Season = t.Season,
                 SourceSeason = t.SourceSeason,
+                FractionalEpisodeInsertionAfter = t.FractionalEpisodeInsertionAfter,
                 Episode = t.Episode,
                 IsPack = t.IsPack,
                 NeededEpisodes = t.NeededEpisodes?.ToList() ?? new(),
@@ -926,12 +930,19 @@ public class FulfillmentPipeline(
             if (!videos.Contains(extension)) return false;
 
             var parsed = parser.Parse(Path.GetFileName(file));
-            var episodes = parsed.EpisodeNumbers;
-            if (episodes.Count == 0) return false;
             var canonical = new List<(int Season, int Episode)>();
-            if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile) && parsed.Season is int sourceSeason)
+            if (transfer.FractionalEpisodeInsertionAfter is int insertionAfter
+                && transfer.SourceSeason is int sequenceSource
+                && transfer.Season is int sequenceSeason
+                && AnimeManifestPreflight.CanonicalEpisodeCount(job, sequenceSeason) is int sequenceCount
+                && AnimeNamedSeasonSequenceMapper.TryMapFile(file, job, sequenceSource, sequenceSeason,
+                    sequenceCount, insertionAfter, parser, out var sequenceEpisode))
+                canonical.Add((sequenceSeason, sequenceEpisode));
+            else if (parsed.EpisodeNumbers.Count == 0)
+                return false;
+            else if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile) && parsed.Season is int sourceSeason)
             {
-                foreach (var sourceEpisode in episodes)
+                foreach (var sourceEpisode in parsed.EpisodeNumbers)
                     if (EpisodeOrderMapping.TryTranslateFile(job.EpisodeOrderProfile, file,
                             sourceSeason, sourceEpisode, out var target))
                         canonical.Add((target.Season, target.Episode));
@@ -944,10 +955,10 @@ public class FulfillmentPipeline(
                     && AnimeManifestPreflight.MatchesNamedCanonicalSeason(job, file,
                         expectedSource, remappedSeason);
                 if (parsed.Season == expectedSource || namedAbsoluteEpisode)
-                    canonical.AddRange(episodes.Select(episode => (remappedSeason, episode)));
+                    canonical.AddRange(parsed.EpisodeNumbers.Select(episode => (remappedSeason, episode)));
             }
             else if ((parsed.Season ?? transfer.Season) is int canonicalSeason)
-                canonical.AddRange(episodes.Select(episode => (canonicalSeason, episode)));
+                canonical.AddRange(parsed.EpisodeNumbers.Select(episode => (canonicalSeason, episode)));
             var selected = canonical.Any(targets.Contains);
             if (selected) declaredCoverage.UnionWith(canonical);
             return selected;

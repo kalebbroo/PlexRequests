@@ -301,7 +301,10 @@ public class LibraryOrganizer(
         if (transfer.Season is int season)
         {
             List<CanonicalFileMapping> mapped;
-            if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
+            if (transfer.FractionalEpisodeInsertionAfter is int insertionAfter)
+                mapped = MapFractionalNamedSeasonFiles(job, transfer, videoFiles,
+                    expectedEpisodeCount, insertionAfter);
+            else if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
                 mapped = MapTranslatedFiles(job, videoFiles);
             else
             {
@@ -526,6 +529,46 @@ public class LibraryOrganizer(
                 $"Configured episode order could not map the pack safely: {unmapped.Count} unmapped file(s), {conflicts.Count} overlapping canonical episode(s); no files were imported.");
         if (mapped.Count == 0)
             throw new EpisodeMappingException("Configured episode order produced no canonical episode files.");
+        return mapped;
+    }
+
+    private List<CanonicalFileMapping> MapFractionalNamedSeasonFiles(
+        FulfillmentJobDto job,
+        TransferItem transfer,
+        IReadOnlyList<string> videoFiles,
+        int? expectedEpisodeCount,
+        int insertionAfter)
+    {
+        if (transfer.SourceSeason is not int sourceSeason
+            || transfer.Season is not int canonicalSeason
+            || expectedEpisodeCount is not int episodeCount)
+            throw new EpisodeMappingException(
+                "Fractional named-season transfer is missing its frozen source/canonical episode-count contract; no files were imported.");
+
+        var mapped = new List<CanonicalFileMapping>();
+        var unmapped = new List<string>();
+        foreach (var file in videoFiles)
+        {
+            if (!AnimeNamedSeasonSequenceMapper.TryMapFile(file, job, sourceSeason, canonicalSeason,
+                    episodeCount, insertionAfter, parser, out var canonicalEpisode))
+            {
+                unmapped.Add(file);
+                continue;
+            }
+            mapped.Add(new CanonicalFileMapping(file,
+                [new EpisodeRef { Season = canonicalSeason, Episode = canonicalEpisode }]));
+        }
+
+        var conflicts = mapped.GroupBy(mapping =>
+                (mapping.Coverage[0].Season, mapping.Coverage[0].Episode))
+            .Where(group => group.Count() > 1).Select(group => group.Key).ToList();
+        if (unmapped.Count > 0 || conflicts.Count > 0)
+            throw new EpisodeMappingException(
+                $"Fractional named-season mapping is ambiguous: {unmapped.Count} unmapped file(s), " +
+                $"{conflicts.Count} overlapping canonical episode(s); no files were imported.");
+        if (mapped.Count == 0)
+            throw new EpisodeMappingException(
+                "Fractional named-season transfer contained no confidently mapped episode files.");
         return mapped;
     }
 

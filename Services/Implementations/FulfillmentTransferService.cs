@@ -67,6 +67,7 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
                 row.Source ??= Trim(t.Source, 128);
                 row.IndexerId ??= t.IndexerId;
                 row.SourceSeason ??= t.SourceSeason;
+                row.FractionalEpisodeInsertionAfter ??= t.FractionalEpisodeInsertionAfter;
                 row.NeededEpisodeRefsJson ??= SerializeEpisodeRefs(t.NeededEpisodeRefs);
                 if (row.State is TransferTrackingState.Failed or TransferTrackingState.Missing)
                 {
@@ -77,6 +78,7 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
                     row.IndexerId = t.IndexerId ?? row.IndexerId;
                     row.Season = t.Season;
                     row.SourceSeason = t.SourceSeason;
+                    row.FractionalEpisodeInsertionAfter = t.FractionalEpisodeInsertionAfter;
                     row.Episode = t.Episode;
                     row.IsPack = t.IsPack;
                     row.NeededEpisodesCsv = t.NeededEpisodes is { Count: > 0 } needed
@@ -112,6 +114,7 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
                 IndexerId = t.IndexerId,
                 Season = t.Season,
                 SourceSeason = t.SourceSeason,
+                FractionalEpisodeInsertionAfter = t.FractionalEpisodeInsertionAfter,
                 Episode = t.Episode,
                 IsPack = t.IsPack,
                 NeededEpisodesCsv = t.NeededEpisodes is { Count: > 0 } n ? string.Join(",", n) : null,
@@ -271,6 +274,7 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
         IndexerId = t.IndexerId,
         Season = t.Season,
         SourceSeason = t.SourceSeason,
+        FractionalEpisodeInsertionAfter = t.FractionalEpisodeInsertionAfter,
         Episode = t.Episode,
         IsPack = t.IsPack,
         NeededEpisodes = string.IsNullOrWhiteSpace(t.NeededEpisodesCsv)
