@@ -19,6 +19,10 @@ public interface IFulfillmentPipeline
     Task ResumeAsync(ActiveJobRecord record, CancellationToken ct);
 }
 
+internal sealed record CanonicalPackFileSelection(
+    IReadOnlyList<bool> Keep,
+    IReadOnlyList<(int Season, int Episode)> MissingCoverage);
+
 /// <summary>
 /// End-to-end processing for a single job: search → plan → add to Deluge → monitor → import → callback.
 /// A plan may be one release (movie / season pack) or several (season packs, or individual episodes when
@@ -145,7 +149,8 @@ public class FulfillmentPipeline(
                         var maxPackGb = job.QualityProfile?.MaxSeasonPackSizeGb
                             ?? prefs.Current.MaxSeasonPackSizeGb;
                         var decision = AnimeManifestPreflight.Evaluate(manifest, job, item, parser,
-                            libraryPrefs.Current.VideoExtensions, maxPackGb);
+                            libraryPrefs.Current.VideoExtensions, maxPackGb,
+                            libraryPrefs.Current.SubtitleExtensions);
                         if (!decision.Accepted)
                         {
                             var detail = $"{item.Candidate.ReleaseName}: {decision.Detail}";
@@ -509,32 +514,14 @@ public class FulfillmentPipeline(
                     !trimmed.Contains(transferKey) && status.Files.Count > 0)
                 {
                     trimmed.Add(transferKey);
-                    var declaredCoverage = new HashSet<(int Season, int Episode)>();
-                    var keep = status.Files.Select(f =>
-                    {
-                        var parsed = parser.Parse(Path.GetFileName(f));
-                        var episodes = parsed.EpisodeNumbers;
-                        if (episodes.Count == 0) return true; // subtitles/extras remain available to the importer
-                        var canonical = new List<(int Season, int Episode)>();
-                        if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile) && parsed.Season is int sourceSeason)
-                        {
-                            foreach (var sourceEpisode in episodes)
-                                if (EpisodeOrderMapping.TryTranslateFile(job.EpisodeOrderProfile, f,
-                                        sourceSeason, sourceEpisode, out var target))
-                                    canonical.Add((target.Season, target.Episode));
-                        }
-                        else if ((parsed.Season ?? it.Season) is int canonicalSeason)
-                            canonical.AddRange(episodes.Select(x => (canonicalSeason, x)));
-                        var selected = canonical.Any(canonicalTargets.Contains);
-                        if (selected) declaredCoverage.UnionWith(canonical);
-                        return selected;
-                    }).ToList();
+                    var selection = BuildCanonicalPackFileSelection(job, it, status.Files, parser,
+                        libraryPrefs.Current.VideoExtensions, libraryPrefs.Current.SubtitleExtensions);
+                    var keep = selection.Keep;
                     // A physical file may cover several episodes, so count the declared logical coverage,
                     // not selected files. When the union cannot prove every wanted episode, leave all files
                     // selected for inspection but retain the canonical targets; the organizer will reject the pack
                     // rather than silently relaxing the request (the old kids-show numbering failure mode).
-                    var missingCoverage = canonicalTargets.Where(x => !declaredCoverage.Contains(x))
-                        .OrderBy(x => x.Season).ThenBy(x => x.Episode).ToList();
+                    var missingCoverage = selection.MissingCoverage;
                     if (missingCoverage.Count > 0)
                     {
                         logger.LogWarning("Job {JobId} torrent {TorrentId}: file identities cannot prove requested episode(s) {Missing} — keeping all files for inspection without relaxing the import contract",
@@ -904,6 +891,54 @@ public class FulfillmentPipeline(
         return transfer.Season is int season && transfer.NeededEpisodes is { Count: > 0 }
             ? transfer.NeededEpisodes.Where(x => x > 0).Select(x => (season, x)).ToHashSet()
             : new();
+    }
+
+    /// <summary>Re-derive a pack's wanted-file priorities after the backend exposes its live file list.
+    /// Only explicitly mapped target videos and recognized subtitle sidecars remain selected. In particular,
+    /// an unnumbered NCOP/NCED/sample is a video extra, not a harmless companion file; re-enabling it here
+    /// would override the payload-free manifest decision and make the organizer reject the completed pack.</summary>
+    internal static CanonicalPackFileSelection BuildCanonicalPackFileSelection(
+        FulfillmentJobDto job,
+        TransferItem transfer,
+        IReadOnlyList<string> files,
+        IReleaseParser parser,
+        IReadOnlyCollection<string> videoExtensions,
+        IReadOnlyCollection<string> subtitleExtensions)
+    {
+        var targets = CanonicalTargets(transfer);
+        var declaredCoverage = new HashSet<(int Season, int Episode)>();
+        var videos = videoExtensions.Where(extension => !string.IsNullOrWhiteSpace(extension))
+            .Select(extension => extension.StartsWith('.') ? extension : $".{extension}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var subtitles = subtitleExtensions.Where(extension => !string.IsNullOrWhiteSpace(extension))
+            .Select(extension => extension.StartsWith('.') ? extension : $".{extension}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var keep = files.Select(file =>
+        {
+            var extension = Path.GetExtension(file);
+            if (subtitles.Contains(extension)) return true;
+            if (!videos.Contains(extension)) return false;
+
+            var parsed = parser.Parse(Path.GetFileName(file));
+            var episodes = parsed.EpisodeNumbers;
+            if (episodes.Count == 0) return false;
+            var canonical = new List<(int Season, int Episode)>();
+            if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile) && parsed.Season is int sourceSeason)
+            {
+                foreach (var sourceEpisode in episodes)
+                    if (EpisodeOrderMapping.TryTranslateFile(job.EpisodeOrderProfile, file,
+                            sourceSeason, sourceEpisode, out var target))
+                        canonical.Add((target.Season, target.Episode));
+            }
+            else if ((parsed.Season ?? transfer.Season) is int canonicalSeason)
+                canonical.AddRange(episodes.Select(episode => (canonicalSeason, episode)));
+            var selected = canonical.Any(targets.Contains);
+            if (selected) declaredCoverage.UnionWith(canonical);
+            return selected;
+        }).ToList();
+        var missing = targets.Where(target => !declaredCoverage.Contains(target))
+            .OrderBy(target => target.Season).ThenBy(target => target.Episode).ToList();
+        return new CanonicalPackFileSelection(keep, missing);
     }
 
     private static string DescribeTargets(IEnumerable<(int Season, int Episode)> targets) =>

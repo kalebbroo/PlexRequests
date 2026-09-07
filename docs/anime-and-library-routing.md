@@ -197,6 +197,12 @@ selected file lengths, and a selected payload above the profile's pack limit. No
 outside the request stay at priority zero. A timeout is retryable; a structurally invalid collection is blocklisted
 for that request so retries advance to another candidate instead of looping.
 
+The verified priority set stays authoritative after Deluge exposes its live file list. A second, defensive trim
+re-derives the same canonical video coverage but treats unnumbered video files (NCOP, NCED, samples, trailers, and
+other extras) as deselected—not as generic companion files. Recognized subtitle sidecars remain selected so a
+Japanese-audio release can still satisfy Smart anime through English subtitles. This prevents post-add monitoring
+from widening a payload-free 12-file decision into 22 files and later failing import on the extras it re-enabled.
+
 When an anime job has no configured order, claim now includes bounded, server-authored snapshots of every valid
 TMDb episode group for that series. The downloader inspects at most the three best collections rejected solely for
 unknown outer scope and runs the real manifest through every snapshot. It adopts an order automatically only when

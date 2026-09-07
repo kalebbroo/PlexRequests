@@ -26,9 +26,10 @@ internal static class AnimeManifestPreflight
         DownloadPlanItem item,
         IReleaseParser parser,
         IReadOnlyCollection<string> videoExtensions,
-        double maxSelectedGb) =>
+        double maxSelectedGb,
+        IReadOnlyCollection<string>? subtitleExtensions = null) =>
         EvaluateWithEpisodeOrder(manifest, job, item, parser, videoExtensions, maxSelectedGb,
-            job.EpisodeOrderProfile);
+            job.EpisodeOrderProfile, subtitleExtensions);
 
     /// <summary>Evaluate the same immutable target contract against one proposed episode order without
     /// mutating the claimed job. Used only during payload-free order discovery.</summary>
@@ -39,7 +40,8 @@ internal static class AnimeManifestPreflight
         IReleaseParser parser,
         IReadOnlyCollection<string> videoExtensions,
         double maxSelectedGb,
-        SeriesEpisodeOrderProfileDto? episodeOrderProfile)
+        SeriesEpisodeOrderProfileDto? episodeOrderProfile,
+        IReadOnlyCollection<string>? subtitleExtensions = null)
     {
         if (!job.IsAnime || !item.IsPack)
             return ManifestPreflightDecision.Reject("Manifest preflight is restricted to anime collection packs.", manifest.Files.Count);
@@ -56,6 +58,10 @@ internal static class AnimeManifestPreflight
             .Where(extension => !string.IsNullOrWhiteSpace(extension))
             .Select(extension => extension.StartsWith('.') ? extension : $".{extension}")
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var subtitleSet = (subtitleExtensions ?? [])
+            .Where(extension => !string.IsNullOrWhiteSpace(extension))
+            .Select(extension => extension.StartsWith('.') ? extension : $".{extension}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var selected = Enumerable.Repeat(false, manifest.Files.Count).ToArray();
         var selectedCoverage = new Dictionary<(int Season, int Episode), int>();
         var unmappedVideos = new List<string>();
@@ -66,7 +72,21 @@ internal static class AnimeManifestPreflight
             var file = manifest.Files[index];
             if (!SafeRelativePath(file.Path))
                 return ManifestPreflightDecision.Reject($"Torrent metadata contains an unsafe path: {file.Path}", manifest.Files.Count);
-            if (!extensions.Contains(Path.GetExtension(file.Path))) continue;
+            var extension = Path.GetExtension(file.Path);
+            if (subtitleSet.Contains(extension))
+            {
+                // Subtitle sidecars are tiny compared with video and may be the only valid Smart-anime
+                // fallback. Keep them available for the organizer's conservative filename pairing and
+                // MediaInfo policy check; unrelated sidecars are discarded with staging after import.
+                selected[index] = true;
+                try { selectedBytes = checked(selectedBytes + Math.Max(0, file.SizeBytes)); }
+                catch (OverflowException)
+                {
+                    return ManifestPreflightDecision.Reject("Selected torrent byte total overflowed the safe range.", manifest.Files.Count);
+                }
+                continue;
+            }
+            if (!extensions.Contains(extension)) continue;
 
             var parsed = parser.Parse(Path.GetFileName(file.Path));
             var episodes = parsed.EpisodeNumbers.Distinct().OrderBy(number => number).ToList();

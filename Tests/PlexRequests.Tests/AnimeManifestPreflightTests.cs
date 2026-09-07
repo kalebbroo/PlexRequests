@@ -15,6 +15,7 @@ public sealed class AnimeManifestPreflightTests
 {
     private readonly ReleaseParser _parser = new();
     private static readonly string[] VideoExtensions = [".mkv", ".mp4"];
+    private static readonly string[] SubtitleExtensions = [".srt", ".ass"];
 
     [Fact]
     public void NumberedArcManifestSelectsOnlyTheExactCanonicalTargetSet()
@@ -28,13 +29,42 @@ public sealed class AnimeManifestPreflightTests
             ("01 - Bakemonogatari/subtitle.ass", 10_000));
 
         var result = AnimeManifestPreflight.Evaluate(manifest, job, item, _parser,
-            VideoExtensions, maxSelectedGb: 10);
+            VideoExtensions, maxSelectedGb: 10, subtitleExtensions: SubtitleExtensions);
 
         Assert.True(result.Accepted, result.Detail);
-        Assert.Equal([true, true, true, false, false], result.WantedFiles);
+        Assert.Equal([true, true, true, false, true], result.WantedFiles);
         Assert.Equal([(1, 1), (1, 2), (2, 1)], result.CanonicalCoverage
             .Select(episode => (episode.Season, episode.Episode)).ToList());
-        Assert.Contains("selected 3/5 files", result.Detail);
+        Assert.Contains("selected 4/5 files", result.Detail);
+    }
+
+    [Fact]
+    public void LivePackTrimDoesNotReenableUnnumberedVideoExtras()
+    {
+        var job = TestData.Job("Monogatari", MediaType.TvShow,
+            seasonTargets: [TestData.Season(4, 1, 2)]);
+        job.IsAnime = true;
+        var transfer = new TransferItem("hash", 4, null, true,
+            NeededEpisodeRefs:
+            [
+                new EpisodeRef { Season = 4, Episode = 1 },
+                new EpisodeRef { Season = 4, Episode = 2 }
+            ]);
+        string[] files =
+        [
+            "Monogatari/Monogatari.S04E01.mkv",
+            "Monogatari/Monogatari.S04E02.mkv",
+            "Monogatari/Monogatari.S04.NCOP.02.mkv",
+            "Monogatari/Monogatari.S04.NCED.01.mkv",
+            "Monogatari/Monogatari.S04E01.en.ass",
+            "Monogatari/readme.nfo"
+        ];
+
+        var result = FulfillmentPipeline.BuildCanonicalPackFileSelection(job, transfer, files,
+            _parser, VideoExtensions, SubtitleExtensions);
+
+        Assert.Empty(result.MissingCoverage);
+        Assert.Equal([true, true, false, false, true, false], result.Keep);
     }
 
     [Fact]
