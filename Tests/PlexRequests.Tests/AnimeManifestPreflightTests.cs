@@ -18,6 +18,128 @@ public sealed class AnimeManifestPreflightTests
     private static readonly string[] SubtitleExtensions = [".srt", ".ass"];
 
     [Fact]
+    public void NamedCollectionSelectsOnlyMissingCanonicalSeasons()
+    {
+        var (job, item) = NamedCollectionJobAndItem();
+        var manifest = Manifest(
+            ("01 - Bakemonogatari/[MTBB] Bakemonogatari - 01v2.mkv", GiB(1)),
+            ("01 - Bakemonogatari/[MTBB] Bakemonogatari - 02v2.mkv", GiB(1)),
+            ("01 - Bakemonogatari/[MTBB] Bakemonogatari - 03.mkv", GiB(1)),
+            ("02 - Nisemonogatari/[MTBB] Nisemonogatari - 01.mkv", GiB(1)),
+            ("03 - Owarimonogatari/[MTBB] Owarimonogatari - 01.mkv", GiB(1)),
+            ("Extras/[MTBB] Monogatari NCOP.mkv", GiB(.1)),
+            ("01 - Bakemonogatari/[MTBB] Bakemonogatari - 01v2.en.ass", 10_000));
+
+        var result = AnimeManifestPreflight.Evaluate(manifest, job, item, _parser,
+            VideoExtensions, maxSelectedGb: 10, subtitleExtensions: SubtitleExtensions);
+
+        Assert.True(result.Accepted, result.Detail);
+        Assert.Equal([true, true, false, true, false, false, true], result.WantedFiles);
+        Assert.Equal([(1, 1), (1, 2), (2, 1)], result.CanonicalCoverage
+            .Select(episode => (episode.Season, episode.Episode)).ToList());
+    }
+
+    [Fact]
+    public void NamedCollectionRejectsAFileThatMixesTargetAndNonTargetEpisodes()
+    {
+        var (job, item) = NamedCollectionJobAndItem();
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(("01 - Bakemonogatari/[MTBB] Bakemonogatari - 01-03.mkv", GiB(2)),
+                     ("02 - Nisemonogatari/[MTBB] Nisemonogatari - 01.mkv", GiB(1))),
+            job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.False(result.Accepted);
+        Assert.Contains("combines requested episodes", result.Detail);
+        Assert.DoesNotContain(true, result.WantedFiles);
+    }
+
+    [Fact]
+    public void NamedCollectionRejectsDuplicateCanonicalCoverage()
+    {
+        var (job, item) = NamedCollectionJobAndItem();
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(("01 - Bakemonogatari/[A] Bakemonogatari - 01.mkv", GiB(1)),
+                     ("01 - Bakemonogatari/[B] Bakemonogatari - 01.mkv", GiB(1)),
+                     ("01 - Bakemonogatari/[MTBB] Bakemonogatari - 02.mkv", GiB(1)),
+                     ("02 - Nisemonogatari/[MTBB] Nisemonogatari - 01.mkv", GiB(1))),
+            job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.False(result.Accepted);
+        Assert.Contains("appears in both", result.Detail);
+        Assert.DoesNotContain(true, result.WantedFiles);
+    }
+
+    [Fact]
+    public void NamedCollectionDoesNotFallBackToBareUploaderSeasonNumbers()
+    {
+        var (job, item) = NamedCollectionJobAndItem();
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(("Unknown Arc/[Group] Monogatari.S01E01.mkv", GiB(1)),
+                     ("Unknown Arc/[Group] Monogatari.S01E02.mkv", GiB(1)),
+                     ("Unknown Arc/[Group] Monogatari.S02E01.mkv", GiB(1))),
+            job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.False(result.Accepted);
+        Assert.Contains("numbered video file(s) did not match", result.Detail);
+        Assert.DoesNotContain(true, result.WantedFiles);
+    }
+
+    [Fact]
+    public void PostAddSelectionRepeatsNamedCollectionContract()
+    {
+        var (job, _) = NamedCollectionJobAndItem();
+        var transfer = new TransferItem("hash", null, null, true, NeededEpisodeRefs:
+        [
+            new EpisodeRef { Season = 1, Episode = 1 },
+            new EpisodeRef { Season = 1, Episode = 2 },
+            new EpisodeRef { Season = 2, Episode = 1 }
+        ]);
+
+        var selected = FulfillmentPipeline.BuildCanonicalPackFileSelection(job, transfer,
+        [
+            "01 - Bakemonogatari/[MTBB] Bakemonogatari - 01v2.mkv",
+            "01 - Bakemonogatari/[MTBB] Bakemonogatari - 02v2.mkv",
+            "01 - Bakemonogatari/[MTBB] Bakemonogatari - 03.mkv",
+            "02 - Nisemonogatari/[MTBB] Nisemonogatari - 01.mkv",
+            "03 - Owarimonogatari/[MTBB] Owarimonogatari - 01.mkv",
+            "Unknown Arc/[Group] Monogatari.S01E01.mkv"
+        ], _parser, VideoExtensions, SubtitleExtensions);
+
+        Assert.Empty(selected.MissingCoverage);
+        Assert.Equal([true, true, false, true, false, false], selected.Keep);
+    }
+
+    [Fact]
+    public void NamedCollectionPlanUsesProvableSeasonsAndLeavesAnAmbiguousArcForContinuation()
+    {
+        var (job, item) = NamedCollectionJobAndItem();
+        var expandedItem = item with
+        {
+            NeededEpisodeRefs = item.NeededEpisodeRefs!
+                .Append(new EpisodeRef { Season = 4, Episode = 1 }).ToList()
+        };
+        var manifest = Manifest(
+            ("01 - Bakemonogatari/[MTBB] Bakemonogatari - 01v2.mkv", GiB(1)),
+            ("01 - Bakemonogatari/[MTBB] Bakemonogatari - 02v2.mkv", GiB(1)),
+            ("03 - Nisemonogatari/[MTBB] Nisemonogatari - 01v2.mkv", GiB(1)),
+            ("13 - Owarimonogatari S1/[MTBB] Owarimonogatari S1 - 01.mkv", GiB(1)),
+            ("14 - Owarimonogatari S2/[MTBB] Owarimonogatari S2 - 01.mkv", GiB(1)));
+
+        var result = FulfillmentPipeline.TryPlanNamedAnimeCollection(manifest, job, expandedItem,
+            _parser, VideoExtensions, maxSelectedGb: 10, subtitleExtensions: SubtitleExtensions);
+
+        Assert.NotNull(result);
+        Assert.False(result.Value.Plan.CoversAllTargets);
+        var planned = Assert.Single(result.Value.Plan.Items);
+        Assert.Equal([(1, 1), (1, 2), (2, 1)], planned.NeededEpisodeRefs!
+            .Select(target => (target.Season, target.Episode)).ToList());
+        Assert.Equal([true, true, true, false, false], result.Value.Decision.WantedFiles);
+    }
+
+    [Fact]
     public void NumberedArcManifestSelectsOnlyTheExactCanonicalTargetSet()
     {
         var (job, item) = JobAndItem();
@@ -690,6 +812,39 @@ public sealed class AnimeManifestPreflightTests
             5, null, true)
         {
             SourceSeason = 1,
+            NeededEpisodeRefs = targets,
+            RequiresManifestPreflight = true
+        };
+        return (job, item);
+    }
+
+    private static (FulfillmentJobDto Job, DownloadPlanItem Item) NamedCollectionJobAndItem()
+    {
+        var job = TestData.Job("Monogatari", MediaType.TvShow, seasonTargets:
+        [
+            new SeasonTarget { Season = 1, Name = "Bakemonogatari", EpisodeCount = 3, MissingEpisodes = [1, 2] },
+            new SeasonTarget { Season = 2, Name = "Nisemonogatari", EpisodeCount = 1, MissingEpisodes = [1] }
+        ]);
+        job.IsAnime = true;
+        job.TmdbId = 46195;
+        job.RequestScope = RequestScopeKind.Series;
+        job.EpisodeOrderProfile = null;
+        job.CanonicalSeasons =
+        [
+            new CanonicalSeasonIdentityDto { Season = 1, Name = "Bakemonogatari", EpisodeCount = 3 },
+            new CanonicalSeasonIdentityDto { Season = 2, Name = "Nisemonogatari", EpisodeCount = 1 },
+            new CanonicalSeasonIdentityDto { Season = 4, Name = "Owarimonogatari", EpisodeCount = 1 }
+        ];
+        var targets = new List<EpisodeRef>
+        {
+            new() { Season = 1, Episode = 1 },
+            new() { Season = 1, Episode = 2 },
+            new() { Season = 2, Episode = 1 }
+        };
+        var item = new DownloadPlanItem(
+            TestData.Release("[MTBB] Monogatari Series (BD 1080p)", sizeGb: 70.2),
+            null, null, true)
+        {
             NeededEpisodeRefs = targets,
             RequiresManifestPreflight = true
         };

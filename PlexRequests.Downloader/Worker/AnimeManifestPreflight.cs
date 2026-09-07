@@ -124,38 +124,50 @@ internal static class AnimeManifestPreflight
                 if (parsed.Season is not int sourceSeason || episodes.Count == 0 || !IsContiguous(episodes))
                     continue; // extras and unrelated videos stay at priority zero
 
-                foreach (var sourceEpisode in episodes)
+                if (!EpisodeOrderMapping.IsActive(episodeOrderProfile)
+                    && item.Season is null
+                    && job.CanonicalSeasons.Count > 0)
                 {
-                    EpisodeRef target;
-                    if (!EpisodeOrderMapping.IsActive(episodeOrderProfile)
-                        && item.SourceSeason is int expectedSource
-                        && item.Season is int canonicalSeason
-                        && expectedSource != canonicalSeason)
+                    if (AnimeNamedCollectionMapper.TryMapFile(file.Path, job, parsed, out var namedCoverage))
+                        coverage.AddRange(namedCoverage.Select(target => (target.Season, target.Episode)));
+                    else
+                        unmappedVideos.Add(file.Path);
+                }
+                else
+                {
+                    foreach (var sourceEpisode in episodes)
                     {
-                        var namedAbsoluteEpisode = sourceSeason == 0
-                            && MatchesNamedCanonicalSeason(job, file.Path, expectedSource, canonicalSeason);
-                        if (sourceSeason != expectedSource && !namedAbsoluteEpisode)
+                        EpisodeRef target;
+                        if (!EpisodeOrderMapping.IsActive(episodeOrderProfile)
+                            && item.SourceSeason is int expectedSource
+                            && item.Season is int canonicalSeason
+                            && expectedSource != canonicalSeason)
+                        {
+                            var namedAbsoluteEpisode = sourceSeason == 0
+                                && MatchesNamedCanonicalSeason(job, file.Path, expectedSource, canonicalSeason);
+                            if (sourceSeason != expectedSource && !namedAbsoluteEpisode)
+                            {
+                                unmappedVideos.Add(file.Path);
+                                coverage.Clear();
+                                break;
+                            }
+                            if (namedAbsoluteEpisode
+                                && (CanonicalEpisodeCount(job, canonicalSeason) is not int expectedCount
+                                    || sourceEpisode > expectedCount))
+                                return ManifestPreflightDecision.Reject(
+                                    $"{file.Path} declares absolute episode {sourceEpisode}, outside canonical " +
+                                    $"S{canonicalSeason:D2}'s known episode range.", manifest.Files.Count);
+                            target = new EpisodeRef { Season = canonicalSeason, Episode = sourceEpisode };
+                        }
+                        else if (!EpisodeOrderMapping.TryTranslateFile(episodeOrderProfile, file.Path,
+                                     sourceSeason, sourceEpisode, out target))
                         {
                             unmappedVideos.Add(file.Path);
                             coverage.Clear();
                             break;
                         }
-                        if (namedAbsoluteEpisode
-                            && (CanonicalEpisodeCount(job, canonicalSeason) is not int expectedCount
-                                || sourceEpisode > expectedCount))
-                            return ManifestPreflightDecision.Reject(
-                                $"{file.Path} declares absolute episode {sourceEpisode}, outside canonical " +
-                                $"S{canonicalSeason:D2}'s known episode range.", manifest.Files.Count);
-                        target = new EpisodeRef { Season = canonicalSeason, Episode = sourceEpisode };
+                        coverage.Add((target.Season, target.Episode));
                     }
-                    else if (!EpisodeOrderMapping.TryTranslateFile(episodeOrderProfile, file.Path,
-                                 sourceSeason, sourceEpisode, out target))
-                    {
-                        unmappedVideos.Add(file.Path);
-                        coverage.Clear();
-                        break;
-                    }
-                    coverage.Add((target.Season, target.Episode));
                 }
             }
             coverage = coverage.Distinct().OrderBy(target => target.Season).ThenBy(target => target.Episode).ToList();

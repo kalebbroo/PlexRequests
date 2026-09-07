@@ -381,30 +381,43 @@ public class LibraryOrganizer(
             return records;
         }
 
-        // Whole-series / multi-season pack with no single target season (e.g. metadata was unavailable
-        // at enqueue time): parse each file's own season+episode coverage independently. One unmapped or
-        // overlapping file rejects the import — never guess or silently import a partial series.
+        // Whole-series / multi-season packs can use either a configured order or a distinctive canonical
+        // season name repeated in each path. Both routes produce the same canonical mappings and must prove
+        // the exact frozen target set again before the first library write.
+        var wholePackTargets = CanonicalTargets(transfer);
+        List<CanonicalFileMapping>? canonicalMappings = null;
         if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
+            canonicalMappings = MapTranslatedFiles(job, videoFiles);
+        else if (job.IsAnime && wholePackTargets.Count > 0 && job.CanonicalSeasons.Count > 0)
+            canonicalMappings = MapNamedCollectionFiles(job, videoFiles);
+
+        if (canonicalMappings is not null)
         {
-            var translated = MapTranslatedFiles(job, videoFiles);
-            var canonicalTargets = CanonicalTargets(transfer);
-            if (canonicalTargets.Count > 0)
+            if (wholePackTargets.Count > 0)
             {
-                var before = translated.Count;
-                translated = RestrictToCanonicalTargets(translated, canonicalTargets);
-                var covered = translated.SelectMany(x => x.Coverage)
+                var before = canonicalMappings.Count;
+                var mixed = canonicalMappings.Where(mapping =>
+                        mapping.Coverage.Any(target => wholePackTargets.Contains((target.Season, target.Episode)))
+                        && mapping.Coverage.Any(target => !wholePackTargets.Contains((target.Season, target.Episode))))
+                    .ToList();
+                if (mixed.Count > 0)
+                    throw new EpisodeMappingException(
+                        $"Cross-season pack combines requested and non-requested canonical episodes in {mixed.Count} file(s); no files were imported.");
+
+                canonicalMappings = RestrictToCanonicalTargets(canonicalMappings, wholePackTargets);
+                var covered = canonicalMappings.SelectMany(x => x.Coverage)
                     .Select(x => (x.Season, x.Episode)).ToHashSet();
-                var missing = canonicalTargets.Where(x => !covered.Contains(x))
+                var missing = wholePackTargets.Where(x => !covered.Contains(x))
                     .OrderBy(x => x.Season).ThenBy(x => x.Episode).ToList();
                 if (missing.Count > 0)
                     throw new EpisodeMappingException(
                         $"Cross-season pack cannot prove coverage for requested episode(s) {DescribeTargets(missing)}; no files were imported.");
                 logger.LogInformation(
                     "Cross-season pack: importing {Kept} of {Total} mapped file(s) covering canonical episode(s) {Needed}",
-                    translated.Count, before, DescribeTargets(canonicalTargets));
+                    canonicalMappings.Count, before, DescribeTargets(wholePackTargets));
             }
-            var inspection = await InspectSelectionAsync(job, translated.Select(x => x.FilePath), allFiles, prefs, ct);
-            foreach (var mapping in translated)
+            var inspection = await InspectSelectionAsync(job, canonicalMappings.Select(x => x.FilePath), allFiles, prefs, ct);
+            foreach (var mapping in canonicalMappings)
             {
                 var file = mapping.FilePath;
                 var canonicalSeason = mapping.Coverage[0].Season;
@@ -529,6 +542,40 @@ public class LibraryOrganizer(
                 $"Configured episode order could not map the pack safely: {unmapped.Count} unmapped file(s), {conflicts.Count} overlapping canonical episode(s); no files were imported.");
         if (mapped.Count == 0)
             throw new EpisodeMappingException("Configured episode order produced no canonical episode files.");
+        return mapped;
+    }
+
+    private List<CanonicalFileMapping> MapNamedCollectionFiles(
+        FulfillmentJobDto job, IReadOnlyList<string> videoFiles)
+    {
+        var mapped = new List<CanonicalFileMapping>();
+        var unmapped = new List<string>();
+        foreach (var file in videoFiles)
+        {
+            var parsed = parser.Parse(Path.GetFileName(file));
+            if (!AnimeNamedCollectionMapper.TryMapFile(file, job, parsed, out var coverage)
+                || coverage.Count == 0
+                || coverage.Any(target => target.Season != coverage[0].Season)
+                || !IsContiguous(coverage.Select(target => target.Episode).ToList()))
+            {
+                unmapped.Add(file);
+                continue;
+            }
+            mapped.Add(new CanonicalFileMapping(file, coverage));
+        }
+
+        var conflicts = mapped.SelectMany(mapping => mapping.Coverage)
+            .GroupBy(target => (target.Season, target.Episode))
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToList();
+        if (unmapped.Count > 0 || conflicts.Count > 0)
+            throw new EpisodeMappingException(
+                $"Named anime collection mapping is ambiguous: {unmapped.Count} unmapped file(s), " +
+                $"{conflicts.Count} overlapping canonical episode(s); no files were imported.");
+        if (mapped.Count == 0)
+            throw new EpisodeMappingException(
+                "Named anime collection contained no confidently mapped canonical episode files.");
         return mapped;
     }
 
