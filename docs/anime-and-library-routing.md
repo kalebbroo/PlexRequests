@@ -283,3 +283,6 @@ the manifest mapping remain the authority.
   pair survives worker restarts; a generic or conflicting manifest stays blocked for admin review.
 - A uniquely named season pack may use `- 01`-style internal files only when every selected path repeats that same
   canonical season identity and the manifest proves exact coverage; unscoped absolute numbering remains blocked.
+- Monitoring cannot enqueue a second season/episode job while an active whole-series job already owns that exact
+  canonical target. Queued, downloading, and deferred target snapshots plus durable imports are combined before a
+  monitor child is allowed, preventing duplicate payloads and two organizers racing the same Plex path.

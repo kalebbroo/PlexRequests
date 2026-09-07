@@ -4,7 +4,9 @@ using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Implementations;
 using PlexRequestsHosted.Services.Jobs;
+using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using System.Text.Json;
 using Xunit;
 
 namespace PlexRequests.Tests;
@@ -194,5 +196,68 @@ public class EpisodeMonitoringTests
         Assert.Equal(FulfillmentStatus.Queued, job.Status);
         Assert.Null(job.NextRetryAt);
         Assert.Equal(now, job.LastUpdatedAt);
+    }
+
+    [Fact]
+    public void ActiveSeriesJobOwnsOnlyItsDurableRemainingTargetsAndImports()
+    {
+        var job = new FulfillmentJobEntity
+        {
+            Id = 255,
+            Status = FulfillmentStatus.Downloading,
+            RequestScopeKind = RequestScopeKind.Series,
+            RequestedSeasonsCsv = "1,2,3,4,5",
+            SeasonTargetsJson = JsonSerializer.Serialize(new[]
+            {
+                new SeasonTarget { Season = 3, EpisodeCount = 23, MissingEpisodes = [1, 2, 3] },
+                new SeasonTarget { Season = 5, EpisodeCount = 15, MissingEpisodes = [5, 6, 10] }
+            })
+        };
+        var imported = new HashSet<(int season, int episode)> { (5, 1), (5, 2) };
+
+        Assert.True(MediaRequestService.ActiveJobsCoverMonitoredEpisodes(
+            [job], imported, [(5, 1), (5, 5), (3, 2)], anchorRequestsAllSeasons: true));
+        Assert.False(MediaRequestService.ActiveJobsCoverMonitoredEpisodes(
+            [job], imported, [(5, 1), (5, 9)], anchorRequestsAllSeasons: true));
+        Assert.Equal([(5, 9)], MediaRequestService.UncoveredMonitoredEpisodes(
+            [job], imported, [(5, 1), (5, 5), (5, 9)], anchorRequestsAllSeasons: true));
+        Assert.False(MediaRequestService.ActiveJobsCoverMonitoredEpisodes(
+            [job], imported, [(6, 1)], anchorRequestsAllSeasons: true));
+    }
+
+    [Fact]
+    public void ActiveSeasonSnapshotCoversEpisodesWhenMetadataTargetsAreUnavailable()
+    {
+        var job = new FulfillmentJobEntity
+        {
+            Status = FulfillmentStatus.Deferred,
+            RequestedSeasonsCsv = "4,5",
+            SeasonTargetsJson = "malformed legacy json"
+        };
+
+        Assert.True(MediaRequestService.ActiveJobsCoverMonitoredEpisodes(
+            [job], new HashSet<(int, int)>(), [(5, 14)], anchorRequestsAllSeasons: false));
+        Assert.False(MediaRequestService.ActiveJobsCoverMonitoredEpisodes(
+            [job], new HashSet<(int, int)>(), [(3, 14)], anchorRequestsAllSeasons: false));
+    }
+
+    [Fact]
+    public void TerminalOrReplacementJobsDoNotClaimBroadSeriesOwnership()
+    {
+        var cancelled = new FulfillmentJobEntity
+        {
+            Status = FulfillmentStatus.Cancelled,
+            RequestScopeKind = RequestScopeKind.Series
+        };
+        var replacement = new FulfillmentJobEntity
+        {
+            Status = FulfillmentStatus.Downloading,
+            RequestScopeKind = RequestScopeKind.Series,
+            IsReplacement = true
+        };
+
+        Assert.False(MediaRequestService.ActiveJobsCoverMonitoredEpisodes(
+            [cancelled, replacement], new HashSet<(int, int)>(), [(1, 1)],
+            anchorRequestsAllSeasons: true));
     }
 }
