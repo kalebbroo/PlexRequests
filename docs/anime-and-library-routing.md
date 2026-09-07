@@ -289,3 +289,8 @@ the manifest mapping remain the authority.
 - Fractional/special names such as `S01E06.5`, `1x06.5`, and `- 06.5` are never truncated to canonical E06. They
   remain unselected extras inside an otherwise complete pack, or reject an attempted E06 fulfillment with an
   explicit mapping/admin-review reason; normal `E06v2` revisions remain valid episode 6 releases.
+- One narrow fractional insertion can map automatically when a complete, uniquely named season manifest proves
+  the whole sequence. For example, source `01..06, 06.5, 07..14` maps by position to canonical `01..15`; the
+  insertion point is frozen on the durable transfer and rechecked during post-add selection and final import.
+  Incomplete, duplicated, multi-fraction, non-`.5`, generic, and standalone cases continue to fail closed and
+  surface through the normal admin-review notification only after automatic safe searches are exhausted.

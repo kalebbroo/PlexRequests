@@ -215,6 +215,122 @@ public sealed class AnimeManifestPreflightTests
     }
 
     [Fact]
+    public void CompleteNamedSeasonSequenceMapsOneHalfEpisodeByPosition()
+    {
+        var (job, item) = FractionalNamedSeasonJobAndItem(
+            Enumerable.Range(1, 15).ToArray());
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(OffMonsterSeasonFiles()), job, item, _parser, VideoExtensions, maxSelectedGb: 20);
+
+        Assert.True(result.Accepted, result.Detail);
+        Assert.Equal(6, result.FractionalEpisodeInsertionAfter);
+        Assert.Equal(Enumerable.Range(1, 15), result.CanonicalCoverage.Select(episode => episode.Episode));
+        Assert.All(result.WantedFiles, Assert.True);
+    }
+
+    [Fact]
+    public void FractionalSequenceAlsoMapsWhenUploaderAndCanonicalSeasonNumbersAgree()
+    {
+        var (job, original) = FractionalNamedSeasonJobAndItem([7, 15]);
+        var item = original with { SourceSeason = 5 };
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(OffMonsterSeasonFiles()), job, item, _parser, VideoExtensions, maxSelectedGb: 20);
+
+        Assert.True(result.Accepted, result.Detail);
+        Assert.Equal(6, result.FractionalEpisodeInsertionAfter);
+        Assert.Equal([7, 15], result.CanonicalCoverage.Select(episode => episode.Episode).ToList());
+    }
+
+    [Fact]
+    public void CompleteNamedSeasonSequenceSelectsOnlyRequestedCanonicalPositions()
+    {
+        var (job, item) = FractionalNamedSeasonJobAndItem([7, 8, 15]);
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(OffMonsterSeasonFiles()), job, item, _parser, VideoExtensions, maxSelectedGb: 20);
+
+        Assert.True(result.Accepted, result.Detail);
+        Assert.Equal(6, result.FractionalEpisodeInsertionAfter);
+        Assert.Equal([7, 8, 15], result.CanonicalCoverage.Select(episode => episode.Episode).ToList());
+        Assert.Equal([6, 7, 14], result.WantedFiles.Select((wanted, index) => (wanted, index))
+            .Where(pair => pair.wanted).Select(pair => pair.index).ToList());
+    }
+
+    [Fact]
+    public void GappedFractionalSequenceRequiresAdminReview()
+    {
+        var (job, item) = FractionalNamedSeasonJobAndItem([1, 15]);
+        var files = OffMonsterSeasonFiles().Where(file => !file.Path.Contains(" - 14 ")).ToArray();
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(files), job, item, _parser, VideoExtensions, maxSelectedGb: 20);
+
+        Assert.False(result.Accepted);
+        Assert.Contains("cannot prove a complete sequence", result.Detail);
+        Assert.DoesNotContain(true, result.WantedFiles);
+    }
+
+    [Fact]
+    public void MultipleFractionalInsertionsRequireAdminReview()
+    {
+        var (job, item) = FractionalNamedSeasonJobAndItem([1, 15]);
+        var files = OffMonsterSeasonFiles()
+            .Append(("Monogatari Series Off & Monster Season/" +
+                     "[MiniMTBB] Monogatari Series Off & Monster Season - 09.5 (BD 1080p).mkv", GiB(1)))
+            .ToArray();
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(files), job, item, _parser, VideoExtensions, maxSelectedGb: 20);
+
+        Assert.False(result.Accepted);
+        Assert.Contains("2 fractional episodes", result.Detail);
+    }
+
+    [Fact]
+    public void NonHalfFractionRequiresExplicitMappingOrAdminReview()
+    {
+        var (job, item) = FractionalNamedSeasonJobAndItem([1, 15]);
+        var files = OffMonsterSeasonFiles().Select(file =>
+            file.Path.Contains(" - 06.5 ")
+                ? (file.Path.Replace(" - 06.5 ", " - 06.25 "), file.Bytes)
+                : file).ToArray();
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(files), job, item, _parser, VideoExtensions, maxSelectedGb: 20);
+
+        Assert.False(result.Accepted);
+        Assert.Contains("explicit episode-order mapping or admin review", result.Detail);
+    }
+
+    [Fact]
+    public void PostAddSelectionReplaysFrozenFractionalInsertion()
+    {
+        var (job, _) = FractionalNamedSeasonJobAndItem([7, 8, 15]);
+        var transfer = new TransferItem("hash", 5, null, true,
+            NeededEpisodeRefs:
+            [
+                new EpisodeRef { Season = 5, Episode = 7 },
+                new EpisodeRef { Season = 5, Episode = 8 },
+                new EpisodeRef { Season = 5, Episode = 15 }
+            ],
+            SourceSeason: 1,
+            FractionalEpisodeInsertionAfter: 6);
+
+        var selected = FulfillmentPipeline.BuildCanonicalPackFileSelection(job, transfer,
+        [
+            "Monogatari Series Off & Monster Season/Monogatari Series Off & Monster Season - 06.mkv",
+            "Monogatari Series Off & Monster Season/Monogatari Series Off & Monster Season - 06.5.mkv",
+            "Monogatari Series Off & Monster Season/Monogatari Series Off & Monster Season - 07.mkv",
+            "Monogatari Series Off & Monster Season/Monogatari Series Off & Monster Season - 14.mkv"
+        ], _parser, VideoExtensions, SubtitleExtensions);
+
+        Assert.Empty(selected.MissingCoverage);
+        Assert.Equal([false, true, true, true], selected.Keep);
+    }
+
+    [Fact]
     public void PostAddSelectionKeepsOnlyNamedSeasonAbsoluteEpisodes()
     {
         var (job, _) = NamedSeasonAbsoluteJobAndItem();
@@ -579,6 +695,53 @@ public sealed class AnimeManifestPreflightTests
         };
         return (job, item);
     }
+
+    private static (FulfillmentJobDto Job, DownloadPlanItem Item) FractionalNamedSeasonJobAndItem(
+        IReadOnlyCollection<int> wantedEpisodes)
+    {
+        var job = TestData.Job("Monogatari", MediaType.TvShow, seasonTargets:
+        [
+            new SeasonTarget
+            {
+                Season = 5,
+                Name = "MONOGATARI Series OFF & MONSTER Season",
+                EpisodeCount = 15,
+                MissingEpisodes = wantedEpisodes.Order().ToList()
+            }
+        ]);
+        job.IsAnime = true;
+        job.TmdbId = 46195;
+        job.RequestScope = RequestScopeKind.Seasons;
+        job.CanonicalSeasons =
+        [
+            new CanonicalSeasonIdentityDto
+            {
+                Season = 5,
+                Name = "MONOGATARI Series OFF & MONSTER Season",
+                EpisodeCount = 15
+            }
+        ];
+        var item = new DownloadPlanItem(
+            TestData.Release("[MiniMTBB] Monogatari Series Off & Monster Season S1 (BD 1080p)"),
+            5, null, true)
+        {
+            SourceSeason = 1,
+            NeededEpisodeRefs = wantedEpisodes.Order()
+                .Select(episode => new EpisodeRef { Season = 5, Episode = episode }).ToList(),
+            RequiresManifestPreflight = true
+        };
+        return (job, item);
+    }
+
+    private static (string Path, long Bytes)[] OffMonsterSeasonFiles() =>
+        Enumerable.Range(1, 14)
+            .Select(episode => ($"Monogatari Series Off & Monster Season/" +
+                                $"[MiniMTBB] Monogatari Series Off & Monster Season - {episode:00} (BD 1080p).mkv",
+                GiB(1)))
+            .Append(("Monogatari Series Off & Monster Season/" +
+                     "[MiniMTBB] Monogatari Series Off & Monster Season - 06.5 (BD 1080p).mkv", GiB(1)))
+            .OrderBy(file => file.Item1, StringComparer.Ordinal)
+            .ToArray();
 
     private static SeriesEpisodeOrderProfileDto Profile(string id, string name, string mappings,
         params (int Season, string Name)[] groups) => new()

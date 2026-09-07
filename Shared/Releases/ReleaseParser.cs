@@ -59,9 +59,9 @@ public partial class ReleaseParser : IReleaseParser
             if (trailingGroup.Success) group = trailingGroup.Groups[1].Value;
         }
 
+        var fractionalEpisode = ParseFractionalEpisode(name);
         var (season, seasonEnd, episode, episodeNumbers, isPack, looksLikeComplete, epStart, epEnd) =
             ParseSeasonEpisode(name);
-        var fractionalEpisodeNumber = HasFractionalEpisodeNumber(name);
 
         int? year = null;
         var yearMatch = Regex.Match(name, @"\b(19\d{2}|20\d{2})\b", RxOpts);
@@ -97,7 +97,9 @@ public partial class ReleaseParser : IReleaseParser
             EpisodeNumbers = episodeNumbers,
             EpisodeStart = epStart,
             EpisodeEnd = epEnd,
-            FractionalEpisodeNumber = fractionalEpisodeNumber,
+            FractionalEpisodeNumber = fractionalEpisode.Episode is not null,
+            FractionalEpisode = fractionalEpisode.Episode,
+            FractionalEpisodeSeason = fractionalEpisode.Season,
             IsSeasonPack = isPack,
             LooksLikeCompleteSeries = looksLikeComplete,
             Year = year
@@ -128,7 +130,7 @@ public partial class ReleaseParser : IReleaseParser
         // Fractional anime/special notation is not an integer episode followed by a harmless delimiter.
         // Returning no canonical identity prevents S01E06.5 from overwriting S01E06; an explicit future
         // mapping model can represent it without weakening ordinary episode parsing.
-        if (HasFractionalEpisodeNumber(name))
+        if (ParseFractionalEpisode(name).Episode is not null)
             return (null, null, null, [], false, false, null, null);
 
         // Episode RANGE first — it must beat the single-episode pattern, which would otherwise match the
@@ -224,13 +226,26 @@ public partial class ReleaseParser : IReleaseParser
         return (null, null, null, [], false, false, null, null);
     }
 
-    private static bool HasFractionalEpisodeNumber(string name) =>
-        Regex.IsMatch(name,
-            @"\bS\d{1,3}[\s._-]*E\d{1,4}\.\d{1,2}(?:v\d+)?(?=[\s._\-\[\(]|$)", RxOpts)
-        || Regex.IsMatch(name,
-            @"\b\d{1,3}x\d{1,4}\.\d{1,2}(?:v\d+)?(?=[\s._\-\[\(]|$)", RxOpts)
-        || Regex.IsMatch(name,
-            @"(?:^|[\s._])-[\s._]*\d{1,4}\.\d{1,2}(?:v\d+)?(?=[\s._\-\[\(]|$)", RxOpts);
+    private static (int? Season, decimal? Episode) ParseFractionalEpisode(string name)
+    {
+        var standard = Regex.Match(name,
+            @"\bS(\d{1,3})[\s._-]*E(\d{1,4}\.\d{1,2})(?:v\d+)?(?=[\s._\-\[\(]|$)", RxOpts);
+        if (standard.Success)
+            return (int.Parse(standard.Groups[1].Value), ParseDecimal(standard.Groups[2].Value));
+
+        var alternate = Regex.Match(name,
+            @"\b(\d{1,3})x(\d{1,4}\.\d{1,2})(?:v\d+)?(?=[\s._\-\[\(]|$)", RxOpts);
+        if (alternate.Success)
+            return (int.Parse(alternate.Groups[1].Value), ParseDecimal(alternate.Groups[2].Value));
+
+        var absolute = Regex.Match(name,
+            @"(?:^|[\s._])-[\s._]*(\d{1,4}\.\d{1,2})(?:v\d+)?(?=[\s._\-\[\(]|$)", RxOpts);
+        return absolute.Success ? (0, ParseDecimal(absolute.Groups[1].Value)) : (null, null);
+    }
+
+    private static decimal ParseDecimal(string value) =>
+        decimal.Parse(value, System.Globalization.NumberStyles.AllowDecimalPoint,
+            System.Globalization.CultureInfo.InvariantCulture);
 
     // Where the title ends. Generated from ReleaseTokens rather than hand-maintained, so a token added
     // for scoring automatically becomes a title boundary too.

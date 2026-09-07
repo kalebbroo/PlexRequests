@@ -61,6 +61,12 @@ public record ParsedRelease
     /// <summary>The name declares a fractional/special episode such as S01E06.5. The canonical episode
     /// model is integer-only, so this must never be silently truncated to E06.</summary>
     public bool FractionalEpisodeNumber { get; init; }
+    /// <summary>The exact fractional source-order number. This is evidence only: it may be mapped to a
+    /// canonical integer episode solely after a complete named-season manifest proves the insertion.</summary>
+    public decimal? FractionalEpisode { get; init; }
+    /// <summary>The source season declared beside <see cref="FractionalEpisode"/>; zero represents anime
+    /// absolute notation such as <c>Show - 06.5</c>.</summary>
+    public int? FractionalEpisodeSeason { get; init; }
     public bool IsSeasonPack { get; init; }     // whole-season / complete-series / multi-season release
     // True only when the name explicitly said "complete"/"complete series" — as opposed to simply
     // failing to parse any season at all. Only releases with this set are pack-eligible for an

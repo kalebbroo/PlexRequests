@@ -9,7 +9,8 @@ internal sealed record ManifestPreflightDecision(
     bool Accepted,
     string Detail,
     IReadOnlyList<bool> WantedFiles,
-    IReadOnlyList<EpisodeRef> CanonicalCoverage)
+    IReadOnlyList<EpisodeRef> CanonicalCoverage,
+    int? FractionalEpisodeInsertionAfter = null)
 {
     public static ManifestPreflightDecision Reject(string detail, int fileCount) =>
         new(false, detail, Enumerable.Repeat(false, fileCount).ToList(), []);
@@ -67,6 +68,24 @@ internal static class AnimeManifestPreflight
         var unmappedVideos = new List<string>();
         long selectedBytes = 0;
 
+        NamedSeasonSequenceMap? namedSequence = null;
+        if (!EpisodeOrderMapping.IsActive(episodeOrderProfile)
+            && item.SourceSeason is int sequenceSourceSeason
+            && item.Season is int sequenceCanonicalSeason
+            && CanonicalEpisodeCount(job, sequenceCanonicalSeason) is int sequenceEpisodeCount)
+        {
+            var videoPaths = manifest.Files
+                .Where(file => extensions.Contains(Path.GetExtension(file.Path)))
+                .Select(file => file.Path).ToList();
+            if (AnimeNamedSeasonSequenceMapper.TryDetect(videoPaths, job,
+                    sequenceSourceSeason, sequenceCanonicalSeason, sequenceEpisodeCount, parser,
+                    out namedSequence, out var sequenceFailure)
+                && namedSequence is null)
+                return ManifestPreflightDecision.Reject(
+                    sequenceFailure ?? "Fractional named season sequence could not be mapped safely.",
+                    manifest.Files.Count);
+        }
+
         for (var index = 0; index < manifest.Files.Count; index++)
         {
             var file = manifest.Files[index];
@@ -89,48 +108,55 @@ internal static class AnimeManifestPreflight
             if (!extensions.Contains(extension)) continue;
 
             var parsed = parser.Parse(Path.GetFileName(file.Path));
-            if (parsed.FractionalEpisodeNumber)
-            {
-                unmappedVideos.Add($"{file.Path} [fractional/special episode]");
-                continue;
-            }
-            var episodes = parsed.EpisodeNumbers.Distinct().OrderBy(number => number).ToList();
-            if (parsed.Season is not int sourceSeason || episodes.Count == 0 || !IsContiguous(episodes))
-                continue; // extras and unrelated videos stay at priority zero
-
             var coverage = new List<(int Season, int Episode)>();
-            foreach (var sourceEpisode in episodes)
+            if (namedSequence is not null
+                && namedSequence.CanonicalEpisodes.TryGetValue(file.Path, out var sequenceEpisode)
+                && item.Season is int sequenceSeason)
+                coverage.Add((sequenceSeason, sequenceEpisode));
+            else
             {
-                EpisodeRef target;
-                if (!EpisodeOrderMapping.IsActive(episodeOrderProfile)
-                    && item.SourceSeason is int expectedSource
-                    && item.Season is int canonicalSeason
-                    && expectedSource != canonicalSeason)
+                if (parsed.FractionalEpisodeNumber)
                 {
-                    var namedAbsoluteEpisode = sourceSeason == 0
-                        && MatchesNamedCanonicalSeason(job, file.Path, expectedSource, canonicalSeason);
-                    if (sourceSeason != expectedSource && !namedAbsoluteEpisode)
+                    unmappedVideos.Add($"{file.Path} [fractional/special episode]");
+                    continue;
+                }
+                var episodes = parsed.EpisodeNumbers.Distinct().OrderBy(number => number).ToList();
+                if (parsed.Season is not int sourceSeason || episodes.Count == 0 || !IsContiguous(episodes))
+                    continue; // extras and unrelated videos stay at priority zero
+
+                foreach (var sourceEpisode in episodes)
+                {
+                    EpisodeRef target;
+                    if (!EpisodeOrderMapping.IsActive(episodeOrderProfile)
+                        && item.SourceSeason is int expectedSource
+                        && item.Season is int canonicalSeason
+                        && expectedSource != canonicalSeason)
+                    {
+                        var namedAbsoluteEpisode = sourceSeason == 0
+                            && MatchesNamedCanonicalSeason(job, file.Path, expectedSource, canonicalSeason);
+                        if (sourceSeason != expectedSource && !namedAbsoluteEpisode)
+                        {
+                            unmappedVideos.Add(file.Path);
+                            coverage.Clear();
+                            break;
+                        }
+                        if (namedAbsoluteEpisode
+                            && (CanonicalEpisodeCount(job, canonicalSeason) is not int expectedCount
+                                || sourceEpisode > expectedCount))
+                            return ManifestPreflightDecision.Reject(
+                                $"{file.Path} declares absolute episode {sourceEpisode}, outside canonical " +
+                                $"S{canonicalSeason:D2}'s known episode range.", manifest.Files.Count);
+                        target = new EpisodeRef { Season = canonicalSeason, Episode = sourceEpisode };
+                    }
+                    else if (!EpisodeOrderMapping.TryTranslateFile(episodeOrderProfile, file.Path,
+                                 sourceSeason, sourceEpisode, out target))
                     {
                         unmappedVideos.Add(file.Path);
                         coverage.Clear();
                         break;
                     }
-                    if (namedAbsoluteEpisode
-                        && (CanonicalEpisodeCount(job, canonicalSeason) is not int expectedCount
-                            || sourceEpisode > expectedCount))
-                        return ManifestPreflightDecision.Reject(
-                            $"{file.Path} declares absolute episode {sourceEpisode}, outside canonical " +
-                            $"S{canonicalSeason:D2}'s known episode range.", manifest.Files.Count);
-                    target = new EpisodeRef { Season = canonicalSeason, Episode = sourceEpisode };
+                    coverage.Add((target.Season, target.Episode));
                 }
-                else if (!EpisodeOrderMapping.TryTranslateFile(episodeOrderProfile, file.Path,
-                             sourceSeason, sourceEpisode, out target))
-                {
-                    unmappedVideos.Add(file.Path);
-                    coverage.Clear();
-                    break;
-                }
-                coverage.Add((target.Season, target.Episode));
             }
             coverage = coverage.Distinct().OrderBy(target => target.Season).ThenBy(target => target.Episode).ToList();
             if (coverage.Count == 0 || coverage.All(target => !targets.Contains(target))) continue;
@@ -182,7 +208,7 @@ internal static class AnimeManifestPreflight
             .Select(target => new EpisodeRef { Season = target.Season, Episode = target.Episode }).ToList();
         return new ManifestPreflightDecision(true,
             $"Manifest proved {canonical.Count} canonical episode(s); selected {selected.Count(value => value)}/{selected.Length} files ({selectedGb:F1} GB).",
-            selected, canonical);
+            selected, canonical, namedSequence?.InsertionAfter);
     }
 
     internal static bool MatchesNamedCanonicalSeason(FulfillmentJobDto job, string releasePath,
@@ -192,7 +218,7 @@ internal static class AnimeManifestPreflight
         : AnimeSeasonIdentity.MatchesCanonicalSeason(releasePath, job.Title, job.SeasonTargets,
             sourceSeason, canonicalSeason);
 
-    private static int? CanonicalEpisodeCount(FulfillmentJobDto job, int canonicalSeason)
+    internal static int? CanonicalEpisodeCount(FulfillmentJobDto job, int canonicalSeason)
     {
         var count = job.CanonicalSeasons.FirstOrDefault(season => season.Season == canonicalSeason)?.EpisodeCount
                     ?? job.SeasonTargets.FirstOrDefault(season => season.Season == canonicalSeason)?.EpisodeCount;

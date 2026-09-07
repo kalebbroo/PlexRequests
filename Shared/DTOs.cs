@@ -723,6 +723,8 @@ public class TrackedTransferDto
     public int? Season { get; set; }
     /// <summary>Season number used inside the release when it differs from canonical Plex numbering.</summary>
     public int? SourceSeason { get; set; }
+    /// <summary>A manifest-proven N.5 source episode inserted after N in canonical order.</summary>
+    public int? FractionalEpisodeInsertionAfter { get; set; }
     public int? Episode { get; set; }
     public bool IsPack { get; set; }
     public List<int> NeededEpisodes { get; set; } = new();

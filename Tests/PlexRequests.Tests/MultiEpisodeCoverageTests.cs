@@ -94,6 +94,16 @@ public sealed class MultiEpisodeCoverageTests
         Assert.Empty(parsed.EpisodeNumbers);
     }
 
+    [Fact]
+    public void ParserPreservesFractionalSourceIdentityForManifestProof()
+    {
+        var standard = _parser.Parse("Show.S01E06.5v2.1080p.mkv");
+        var absolute = _parser.Parse("[Group] Show - 06.5 (1080p).mkv");
+
+        Assert.Equal((1, 6.5m), (standard.FractionalEpisodeSeason, standard.FractionalEpisode));
+        Assert.Equal((0, 6.5m), (absolute.FractionalEpisodeSeason, absolute.FractionalEpisode));
+    }
+
     [Theory]
     [InlineData("Show.S01E06.1080p.mkv")]
     [InlineData("Show.S01E06v2.1080p.mkv")]
@@ -260,6 +270,58 @@ public sealed class MultiEpisodeCoverageTests
             Assert.False(result.Success);
             Assert.Equal(BlocklistReason.EpisodeMappingAmbiguous, result.BlocklistReason);
             Assert.False(Directory.Exists(library));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OrganizerReplaysManifestProvenFractionalInsertionForDownloadedSubset()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "Monogatari Series Off & Monster Season");
+            Directory.CreateDirectory(source);
+            foreach (var episode in new[] { "06", "06.5", "07", "14" })
+                await File.WriteAllBytesAsync(Path.Combine(source,
+                    $"Monogatari Series Off & Monster Season - {episode}.mkv"), [1, 2, 3, 4]);
+            var library = Path.Combine(root, "library");
+            var job = TvJob(library);
+            job.Title = "Monogatari";
+            job.IsAnime = true;
+            job.SeasonTargets =
+            [
+                new SeasonTarget
+                {
+                    Season = 5,
+                    Name = "MONOGATARI Series OFF & MONSTER Season",
+                    EpisodeCount = 15,
+                    MissingEpisodes = [6, 7, 8, 15]
+                }
+            ];
+            job.CanonicalSeasons =
+            [
+                new CanonicalSeasonIdentityDto
+                {
+                    Season = 5,
+                    Name = "MONOGATARI Series OFF & MONSTER Season",
+                    EpisodeCount = 15
+                }
+            ];
+            var targets = new[] { 6, 7, 8, 15 }
+                .Select(episode => new EpisodeRef { Season = 5, Episode = episode }).ToList();
+
+            var result = await CreateOrganizer().OrganizeAsync(job,
+                new TransferItem("transfer", 5, null, true, NeededEpisodeRefs: targets,
+                    SourceSeason: 1, FractionalEpisodeInsertionAfter: 6),
+                source, Preferences(), CancellationToken.None);
+
+            Assert.True(result.Success, result.FailReason);
+            var episodes = result.Files.Where(file => file.FileType == "video")
+                .Select(file => file.Episode!.Value).Order().ToList();
+            Assert.Equal([6, 7, 8, 15], episodes);
+            Assert.All(result.Files.Where(file => file.FileType == "video"), file =>
+                Assert.True(File.Exists(file.DestinationPath)));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
