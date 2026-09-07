@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using PlexRequestsHosted.Infrastructure.Catalog;
 using PlexRequestsHosted.Infrastructure.Data;
+using PlexRequestsHosted.Services.Implementations;
 using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequestsHosted.Services.Background;
@@ -47,7 +48,7 @@ public sealed class CatalogMaintenanceWorker(
             .Where(x => x.Protocol == PlexRequestsHosted.Shared.Enums.AcquisitionProtocol.Torrent && x.SourceId != null)
             .Select(x => x.SourceId!)
             .ToListAsync(cancellationToken);
-        var blockedHashes = await app.ReleaseBlocklist.AsNoTracking()
+        var blockedHashes = await app.ReleaseBlocklist.AsNoTracking().EffectiveAt(now)
             .Where(x => x.InfoHash != null)
             .Select(x => x.InfoHash!)
             .ToListAsync(cancellationToken);

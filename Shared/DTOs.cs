@@ -1899,6 +1899,7 @@ public class BlocklistEntryDto
     public string? ReleaseName { get; set; }
     public BlocklistScope Scope { get; set; }
     public BlocklistReason Reason { get; set; }
+    public int? DecisionVersion { get; set; }
     public string? Detail { get; set; }
     public int? MediaRequestId { get; set; }
     public string? RequestTitle { get; set; }
