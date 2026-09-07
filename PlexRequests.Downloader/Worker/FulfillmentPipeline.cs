@@ -89,7 +89,7 @@ public class FulfillmentPipeline(
                 if (job.IsUpgrade && !job.IsReplacement) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
                 // Flag whether the search had anything to reject. Only that case counts toward relaxing the
                 // quality target — a title that simply isn't out yet gains nothing from lowering the bar.
-                else await api.MarkDeferredAsync(job.Id, detail, candidates.Count > 0, ct);
+                else await api.MarkDeferredAsync(job.Id, detail, ranker.LastSearchRejectedCandidates, ct);
                 return;
             }
 
@@ -100,6 +100,7 @@ public class FulfillmentPipeline(
                 _ => deluge.Value.TvLabel
             };
             var transfers = new List<TransferItem>();
+            var preflightFailures = new List<string>();
             foreach (var item in plan.Items)
             {
                 var resource = item.Candidate.Acquisition;
@@ -108,12 +109,77 @@ public class FulfillmentPipeline(
                     logger.LogWarning("Job {JobId}: no acquisition backend is configured for {Protocol}", job.Id, resource.Protocol);
                     continue;
                 }
+                AcquisitionManifest? manifest = null;
+                IReadOnlyList<bool>? wantedFiles = null;
+                if (item.RequiresManifestPreflight)
+                {
+                    if (!backend.Capabilities.SupportsManifestPreflight)
+                    {
+                        var detail = $"{item.Candidate.ReleaseName}: {resource.Protocol} cannot preflight collection manifests";
+                        preflightFailures.Add(detail);
+                        logger.LogWarning("Job {JobId}: {Detail}", job.Id, detail);
+                        continue;
+                    }
+
+                    try
+                    {
+                        manifest = await backend.GetManifestAsync(resource, ct);
+                        if (manifest is null)
+                        {
+                            var detail = $"{item.Candidate.ReleaseName}: torrent metadata was not available within the preflight timeout";
+                            preflightFailures.Add(detail);
+                            logger.LogWarning("Job {JobId}: {Detail}", job.Id, detail);
+                            continue;
+                        }
+
+                        var maxPackGb = job.QualityProfile?.MaxSeasonPackSizeGb
+                            ?? prefs.Current.MaxSeasonPackSizeGb;
+                        var decision = AnimeManifestPreflight.Evaluate(manifest, job, item, parser,
+                            libraryPrefs.Current.VideoExtensions, maxPackGb);
+                        if (!decision.Accepted)
+                        {
+                            var detail = $"{item.Candidate.ReleaseName}: {decision.Detail}";
+                            preflightFailures.Add(detail);
+                            logger.LogWarning("Job {JobId}: anime manifest rejected — {Detail}", job.Id, detail);
+                            await SafeBlocklist(job.Id, new BlocklistRequestDto
+                            {
+                                InfoHash = resource.SourceId ?? MagnetUtil.InfoHashFromMagnet(resource.Locator),
+                                Protocol = resource.Protocol,
+                                SourceId = resource.SourceId,
+                                ReleaseName = item.Candidate.ReleaseName,
+                                Reason = BlocklistReason.EpisodeMappingAmbiguous,
+                                Detail = decision.Detail,
+                                Season = item.Season,
+                                Episode = item.Episode,
+                                IndexerId = item.Candidate.IndexerId > 0 ? item.Candidate.IndexerId : null
+                            });
+                            continue;
+                        }
+
+                        wantedFiles = decision.WantedFiles;
+                        logger.LogInformation("Job {JobId}: anime collection preflight accepted \"{Release}\" — {Detail}",
+                            job.Id, item.Candidate.ReleaseName, decision.Detail);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        var detail = $"{item.Candidate.ReleaseName}: manifest preflight failed ({ex.Message})";
+                        preflightFailures.Add(detail);
+                        logger.LogWarning(ex, "Job {JobId}: {Detail}", job.Id, detail);
+                        continue;
+                    }
+                }
+
                 var transferId = await backend.EnqueueAsync(new AcquisitionRequest(resource, label,
-                    item.Candidate.ReleaseName, job.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)), ct);
+                    item.Candidate.ReleaseName,
+                    job.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    manifest, wantedFiles), ct);
                 if (string.IsNullOrWhiteSpace(transferId))
                 {
                     logger.LogWarning("Failed to enqueue {Protocol} transfer for job {JobId} (S{Season}E{Episode})",
                         resource.Protocol, job.Id, item.Season, item.Episode);
+                    if (item.RequiresManifestPreflight)
+                        preflightFailures.Add(
+                            $"{item.Candidate.ReleaseName}: verified selection could not be added (the torrent may already be owned by another job)");
                     continue;
                 }
                 transfers.Add(new TransferItem(
@@ -133,10 +199,15 @@ public class FulfillmentPipeline(
 
             if (transfers.Count == 0)
             {
-                // Adding to the download client failed for everything (usually a transient Deluge/VPN blip).
-                // Defer with a backoff rather than failing so it's retried automatically.
+                // Adding to the download client failed for everything. Preserve manifest diagnostics when
+                // present so the admin sees a mapping/coverage problem rather than a generic Deluge error.
+                var detail = preflightFailures.Count > 0
+                    ? $"No anime collection passed manifest preflight: {string.Join("; ", preflightFailures.Take(3))}"
+                    : "Could not enqueue release(s) with an available acquisition backend";
                 if (job.IsUpgrade && !job.IsReplacement) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
-                else await api.MarkDeferredAsync(job.Id, "Could not enqueue release(s) with an available acquisition backend", false, ct);
+                // DeferCount still drives the one-time admin escalation. Do not call a manifest/backend
+                // failure a quality rejection: lowering the quality floor cannot repair it.
+                else await api.MarkDeferredAsync(job.Id, detail, false, ct);
                 return;
             }
 
@@ -164,7 +235,10 @@ public class FulfillmentPipeline(
                 Resolution = t.Resolution
             }).ToList(), ct);
 
-            var record = new ActiveJobRecord(job, transfers, plan.CoversAllTargets);
+            // A mixed plan can lose one item to an unavailable backend or failed preflight. The remaining
+            // transfers may still import, but they cannot truthfully complete the entire request.
+            var record = new ActiveJobRecord(job, transfers,
+                plan.CoversAllTargets && transfers.Count == plan.Items.Count);
             await stateStore.SaveAsync(record, ct);
             await SafeReportProgress(job.Id, 0);
             await MonitorAndImportAllAsync(record, ct);
@@ -718,7 +792,8 @@ public class FulfillmentPipeline(
             NeededEpisodes = isPack && requestedSeasons.Count == 1 && canonicalTargets.Count > 0
                 ? canonicalTargets.Select(target => target.Episode).ToList()
                 : null,
-            NeededEpisodeRefs = isPack && canonicalTargets.Count > 0 ? canonicalTargets : null
+            NeededEpisodeRefs = isPack && canonicalTargets.Count > 0 ? canonicalTargets : null,
+            RequiresManifestPreflight = job.IsAnime && isPack && canonicalTargets.Count > 0
         };
         return new DownloadPlan(isPack ? DownloadPlanKind.SeasonPack : DownloadPlanKind.Episodes, new[] { item });
     }

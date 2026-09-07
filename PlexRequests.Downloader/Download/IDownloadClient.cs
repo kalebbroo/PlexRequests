@@ -23,7 +23,11 @@ public record DownloadStatus(string State, double Progress, string Name, long To
 public interface IDownloadClient
 {
     /// <summary>Add a magnet, optionally labelled for library routing. Returns the torrent id/hash, or null on failure.</summary>
-    Task<string?> AddMagnetAsync(string magnet, string? label, CancellationToken ct);
+    Task<string?> AddMagnetAsync(string magnet, string? label, CancellationToken ct,
+        AcquisitionManifest? manifest = null, IReadOnlyList<bool>? wantedFiles = null);
+    /// <summary>Use Deluge's metadata-prefetch RPC to inspect a magnet without adding it to the session or
+    /// downloading payload pieces.</summary>
+    Task<AcquisitionManifest?> GetMagnetManifestAsync(string magnet, CancellationToken ct);
     Task<DownloadStatus?> GetStatusAsync(string torrentId, CancellationToken ct);
     Task<bool> RemoveAsync(string torrentId, bool removeData, CancellationToken ct);
     /// <summary>Restrict which files of a multi-file torrent actually download. <paramref name="keep"/> is

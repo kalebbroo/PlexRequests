@@ -8,7 +8,18 @@ namespace PlexRequests.Downloader.Download;
 public sealed record AcquisitionBackendCapabilities(
     bool SupportsFileSelection,
     bool SupportsPeerTelemetry,
-    bool CanKeepSourceDataAfterRemoval);
+    bool CanKeepSourceDataAfterRemoval,
+    bool SupportsManifestPreflight = false);
+
+/// <summary>One immutable entry from an acquisition resource's metadata manifest. Paths are resource-relative
+/// and remain in the backend's native order so a validated selection can be applied atomically at enqueue.</summary>
+public sealed record AcquisitionManifestFile(string Path, long SizeBytes);
+
+/// <summary>A payload-free resource manifest. <paramref name="NativeMetadata"/> is an ephemeral backend token
+/// used to enqueue the exact metadata that was reviewed; it is never persisted in job state or sent to the web.</summary>
+public sealed record AcquisitionManifest(
+    IReadOnlyList<AcquisitionManifestFile> Files,
+    byte[]? NativeMetadata = null);
 
 /// <summary>Protocol-neutral transfer status. Peer and tracker fields are optional diagnostics supplied
 /// by torrent backends; direct and Usenet backends do not have to invent values for them.</summary>
@@ -30,7 +41,9 @@ public sealed record AcquisitionRequest(
     AcquisitionResource Resource,
     string? Label,
     string DisplayName,
-    string? CorrelationId = null);
+    string? CorrelationId = null,
+    AcquisitionManifest? Manifest = null,
+    IReadOnlyList<bool>? WantedFiles = null);
 
 public enum TransferVerdict { Wait, Import, Fail, Missing }
 
@@ -47,6 +60,10 @@ public interface IAcquisitionBackend
     AcquisitionBackendCapabilities Capabilities { get; }
 
     Task<string?> EnqueueAsync(AcquisitionRequest request, CancellationToken ct);
+    /// <summary>Resolve a resource's file manifest without retaining or downloading its payload. Null means
+    /// metadata was unavailable; callers must not treat that as approval.</summary>
+    Task<AcquisitionManifest?> GetManifestAsync(AcquisitionResource resource, CancellationToken ct) =>
+        Task.FromResult<AcquisitionManifest?>(null);
     Task<TransferStatus?> GetStatusAsync(string transferId, CancellationToken ct);
     TransferHealthDecision EvaluateHealth(TransferStatus? status, DateTime addedAt, DateTime? progressChangedAt, DateTime now);
     Task<bool> RemoveAsync(string transferId, bool removeData, CancellationToken ct);
@@ -91,13 +108,22 @@ public sealed class TorrentAcquisitionBackend(IDownloadClient client) : IAcquisi
     public AcquisitionBackendCapabilities Capabilities { get; } = new(
         SupportsFileSelection: true,
         SupportsPeerTelemetry: true,
-        CanKeepSourceDataAfterRemoval: true);
+        CanKeepSourceDataAfterRemoval: true,
+        SupportsManifestPreflight: true);
 
     public Task<string?> EnqueueAsync(AcquisitionRequest request, CancellationToken ct)
     {
         if (request.Resource.Protocol != Protocol)
             throw new ArgumentException($"Torrent backend cannot enqueue {request.Resource.Protocol}", nameof(request));
-        return client.AddMagnetAsync(request.Resource.Locator, request.Label, ct);
+        return client.AddMagnetAsync(request.Resource.Locator, request.Label, ct,
+            request.Manifest, request.WantedFiles);
+    }
+
+    public Task<AcquisitionManifest?> GetManifestAsync(AcquisitionResource resource, CancellationToken ct)
+    {
+        if (resource.Protocol != Protocol)
+            throw new ArgumentException($"Torrent backend cannot inspect {resource.Protocol}", nameof(resource));
+        return client.GetMagnetManifestAsync(resource.Locator, ct);
     }
 
     public async Task<TransferStatus?> GetStatusAsync(string transferId, CancellationToken ct)

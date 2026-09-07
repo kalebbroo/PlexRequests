@@ -244,6 +244,37 @@ public class ReleaseEvaluatorTests
     }
 
     [Fact]
+    public void UnscopedAnimeCollectionDefersSizeDecisionToSelectedManifestBytes()
+    {
+        var job = TestData.Job("Monogatari", MediaType.TvShow,
+            seasonTargets: [TestData.Season(1, 1)]);
+        job.IsAnime = true;
+        var ranked = _eval.Evaluate(
+            TestData.Release("[MTBB] Monogatari Series (BD 1080p)", sizeGb: 140),
+            job, TestData.Context());
+
+        Assert.True(ranked.IsPack);
+        Assert.True(Rejected(ranked, RejectionReason.PackScopeUnknown));
+        Assert.False(Rejected(ranked, RejectionReason.SizeTooLarge));
+    }
+
+    [Fact]
+    public void CompleteAnimeSeriesLabelStillNeedsManifestProof()
+    {
+        var job = TestData.Job("Show", MediaType.TvShow,
+            seasonTargets: [TestData.Season(1, 1), TestData.Season(2, 1)]);
+        job.IsAnime = true;
+
+        var ranked = _eval.Evaluate(
+            TestData.Release("Show.COMPLETE.SERIES.1080p.WEB-DL", sizeGb: 40),
+            job, TestData.Context());
+
+        Assert.True(ranked.IsPack);
+        Assert.True(ranked.LooksLikeCompleteSeries);
+        Assert.True(Rejected(ranked, RejectionReason.PackScopeUnknown));
+    }
+
+    [Fact]
     public void Rejects_a_different_title()
     {
         var r = _eval.Evaluate(TestData.Release("Completely.Different.Show.S01E01.1080p.WEB-DL"),

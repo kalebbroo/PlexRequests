@@ -170,6 +170,16 @@ identity and an identifiable audio format, rejects video-shaped releases, applie
 and ranks lossless FLAC/ALAC/APE/WAV above lossy formats. Video resolution profiles never reject a music
 release for having no pixel resolution.
 
+Every anime pack is manifest-preflighted before payload. Ordinary `SxxEyy` paths can prove their identity directly;
+alternate/absolute paths must resolve through the immutable per-series map. An unscoped collection retains
+`PackScopeUnknown` as a hard rejection unless that map covers the whole job and no ordinary candidate can complete
+the request; a declared "complete series" pack is never trusted solely because of that label. Before adding the
+torrent, the worker uses Deluge's metadata-prefetch RPC, verifies the bencoded info dictionary against the magnet
+hash, maps each video path to the exact outstanding canonical target set, and computes a bounded file selection.
+Missing, duplicate, ambiguous, unsafe, or oversized manifests are rejected and blocklisted for the request.
+Accepted file priorities are included when the verified metadata is added, so unrelated arcs and extras never
+begin downloading.
+
 ### Stage 4 — Hand to the torrent client
 Add the chosen magnet/torrent to **qBittorrent** or **Deluge** via its Web API, tagged with a
 category that routes the completed files to the correct library path (movies vs TV vs music). Record the

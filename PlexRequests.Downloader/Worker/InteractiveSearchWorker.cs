@@ -170,7 +170,7 @@ public class InteractiveSearchWorker(
             Season = r.Season,
             Episode = r.Episode,
             IsPack = r.IsPack,
-            RequiresEpisodeMapping = requiresManifestReview && !hasEpisodeMapping,
+            RequiresEpisodeMapping = requiresManifestReview && !r.LooksLikeCompleteSeries && !hasEpisodeMapping,
             RequiresManifestReview = requiresManifestReview,
             Accepted = r.Accepted,
             Rejections = r.Rejections.Select(x => x.Detail).ToList(),

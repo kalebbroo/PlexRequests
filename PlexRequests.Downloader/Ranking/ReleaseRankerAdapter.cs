@@ -1,4 +1,5 @@
 using PlexRequests.Downloader.Configuration;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Releases;
 
@@ -58,7 +59,7 @@ public class ReleaseRankerAdapter(
         if (!ranked.Any(r => r.Accepted) && !job.IsUpgrade && job.EmptySearchCount >= threshold)
         {
             var relaxed = evaluator.EvaluateAll(candidates, job, BuildContext(job, relaxFloor: true));
-            if (relaxed.Any(r => r.Accepted))
+            if (relaxed.Any(r => r.Accepted || IsManifestOnlyCandidate(r)))
             {
                 logger.LogInformation(
                     "\"{Title}\": nothing at the preferred quality after {Count} empty search(es) — settling for the best available (the upgrade scan will revisit)",
@@ -71,9 +72,60 @@ public class ReleaseRankerAdapter(
 
         var result = planner.Plan(ranked, job, context);
         if (result.IsEmpty)
+            result = TryPlanManifestPreflight(ranked, job, context, result);
+        result = RequireAnimePackPreflight(result, job);
+        if (result.IsEmpty)
             LastFailureSummary = string.Join("; ", result.Notes.Where(note => !string.IsNullOrWhiteSpace(note)).Take(8));
         LogOutcome(job, candidates.Count, ranked, result);
         return result.Plan;
+    }
+
+    private DownloadPlanResult TryPlanManifestPreflight(IReadOnlyList<RankedCandidate> ranked,
+        FulfillmentJobDto job, RankingContext context, DownloadPlanResult original)
+    {
+        if (!job.IsAnime) return original;
+        var hasExplicitMap = EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile);
+        var provisional = ranked.Where(candidate => IsManifestOnlyCandidate(candidate)
+                && (hasExplicitMap || candidate.LooksLikeCompleteSeries))
+            .ToList();
+        if (provisional.Count == 0) return original;
+
+        var eligible = provisional.Select(candidate => candidate.Candidate.Acquisition)
+            .ToHashSet();
+        var preflightRanked = ranked.Select(candidate => provisional.Contains(candidate)
+                ? candidate with { Accepted = true, Rejections = [] }
+                : candidate)
+            .ToList();
+        var planned = planner.Plan(preflightRanked, job, context);
+        if (planned.IsEmpty || !planned.Plan.CoversAllTargets) return original;
+
+        var items = planned.Plan.Items.Select(item => eligible.Contains(item.Candidate.Acquisition)
+                ? item with { RequiresManifestPreflight = true }
+                : item)
+            .ToList();
+        if (!items.Any(item => item.RequiresManifestPreflight)) return original;
+        var notes = planned.Notes.Prepend(
+            "No ordinary release covered the request; selected an anime collection provisionally for payload-free manifest validation.")
+            .ToList();
+        return new DownloadPlanResult(planned.Plan with { Items = items }, notes);
+    }
+
+    private static bool IsManifestOnlyCandidate(RankedCandidate candidate) =>
+        candidate.Rejections.Count > 0
+        && candidate.Rejections.All(rejection => rejection.Reason == RejectionReason.PackScopeUnknown);
+
+    private static DownloadPlanResult RequireAnimePackPreflight(DownloadPlanResult result, FulfillmentJobDto job)
+    {
+        if (result.IsEmpty || !job.IsAnime || !result.Plan.Items.Any(item => item.IsPack)) return result;
+        if (result.Plan.Items.Any(item => item.IsPack && item.NeededEpisodeRefs is not { Count: > 0 }))
+            return DownloadPlanResult.None(
+                "anime pack selection has no exact canonical episode target set; metadata must be refreshed before a safe manifest preflight");
+
+        var items = result.Plan.Items.Select(item => item.IsPack
+                ? item with { RequiresManifestPreflight = true }
+                : item)
+            .ToList();
+        return new DownloadPlanResult(result.Plan with { Items = items }, result.Notes);
     }
 
     private RankingContext BuildContext(FulfillmentJobDto job, bool relaxFloor) => new()

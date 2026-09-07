@@ -21,6 +21,11 @@ public record DownloadPlanItem(ReleaseCandidate Candidate, int? Season, int? Epi
 {
     public IReadOnlyList<EpisodeRef>? NeededEpisodeRefs { get; init; }
 
+    /// <summary>The candidate was acceptable only after its internal file manifest proves the immutable
+    /// canonical target contract. The worker must preflight it before enqueue and apply the returned file
+    /// selection atomically; this flag is never persisted because validation happens before transfer state.</summary>
+    public bool RequiresManifestPreflight { get; init; }
+
     /// <summary>Vertical resolution (pixel height) of the chosen release, per the ranker. 0 = unknown.
     /// Carried through to the imported-file audit rows so achieved quality / cutoff can be evaluated.</summary>
     public int Resolution { get; init; }
