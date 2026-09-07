@@ -1790,6 +1790,9 @@ public class SearchResultDto
     /// <summary>The outer release name could not prove the collection's internal coverage. Even with a
     /// mapping configured, forcing it is an explicit admin acknowledgement pending manifest preflight.</summary>
     public bool RequiresManifestReview { get; set; }
+    /// <summary>The release name explicitly conflicts with the configured language contract. An admin may
+    /// inspect and force it as a last resort, but actual media tracks are still verified before import.</summary>
+    public bool RequiresLanguageReview { get; set; }
 
     public bool Accepted { get; set; }
     /// <summary>Every reason this was rejected, human-readable. Empty when accepted.</summary>

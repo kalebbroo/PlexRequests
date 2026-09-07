@@ -40,6 +40,10 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         var parsed = _parser.Parse(c.ReleaseName);
         if (job.MediaType == MediaType.Music)
             return MusicReleaseEvaluator.Evaluate(c, job, context, parsed);
+        var isAnime = job.IsAnime || job.MediaType == MediaType.Anime;
+        var languagePreference = job.MediaLanguagePolicy?.Preference ?? context.Profile?.LanguagePreference;
+        var preferredAudio = MediaLanguagePolicy.Normalize(job.MediaLanguagePolicy?.PreferredAudioLanguage
+                                                            ?? context.Profile?.PreferredAudioLanguage) ?? "en";
         var resolution = EffectiveResolution(c, parsed);
         var rejections = new List<Rejection>();
 
@@ -239,9 +243,12 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
             rejections.Add(new Rejection(RejectionReason.CustomFormatScoreTooLow,
                 $"custom-format score {formatScore} is below the profile's minimum of {minScore}"));
 
-        if (context.Profile?.AllowedLanguagesCsv is { Length: > 0 } allowedCsv && parsed.Languages.Count > 0)
+        var allowedLanguages = job.MediaLanguagePolicy?.AllowedAudioLanguages.Count > 0
+            ? job.MediaLanguagePolicy.AllowedAudioLanguages.ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : MediaLanguagePolicy.ParseCsv(context.Profile?.AllowedLanguagesCsv)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (allowedLanguages.Count > 0 && parsed.Languages.Count > 0)
         {
-            var allowedLanguages = MediaLanguagePolicy.ParseCsv(allowedCsv).ToHashSet(StringComparer.OrdinalIgnoreCase);
             // Release names are hints, not proof. Normalize explicit language names/codes so "Japanese"
             // matches "ja", but do not reject ambiguous "dual"/"multi" tags. MediaInfo still enforces
             // the complete allowlist against the actual audio streams before any library write.
@@ -253,19 +260,33 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
                     $"explicit language hint(s) [{string.Join(", ", explicitLanguages)}] aren't in the profile's allowed set"));
         }
 
-        if (context.Profile?.LanguagePreference == ReleaseLanguagePreference.EnglishOnly)
+        if (languagePreference == ReleaseLanguagePreference.EnglishOnly)
         {
-            var preferred = MediaLanguagePolicy.Normalize(context.Profile.PreferredAudioLanguage) ?? "en";
             var explicitLanguages = parsed.Languages.Select(MediaLanguagePolicy.NormalizeExplicitLanguage)
                 .Where(x => x is not null).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            if (explicitLanguages.Count > 0 && !explicitLanguages.Contains(preferred, StringComparer.OrdinalIgnoreCase)
+            if (explicitLanguages.Count > 0 && !explicitLanguages.Contains(preferredAudio, StringComparer.OrdinalIgnoreCase)
                 && !parsed.MultiLanguage)
                 rejections.Add(new Rejection(RejectionReason.LanguageNotAllowed,
-                    $"release advertises [{string.Join(", ", explicitLanguages)}], not required {preferred} audio"));
+                    $"release advertises [{string.Join(", ", explicitLanguages)}], not required {preferredAudio} audio"));
+        }
+
+        if (isAnime && languagePreference == ReleaseLanguagePreference.Smart)
+        {
+            var explicitLanguages = parsed.Languages.Select(MediaLanguagePolicy.NormalizeExplicitLanguage)
+                .Where(language => language is not null).Select(language => language!)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var explicitlyWrongDub = explicitLanguages.Contains("ja")
+                && !explicitLanguages.Contains(preferredAudio)
+                && explicitLanguages.Any(language => language != "ja" && language != preferredAudio);
+            if (explicitlyWrongDub)
+                rejections.Add(new Rejection(RejectionReason.LanguageNotAllowed,
+                    $"Smart anime release explicitly advertises Japanese plus " +
+                    $"[{string.Join(", ", explicitLanguages.Where(language => language != "ja").Order())}], " +
+                    $"but no preferred {preferredAudio} track; wait for {preferredAudio}/Japanese dual audio or Japanese with {preferredAudio} subtitles"));
         }
 
         var score = Score(c, parsed, resolution, rank, isPack, context, idMatch, titleRecall, formatScore,
-            job.IsAnime || job.MediaType == MediaType.Anime);
+            isAnime, job.MediaLanguagePolicy);
 
         return new RankedCandidate
         {
@@ -334,7 +355,8 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
 
     private static (double Total, List<ScoreComponent> Components) Score(
         ReleaseCandidate c, ParsedRelease p, int resolution, int? profileRank, bool isPack,
-        RankingContext context, bool idMatch, double titleRecall, int formatScore, bool isAnime)
+        RankingContext context, bool idMatch, double titleRecall, int formatScore, bool isAnime,
+        MediaLanguagePolicyDto? languagePolicy)
     {
         var prefs = context.Preferences;
         var parts = new List<ScoreComponent>();
@@ -352,7 +374,7 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         if (p.ProperOrRepack) Add("PROPER/REPACK", 20);
         if (prefs.PreferX265 && p.Codec == "x265") Add("HEVC/x265 preference", 45);
         if (prefs.PreferHdr && p.Hdr) Add("HDR", 10);
-        foreach (var preference in LanguagePreferenceScore(p, context.Profile, isAnime))
+        foreach (var preference in LanguagePreferenceScore(p, context.Profile, isAnime, languagePolicy))
             Add(preference.Name, preference.Points);
         if (p.Group is not null && prefs.PreferredGroupsCsv is { Length: > 0 } groups
             && groups.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -378,16 +400,19 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
     /// usable dub or original-language copy rather than no download at all.
     /// </summary>
     internal static IReadOnlyList<ScoreComponent> LanguagePreferenceScore(
-        ParsedRelease release, QualityProfileDto? profile, bool isAnime)
+        ParsedRelease release, QualityProfileDto? profile, bool isAnime,
+        MediaLanguagePolicyDto? languagePolicy = null)
     {
-        if (profile is null || profile.LanguagePreference is ReleaseLanguagePreference.Any or ReleaseLanguagePreference.Custom)
+        var preference = languagePolicy?.Preference ?? profile?.LanguagePreference ?? ReleaseLanguagePreference.Any;
+        if (preference is ReleaseLanguagePreference.Any or ReleaseLanguagePreference.Custom)
             return [];
 
         var parts = new List<ScoreComponent>();
         var explicitLanguages = release.Languages.Select(MediaLanguagePolicy.NormalizeExplicitLanguage)
             .Where(x => x is not null).Select(x => x!)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var preferred = MediaLanguagePolicy.Normalize(profile.PreferredAudioLanguage) ?? "en";
+        var preferred = MediaLanguagePolicy.Normalize(languagePolicy?.PreferredAudioLanguage
+                                                       ?? profile?.PreferredAudioLanguage) ?? "en";
         bool hasPreferred = explicitLanguages.Contains(preferred);
         bool hasJapanese = explicitLanguages.Contains("ja");
         bool hasOther = explicitLanguages.Any(x => !x.Equals(preferred, StringComparison.OrdinalIgnoreCase));
@@ -395,7 +420,7 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
 
         void Add(string name, double points) => parts.Add(new ScoreComponent(name, points));
 
-        switch (profile.LanguagePreference)
+        switch (preference)
         {
             case ReleaseLanguagePreference.Smart when isAnime:
                 if (looksDual && hasPreferred && hasJapanese) Add("Smart anime: dual audio", 240);
@@ -426,7 +451,8 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
                 break;
         }
 
-        if (profile.PreferForcedSubtitles && release.ForcedSubtitles)
+        if ((languagePolicy?.PreferForcedSubtitles ?? profile?.PreferForcedSubtitles) == true
+            && release.ForcedSubtitles)
             Add("Forced subtitles", 30);
         return parts;
     }

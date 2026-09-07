@@ -172,6 +172,7 @@ public class InteractiveSearchWorker(
             IsPack = r.IsPack,
             RequiresEpisodeMapping = requiresManifestReview && !r.LooksLikeCompleteSeries && !hasEpisodeMapping,
             RequiresManifestReview = requiresManifestReview,
+            RequiresLanguageReview = r.Rejections.Any(x => x.Reason == RejectionReason.LanguageNotAllowed),
             Accepted = r.Accepted,
             Rejections = r.Rejections.Select(x => x.Detail).ToList(),
             Score = Math.Round(r.Score, 1),

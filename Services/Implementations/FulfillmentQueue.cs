@@ -318,6 +318,10 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             .Take(max)
             .ToListAsync();
 
+        // Older queued jobs predate immutable media-language snapshots. Hydrate that contract before the
+        // claim crosses the process boundary; otherwise the worker cannot enforce track languages or fix
+        // playback defaults and a retry can import a foreign-first release under today's Smart profile.
+        await SnapshotMissingMediaLanguagePoliciesAsync(jobs);
         await SnapshotMissingEpisodeOrderProfilesAsync(jobs);
         var now = DateTime.UtcNow;
         foreach (var j in jobs)
@@ -472,6 +476,76 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         }
         if (hydrated > 0)
             _logger.LogInformation("Snapshotted episode-order profiles onto {Count} legacy queued job(s)", hydrated);
+    }
+
+    /// <summary>
+    /// Jobs created before media-track validation carried only a nullable profile id. Resolve their missing
+    /// policy exactly once at the final safe boundary before claim. A non-empty snapshot is never replaced,
+    /// so later profile edits cannot silently change an in-flight job. If no historical/default profile can
+    /// be resolved, video jobs receive the installation's conservative Smart contract: preferred audio, or
+    /// Japanese audio with preferred-language subtitles for anime.
+    /// </summary>
+    private async Task SnapshotMissingMediaLanguagePoliciesAsync(IReadOnlyList<FulfillmentJobEntity> jobs)
+    {
+        var legacyVideo = jobs.Where(job => job.MediaType is MediaType.Movie or MediaType.TvShow or MediaType.Anime
+                                            && string.IsNullOrWhiteSpace(job.MediaLanguagePolicyJson))
+            .ToList();
+        if (legacyVideo.Count == 0) return;
+
+        var requestIds = legacyVideo.Select(job => job.MediaRequestId).Distinct().ToList();
+        var requests = await _db.MediaRequests.AsNoTracking()
+            .Where(request => requestIds.Contains(request.Id))
+            .Select(request => new
+            {
+                request.Id,
+                request.QualityProfileId,
+                request.RequestedByUserId
+            })
+            .ToDictionaryAsync(request => request.Id);
+        var profiles = new Dictionary<int, QualityProfileDto?>();
+        var hydrated = 0;
+        var fallback = 0;
+
+        foreach (var job in legacyVideo)
+        {
+            requests.TryGetValue(job.MediaRequestId, out var request);
+            var profileId = job.QualityProfileId ?? request?.QualityProfileId;
+            if (profileId is not > 0)
+            {
+                profileId = await _profiles.ResolveProfileIdAsync(job.MediaType, job.MediaId,
+                    string.IsNullOrWhiteSpace(job.GenresCsv)
+                        ? null
+                        : job.GenresCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                    requesterChoiceId: null,
+                    userId: request?.RequestedByUserId is > 0 ? request.RequestedByUserId : null,
+                    isAnime: job.IsAnime);
+                if (profileId is > 0) job.QualityProfileId = profileId;
+            }
+
+            QualityProfileDto? profile = null;
+            if (profileId is > 0)
+            {
+                if (!profiles.TryGetValue(profileId.Value, out profile))
+                {
+                    profile = await _profiles.GetProfileAsync(profileId.Value);
+                    profiles[profileId.Value] = profile;
+                }
+            }
+
+            var policy = profile is null
+                ? MediaLanguagePolicy.SmartDefault()
+                : MediaLanguagePolicy.FromProfile(profile);
+            if (!MediaLanguagePolicy.IsActive(policy)) continue;
+
+            job.MediaLanguagePolicyJson = JsonSerializer.Serialize(policy);
+            hydrated++;
+            if (profile is null) fallback++;
+        }
+
+        if (hydrated > 0)
+            _logger.LogInformation(
+                "Snapshotted media-language policies onto {Count} legacy queued video job(s) ({Fallback} used the safe Smart default)",
+                hydrated, fallback);
     }
 
     /// <summary>
