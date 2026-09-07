@@ -81,7 +81,7 @@ public class NotificationService(
         // Not a failure — the request is still being searched. Surface it to admins so they can add an
         // indexer or relax quality rules if they want it found sooner.
         await NotifyAdminsAsync(NotificationType.RequestSearchStalled, "Still searching",
-            $"\"{request.Title}\" has been searched {attempts} times with no release found yet. It will keep retrying; you can help by adding an indexer or adjusting quality rules.",
+            $"\"{request.Title}\" has been searched {attempts} times without a safe automatic match. It will keep retrying. Open Activity → Search queue → Review results to see rejected releases; anime may need an alternate episode order before a collection can be used.",
             request.Id);
         await WriteOutboxAsync(request, BridgeEventType.Searching,
             $"Still searching after {attempts} attempts");

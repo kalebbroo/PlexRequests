@@ -83,7 +83,9 @@ public class FulfillmentPipeline(
                 // "which indexers returned nothing?" without log archaeology.
                 var detail = candidates.Count == 0
                     ? $"No indexer returned a release ({search.Summary})"
-                    : $"{candidates.Count} candidate(s) all rejected by quality/seeder/title filters ({search.Summary})";
+                    : !string.IsNullOrWhiteSpace(ranker.LastFailureSummary)
+                        ? $"{ranker.LastFailureSummary} ({search.Summary})"
+                        : $"{candidates.Count} candidate(s) could not form a safe download plan ({search.Summary})";
                 if (job.IsUpgrade && !job.IsReplacement) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
                 // Flag whether the search had anything to reject. Only that case counts toward relaxing the
                 // quality target — a title that simply isn't out yet gains nothing from lowering the bar.
@@ -433,8 +435,8 @@ public class FulfillmentPipeline(
                         if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile) && parsed.Season is int sourceSeason)
                         {
                             foreach (var sourceEpisode in episodes)
-                                if (EpisodeOrderMapping.TryTranslate(job.EpisodeOrderProfile, sourceSeason,
-                                        sourceEpisode, out var target))
+                                if (EpisodeOrderMapping.TryTranslateFile(job.EpisodeOrderProfile, f,
+                                        sourceSeason, sourceEpisode, out var target))
                                     canonical.Add((target.Season, target.Episode));
                         }
                         else if ((parsed.Season ?? it.Season) is int canonicalSeason)
@@ -688,11 +690,19 @@ public class FulfillmentPipeline(
     /// A one-item plan from the release an admin explicitly chose. Season/episode come from the job's own
     /// targets rather than being re-parsed from the name — the admin already told us what this is for.
     /// </summary>
-    private static DownloadPlan BuildForcedPlan(FulfillmentJobDto job)
+    internal static DownloadPlan BuildForcedPlan(FulfillmentJobDto job)
     {
         var episode = job.RequestedEpisodes.FirstOrDefault();
-        var season = episode?.Season ?? job.RequestedSeasons.FirstOrDefault();
-        var target = job.SeasonTargets.FirstOrDefault();
+        var canonicalTargets = job.SeasonTargets
+            .SelectMany(target => target.MissingEpisodes.Select(number =>
+                new EpisodeRef { Season = target.Season, Episode = number }))
+            .DistinctBy(target => (target.Season, target.Episode))
+            .OrderBy(target => target.Season).ThenBy(target => target.Episode)
+            .ToList();
+        var requestedSeasons = canonicalTargets.Select(target => target.Season)
+            .Concat(job.RequestedSeasons)
+            .Distinct().OrderBy(seasonNumber => seasonNumber).ToList();
+        var season = episode?.Season ?? (requestedSeasons.Count == 1 ? requestedSeasons[0] : null);
         bool isPack = episode is null;
 
         var candidate = new ReleaseCandidate
@@ -705,10 +715,10 @@ public class FulfillmentPipeline(
 
         var item = new DownloadPlanItem(candidate, season == 0 ? null : season, episode?.Episode, isPack)
         {
-            NeededEpisodes = isPack && target is { MissingEpisodes.Count: > 0 } ? target.MissingEpisodes : null,
-            NeededEpisodeRefs = isPack && target is { MissingEpisodes.Count: > 0 }
-                ? target.MissingEpisodes.Select(x => new EpisodeRef { Season = target.Season, Episode = x }).ToList()
-                : null
+            NeededEpisodes = isPack && requestedSeasons.Count == 1 && canonicalTargets.Count > 0
+                ? canonicalTargets.Select(target => target.Episode).ToList()
+                : null,
+            NeededEpisodeRefs = isPack && canonicalTargets.Count > 0 ? canonicalTargets : null
         };
         return new DownloadPlan(isPack ? DownloadPlanKind.SeasonPack : DownloadPlanKind.Episodes, new[] { item });
     }

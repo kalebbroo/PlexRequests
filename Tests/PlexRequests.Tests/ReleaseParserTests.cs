@@ -20,6 +20,7 @@ public class ReleaseParserTests
     [Theory]
     [InlineData("Show.S01E01.1080p.WEB-DL-GRP", ReleaseSource.WebDl)]
     [InlineData("Show.S01E01.1080p.BluRay-GRP", ReleaseSource.BluRay)]
+    [InlineData("[MTBB] Monogatari Series (BD 1080p)", ReleaseSource.BluRay)]
     [InlineData("Show.S01E01.1080p.REMUX-GRP", ReleaseSource.Remux)]
     [InlineData("Show.S01E01.1080p.HDTV-GRP", ReleaseSource.Hdtv)]
     [InlineData("Movie.2024.CAM.x264", ReleaseSource.Cam)]
@@ -94,6 +95,8 @@ public class ReleaseParserTests
     [InlineData("Severance.S02E07.1080p.WEB-DL", "Severance")]
     [InlineData("Lucky_Star.S01.1080p-GRP", "Lucky Star")]
     [InlineData("Lucky_Star.1080p", "Lucky Star")]
+    [InlineData("[MTBB] Monogatari Series (BD 1080p)", "[MTBB] Monogatari Series")]
+    [InlineData("[SubsPlease] Show - 13 [1080p]", "[SubsPlease] Show")]
     public void Extracts_core_title(string name, string expected) =>
         Assert.Equal(expected, _parser.Parse(name).Title);
 
@@ -107,6 +110,9 @@ public class ReleaseParserTests
 
         var p2 = _parser.Parse("Show.S01E01_1080p_WEB-DL_GRP");
         Assert.Equal("GRP", p2.Group);
+
+        var anime = _parser.Parse("[MTBB] Monogatari Series (BD 1080p)");
+        Assert.Equal("MTBB", anime.Group);
     }
 
     [Theory]

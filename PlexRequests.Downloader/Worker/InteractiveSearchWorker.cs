@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using PlexRequests.Downloader.Api;
 using PlexRequests.Downloader.Configuration;
 using PlexRequests.Downloader.Indexers;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
@@ -104,7 +105,7 @@ public class InteractiveSearchWorker(
             var ranked = evaluator.EvaluateAll(search.Candidates, job, context);
             result.Results = ranked
                 .Where(r => task.IncludeRejected || r.Accepted)
-                .Select(ToDto).ToList();
+                .Select(r => ToDto(r, EpisodeOrderMapping.IsActive(task.EpisodeOrderProfile))).ToList();
 
             logger.LogInformation("Interactive search #{Id}: {Accepted} acceptable of {Total} candidate(s)",
                 task.Id, result.Results.Count(r => r.Accepted), result.Results.Count);
@@ -147,30 +148,36 @@ public class InteractiveSearchWorker(
             : new()
     };
 
-    private static SearchResultDto ToDto(RankedCandidate r) => new()
+    private static SearchResultDto ToDto(RankedCandidate r, bool hasEpisodeMapping)
     {
-        ReleaseName = r.Candidate.ReleaseName,
-        Magnet = r.Candidate.Acquisition.Protocol == AcquisitionProtocol.Torrent ? r.Candidate.Acquisition.Locator : string.Empty,
-        InfoHash = r.Candidate.Acquisition.Protocol == AcquisitionProtocol.Torrent
-            ? MagnetUtil.Normalize(r.Candidate.Acquisition.SourceId) ?? MagnetUtil.InfoHashFromMagnet(r.Candidate.Acquisition.Locator)
-            : null,
-        Protocol = r.Candidate.Acquisition.Protocol,
-        IndexerId = r.Candidate.IndexerId,
-        IndexerName = r.Candidate.Source,
-        Seeders = r.Candidate.Seeders,
-        SeedersKnown = r.Candidate.SeedersKnown,
-        SizeGb = Math.Round(r.Candidate.SizeGb, 2),
-        SizeKnown = r.Candidate.SizeKnown,
-        PublishDate = r.Candidate.PublishDate,
-        Resolution = r.Resolution,
-        Season = r.Season,
-        Episode = r.Episode,
-        IsPack = r.IsPack,
-        Accepted = r.Accepted,
-        Rejections = r.Rejections.Select(x => x.Detail).ToList(),
-        Score = Math.Round(r.Score, 1),
-        ScoreBreakdown = r.ScoreBreakdown
-            .GroupBy(c => c.Name)
-            .ToDictionary(g => g.Key, g => Math.Round(g.Sum(c => c.Points), 1))
-    };
+        var requiresManifestReview = r.Rejections.Any(x => x.Reason == RejectionReason.PackScopeUnknown);
+        return new()
+        {
+            ReleaseName = r.Candidate.ReleaseName,
+            Magnet = r.Candidate.Acquisition.Protocol == AcquisitionProtocol.Torrent ? r.Candidate.Acquisition.Locator : string.Empty,
+            InfoHash = r.Candidate.Acquisition.Protocol == AcquisitionProtocol.Torrent
+                ? MagnetUtil.Normalize(r.Candidate.Acquisition.SourceId) ?? MagnetUtil.InfoHashFromMagnet(r.Candidate.Acquisition.Locator)
+                : null,
+            Protocol = r.Candidate.Acquisition.Protocol,
+            IndexerId = r.Candidate.IndexerId,
+            IndexerName = r.Candidate.Source,
+            Seeders = r.Candidate.Seeders,
+            SeedersKnown = r.Candidate.SeedersKnown,
+            SizeGb = Math.Round(r.Candidate.SizeGb, 2),
+            SizeKnown = r.Candidate.SizeKnown,
+            PublishDate = r.Candidate.PublishDate,
+            Resolution = r.Resolution,
+            Season = r.Season,
+            Episode = r.Episode,
+            IsPack = r.IsPack,
+            RequiresEpisodeMapping = requiresManifestReview && !hasEpisodeMapping,
+            RequiresManifestReview = requiresManifestReview,
+            Accepted = r.Accepted,
+            Rejections = r.Rejections.Select(x => x.Detail).ToList(),
+            Score = Math.Round(r.Score, 1),
+            ScoreBreakdown = r.ScoreBreakdown
+                .GroupBy(c => c.Name)
+                .ToDictionary(g => g.Key, g => Math.Round(g.Sum(c => c.Points), 1))
+        };
+    }
 }

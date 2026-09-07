@@ -487,7 +487,8 @@ public class LibraryOrganizer(
             var coverage = new List<EpisodeRef>();
             foreach (var sourceEpisode in sourceEpisodes)
             {
-                if (!EpisodeOrderMapping.TryTranslate(job.EpisodeOrderProfile, sourceSeason, sourceEpisode, out var target))
+                if (!EpisodeOrderMapping.TryTranslateFile(job.EpisodeOrderProfile, file,
+                        sourceSeason, sourceEpisode, out var target))
                 {
                     coverage.Clear();
                     break;

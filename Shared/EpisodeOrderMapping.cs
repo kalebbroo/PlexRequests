@@ -100,6 +100,44 @@ public static partial class EpisodeOrderMapping
         return false;
     }
 
+    /// <summary>
+    /// Translate an episode identity using both its filename and, when needed, a numbered parent folder.
+    /// Anime franchise batches commonly contain paths such as
+    /// <c>01 - Bakemonogatari/[Group] Bakemonogatari - 01.mkv</c>: the filename is absolute-style, while
+    /// the parent folder is the source season/story-arc used by a TMDb episode group. We accept the folder
+    /// only when it resolves through the explicit immutable mapping, and fail if filename and folder
+    /// evidence point at different canonical episodes.
+    /// </summary>
+    public static bool TryTranslateFile(SeriesEpisodeOrderProfileDto? profile, string filePath,
+        int parsedSeason, int sourceEpisode, out EpisodeRef target)
+    {
+        if (!IsActive(profile))
+            return TryTranslate(profile, parsedSeason, sourceEpisode, out target);
+        if (!TryParse(profile!, out var map, out _))
+        {
+            target = new EpisodeRef();
+            return false;
+        }
+
+        var sourceKeys = new List<(int Season, int Episode)> { (parsedSeason, sourceEpisode) };
+        if (parsedSeason == 0 && TryNumberedParent(filePath, out var parentSeason))
+            sourceKeys.Insert(0, (parentSeason, sourceEpisode));
+
+        var matches = sourceKeys.Distinct()
+            .Where(map.ContainsKey)
+            .Select(key => map[key])
+            .DistinctBy(episode => (episode.Season, episode.Episode))
+            .ToList();
+        if (matches.Count == 1)
+        {
+            target = new EpisodeRef { Season = matches[0].Season, Episode = matches[0].Episode };
+            return true;
+        }
+
+        target = new EpisodeRef();
+        return false;
+    }
+
     /// <summary>Resolves Plex's canonical aired numbering back to the numbering used in release names.</summary>
     public static bool TryTranslateCanonicalToSource(SeriesEpisodeOrderProfileDto? profile,
         int canonicalSeason, int canonicalEpisode, out EpisodeRef source)
@@ -150,7 +188,19 @@ public static partial class EpisodeOrderMapping
 
     private static string SourceLabel(int season, int episode) => season == 0 ? $"A{episode}" : $"S{season:D2}E{episode:D2}";
 
+    private static bool TryNumberedParent(string filePath, out int season)
+    {
+        season = 0;
+        var parent = Path.GetFileName(Path.GetDirectoryName(filePath));
+        if (string.IsNullOrWhiteSpace(parent)) return false;
+        var match = NumberedParentRegex().Match(parent);
+        return match.Success && int.TryParse(match.Groups[1].Value, out season) && season > 0;
+    }
+
     [GeneratedRegex(@"^(?:(?:S(\d{1,3})E)|A)(\d{1,4})\s*(?:->|=)\s*S(\d{1,3})E(\d{1,4})$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex MappingLineRegex();
+
+    [GeneratedRegex(@"^\s*(\d{1,3})(?:\s*[-_.:]\s*|\s+)", RegexOptions.CultureInvariant)]
+    private static partial Regex NumberedParentRegex();
 }

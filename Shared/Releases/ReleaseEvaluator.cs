@@ -92,7 +92,18 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         // ---- Season / episode ------------------------------------------------------------------------
         int? sourceSeason = c.Season ?? parsed.Season;
         int? sourceEpisode = c.Episode ?? parsed.Episode;
-        bool isPack = sourceEpisode is null && (parsed.IsSeasonPack || sourceSeason is not null);
+        var singleFileLimit = context.Profile?.MaxSizeGb ?? p.MaxSizeGb;
+        var packLimit = context.Profile?.MaxSeasonPackSizeGb ?? p.MaxSeasonPackSizeGb;
+        // Anime collections commonly omit Sxx/Exx from the outer torrent name and reveal their real shape
+        // only in the internal file tree. A release larger than the single-file ceiling but still within the
+        // configured pack ceiling is strong evidence of that shape. Classify it as a pack for the correct
+        // size policy, but reject it explicitly below until a manifest preflight can prove its coverage.
+        bool unscopedAnimeCollection = job.IsAnime
+            && job.MediaType is MediaType.TvShow or MediaType.Anime
+            && sourceSeason is null && sourceEpisode is null
+            && !parsed.LooksLikeCompleteSeries
+            && c.SizeKnown && c.SizeGb > singleFileLimit && c.SizeGb <= packLimit;
+        bool isPack = sourceEpisode is null && (parsed.IsSeasonPack || sourceSeason is not null || unscopedAnimeCollection);
         var canonicalCoverage = new List<EpisodeRef>();
         int? season = sourceSeason;
         int? episode = sourceEpisode;
@@ -145,14 +156,16 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
             canonicalCoverage.AddRange(sourceEpisodes.Select(x => new EpisodeRef { Season = identitySeason, Episode = x }));
         }
 
+        if (unscopedAnimeCollection)
+            rejections.Add(new Rejection(RejectionReason.PackScopeUnknown,
+                $"{c.SizeGb:F1} GB anime collection has no season/episode scope; map and verify its internal file manifest before selecting it"));
+
         // ---- Seeders, size ---------------------------------------------------------------------------
         int minSeeders = context.Profile?.MinSeeders ?? p.MinSeeders;
         if (c.SeedersKnown && c.Seeders < minSeeders)
             rejections.Add(new Rejection(RejectionReason.TooFewSeeders, $"{c.Seeders} seeders, minimum is {minSeeders}"));
 
-        double maxSize = isPack
-            ? context.Profile?.MaxSeasonPackSizeGb ?? p.MaxSeasonPackSizeGb
-            : context.Profile?.MaxSizeGb ?? p.MaxSizeGb;
+        double maxSize = isPack ? packLimit : singleFileLimit;
 
         if (c.SizeKnown)
         {
@@ -166,8 +179,10 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
 
         // ---- Identity --------------------------------------------------------------------------------
         var (idMatch, idMismatch) = CompareImdb(job.ImdbId, c.ImdbId);
-        double titleRecall = TitleSimilarity(parsed.Title, job.Title);
-        int extraTokens = ExtraTitleTokens(parsed.Title, job.Title);
+        var identityReleaseTitle = NormalizeIdentityTitle(parsed.Title, job.IsAnime);
+        var identityJobTitle = NormalizeIdentityTitle(job.Title, job.IsAnime);
+        double titleRecall = TitleSimilarity(identityReleaseTitle, identityJobTitle);
+        int extraTokens = ExtraTitleTokens(identityReleaseTitle, identityJobTitle);
         int jobRawTokens = RawTokenCount(job.Title);
         // Tolerance for extra words scales with how specific the request is: a one-word title like "Lucky"
         // tolerates none (so it rejects "Lucky Star"), while "The Office" tolerates one (so it accepts the
@@ -453,6 +468,17 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         var job = Tokenize(jobTitle);
         if (rel.Count == 0) return 0; // couldn't parse a core title — the other gates still apply
         return rel.Except(job).Count(t => !RegionTokens.Contains(t));
+    }
+
+    private static string NormalizeIdentityTitle(string title, bool isAnime)
+    {
+        if (!isAnime || string.IsNullOrWhiteSpace(title)) return title;
+        // Nyaa's conventional leading [release group] is provenance, not title identity. "Series" is also
+        // routinely appended to franchise names ("Monogatari Series") without being part of the requested
+        // metadata title. Keep this anime-only so titles in other media domains retain their literal words.
+        var normalized = Regex.Replace(title, @"^\s*\[[^\[\]\r\n]{1,64}\]\s*", string.Empty);
+        normalized = Regex.Replace(normalized, @"\bseries\b", " ", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return Regex.Replace(normalized, @"\s+", " ").Trim();
     }
 
     internal static (bool match, bool mismatch) CompareImdb(string? jobImdb, string? candidateImdb)

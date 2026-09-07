@@ -255,6 +255,37 @@ public sealed class ReleaseCatalogTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CatalogSearchFindsAndReparsesLegacyGroupPrefixedAnimeRows()
+    {
+        var item = Item("monogatari", Hex('A'));
+        item.ReleaseName = "[MTBB] Monogatari Series (BD 1080p)";
+        item.MediaType = MediaType.TvShow;
+        await _catalog.UpsertBatchAsync(Batch(4, "anime-first", "one", item), CancellationToken.None);
+
+        await using (var db = await _factory.CreateDbContextAsync(CancellationToken.None))
+        {
+            var legacy = await db.Releases.SingleAsync(CancellationToken.None);
+            legacy.ParserVersion = 1;
+            legacy.NormalizedTitle = "[MTBB] MONOGATARI SERIES (BD";
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
+
+        var found = await _catalog.SearchAsync(new CatalogQueryDto
+        {
+            Title = "Monogatari",
+            MediaType = MediaType.TvShow
+        }, CancellationToken.None);
+        Assert.Single(found);
+
+        await _catalog.UpsertBatchAsync(Batch(4, "anime-reseen", "two", item), CancellationToken.None);
+        await using var verified = await _factory.CreateDbContextAsync(CancellationToken.None);
+        var release = await verified.Releases.SingleAsync(CancellationToken.None);
+        Assert.Equal(ReleaseCatalogService.ParserVersion, release.ParserVersion);
+        Assert.Equal("[MTBB] MONOGATARI SERIES", release.NormalizedTitle);
+        Assert.Equal(ReleaseSource.BluRay, release.ReleaseSource);
+    }
+
+    [Fact]
     public async Task Catalog_browser_filters_captured_releases_by_source_and_title_tokens()
     {
         var ext = Item("ext-row", Hex('6'));
