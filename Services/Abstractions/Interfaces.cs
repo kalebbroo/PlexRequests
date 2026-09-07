@@ -190,7 +190,8 @@ public interface ISeasonAvailabilityEvaluator
 /// pack", while satisfaction treats a season with episodes present as good enough, because otherwise the
 /// request could never complete.
 /// </param>
-public record SeasonCompleteness(int SeasonNumber, int PlexCount, int ExpectedCount, bool Complete, bool Aired, List<int> MissingEpisodes, bool CountUnknown = false);
+public record SeasonCompleteness(int SeasonNumber, int PlexCount, int ExpectedCount, bool Complete, bool Aired,
+    List<int> MissingEpisodes, bool CountUnknown = false, string? Name = null);
 
 public interface IAuthService
 {

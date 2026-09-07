@@ -438,7 +438,7 @@ public sealed class MusicImportTests
     private sealed class NoSeasonPacks : ISeasonPackSplitter
     {
         public SeasonPackMapResult Map(IReadOnlyList<string> videoFiles, int season,
-            int? expectedEpisodeCount) => new([], [], []);
+            int? expectedEpisodeCount, int? sourceSeason = null) => new([], [], []);
     }
 
     private sealed class NoEpisodes : IEpisodeTitleProvider

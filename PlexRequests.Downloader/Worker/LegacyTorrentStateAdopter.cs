@@ -55,6 +55,7 @@ public class LegacyTorrentStateAdopter(
                     Source = t.Source,
                     IndexerId = t.IndexerId,
                     Season = t.Season,
+                    SourceSeason = t.SourceSeason,
                     Episode = t.Episode,
                     IsPack = t.IsPack,
                     NeededEpisodes = t.NeededEpisodes?.ToList() ?? new(),

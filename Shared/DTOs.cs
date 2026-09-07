@@ -721,6 +721,8 @@ public class TrackedTransferDto
     public string? Source { get; set; }
     public int? IndexerId { get; set; }
     public int? Season { get; set; }
+    /// <summary>Season number used inside the release when it differs from canonical Plex numbering.</summary>
+    public int? SourceSeason { get; set; }
     public int? Episode { get; set; }
     public bool IsPack { get; set; }
     public List<int> NeededEpisodes { get; set; } = new();
@@ -841,6 +843,10 @@ public class FulfillmentJobDto
     /// back to precisely the missing episodes. Empty ⇒ metadata unavailable, so the downloader is pack-only.
     /// </summary>
     public List<SeasonTarget> SeasonTargets { get; set; } = new();
+    /// <summary>Every canonical provider season identity, including seasons already present in Plex. Anime
+    /// release numbering can only be interpreted safely when a pack named for a non-target season is still
+    /// recognized as that non-target season rather than trusted by number.</summary>
+    public List<CanonicalSeasonIdentityDto> CanonicalSeasons { get; set; } = new();
     public Quality Quality { get; set; }
 
     /// <summary>
@@ -921,8 +927,18 @@ public class EpisodeRef
 public class SeasonTarget
 {
     public int Season { get; set; }
+    /// <summary>Canonical provider season name frozen with the episode target. Anime uploaders frequently
+    /// number franchise arcs differently; a unique name match is the only safe automatic remap signal.</summary>
+    public string? Name { get; set; }
     public int EpisodeCount { get; set; }
     public List<int> MissingEpisodes { get; set; } = new();
+}
+
+public class CanonicalSeasonIdentityDto
+{
+    public int Season { get; set; }
+    public string? Name { get; set; }
+    public int EpisodeCount { get; set; }
 }
 
 /// <summary>One quality tier in the catalog: a (resolution, source) pair such as "WEBDL-1080p".</summary>

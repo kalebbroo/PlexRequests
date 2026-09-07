@@ -72,6 +72,8 @@ public sealed record RankedCandidate
     public int? ProfileRank { get; init; }
 
     public int? Season { get; init; }
+    /// <summary>Season number declared by the release before canonical season-name/order translation.</summary>
+    public int? SourceSeason { get; init; }
     public int? SeasonEnd { get; init; }
     public int? Episode { get; init; }
     /// <summary>First and last episode when the name declares a range (S01E01-E06). Null otherwise.</summary>

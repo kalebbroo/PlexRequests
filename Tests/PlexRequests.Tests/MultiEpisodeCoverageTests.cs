@@ -135,6 +135,15 @@ public sealed class MultiEpisodeCoverageTests
         var nonContiguous = splitter.Map(["Show.S01E01E03.mkv"], 1, 3);
         Assert.False(nonContiguous.IsUnambiguous);
         Assert.Empty(nonContiguous.Mappings);
+
+        var translated = splitter.Map(["Anime.S04E01.mkv", "Anime.S04E02.mkv"],
+            season: 3, expectedEpisodeCount: 23, sourceSeason: 4);
+        Assert.True(translated.IsUnambiguous);
+        Assert.All(translated.Mappings, mapping => Assert.Equal(3, mapping.Season));
+
+        var wrongSource = splitter.Map(["Anime.S05E01.mkv"],
+            season: 3, expectedEpisodeCount: 23, sourceSeason: 4);
+        Assert.False(wrongSource.IsUnambiguous);
     }
 
     [Fact]

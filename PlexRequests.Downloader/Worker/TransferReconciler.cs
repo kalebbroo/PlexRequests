@@ -198,7 +198,8 @@ public class TransferReconciler(
             ReleaseName: t.ReleaseName,
             Protocol: t.Protocol,
             SourceId: t.SourceId,
-            NeededEpisodeRefs: t.NeededEpisodeRefs.Count > 0 ? t.NeededEpisodeRefs : null);
+            NeededEpisodeRefs: t.NeededEpisodeRefs.Count > 0 ? t.NeededEpisodeRefs : null,
+            SourceSeason: t.SourceSeason);
 
         var result = await importCoordinator.RunOnceAsync(t.Protocol, t.TransferId,
             token => importer.ImportAsync(job, item, sourcePath, token), ct);

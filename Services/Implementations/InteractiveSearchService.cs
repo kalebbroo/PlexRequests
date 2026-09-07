@@ -256,6 +256,7 @@ public class InteractiveSearchService(
                 ? $"S{s}E{e}"
                 : jobSnapshot?.RequestedEpisodesCsv,
             SeasonTargetsJson = jobSnapshot?.SeasonTargetsJson,
+            CanonicalSeasonsJson = jobSnapshot?.CanonicalSeasonsJson,
             MediaLanguagePolicyJson = policyJson,
             EpisodeOrderProfileJson = episodeOrderJson,
             LibraryDestinationId = routingSnapshot?.LibraryDestinationId,

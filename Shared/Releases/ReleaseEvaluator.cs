@@ -96,6 +96,11 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         // ---- Season / episode ------------------------------------------------------------------------
         int? sourceSeason = c.Season ?? parsed.Season;
         int? sourceEpisode = c.Episode ?? parsed.Episode;
+        var seasonIdentity = isAnime && !EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile)
+            ? job.CanonicalSeasons.Count > 0
+                ? AnimeSeasonIdentity.Match(c.ReleaseName, job.Title, job.CanonicalSeasons, sourceSeason)
+                : AnimeSeasonIdentity.Match(c.ReleaseName, job.Title, job.SeasonTargets, sourceSeason)
+            : null;
         var singleFileLimit = context.Profile?.MaxSizeGb ?? p.MaxSizeGb;
         var packLimit = context.Profile?.MaxSeasonPackSizeGb ?? p.MaxSeasonPackSizeGb;
         // Anime collections commonly omit Sxx/Exx from the outer torrent name and reveal their real shape
@@ -117,6 +122,12 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         int? seasonEnd = parsed.SeasonEnd;
         int? episodeStart = parsed.EpisodeStart;
         int? episodeEnd = parsed.EpisodeEnd;
+
+        if (seasonIdentity is not null)
+        {
+            season = seasonIdentity.CanonicalSeason;
+            seasonEnd = null;
+        }
 
         if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
         {
@@ -158,9 +169,10 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         }
         else if (sourceSeason is int identitySeason)
         {
+            var canonicalSeason = seasonIdentity?.CanonicalSeason ?? identitySeason;
             var sourceEpisodes = (c.Episode is int supplied ? new[] { supplied } : parsed.EpisodeNumbers)
                 .Distinct().OrderBy(x => x).ToList();
-            canonicalCoverage.AddRange(sourceEpisodes.Select(x => new EpisodeRef { Season = identitySeason, Episode = x }));
+            canonicalCoverage.AddRange(sourceEpisodes.Select(x => new EpisodeRef { Season = canonicalSeason, Episode = x }));
         }
 
         if (unverifiedAnimeCollection)
@@ -205,7 +217,7 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
 
         if (idMismatch)
             rejections.Add(new Rejection(RejectionReason.ImdbMismatch, $"IMDb {c.ImdbId} is a different title to {job.ImdbId}"));
-        else if (!idMatch)
+        else if (!idMatch && seasonIdentity is null)
         {
             // The id is far stronger than fuzzy text, so the title gate only applies when there's no id.
             if (titleRecall < p.MinTitleSimilarity)
@@ -296,6 +308,7 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
             QualityDefinitionId = definition?.Id,
             ProfileRank = rank,
             Season = season,
+            SourceSeason = sourceSeason,
             SeasonEnd = seasonEnd,
             Episode = episode,
             EpisodeStart = episodeStart,

@@ -13,7 +13,8 @@ public interface ISeasonPackSplitter
     /// Files that can't be confidently mapped are returned explicitly (never guessed) so the caller can
     /// reject the complete import before any library write.
     /// </summary>
-    SeasonPackMapResult Map(IReadOnlyList<string> videoFiles, int season, int? expectedEpisodeCount);
+    SeasonPackMapResult Map(IReadOnlyList<string> videoFiles, int season, int? expectedEpisodeCount,
+        int? sourceSeason = null);
 }
 
 /// <summary>One physical file and every logical episode it explicitly says it covers.</summary>
@@ -31,7 +32,8 @@ public sealed record SeasonPackMapResult(
 
 public class SeasonPackSplitter(IReleaseParser parser, ILogger<SeasonPackSplitter> logger) : ISeasonPackSplitter
 {
-    public SeasonPackMapResult Map(IReadOnlyList<string> videoFiles, int season, int? expectedEpisodeCount)
+    public SeasonPackMapResult Map(IReadOnlyList<string> videoFiles, int season, int? expectedEpisodeCount,
+        int? sourceSeason = null)
     {
         var result = new List<EpisodeFileMapping>();
         var unmapped = new List<string>();
@@ -42,7 +44,7 @@ public class SeasonPackSplitter(IReleaseParser parser, ILogger<SeasonPackSplitte
         {
             var parsed = parser.Parse(Path.GetFileName(file));
             var episodes = parsed.EpisodeNumbers.Distinct().OrderBy(x => x).ToList();
-            var seasonMatches = parsed.Season is null || parsed.Season == season;
+            var seasonMatches = parsed.Season is null || parsed.Season == (sourceSeason ?? season);
             var episodesValid = episodes.Count > 0 && episodes.All(x => x > 0)
                 && episodes.SequenceEqual(Enumerable.Range(episodes[0], episodes.Count))
                 && (expectedEpisodeCount is not int expected || episodes.All(x => x <= expected));

@@ -4,9 +4,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
+using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.Implementations;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 using Xunit;
 
 namespace PlexRequests.Tests;
@@ -40,6 +42,33 @@ public sealed class AnimeEpisodeOrderPersistenceTests
         Assert.Empty(claimed[2].EpisodeOrderCandidates);
         Assert.Empty(claimed[3].EpisodeOrderCandidates);
         Assert.Equal(1, groups.CandidateCalls);
+    }
+
+    [Fact]
+    public async Task ClaimHydratesCanonicalSeasonNamesOnLegacyAnimeTargets()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = Request("Monogatari");
+        fixture.Db.MediaRequests.Add(request);
+        await fixture.Db.SaveChangesAsync();
+        fixture.Db.FulfillmentJobs.Add(Job(request, anime: true, episodeOrderJson: null));
+        await fixture.Db.SaveChangesAsync();
+        var metadata = new FixedMetadata(new MediaDetailDto
+        {
+            Id = 46195,
+            MediaType = MediaType.TvShow,
+            Title = "Monogatari",
+            Seasons = [new SeasonDto { SeasonNumber = 1, Name = "Bakemonogatari", EpisodeCount = 12 }]
+        });
+        var queue = fixture.Queue(new FixedPreferences(), new FakeEpisodeGroups(Profile("candidate")), metadata);
+
+        var claimed = Assert.Single(await queue.ClaimNextAsync("worker"));
+
+        Assert.Equal("Bakemonogatari", Assert.Single(claimed.SeasonTargets).Name);
+        Assert.Equal("Bakemonogatari", Assert.Single(claimed.CanonicalSeasons).Name);
+        var persisted = JsonSerializer.Deserialize<List<SeasonTarget>>((await fixture.Db.FulfillmentJobs.SingleAsync()).SeasonTargetsJson!);
+        Assert.Equal("Bakemonogatari", Assert.Single(persisted!).Name);
+        Assert.NotNull((await fixture.Db.FulfillmentJobs.SingleAsync()).CanonicalSeasonsJson);
     }
 
     [Fact]
@@ -198,6 +227,20 @@ public sealed class AnimeEpisodeOrderPersistenceTests
         }
     }
 
+    private sealed class FixedMetadata(MediaDetailDto detail) : IMediaMetadataProvider
+    {
+        public Task<List<MediaCardDto>> SearchAsync(string query, MediaType? mediaType = null,
+            int page = 1, int pageSize = 20) => Task.FromResult(new List<MediaCardDto>());
+        public Task<MediaDetailDto?> GetDetailsAsync(int mediaId, MediaType mediaType) =>
+            Task.FromResult<MediaDetailDto?>(detail);
+        public Task<MediaDetailDto?> GetDetailsAsync(MediaRef mediaRef) => Task.FromResult<MediaDetailDto?>(detail);
+        public Task<List<MediaCardDto>> GetRecentlyAddedAsync(int count = 10) =>
+            Task.FromResult(new List<MediaCardDto>());
+        public Task<List<MediaCardDto>> GetLibraryAsync(MediaType mediaType, int page = 1,
+            int pageSize = 20) => Task.FromResult(new List<MediaCardDto>());
+        public Task<string?> GetImdbIdAsync(int mediaId, MediaType mediaType) => Task.FromResult<string?>(null);
+    }
+
     private sealed class Fixture(SqliteConnection connection, AppDbContext db) : IAsyncDisposable
     {
         public AppDbContext Db { get; } = db;
@@ -213,7 +256,7 @@ public sealed class AnimeEpisodeOrderPersistenceTests
         }
 
         public FulfillmentQueue Queue(ILibraryOrganizationPreferencesService preferences,
-            ITmdbEpisodeGroupImportService groups) => new(Db, null!, null!,
+            ITmdbEpisodeGroupImportService groups, IMediaMetadataProvider? metadata = null) => new(Db, metadata!, null!,
             new QualityProfileService(Db, NullLogger<QualityProfileService>.Instance), null!, null!, preferences,
             NullLogger<FulfillmentQueue>.Instance, groups);
 

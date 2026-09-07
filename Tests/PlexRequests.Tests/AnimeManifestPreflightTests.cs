@@ -84,6 +84,73 @@ public sealed class AnimeManifestPreflightTests
     }
 
     [Fact]
+    public void NamedSeasonTranslationMapsUploaderSeasonToCanonicalSeason()
+    {
+        var (job, _) = JobAndItem();
+        job.EpisodeOrderProfile = null;
+        var item = new DownloadPlanItem(TestData.Release("Monogatari Second Season S04"), 3, null, true)
+        {
+            SourceSeason = 4,
+            NeededEpisodeRefs =
+            [
+                new EpisodeRef { Season = 3, Episode = 1 },
+                new EpisodeRef { Season = 3, Episode = 2 }
+            ],
+            RequiresManifestPreflight = true
+        };
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(("[Group] Monogatari S04E01.mkv", GiB(1)),
+                     ("[Group] Monogatari S04E02.mkv", GiB(1))),
+            job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.True(result.Accepted, result.Detail);
+        Assert.Equal([(3, 1), (3, 2)], result.CanonicalCoverage
+            .Select(episode => (episode.Season, episode.Episode)).ToList());
+    }
+
+    [Fact]
+    public void NamedSeasonTranslationRejectsAConflictingInternalSeason()
+    {
+        var (job, _) = JobAndItem();
+        job.EpisodeOrderProfile = null;
+        var item = new DownloadPlanItem(TestData.Release("Monogatari Second Season S04"), 3, null, true)
+        {
+            SourceSeason = 4,
+            NeededEpisodeRefs = [new EpisodeRef { Season = 3, Episode = 1 }],
+            RequiresManifestPreflight = true
+        };
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(("[Group] Monogatari S05E01.mkv", GiB(1))),
+            job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.False(result.Accepted);
+        Assert.Contains("did not match", result.Detail);
+    }
+
+    [Fact]
+    public void PostAddSelectionPreservesNamedSeasonTranslation()
+    {
+        var (job, _) = JobAndItem();
+        job.EpisodeOrderProfile = null;
+        var transfer = new TransferItem("hash", 3, null, true,
+            NeededEpisodeRefs:
+            [
+                new EpisodeRef { Season = 3, Episode = 1 },
+                new EpisodeRef { Season = 3, Episode = 2 }
+            ],
+            SourceSeason: 4);
+
+        var selected = FulfillmentPipeline.BuildCanonicalPackFileSelection(job, transfer,
+            ["Monogatari.S04E01.mkv", "Monogatari.S04E02.mkv", "Monogatari.S05E01.mkv"],
+            _parser, VideoExtensions, [".ass"]);
+
+        Assert.Empty(selected.MissingCoverage);
+        Assert.Equal([true, true, false], selected.Keep);
+    }
+
+    [Fact]
     public void DuplicateCanonicalEpisodeRejectsTheManifest()
     {
         var (job, item) = JobAndItem();

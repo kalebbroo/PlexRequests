@@ -51,6 +51,10 @@ public class FulfillmentJobEntity
     // fall back to precisely the missing episodes. Null/empty ⇒ pack-only (metadata unavailable at enqueue).
     public string? SeasonTargetsJson { get; set; }
 
+    // Every canonical season name/count, including seasons outside the current missing target. This prevents
+    // an uploader's arc number from impersonating another Plex season after the real season was imported.
+    public string? CanonicalSeasonsJson { get; set; }
+
     public Quality Quality { get; set; }
 
     // Classification snapshot taken at enqueue time, so the downloader can route/organize without

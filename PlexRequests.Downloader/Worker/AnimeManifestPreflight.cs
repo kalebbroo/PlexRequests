@@ -96,8 +96,22 @@ internal static class AnimeManifestPreflight
             var coverage = new List<(int Season, int Episode)>();
             foreach (var sourceEpisode in episodes)
             {
-                if (!EpisodeOrderMapping.TryTranslateFile(episodeOrderProfile, file.Path,
-                        sourceSeason, sourceEpisode, out var target))
+                EpisodeRef target;
+                if (!EpisodeOrderMapping.IsActive(episodeOrderProfile)
+                    && item.SourceSeason is int expectedSource
+                    && item.Season is int canonicalSeason
+                    && expectedSource != canonicalSeason)
+                {
+                    if (sourceSeason != expectedSource)
+                    {
+                        unmappedVideos.Add(file.Path);
+                        coverage.Clear();
+                        break;
+                    }
+                    target = new EpisodeRef { Season = canonicalSeason, Episode = sourceEpisode };
+                }
+                else if (!EpisodeOrderMapping.TryTranslateFile(episodeOrderProfile, file.Path,
+                             sourceSeason, sourceEpisode, out target))
                 {
                     unmappedVideos.Add(file.Path);
                     coverage.Clear();
