@@ -21,6 +21,11 @@ public interface IReleaseRanker
     /// <summary>The planner's actionable explanation when no download could be formed. This includes
     /// coverage/mapping failures that a generic "quality filter" message would hide.</summary>
     string? LastFailureSummary { get; }
+
+    /// <summary>Best-first anime collections rejected only because their outer name cannot prove episode
+    /// scope. The pipeline may inspect a bounded number of their manifests against authoritative episode
+    /// groups; candidates rejected for quality, language, identity, health, or size never appear here.</summary>
+    IReadOnlyList<ReleaseCandidate> ManifestFallbackCandidates { get; }
 }
 
 /// <summary>
@@ -44,10 +49,12 @@ public class ReleaseRankerAdapter(
 {
     public bool LastSearchRejectedCandidates { get; private set; }
     public string? LastFailureSummary { get; private set; }
+    public IReadOnlyList<ReleaseCandidate> ManifestFallbackCandidates { get; private set; } = [];
 
     public DownloadPlan PlanDownload(IReadOnlyList<ReleaseCandidate> candidates, FulfillmentJobDto job)
     {
         LastFailureSummary = null;
+        ManifestFallbackCandidates = [];
         var context = BuildContext(job, relaxFloor: false);
         var ranked = evaluator.EvaluateAll(candidates, job, context);
 
@@ -69,6 +76,8 @@ public class ReleaseRankerAdapter(
         }
 
         LastSearchRejectedCandidates = candidates.Count > 0 && !ranked.Any(r => r.Accepted);
+        ManifestFallbackCandidates = ranked.Where(IsManifestOnlyCandidate)
+            .Select(candidate => candidate.Candidate).ToList();
 
         var result = planner.Plan(ranked, job, context);
         if (result.IsEmpty)

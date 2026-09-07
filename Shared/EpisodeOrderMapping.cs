@@ -32,6 +32,7 @@ public static partial class EpisodeOrderMapping
         profile.SourceEpisodeGroupId = null;
         profile.SourceEpisodeGroupName = null;
         profile.ImportedAt = null;
+        profile.SourceGroups = [];
         profile.MappingsText = string.Empty;
     }
 
@@ -40,6 +41,30 @@ public static partial class EpisodeOrderMapping
     {
         var result = new Dictionary<(int, int), EpisodeRef>();
         var targets = new HashSet<(int, int)>();
+        var sourceGroupSeasons = new HashSet<int>();
+        if (!string.IsNullOrWhiteSpace(profile.SourceEpisodeGroupId)
+            && profile.SourceOrder != EpisodeOrderType.Absolute
+            && (profile.SourceGroups?.Count ?? 0) == 0)
+        {
+            mappings = result;
+            error = "This imported episode group predates folder-title verification; re-import it from TMDb before use.";
+            return false;
+        }
+        foreach (var group in profile.SourceGroups ?? [])
+        {
+            if (group.SourceSeason <= 0 || string.IsNullOrWhiteSpace(group.Name) || group.Name.Trim().Length > 256)
+            {
+                mappings = result;
+                error = "Imported source groups must have a positive number and a non-empty name.";
+                return false;
+            }
+            if (!sourceGroupSeasons.Add(group.SourceSeason))
+            {
+                mappings = result;
+                error = $"Imported source group S{group.SourceSeason:D2} is repeated.";
+                return false;
+            }
+        }
         var lines = (profile.MappingsText ?? string.Empty).Replace("\r", string.Empty).Split('\n');
         for (var i = 0; i < lines.Length; i++)
         {
@@ -76,6 +101,14 @@ public static partial class EpisodeOrderMapping
                 error = $"Line {i + 1} maps more than one source episode to S{targetSeason:D2}E{targetEpisode:D2}.";
                 return false;
             }
+        }
+
+        if (sourceGroupSeasons.Count > 0 && result.Keys.Any(key => !sourceGroupSeasons.Contains(key.Item1)))
+        {
+            var unknown = result.Keys.First(key => !sourceGroupSeasons.Contains(key.Item1));
+            mappings = result;
+            error = $"Source mapping {SourceLabel(unknown.Item1, unknown.Item2)} has no matching imported group name.";
+            return false;
         }
 
         mappings = result;
@@ -120,8 +153,23 @@ public static partial class EpisodeOrderMapping
         }
 
         var sourceKeys = new List<(int Season, int Episode)> { (parsedSeason, sourceEpisode) };
-        if (parsedSeason == 0 && TryNumberedParent(filePath, out var parentSeason))
-            sourceKeys.Insert(0, (parentSeason, sourceEpisode));
+        if (TryNumberedParent(filePath, out var parentSeason, out var parentName))
+        {
+            var authoritativeGroups = profile!.SourceGroups ?? [];
+            if (authoritativeGroups.Count > 0)
+            {
+                if (!SourceGroupNameMatches(authoritativeGroups, parentSeason, parentName))
+                {
+                    target = new EpisodeRef();
+                    return false;
+                }
+                // A proven collection folder outranks an arc's own S1/S2 token. Mixing both identities can
+                // accidentally map an embedded sub-series through the first franchise group.
+                sourceKeys = [(parentSeason, sourceEpisode)];
+            }
+            else if (parsedSeason == 0)
+                sourceKeys.Insert(0, (parentSeason, sourceEpisode));
+        }
 
         var matches = sourceKeys.Distinct()
             .Where(map.ContainsKey)
@@ -188,19 +236,52 @@ public static partial class EpisodeOrderMapping
 
     private static string SourceLabel(int season, int episode) => season == 0 ? $"A{episode}" : $"S{season:D2}E{episode:D2}";
 
-    private static bool TryNumberedParent(string filePath, out int season)
+    private static bool TryNumberedParent(string filePath, out int season, out string name)
     {
         season = 0;
+        name = string.Empty;
         var parent = Path.GetFileName(Path.GetDirectoryName(filePath));
         if (string.IsNullOrWhiteSpace(parent)) return false;
         var match = NumberedParentRegex().Match(parent);
-        return match.Success && int.TryParse(match.Groups[1].Value, out season) && season > 0;
+        if (!match.Success || !int.TryParse(match.Groups[1].Value, out season) || season <= 0) return false;
+        name = match.Groups[2].Value.Trim();
+        return name.Length > 0;
     }
+
+    private static bool SourceGroupNameMatches(IReadOnlyCollection<EpisodeOrderSourceGroupDto> groups,
+        int sourceSeason, string folderName)
+    {
+        var expected = groups.FirstOrDefault(group => group.SourceSeason == sourceSeason);
+        if (expected is null) return false;
+        var folderTokens = TitleTokens(folderName);
+        var expectedTokens = TitleTokens(expected.Name);
+        if (folderTokens.Count == 0 || expectedTokens.Count == 0) return false;
+        if (folderTokens.SequenceEqual(expectedTokens)) return true;
+
+        // Release folders commonly split one named arc into season/part/cour folders. Permit only those
+        // explicit structural suffixes; arbitrary extra title words must not turn one anime into another.
+        return folderTokens.Count > expectedTokens.Count
+               && folderTokens.Take(expectedTokens.Count).SequenceEqual(expectedTokens)
+               && folderTokens.Skip(expectedTokens.Count).All(IsStructuralSuffix);
+    }
+
+    private static List<string> TitleTokens(string value) => TitleTokenRegex().Matches(value)
+        .Select(match => match.Value.ToLowerInvariant()).ToList();
+
+    private static bool IsStructuralSuffix(string token) =>
+        token is "season" or "part" or "cour" or "arc"
+        || StructuralNumberRegex().IsMatch(token);
 
     [GeneratedRegex(@"^(?:(?:S(\d{1,3})E)|A)(\d{1,4})\s*(?:->|=)\s*S(\d{1,3})E(\d{1,4})$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex MappingLineRegex();
 
-    [GeneratedRegex(@"^\s*(\d{1,3})(?:\s*[-_.:]\s*|\s+)", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^\s*(\d{1,3})(?:\s*[-_.:]\s*|\s+)(.+?)\s*$", RegexOptions.CultureInvariant)]
     private static partial Regex NumberedParentRegex();
+
+    [GeneratedRegex(@"[\p{L}\p{N}]+", RegexOptions.CultureInvariant)]
+    private static partial Regex TitleTokenRegex();
+
+    [GeneratedRegex(@"^(?:s|season|part|pt|cour)?\d{1,3}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex StructuralNumberRegex();
 }

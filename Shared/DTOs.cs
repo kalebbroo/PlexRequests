@@ -669,6 +669,11 @@ public record ProgressRequest(int Progress, string? WorkerId, List<DownloadTrans
 /// </param>
 public record FailRequest(string? Reason, bool CandidatesRejected = false);
 
+/// <summary>Worker request to freeze one authoritative TMDb episode group onto an anime job after the
+/// torrent manifest uniquely proved it. The server re-imports the group by id; it never trusts mappings
+/// supplied by the downloader or changes the reusable series-wide admin preference.</summary>
+public record EpisodeOrderSelectionRequest(string EpisodeGroupId);
+
 /// <summary>
 /// Live, per-transfer telemetry the downloader worker samples from the active backend each
 /// monitor tick and pushes up with its progress report. Ephemeral — the web app holds only the latest
@@ -853,6 +858,12 @@ public class FulfillmentJobDto
     /// <summary>Immutable per-series release-number translation captured when this job was enqueued.
     /// Null means release numbering already matches Plex's aired order.</summary>
     public SeriesEpisodeOrderProfileDto? EpisodeOrderProfile { get; set; }
+
+    /// <summary>Authoritative TMDb episode-group snapshots offered only when an anime job has no configured
+    /// order. The downloader may use these to resolve an unscoped pack, but only when manifest validation
+    /// proves one unique mapping. They are advisory until the web app persists the selected group onto the
+    /// job; an empty list preserves the existing fail-closed/manual-review behavior.</summary>
+    public List<SeriesEpisodeOrderProfileDto> EpisodeOrderCandidates { get; set; } = new();
 
     /// <summary>The quality-tier catalog, needed to resolve a release's (resolution, source) to a tier.</summary>
     public List<QualityDefinitionDto> QualityDefinitions { get; set; } = new();
@@ -1390,8 +1401,18 @@ public class SeriesEpisodeOrderProfileDto
     public string? SourceEpisodeGroupId { get; set; }
     public string? SourceEpisodeGroupName { get; set; }
     public DateTime? ImportedAt { get; set; }
+    /// <summary>Named source groups from an authoritative episode-group import. When a torrent uses numbered
+    /// parent folders, both the ordinal and this title must agree before that folder can identify a source
+    /// season. Empty for absolute/manual legacy maps where no group-name evidence exists.</summary>
+    public List<EpisodeOrderSourceGroupDto> SourceGroups { get; set; } = new();
     public string MappingsText { get; set; } = string.Empty;
     public bool Enabled { get; set; } = true;
+}
+
+public class EpisodeOrderSourceGroupDto
+{
+    public int SourceSeason { get; set; }
+    public string Name { get; set; } = string.Empty;
 }
 
 public class TmdbEpisodeGroupSummaryDto

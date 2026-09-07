@@ -69,6 +69,10 @@ public interface IPlexRequestsApiClient
     /// <summary>Report "no release findable yet" for a normal job: the web app parks it on a retry backoff
     /// (Deferred / request shows "Searching") instead of failing. Keyed by JOB id, not request id.</summary>
     Task<bool> MarkDeferredAsync(int jobId, string reason, bool candidatesRejected, CancellationToken ct);
+    /// <summary>Ask the web app to re-import and freeze the one TMDb episode group that manifest analysis
+    /// uniquely matched. The returned server-authored profile becomes the immutable job contract.</summary>
+    Task<SeriesEpisodeOrderProfileDto?> ApplyEpisodeOrderGroupAsync(int jobId, string episodeGroupId,
+        CancellationToken ct);
     /// <summary>Report that an upgrade job found nothing better than what's already imported (terminal, non-failure).</summary>
     Task<bool> MarkUpgradeExhaustedAsync(int jobId, CancellationToken ct);
     /// <summary>Report a successful quality upgrade: the better release imported and old files were deleted on

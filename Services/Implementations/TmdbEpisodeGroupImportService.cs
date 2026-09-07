@@ -10,6 +10,10 @@ public interface ITmdbEpisodeGroupImportService
 {
     Task<List<MediaCardDto>> SearchSeriesAsync(string query, CancellationToken ct = default);
     Task<List<TmdbEpisodeGroupSummaryDto>> GetGroupsAsync(int tmdbId, CancellationToken ct = default);
+    /// <summary>Build every valid TMDb episode-group profile for safe manifest comparison. Invalid/empty
+    /// community groups are skipped independently so one bad group cannot suppress the usable choices.</summary>
+    Task<List<SeriesEpisodeOrderProfileDto>> GetCandidateProfilesAsync(int tmdbId, string seriesTitle,
+        CancellationToken ct = default);
     Task<EpisodeGroupImportPreviewDto> BuildPreviewAsync(int tmdbId, string seriesTitle, string groupId,
         CancellationToken ct = default);
 }
@@ -64,6 +68,31 @@ public sealed class TmdbEpisodeGroupImportService(
         }
     }
 
+    public async Task<List<SeriesEpisodeOrderProfileDto>> GetCandidateProfilesAsync(int tmdbId,
+        string seriesTitle, CancellationToken ct = default)
+    {
+        var summaries = await GetGroupsAsync(tmdbId, ct);
+        var profiles = new List<SeriesEpisodeOrderProfileDto>();
+        foreach (var summary in summaries.Where(group => group.EpisodeCount > 0).Take(24))
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                profiles.Add((await BuildPreviewAsync(tmdbId, seriesTitle, summary.Id, ct)).Profile);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex,
+                    "Skipping invalid TMDb episode group {GroupId} ({GroupName}) for series {TmdbId}",
+                    summary.Id, summary.Name, tmdbId);
+            }
+        }
+
+        return profiles
+            .DistinctBy(profile => profile.SourceEpisodeGroupId, StringComparer.Ordinal)
+            .ToList();
+    }
+
     internal static EpisodeGroupImportPreviewDto BuildPreview(int tmdbId, string seriesTitle,
         TvGroupCollection details, DateTime? importedAt = null)
     {
@@ -80,6 +109,12 @@ public sealed class TmdbEpisodeGroupImportService(
             TvGroupType.Digital => EpisodeOrderType.Digital,
             _ => EpisodeOrderType.Custom
         };
+        // Most TMDb groups use one-based or semantic ordinals (sometimes with deliberate gaps), while
+        // some community groups are zero-based. If zero appears, shift the entire set together so group 0
+        // becomes source folder 1 and group 1 becomes source folder 2; shifting only the first group would
+        // create a duplicate and shifting every group unconditionally would break semantic orders.
+        var sourceGroupOffset = details.Type != TvGroupType.Absolute && groups.Any(group => group.Order == 0)
+            ? 1 : 0;
         var lines = new List<string>();
         var skippedSpecials = 0;
         if (details.Type == TvGroupType.Absolute)
@@ -99,7 +134,7 @@ public sealed class TmdbEpisodeGroupImportService(
         {
             foreach (var group in groups)
             foreach (var episode in (group.Episodes ?? []).OrderBy(x => x.Order))
-                lines.Add($"S{group.Order:D2}E{episode.Order + 1:D2} -> S{episode.SeasonNumber:D2}E{episode.EpisodeNumber:D2}");
+                lines.Add($"S{group.Order + sourceGroupOffset:D2}E{episode.Order + 1:D2} -> S{episode.SeasonNumber:D2}E{episode.EpisodeNumber:D2}");
         }
 
         var profile = new SeriesEpisodeOrderProfileDto
@@ -110,6 +145,15 @@ public sealed class TmdbEpisodeGroupImportService(
             SourceEpisodeGroupId = details.Id,
             SourceEpisodeGroupName = string.IsNullOrWhiteSpace(details.Name) ? "Unnamed group" : details.Name,
             ImportedAt = importedAt ?? DateTime.UtcNow,
+            SourceGroups = details.Type == TvGroupType.Absolute
+                ? []
+                : groups.Where(group => group.Order + sourceGroupOffset > 0 && !string.IsNullOrWhiteSpace(group.Name))
+                    .Select(group => new EpisodeOrderSourceGroupDto
+                    {
+                        SourceSeason = group.Order + sourceGroupOffset,
+                        Name = group.Name.Trim()
+                    })
+                    .ToList(),
             MappingsText = string.Join('\n', lines),
             Enabled = true
         };

@@ -21,7 +21,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
     IMusicDirectAcquisitionResolver directMusic, IQualityProfileService profiles,
     ICustomFormatService formats, ISeasonAvailabilityEvaluator seasonEvaluator,
     ILibraryOrganizationPreferencesService libraryPreferences,
-    ILogger<FulfillmentQueue> logger) : IFulfillmentQueue
+    ILogger<FulfillmentQueue> logger,
+    ITmdbEpisodeGroupImportService? episodeGroups = null) : IFulfillmentQueue
 {
     private readonly AppDbContext _db = db;
     private readonly IMediaMetadataProvider _metadata = metadata;
@@ -31,6 +32,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
     private readonly ISeasonAvailabilityEvaluator _seasonEvaluator = seasonEvaluator;
     private readonly ILibraryOrganizationPreferencesService _libraryPreferences = libraryPreferences;
     private readonly ILogger<FulfillmentQueue> _logger = logger;
+    private readonly ITmdbEpisodeGroupImportService? _episodeGroups = episodeGroups;
 
     public async Task<bool> EnqueueAsync(MediaRequestDto request, bool force = false)
     {
@@ -332,7 +334,116 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
 
         var dtos = jobs.Select(Map).ToList();
         await AttachRankingContextAsync(dtos, jobs);
+        await AttachEpisodeOrderCandidatesAsync(dtos);
         return dtos;
+    }
+
+    /// <summary>Offer official episode-group snapshots to the downloader only for anime jobs that have an
+    /// exact target set and no configured order. Discovery is bounded and best-effort: TMDb downtime must
+    /// never make claiming the durable queue fail.</summary>
+    private async Task AttachEpisodeOrderCandidatesAsync(IReadOnlyList<FulfillmentJobDto> jobs)
+    {
+        if (_episodeGroups is null) return;
+        var eligible = jobs.Where(job => job.IsAnime
+                                         && job.MediaType is MediaType.TvShow or MediaType.Anime
+                                         && job.EpisodeOrderProfile is null
+                                         && job.TmdbId is > 0
+                                         && (job.RequestedEpisodes.Count > 0
+                                             || job.SeasonTargets.Any(target => target.MissingEpisodes.Count > 0)))
+            .ToList();
+        if (eligible.Count == 0) return;
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        var bySeries = new Dictionary<int, List<SeriesEpisodeOrderProfileDto>>();
+        foreach (var job in eligible)
+        {
+            var tmdbId = job.TmdbId!.Value;
+            if (!bySeries.TryGetValue(tmdbId, out var candidates))
+            {
+                try
+                {
+                    candidates = await _episodeGroups.GetCandidateProfilesAsync(tmdbId, job.Title, timeout.Token);
+                    bySeries[tmdbId] = candidates;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex,
+                        "TMDb episode-order candidates unavailable for anime job {JobId} ({Title})",
+                        job.Id, job.Title);
+                    candidates = [];
+                    bySeries[tmdbId] = candidates;
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogWarning("TMDb episode-order discovery timed out while claiming anime job {JobId} ({Title})",
+                        job.Id, job.Title);
+                    break;
+                }
+            }
+
+            job.EpisodeOrderCandidates = candidates;
+        }
+    }
+
+    public async Task<SeriesEpisodeOrderProfileDto?> ApplyEpisodeOrderGroupAsync(int jobId,
+        string episodeGroupId, CancellationToken ct = default)
+    {
+        if (_episodeGroups is null || string.IsNullOrWhiteSpace(episodeGroupId)
+            || episodeGroupId.Trim().Length > 128) return null;
+        var job = await _db.FulfillmentJobs.FirstOrDefaultAsync(entity => entity.Id == jobId, ct);
+        if (job is null || !job.IsAnime || job.MediaType is not (MediaType.TvShow or MediaType.Anime)
+            || job.Status is FulfillmentStatus.Completed or FulfillmentStatus.Cancelled or FulfillmentStatus.Failed)
+            return null;
+        var tmdbId = job.TmdbId ?? (string.IsNullOrWhiteSpace(job.ExternalId) ? job.MediaId : null);
+        if (tmdbId is not > 0) return null;
+
+        if (!string.IsNullOrWhiteSpace(job.EpisodeOrderProfileJson))
+        {
+            try
+            {
+                var frozen = JsonSerializer.Deserialize<SeriesEpisodeOrderProfileDto>(job.EpisodeOrderProfileJson);
+                return frozen is not null
+                       && string.Equals(frozen.SourceEpisodeGroupId, episodeGroupId.Trim(), StringComparison.Ordinal)
+                       && EpisodeOrderMapping.IsActive(frozen)
+                       && EpisodeOrderMapping.TryParse(frozen, out _, out _)
+                    ? frozen
+                    : null;
+            }
+            catch (JsonException)
+            {
+                // A malformed old snapshot must not be overwritten automatically; the admin can replace it
+                // explicitly from Library settings where the change is visible and confirmed.
+                return null;
+            }
+        }
+
+        EpisodeGroupImportPreviewDto preview;
+        try
+        {
+            preview = await _episodeGroups.BuildPreviewAsync(tmdbId.Value, job.Title,
+                episodeGroupId.Trim(), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Rejected episode-group selection {GroupId} for anime job {JobId}",
+                episodeGroupId, jobId);
+            return null;
+        }
+
+        var profile = preview.Profile;
+        if (!EpisodeOrderMapping.IsActive(profile)
+            || !EpisodeOrderMapping.TryParse(profile, out _, out _)
+            || profile.TmdbId != tmdbId.Value
+            || !string.Equals(profile.SourceEpisodeGroupId, episodeGroupId.Trim(), StringComparison.Ordinal))
+            return null;
+
+        job.EpisodeOrderProfileJson = JsonSerializer.Serialize(profile);
+        if (await _db.SaveChangesAsync(ct) == 0) return null;
+
+        _logger.LogInformation(
+            "Persisted uniquely matched TMDb episode group {GroupId} ({GroupName}) for anime job {JobId} only",
+            profile.SourceEpisodeGroupId, profile.SourceEpisodeGroupName, jobId);
+        return profile;
     }
 
     /// <summary>

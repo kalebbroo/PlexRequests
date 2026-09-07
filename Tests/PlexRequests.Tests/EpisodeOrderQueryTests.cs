@@ -104,6 +104,7 @@ public sealed class EpisodeOrderQueryTests
         profile.SourceEpisodeGroupId = "old-group";
         profile.SourceEpisodeGroupName = "Old order";
         profile.ImportedAt = DateTime.UtcNow;
+        profile.SourceGroups = [new EpisodeOrderSourceGroupDto { SourceSeason = 1, Name = "Old arc" }];
 
         EpisodeOrderMapping.AssignSeries(profile, 456, "Different Show");
 
@@ -113,6 +114,28 @@ public sealed class EpisodeOrderQueryTests
         Assert.Null(profile.SourceEpisodeGroupId);
         Assert.Null(profile.SourceEpisodeGroupName);
         Assert.Null(profile.ImportedAt);
+        Assert.Empty(profile.SourceGroups);
+    }
+
+    [Fact]
+    public void Imported_mapping_cannot_reference_an_unnamed_source_group()
+    {
+        var profile = Profile(EpisodeOrderType.Custom,
+            "S01E01 -> S01E01\nS02E01 -> S01E02");
+        profile.SourceGroups = [new EpisodeOrderSourceGroupDto { SourceSeason = 1, Name = "Only arc" }];
+
+        Assert.False(EpisodeOrderMapping.TryParse(profile, out _, out var error));
+        Assert.Contains("no matching imported group", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void LegacySeasonBasedTmdbImportMustBeReimportedForFolderTitleEvidence()
+    {
+        var profile = Profile(EpisodeOrderType.Custom, "S01E01 -> S01E01");
+        profile.SourceEpisodeGroupId = "legacy-group";
+
+        Assert.False(EpisodeOrderMapping.TryParse(profile, out _, out var error));
+        Assert.Contains("re-import", error, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
