@@ -49,6 +49,7 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
             .ToDictionary(t => (t.Protocol, t.TransferId), TransferKeyComparer.Instance);
 
         var added = 0;
+        var reactivated = 0;
         foreach (var t in transfers)
         {
             if (string.IsNullOrWhiteSpace(t.TransferId)) continue;
@@ -56,13 +57,45 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
             if (existing.TryGetValue((t.Protocol, t.TransferId), out var row))
             {
                 // Re-registering an already-known transfer is normal (a duplicate enqueue that adopted the
-                // existing one). Refresh what we know; never resurrect a terminal state here — the
-                // reconciler owns state transitions.
+                // existing one). A Failed/Missing row is different: RegisterAsync is called only after the
+                // backend accepted a concrete transfer for the current attempt, so leaving that row terminal
+                // makes the durable reconciler blind to a real download. This happens when a retry selects the
+                // same content-addressed torrent. Imported remains terminal; re-downloading an audited import
+                // needs a new replacement job rather than silently erasing history.
                 row.ReleaseName ??= t.ReleaseName;
                 row.SourceId ??= t.SourceId;
                 row.Source ??= Trim(t.Source, 128);
                 row.IndexerId ??= t.IndexerId;
                 row.NeededEpisodeRefsJson ??= SerializeEpisodeRefs(t.NeededEpisodeRefs);
+                if (row.State is TransferTrackingState.Failed or TransferTrackingState.Missing)
+                {
+                    var now = DateTime.UtcNow;
+                    row.ReleaseName = t.ReleaseName ?? row.ReleaseName;
+                    row.SourceId = t.SourceId ?? row.SourceId;
+                    row.Source = Trim(t.Source, 128) ?? row.Source;
+                    row.IndexerId = t.IndexerId ?? row.IndexerId;
+                    row.Season = t.Season;
+                    row.Episode = t.Episode;
+                    row.IsPack = t.IsPack;
+                    row.NeededEpisodesCsv = t.NeededEpisodes is { Count: > 0 } needed
+                        ? string.Join(",", needed)
+                        : null;
+                    row.NeededEpisodeRefsJson = SerializeEpisodeRefs(t.NeededEpisodeRefs);
+                    row.Resolution = t.Resolution;
+                    row.State = TransferTrackingState.Active;
+                    row.Progress = 0;
+                    row.Seeds = 0;
+                    row.Peers = 0;
+                    row.DownloadRateBytesPerSec = 0;
+                    row.TotalSizeBytes = 0;
+                    row.ProgressChangedAt = now;
+                    row.LastSeenAt = null;
+                    row.TrackerStatus = null;
+                    row.FailReason = null;
+                    row.ImportedAt = null;
+                    row.AddedAt = now;
+                    reactivated++;
+                }
                 continue;
             }
 
@@ -88,8 +121,10 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
         }
 
         await db.SaveChangesAsync();
-        if (added > 0) logger.LogInformation("Job {JobId}: tracking {Count} transfer(s)", jobId, added);
-        return added;
+        if (added > 0 || reactivated > 0)
+            logger.LogInformation("Job {JobId}: tracking {Added} new and {Reactivated} retried transfer(s)",
+                jobId, added, reactivated);
+        return added + reactivated;
     }
 
     public async Task<List<TrackedTransferDto>> GetActiveAsync()

@@ -194,6 +194,12 @@ Add the chosen magnet/torrent to **qBittorrent** or **Deluge** via its Web API, 
 category that routes the completed files to the correct library path (movies vs TV vs music). Record the
 client's torrent hash against the job for progress polling and cleanup.
 
+That durable registration is idempotent by job, protocol, and backend id. If a later attempt selects the
+same content-addressed torrent after its earlier row was marked Failed or Missing, registration reactivates
+the row and replaces its target/telemetry fields with the current attempt. Imported rows remain terminal.
+Without that distinction the worker's local state can monitor the retry while the database reconciler stays
+blind to it, making a deploy during the download capable of stranding the import.
+
 ### Stage 5 — VPN failsafe (the reason this is out-of-process)
 The torrent client must only ever talk through the VPN. Enforce **in depth**:
 - Bind the torrent client to the VPN interface (e.g. `wg0`/`tun0`) — not the default route.

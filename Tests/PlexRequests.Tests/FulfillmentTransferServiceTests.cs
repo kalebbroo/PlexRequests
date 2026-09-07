@@ -13,6 +13,77 @@ namespace PlexRequests.Tests;
 public sealed class FulfillmentTransferServiceTests
 {
     [Fact]
+    public async Task RetryingSameBackendIdReactivatesTerminalTrackingWithCurrentIntent()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity { MediaId = 7, MediaType = MediaType.TvShow, Title = "Anime" };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var job = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId,
+            MediaType = request.MediaType, Title = request.Title
+        };
+        db.FulfillmentJobs.Add(job);
+        await db.SaveChangesAsync();
+        const string transferId = "0936f1e8a2c3968ad47f3331919a065fcd81e985";
+        db.FulfillmentTransfers.Add(new FulfillmentTransferEntity
+        {
+            FulfillmentJobId = job.Id,
+            TransferId = transferId,
+            State = TransferTrackingState.Failed,
+            Progress = 22.5,
+            Seeds = 10,
+            Peers = 3,
+            TotalSizeBytes = 20_000,
+            FailReason = "old attempt was stopped",
+            Season = 1,
+            NeededEpisodesCsv = "1,2"
+        });
+        await db.SaveChangesAsync();
+        var service = new FulfillmentTransferService(db, NullLogger<FulfillmentTransferService>.Instance);
+
+        var registered = await service.RegisterAsync(job.Id,
+        [
+            new TrackedTransferDto
+            {
+                FulfillmentJobId = job.Id,
+                TransferId = transferId,
+                ReleaseName = "safe retry",
+                Season = 4,
+                IsPack = true,
+                NeededEpisodes = [1, 2, 3],
+                NeededEpisodeRefs =
+                [
+                    new EpisodeRef { Season = 4, Episode = 1 },
+                    new EpisodeRef { Season = 4, Episode = 2 }
+                ],
+                Resolution = 1080
+            }
+        ]);
+
+        Assert.Equal(1, registered);
+        var row = await db.FulfillmentTransfers.SingleAsync();
+        Assert.Equal(TransferTrackingState.Active, row.State);
+        Assert.Equal(0, row.Progress);
+        Assert.Equal(0, row.Seeds);
+        Assert.Equal(0, row.Peers);
+        Assert.Equal(0, row.TotalSizeBytes);
+        Assert.Null(row.FailReason);
+        Assert.Null(row.LastSeenAt);
+        Assert.Equal("safe retry", row.ReleaseName);
+        Assert.Equal(4, row.Season);
+        Assert.Equal("1,2,3", row.NeededEpisodesCsv);
+        Assert.Contains("\"Season\":4", row.NeededEpisodeRefsJson);
+        Assert.Equal(1080, row.Resolution);
+        Assert.Single(await service.GetActiveAsync());
+    }
+
+    [Fact]
     public async Task Missing_backend_transfer_with_an_import_audit_is_recorded_as_imported()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
