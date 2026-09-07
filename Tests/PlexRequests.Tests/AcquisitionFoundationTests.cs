@@ -104,6 +104,7 @@ public sealed class AcquisitionFoundationTests
         Assert.Contains("Protocol", await ColumnsAsync(connection, "ImportedFiles"));
         Assert.Contains("Protocol", await ColumnsAsync(connection, "ReleaseBlocklist"));
         Assert.Contains("SourceId", await ColumnsAsync(connection, "ReleaseBlocklist"));
+        Assert.Contains("DecisionVersion", await ColumnsAsync(connection, "ReleaseBlocklist"));
     }
 
     private static async Task<List<string>> ColumnsAsync(SqliteConnection connection, string table)

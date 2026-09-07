@@ -23,6 +23,25 @@ public interface IReleaseBlocklistService
     Task<int> PruneExpiredAsync(CancellationToken ct = default);
 }
 
+/// <summary>Versioned automatic decisions can be reconsidered after mapping logic changes. Increment the
+/// relevant version whenever a release previously rejected for that reason may now be mapped safely.</summary>
+public static class ReleaseBlocklistPolicy
+{
+    public const int CurrentEpisodeMappingVersion = 1;
+
+    public static bool IsDurableContentDecision(BlocklistReason reason) => reason is
+        BlocklistReason.WrongContent or BlocklistReason.ManualBlock or BlocklistReason.MediaPolicyMismatch;
+
+    public static IQueryable<ReleaseBlocklistEntity> EffectiveAt(
+        this IQueryable<ReleaseBlocklistEntity> query, DateTime now) => query.Where(entry =>
+        (entry.ExpiresAt == null || entry.ExpiresAt > now)
+        && (entry.Reason != BlocklistReason.EpisodeMappingAmbiguous
+            || entry.DecisionVersion >= CurrentEpisodeMappingVersion));
+
+    public static int? DecisionVersionFor(BlocklistReason reason) =>
+        reason == BlocklistReason.EpisodeMappingAmbiguous ? CurrentEpisodeMappingVersion : null;
+}
+
 /// <summary>
 /// Remembers releases that failed so a retry doesn't pick the same broken torrent again.
 ///
@@ -78,7 +97,19 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
 
         if (existing is not null)
         {
+            // A later automatic parser failure must never weaken a deliberate or immutable content decision.
+            // The inverse remains allowed: an automatic mapping rejection can be upgraded to a durable block.
+            if (request.Reason == BlocklistReason.EpisodeMappingAmbiguous
+                && ReleaseBlocklistPolicy.IsDurableContentDecision(existing.Reason))
+            {
+                logger.LogInformation(
+                    "Kept durable {ExistingReason} block for {Release}; ignored automatic {NewReason} update",
+                    existing.Reason, request.ReleaseName, request.Reason);
+                return true;
+            }
+
             existing.Reason = request.Reason;
+            existing.DecisionVersion = ReleaseBlocklistPolicy.DecisionVersionFor(request.Reason);
             existing.Detail = Trim(request.Detail);
             existing.BlockedAt = DateTime.UtcNow;
             existing.ExpiresAt = request.ExpiresAt;
@@ -101,6 +132,7 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
             Episode = request.Episode,
             IndexerId = request.IndexerId,
             Reason = request.Reason,
+            DecisionVersion = ReleaseBlocklistPolicy.DecisionVersionFor(request.Reason),
             Detail = Trim(request.Detail),
             ExpiresAt = request.ExpiresAt
         });
@@ -113,7 +145,7 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
 
     public async Task<List<BlocklistEntryDto>> ListAsync(int? mediaRequestId = null, int take = 200)
     {
-        var q = db.ReleaseBlocklist.AsNoTracking().AsQueryable();
+        var q = db.ReleaseBlocklist.AsNoTracking().EffectiveAt(DateTime.UtcNow);
         if (mediaRequestId is int rid) q = q.Where(b => b.MediaRequestId == rid);
 
         var rows = await q.OrderByDescending(b => b.BlockedAt).Take(Math.Clamp(take, 1, 1000)).ToListAsync();
@@ -125,7 +157,8 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
         {
             Id = b.Id, InfoHash = b.InfoHash, Protocol = b.Protocol, SourceId = b.SourceId,
             ReleaseName = b.ReleaseName, Scope = b.Scope,
-            Reason = b.Reason, Detail = b.Detail, MediaRequestId = b.MediaRequestId,
+            Reason = b.Reason, DecisionVersion = b.DecisionVersion, Detail = b.Detail,
+            MediaRequestId = b.MediaRequestId,
             RequestTitle = b.MediaRequestId is int id && titles.TryGetValue(id, out var t) ? t : null,
             MediaId = b.MediaId, MediaType = b.MediaType, BlockedAt = b.BlockedAt, ExpiresAt = b.ExpiresAt
         }).ToList();
@@ -152,8 +185,8 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
         if (job is null) return new();
 
         var now = DateTime.UtcNow;
-        var resources = await db.ReleaseBlocklist
-            .Where(b => (b.SourceId != null || b.InfoHash != null) && (b.ExpiresAt == null || b.ExpiresAt > now))
+        var resources = await db.ReleaseBlocklist.EffectiveAt(now)
+            .Where(b => b.SourceId != null || b.InfoHash != null)
             // Request-scoped entries apply to this request; wider scopes apply to the title or everywhere.
             .Where(b => b.MediaRequestId == job.MediaRequestId
                         || (b.Scope == BlocklistScope.Media && b.MediaId == job.MediaId && b.MediaType == job.MediaType)
@@ -170,7 +203,12 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
     public async Task<int> PruneExpiredAsync(CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
-        return await db.ReleaseBlocklist.Where(b => b.ExpiresAt != null && b.ExpiresAt <= now).ExecuteDeleteAsync(ct);
+        return await db.ReleaseBlocklist.Where(b =>
+                (b.ExpiresAt != null && b.ExpiresAt <= now)
+                || (b.Reason == BlocklistReason.EpisodeMappingAmbiguous
+                    && (b.DecisionVersion == null
+                        || b.DecisionVersion < ReleaseBlocklistPolicy.CurrentEpisodeMappingVersion)))
+            .ExecuteDeleteAsync(ct);
     }
 
     private static string? Trim(string? s) => s is { Length: > 1000 } ? s[..1000] : s;

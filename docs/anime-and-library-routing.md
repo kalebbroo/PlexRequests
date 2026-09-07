@@ -294,3 +294,7 @@ the manifest mapping remain the authority.
   insertion point is frozen on the durable transfer and rechecked during post-add selection and final import.
   Incomplete, duplicated, multi-fraction, non-`.5`, generic, and standalone cases continue to fail closed and
   surface through the normal admin-review notification only after automatic safe searches are exhausted.
+- Automatic episode-mapping blocklist decisions carry the mapping-engine version that produced them. A newer
+  engine can reconsider older parser decisions instead of permanently hiding a now-safe release, while manual
+  blocks, confirmed wrong content, and immutable track-policy failures remain durable and cannot be weakened by
+  a later automatic rejection. Interactive and background searches apply the same expiry/version policy.

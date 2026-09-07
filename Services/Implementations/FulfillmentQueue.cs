@@ -703,8 +703,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             .Select(x => x.DirectDownloadsEnabled)
             .FirstOrDefaultAsync();
         var requestIds = entities.Select(e => e.MediaRequestId).Distinct().ToList();
-        var blocked = await _db.ReleaseBlocklist
-            .Where(b => (b.SourceId != null || b.InfoHash != null) && (b.ExpiresAt == null || b.ExpiresAt > now))
+        var blocked = await _db.ReleaseBlocklist.EffectiveAt(now)
+            .Where(b => b.SourceId != null || b.InfoHash != null)
             .Where(b => (b.MediaRequestId != null && requestIds.Contains(b.MediaRequestId.Value))
                         || b.Scope != BlocklistScope.Request)
             .Select(b => new { b.MediaRequestId, b.Scope, b.MediaId, b.MediaType,

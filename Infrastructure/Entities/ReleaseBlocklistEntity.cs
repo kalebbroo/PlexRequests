@@ -39,6 +39,9 @@ public class ReleaseBlocklistEntity
     public int? IndexerId { get; set; }
 
     public BlocklistReason Reason { get; set; }
+    /// <summary>Decision-engine version for automatically re-evaluable failures. Null is intentional for
+    /// permanent content/user decisions such as WrongContent and ManualBlock.</summary>
+    public int? DecisionVersion { get; set; }
     [MaxLength(1000)] public string? Detail { get; set; }
 
     /// <summary>Display name, so the admin panel doesn't show a bare hash.</summary>

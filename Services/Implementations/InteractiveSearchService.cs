@@ -361,7 +361,7 @@ public class InteractiveSearchService(
 
         if (task.MediaRequestId is int reqId)
         {
-            var blocked = await db.ReleaseBlocklist
+            var blocked = await db.ReleaseBlocklist.EffectiveAt(DateTime.UtcNow)
                 .Where(b => (b.SourceId != null || b.InfoHash != null)
                     && (b.MediaRequestId == reqId || b.Scope != BlocklistScope.Request))
                 .Select(b => new { b.Protocol, b.SourceId, b.InfoHash }).ToListAsync();
