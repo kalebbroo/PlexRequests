@@ -609,6 +609,7 @@ else
             profile.SourceEpisodeGroupId = preview.Profile.SourceEpisodeGroupId;
             profile.SourceEpisodeGroupName = preview.Profile.SourceEpisodeGroupName;
             profile.ImportedAt = preview.Profile.ImportedAt;
+            profile.SourceGroups = preview.Profile.SourceGroups;
             profile.MappingsText = preview.Profile.MappingsText;
             profile.Enabled = true;
             await Toast.ShowSuccessAsync($"Imported {preview.MappedEpisodeCount} validated episode mapping(s). Click Save to persist them.");
@@ -629,6 +630,7 @@ else
         profile.SourceEpisodeGroupId = null;
         profile.SourceEpisodeGroupName = null;
         profile.ImportedAt = null;
+        profile.SourceGroups = [];
     }
 
     private void OrderEdited(SeriesEpisodeOrderProfileDto profile) => MappingEdited(profile);

@@ -43,6 +43,8 @@ public sealed class TmdbEpisodeGroupImportTests
             preview.Profile.MappingsText);
         Assert.Equal(3, preview.MappedEpisodeCount);
         Assert.Null(preview.Warning);
+        Assert.Equal([(1, "Volume 1"), (2, "Volume 2")], preview.Profile.SourceGroups
+            .Select(group => (group.SourceSeason, group.Name)).ToList());
     }
 
     [Fact]
@@ -55,6 +57,20 @@ public sealed class TmdbEpisodeGroupImportTests
 
         Assert.Equal(EpisodeOrderType.Custom, preview.Profile.SourceOrder);
         Assert.Equal("S01E01 -> S02E08", preview.Profile.MappingsText);
+    }
+
+    [Fact]
+    public void ZeroBasedGroupOrdersAreShiftedAsOneSet()
+    {
+        var details = Group(TvGroupType.StoryArc,
+            Season("Arc one", 0, Episode(42, 1, 1, 0)),
+            Season("Arc two", 1, Episode(42, 1, 2, 0)));
+
+        var preview = TmdbEpisodeGroupImportService.BuildPreview(42, "Anime", details, ImportedAt);
+
+        Assert.Equal("S01E01 -> S01E01\nS02E01 -> S01E02", preview.Profile.MappingsText);
+        Assert.Equal([(1, "Arc one"), (2, "Arc two")], preview.Profile.SourceGroups
+            .Select(group => (group.SourceSeason, group.Name)).ToList());
     }
 
     [Fact]

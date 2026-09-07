@@ -23,6 +23,13 @@ public interface IFulfillmentQueue
     /// torrent it did not itself add — claiming would be wrong, since the job may be terminal.</summary>
     Task<FulfillmentJobDto?> GetJobAsync(int jobId);
 
+    /// <summary>Re-import and freeze an authoritative TMDb episode group after payload-free manifest
+    /// analysis found one unique match. This changes only the current job because another release of the
+    /// same series may use a different order. Returns the validated profile or null without changing the
+    /// job when the group/job is invalid or unavailable.</summary>
+    Task<SeriesEpisodeOrderProfileDto?> ApplyEpisodeOrderGroupAsync(int jobId, string episodeGroupId,
+        CancellationToken ct = default) => Task.FromResult<SeriesEpisodeOrderProfileDto?>(null);
+
     /// <summary>Record download progress (0-100) for a claimed job.</summary>
     Task<bool> ReportProgressAsync(int jobId, int progress);
 

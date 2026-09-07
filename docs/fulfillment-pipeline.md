@@ -96,6 +96,15 @@ re-enqueue.
 **Idempotency:** callbacks are safe to retry — the app no-ops when the target is already in the
 terminal state. The worker should retry callbacks until it gets a 2xx.
 
+### `POST /api/fulfillment/{jobId}/episode-order`
+
+Body: `{ "episodeGroupId": "..." }`. Used only after payload-free anime manifest analysis uniquely matches
+one of the authoritative TMDb episode-group candidates included with the claimed job. The server fetches and
+validates the group again, then freezes that server-authored mapping onto this job. Worker-supplied mapping text
+is never accepted, and the reusable admin series preference is not changed because another release may use a
+different order. An invalid, unavailable, terminal, non-anime, or mismatched selection returns a non-2xx response
+without changing the job.
+
 ---
 
 ## Downloader service design (4.2)

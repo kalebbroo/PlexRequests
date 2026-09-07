@@ -915,6 +915,23 @@ app.MapGet("/api/fulfillment/jobs/{jobId:int}", async (int jobId, HttpContext ct
     return job is null ? Results.NotFound() : Results.Ok(job);
 });
 
+// A downloader may discover an anime order only by comparing content-addressed torrent metadata against
+// TMDb episode groups. Persist by group id, never by accepting a worker-supplied mapping: the web app
+// re-imports and validates the authoritative group before freezing it onto this active job only. Different
+// releases of the same series may use different orders; only an admin can create a reusable global profile.
+app.MapPost("/api/fulfillment/{jobId:int}/episode-order", async (
+    int jobId,
+    EpisodeOrderSelectionRequest body,
+    HttpContext ctx,
+    IConfiguration cfg,
+    IFulfillmentQueue queue,
+    CancellationToken cancellationToken) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var profile = await queue.ApplyEpisodeOrderGroupAsync(jobId, body.EpisodeGroupId, cancellationToken);
+    return profile is null ? Results.BadRequest() : Results.Ok(profile);
+});
+
 app.MapGet("/api/fulfillment/transfers/active", async (HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IFulfillmentTransferService svc) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();

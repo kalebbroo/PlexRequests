@@ -97,6 +97,24 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         return resp.IsSuccessStatusCode;
     }
 
+    public async Task<SeriesEpisodeOrderProfileDto?> ApplyEpisodeOrderGroupAsync(int jobId,
+        string episodeGroupId, CancellationToken ct)
+    {
+        try
+        {
+            var response = await _http.PostAsJsonAsync($"/api/fulfillment/{jobId}/episode-order",
+                new EpisodeOrderSelectionRequest(episodeGroupId), ct);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadFromJsonAsync<SeriesEpisodeOrderProfileDto>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not persist episode-order group {GroupId} for job {JobId}",
+                episodeGroupId, jobId);
+            return null;
+        }
+    }
+
     public async Task<bool> MarkUpgradeExhaustedAsync(int jobId, CancellationToken ct)
     {
         var resp = await _http.PostAsync($"/api/fulfillment/{jobId}/upgrade-exhausted", content: null, ct);

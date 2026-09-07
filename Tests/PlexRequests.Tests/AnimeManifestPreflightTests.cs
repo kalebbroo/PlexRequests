@@ -3,6 +3,7 @@ using PlexRequests.Downloader.Configuration;
 using PlexRequests.Downloader.Download;
 using PlexRequests.Downloader.Ranking;
 using PlexRequests.Downloader.Worker;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
@@ -192,6 +193,127 @@ public sealed class AnimeManifestPreflightTests
         Assert.Equal([true, true], result.WantedFiles);
     }
 
+    [Fact]
+    public void ResolverSelectsTheOnlyEpisodeGroupWhoseFullManifestMatches()
+    {
+        var (job, item) = JobAndItem();
+        job.EpisodeOrderProfile = null;
+        var manifest = Manifest(
+            ("01 - Bakemonogatari/[MTBB] Bakemonogatari - 01.mkv", GiB(1)),
+            ("01 - Bakemonogatari/[MTBB] Bakemonogatari - 02.mkv", GiB(1)),
+            ("02 - Nisemonogatari/[MTBB] Nisemonogatari - 01.mkv", GiB(1)));
+        var matching = Profile("matching", "Story order",
+            "S01E01 -> S01E01\nS01E02 -> S01E02\nS02E01 -> S02E01",
+            (1, "Bakemonogatari"), (2, "Nisemonogatari"));
+        var wrong = Profile("wrong", "Wrong order", "S01E01 -> S01E01\nS01E02 -> S01E02",
+            (1, "Bakemonogatari"));
+
+        var result = AnimeEpisodeOrderResolver.Resolve(manifest, job, item, [wrong, matching],
+            _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.True(result.Resolved, result.Detail);
+        Assert.Equal("matching", result.Profile!.SourceEpisodeGroupId);
+        Assert.True(result.Decision!.Accepted);
+        Assert.Contains("uniquely matches", result.Detail);
+    }
+
+    [Fact]
+    public void ResolverRejectsConflictingGroupsThatBothFitTheCurrentManifest()
+    {
+        var (job, item) = JobAndItem();
+        job.EpisodeOrderProfile = null;
+        var manifest = Manifest(
+            ("01 - Arc/[Group] Arc - 01.mkv", GiB(1)),
+            ("01 - Arc/[Group] Arc - 02.mkv", GiB(1)),
+            ("02 - Arc/[Group] Arc - 01.mkv", GiB(1)));
+        var first = Profile("first", "First order",
+            "S01E01 -> S01E01\nS01E02 -> S01E02\nS02E01 -> S02E01", (1, "Arc"), (2, "Arc"));
+        var second = Profile("second", "Second order",
+            "S01E01 -> S01E02\nS01E02 -> S01E01\nS02E01 -> S02E01", (1, "Arc"), (2, "Arc"));
+
+        var result = AnimeEpisodeOrderResolver.Resolve(manifest, job, item, [first, second],
+            _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.False(result.Resolved);
+        Assert.Contains("conflicting", result.Detail);
+        Assert.Contains("admin review", result.Detail);
+    }
+
+    [Fact]
+    public void ResolverTreatsDuplicateOfficialGroupsWithTheSameFullContractAsOneMatch()
+    {
+        var (job, item) = JobAndItem();
+        job.EpisodeOrderProfile = null;
+        var manifest = Manifest(
+            ("01 - Arc/[Group] Arc - 01.mkv", GiB(1)),
+            ("01 - Arc/[Group] Arc - 02.mkv", GiB(1)),
+            ("02 - Arc/[Group] Arc - 01.mkv", GiB(1)));
+        const string map = "S01E01 -> S01E01\nS01E02 -> S01E02\nS02E01 -> S02E01";
+
+        var result = AnimeEpisodeOrderResolver.Resolve(manifest, job, item,
+            [Profile("b", "Same B", map, (1, "Arc"), (2, "Arc")),
+             Profile("a", "Same A", map, (1, "Arc"), (2, "Arc"))],
+            _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.True(result.Resolved, result.Detail);
+        Assert.Equal("a", result.Profile!.SourceEpisodeGroupId);
+    }
+
+    [Fact]
+    public void RankerExposesOnlyCollectionsBlockedSolelyByManifestScope()
+    {
+        var (job, _) = JobAndItem();
+        job.EpisodeOrderProfile = null;
+        job.QualityProfile = TestData.Profile(TestData.Definitions());
+        job.QualityDefinitions = TestData.Definitions();
+        job.EmptySearchCount = 3;
+        var safe = TestData.Release("[MTBB] Monogatari Series (BD 1080p)", sizeGb: 70.2,
+            infoHash: new string('a', 40));
+        var unhealthy = TestData.Release("[Other] Monogatari Series (BD 1080p)", seeders: 0,
+            sizeGb: 70.2, infoHash: new string('b', 40));
+        var ranker = CreateRanker();
+
+        Assert.True(ranker.PlanDownload([unhealthy, safe], job).IsEmpty);
+
+        var candidate = Assert.Single(ranker.ManifestFallbackCandidates);
+        Assert.Equal(safe.Acquisition.SourceId, candidate.Acquisition.SourceId);
+    }
+
+    [Fact]
+    public void OfficialGroupNamePreventsOrdinalCollisionBetweenAnimeArcs()
+    {
+        var (job, _) = JobAndItem();
+        job.EpisodeOrderProfile = Profile("novel", "Novel order",
+            "S01E01 -> S01E01\nS02E01 -> S02E01",
+            (1, "Bakemonogatari"), (2, "Nisemonogatari"));
+        var item = new DownloadPlanItem(TestData.Release("Monogatari collection"), null, null, true)
+        {
+            NeededEpisodeRefs = [new EpisodeRef { Season = 2, Episode = 1 }],
+            RequiresManifestPreflight = true
+        };
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(("02 - Kizumonogatari/[MTBB] Kizumonogatari - 01.mkv", GiB(1))),
+            job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.False(result.Accepted);
+        Assert.DoesNotContain(true, result.WantedFiles);
+        Assert.Contains("S02E01", result.Detail);
+        Assert.Contains("Kizumonogatari", result.Detail);
+    }
+
+    [Fact]
+    public void StructuralSeasonSuffixMayMatchAnAuthoritativeArcName()
+    {
+        var profile = Profile("novel", "Novel order", "S12E01 -> S04E01",
+            (12, "Owarimonogatari"));
+
+        Assert.True(EpisodeOrderMapping.TryTranslateFile(profile,
+            "12 - Owarimonogatari S1/[MTBB] Owarimonogatari S1 - 01.mkv",
+            parsedSeason: 1, sourceEpisode: 1, out var target));
+        Assert.Equal((4, 1), (target.Season, target.Episode));
+    }
+
     private static ReleaseRankerAdapter CreateRanker() => new(
         TestData.Evaluator(), new DownloadPlanner(), new StubPreferences(), new StubIndexers(),
         NullLogger<ReleaseRankerAdapter>.Instance);
@@ -210,6 +332,7 @@ public sealed class AnimeManifestPreflightTests
             TestData.Season(2, 1)
         ]);
         job.IsAnime = true;
+        job.TmdbId = 46195;
         job.RequestScope = RequestScopeKind.Series;
         job.EpisodeOrderProfile = new SeriesEpisodeOrderProfileDto
         {
@@ -226,6 +349,23 @@ public sealed class AnimeManifestPreflightTests
         };
         return (job, item);
     }
+
+    private static SeriesEpisodeOrderProfileDto Profile(string id, string name, string mappings,
+        params (int Season, string Name)[] groups) => new()
+    {
+        TmdbId = 46195,
+        SeriesTitle = "Monogatari",
+        SourceOrder = EpisodeOrderType.Custom,
+        SourceEpisodeGroupId = id,
+        SourceEpisodeGroupName = name,
+        SourceGroups = groups.Select(group => new EpisodeOrderSourceGroupDto
+        {
+            SourceSeason = group.Season,
+            Name = group.Name
+        }).ToList(),
+        MappingsText = mappings,
+        Enabled = true
+    };
 
     private static AcquisitionManifest Manifest(params (string Path, long Bytes)[] files) =>
         new(files.Select(file => new AcquisitionManifestFile(file.Path, file.Bytes)).ToList());

@@ -188,6 +188,28 @@ selected file lengths, and a selected payload above the profile's pack limit. No
 outside the request stay at priority zero. A timeout is retryable; a structurally invalid collection is blocklisted
 for that request so retries advance to another candidate instead of looping.
 
+When an anime job has no configured order, claim now includes bounded, server-authored snapshots of every valid
+TMDb episode group for that series. The downloader inspects at most the three best collections rejected solely for
+unknown outer scope and runs the real manifest through every snapshot. It adopts an order automatically only when
+one complete mapping contract uniquely passes; duplicate TMDb groups are equivalent only when their entire
+source-to-canonical maps are identical, not merely when they happen to cover today's requested subset. The worker
+sends only the selected group id back, and the web app re-imports that group from TMDb before freezing it onto the
+current job. It does not change the reusable series setting because a later release may use a different order.
+For numbered collection folders, imported profiles also retain each TMDb group's name. Both the ordinal and a
+conservative tokenized title match must agree; folder `02 - Kizumonogatari` can never satisfy official group 2
+`Nisemonogatari` merely because the numbers collide. Explicit `S1`/`Part 2`/`Cour 2` suffixes are tolerated, while
+arbitrary extra title words fail closed and appear in the manifest diagnostic.
+Season-based TMDb profiles saved before this folder-title provenance existed are not trusted silently; the admin
+must re-import that group once. Legacy hand-authored maps remain valid, and absolute groups do not need folder
+names because their source identity is the absolute episode number itself.
+
+Mixed franchise archives intentionally remain a last-resort review case. A collection that embeds movies among TV
+arcs, resets numbering under title folders, splits one official group across multiple folders, or predates current
+episodes cannot be made safe by an episode-count coincidence. It stays payload-free, records the conflicting or
+missing group evidence in the job error, keeps retrying other releases, and reaches the existing one-time admin
+notification after the retry threshold. The next manual-review layer can use that evidence to build a per-release
+custom map; it must never reinterpret the files silently.
+
 Release aliases should eventually come from a durable identity table populated from metadata aliases and AniDB's
 title dump, not an ever-growing stop-word list. Alias matches are ranking evidence only; canonical provider IDs and
 the manifest mapping remain the authority.
@@ -204,3 +226,5 @@ the manifest mapping remain the authority.
 - Routing, track inspection, episode coverage, import, Plex scan, and verification are visible in one audit trail.
 - An unscoped anime collection never starts automatically until its internal manifest proves unique canonical
   coverage; the last-resort admin path preserves the same import and target safeguards.
+- Automatic episode-order discovery persists its authoritative TMDb group on the current job only and rejects
+  zero-match or conflicting-match manifests without starting payload data.

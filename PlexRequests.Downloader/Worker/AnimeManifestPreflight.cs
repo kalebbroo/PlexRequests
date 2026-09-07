@@ -26,7 +26,20 @@ internal static class AnimeManifestPreflight
         DownloadPlanItem item,
         IReleaseParser parser,
         IReadOnlyCollection<string> videoExtensions,
-        double maxSelectedGb)
+        double maxSelectedGb) =>
+        EvaluateWithEpisodeOrder(manifest, job, item, parser, videoExtensions, maxSelectedGb,
+            job.EpisodeOrderProfile);
+
+    /// <summary>Evaluate the same immutable target contract against one proposed episode order without
+    /// mutating the claimed job. Used only during payload-free order discovery.</summary>
+    public static ManifestPreflightDecision EvaluateWithEpisodeOrder(
+        AcquisitionManifest manifest,
+        FulfillmentJobDto job,
+        DownloadPlanItem item,
+        IReleaseParser parser,
+        IReadOnlyCollection<string> videoExtensions,
+        double maxSelectedGb,
+        SeriesEpisodeOrderProfileDto? episodeOrderProfile)
     {
         if (!job.IsAnime || !item.IsPack)
             return ManifestPreflightDecision.Reject("Manifest preflight is restricted to anime collection packs.", manifest.Files.Count);
@@ -45,6 +58,7 @@ internal static class AnimeManifestPreflight
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var selected = Enumerable.Repeat(false, manifest.Files.Count).ToArray();
         var selectedCoverage = new Dictionary<(int Season, int Episode), int>();
+        var unmappedVideos = new List<string>();
         long selectedBytes = 0;
 
         for (var index = 0; index < manifest.Files.Count; index++)
@@ -62,9 +76,10 @@ internal static class AnimeManifestPreflight
             var coverage = new List<(int Season, int Episode)>();
             foreach (var sourceEpisode in episodes)
             {
-                if (!EpisodeOrderMapping.TryTranslateFile(job.EpisodeOrderProfile, file.Path,
+                if (!EpisodeOrderMapping.TryTranslateFile(episodeOrderProfile, file.Path,
                         sourceSeason, sourceEpisode, out var target))
                 {
+                    unmappedVideos.Add(file.Path);
                     coverage.Clear();
                     break;
                 }
@@ -101,8 +116,12 @@ internal static class AnimeManifestPreflight
         {
             var sample = string.Join(",", missing.Take(12).Select(target => $"S{target.Season:D2}E{target.Episode:D2}"));
             var suffix = missing.Count > 12 ? $" (+{missing.Count - 12} more)" : string.Empty;
+            var unmapped = unmappedVideos.Count == 0
+                ? string.Empty
+                : $" {unmappedVideos.Count} numbered video file(s) did not match this order"
+                  + $" (for example: {string.Join("; ", unmappedVideos.Distinct().Take(3))}).";
             return ManifestPreflightDecision.Reject(
-                $"Torrent manifest is missing {missing.Count} requested canonical episode(s): {sample}{suffix}.",
+                $"Torrent manifest is missing {missing.Count} requested canonical episode(s): {sample}{suffix}.{unmapped}",
                 manifest.Files.Count);
         }
 

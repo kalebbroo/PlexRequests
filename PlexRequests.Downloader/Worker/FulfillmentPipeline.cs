@@ -75,6 +75,14 @@ public class FulfillmentPipeline(
                 candidates = search.Candidates;
                 plan = ranker.PlanDownload(candidates, job);
             }
+            string? episodeOrderDiscoveryDetail = null;
+            if (plan.IsEmpty && !job.IsManualGrab && job.IsAnime
+                && job.EpisodeOrderProfile is null
+                && job.EpisodeOrderCandidates.Count > 0
+                && ranker.ManifestFallbackCandidates.Count > 0)
+            {
+                (plan, episodeOrderDiscoveryDetail) = await TryResolveAnimeEpisodeOrderAsync(job, ct);
+            }
             if (plan.IsEmpty)
             {
                 // Never dead-end: a normal job is parked and re-searched on a backoff (request shows
@@ -83,6 +91,8 @@ public class FulfillmentPipeline(
                 // "which indexers returned nothing?" without log archaeology.
                 var detail = candidates.Count == 0
                     ? $"No indexer returned a release ({search.Summary})"
+                    : !string.IsNullOrWhiteSpace(episodeOrderDiscoveryDetail)
+                        ? $"{episodeOrderDiscoveryDetail} ({search.Summary})"
                     : !string.IsNullOrWhiteSpace(ranker.LastFailureSummary)
                         ? $"{ranker.LastFailureSummary} ({search.Summary})"
                         : $"{candidates.Count} candidate(s) could not form a safe download plan ({search.Summary})";
@@ -796,6 +806,89 @@ public class FulfillmentPipeline(
             RequiresManifestPreflight = job.IsAnime && isPack && canonicalTargets.Count > 0
         };
         return new DownloadPlan(isPack ? DownloadPlanKind.SeasonPack : DownloadPlanKind.Episodes, new[] { item });
+    }
+
+    /// <summary>Inspect a bounded number of otherwise-acceptable anime collections without starting their
+    /// payload. A TMDb order is adopted only after one full mapping contract uniquely passes the same
+    /// manifest preflight enforced again immediately before enqueue.</summary>
+    private async Task<(DownloadPlan Plan, string? Detail)> TryResolveAnimeEpisodeOrderAsync(
+        FulfillmentJobDto job, CancellationToken ct)
+    {
+        var canonicalTargets = job.RequestedEpisodes
+            .Concat(job.SeasonTargets.SelectMany(target => target.MissingEpisodes.Select(episode =>
+                new EpisodeRef { Season = target.Season, Episode = episode })))
+            .Where(target => target.Season >= 0 && target.Episode > 0)
+            .DistinctBy(target => (target.Season, target.Episode))
+            .OrderBy(target => target.Season).ThenBy(target => target.Episode)
+            .ToList();
+        if (canonicalTargets.Count == 0)
+            return (DownloadPlan.None,
+                "Anime episode-order discovery needs an exact canonical episode target set before it can inspect a collection");
+
+        var failures = new List<string>();
+        var maxPackGb = job.QualityProfile?.MaxSeasonPackSizeGb ?? prefs.Current.MaxSeasonPackSizeGb;
+        foreach (var candidate in ranker.ManifestFallbackCandidates
+                     .DistinctBy(candidate => candidate.Acquisition.SourceId ?? candidate.Acquisition.Locator,
+                         StringComparer.OrdinalIgnoreCase)
+                     .Take(3))
+        {
+            var resource = candidate.Acquisition;
+            if (!acquisitionBackends.TryGet(resource.Protocol, out var backend)
+                || !backend.Capabilities.SupportsManifestPreflight)
+            {
+                failures.Add($"{candidate.ReleaseName}: {resource.Protocol} cannot inspect manifests");
+                continue;
+            }
+
+            AcquisitionManifest? manifest;
+            try
+            {
+                manifest = await backend.GetManifestAsync(resource, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                failures.Add($"{candidate.ReleaseName}: metadata inspection failed ({ex.Message})");
+                continue;
+            }
+            if (manifest is null)
+            {
+                failures.Add($"{candidate.ReleaseName}: metadata did not arrive within the preflight timeout");
+                continue;
+            }
+
+            var item = new DownloadPlanItem(candidate, null, null, true)
+            {
+                NeededEpisodeRefs = canonicalTargets,
+                RequiresManifestPreflight = true
+            };
+            var resolution = AnimeEpisodeOrderResolver.Resolve(manifest, job, item,
+                job.EpisodeOrderCandidates, parser, libraryPrefs.Current.VideoExtensions, maxPackGb);
+            if (!resolution.Resolved || resolution.Profile?.SourceEpisodeGroupId is not { Length: > 0 } groupId)
+            {
+                failures.Add($"{candidate.ReleaseName}: {resolution.Detail}");
+                continue;
+            }
+
+            var persisted = await api.ApplyEpisodeOrderGroupAsync(job.Id, groupId, ct);
+            if (persisted is null)
+                return (DownloadPlan.None,
+                    $"{candidate.ReleaseName}: a unique manifest match was found, but its authoritative TMDb order could not be frozen onto the job; it will retry safely");
+
+            job.EpisodeOrderProfile = persisted;
+            var plan = ranker.PlanDownload([candidate], job);
+            if (plan.IsEmpty)
+                return (DownloadPlan.None,
+                    $"{candidate.ReleaseName}: TMDb order \"{persisted.SourceEpisodeGroupName}\" was saved, but the release no longer formed a complete plan");
+
+            logger.LogInformation("Job {JobId}: automatically selected anime episode order — {Detail}",
+                job.Id, resolution.Detail);
+            return (plan, resolution.Detail);
+        }
+
+        var detail = failures.Count == 0
+            ? "No safe anime collection was available for episode-order discovery"
+            : $"Anime collection metadata could not prove one episode order: {string.Join("; ", failures.Take(3))}";
+        return (DownloadPlan.None, detail);
     }
 
     private static string TransferKey(TransferItem transfer) => TransferKey(transfer.Protocol, transfer.TransferId);
