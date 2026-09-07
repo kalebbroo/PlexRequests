@@ -231,6 +231,16 @@ existing snapshot is never overwritten. If an old row cannot resolve any profile
 Smart English/English fallback instead of crossing the process boundary without track validation. This matters
 after long deferrals: retrying an old anime request must not bypass protections added while it was waiting.
 
+Partial progress is non-terminal. Anime and kids catalogs rarely expose one trustworthy release for an entire
+multi-season request, so each successfully imported pack is recorded as durable episode coverage and subtracted
+from the same immutable job contract. The worker discards its completed transfer plan before the server makes the
+job claimable again, waits through a short hand-off window, then searches only the remaining episodes. A manual
+grab is converted back to automatic search for the remainder so it cannot replay the administrator's one-season
+choice. If later passes collectively cover the complete target, the request becomes Available; otherwise it stays
+Partially available while retries continue. A legacy `MediaType.Anime` request also uses series/episode-aware Plex
+verification—one visible episode is never enough to complete a whole-series request. Only repeated searches with
+no safe match reach the one-time admin review notification.
+
 Release aliases should eventually come from a durable identity table populated from metadata aliases and AniDB's
 title dump, not an ever-growing stop-word list. Alias matches are ranking evidence only; canonical provider IDs and
 the manifest mapping remain the authority.
@@ -251,3 +261,5 @@ the manifest mapping remain the authority.
   zero-match or conflicting-match manifests without starting payload data.
 - Legacy queued anime jobs cannot be claimed without a frozen language contract, and Smart anime rejects actual
   tracks unless they contain the preferred dub or Japanese audio with preferred-language subtitles.
+- A partial season/episode import automatically narrows and continues the same job without re-downloading proven
+  coverage, replaying a manual grab, or falsely marking a legacy Anime series complete after one episode.

@@ -162,8 +162,9 @@ public class AvailabilityReconciliationService(
     private static async Task<bool> IsSatisfiedAsync(MediaRequestEntity req, Dictionary<(MediaType, int), bool> titleAvailable,
         IPlexApiService plex, ISeasonAvailabilityEvaluator seasonEvaluator, CancellationToken ct)
     {
-        // Movies: available when the title is on Plex.
-        if (req.MediaType != MediaType.TvShow)
+        // Movies: available when the title is on Plex. Legacy MediaType.Anime rows are series, not movies;
+        // treating them as title-level meant one imported episode could falsely complete the whole request.
+        if (!UsesSeriesAvailability(req.MediaType))
             return titleAvailable.TryGetValue((req.MediaType, req.MediaId), out var mv) && mv;
 
         // TV, episode-level request: every requested episode must be present.
@@ -190,6 +191,9 @@ public class AvailabilityReconciliationService(
         // "the show exists in the library at all", which used to fire the instant even one episode landed.
         return await seasonEvaluator.IsWholeSeriesSatisfiedAsync(req.MediaId, ct);
     }
+
+    internal static bool UsesSeriesAvailability(MediaType mediaType) =>
+        mediaType is MediaType.TvShow or MediaType.Anime;
 
     private static List<(int season, int episode)> ParseEpisodes(string csv)
     {
