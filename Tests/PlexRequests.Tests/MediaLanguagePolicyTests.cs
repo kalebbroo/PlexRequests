@@ -170,6 +170,32 @@ public sealed class MediaLanguagePolicyTests
     }
 
     [Fact]
+    public void SmartAnime_RequiresPreferredDubOrJapaneseWithPreferredSubtitles()
+    {
+        var policy = new MediaLanguagePolicyDto
+        {
+            Preference = ReleaseLanguagePreference.Smart,
+            PreferredAudioLanguage = "en",
+            PreferredSubtitleLanguage = "en"
+        };
+
+        Assert.True(MediaLanguagePolicy.Evaluate(policy,
+            Tracks(audio: ["en", "ja"], subtitles: ["en"]), isAnime: true).Accepted);
+        Assert.True(MediaLanguagePolicy.Evaluate(policy,
+            Tracks(audio: ["ja"], subtitles: ["en"]), isAnime: true).Accepted);
+        var wrongDub = MediaLanguagePolicy.Evaluate(policy,
+            Tracks(audio: ["de", "ja"], subtitles: ["de"]), isAnime: true);
+        Assert.False(wrongDub.Accepted);
+        Assert.Contains("Japanese audio with en subtitles", wrongDub.Reason);
+        Assert.False(MediaLanguagePolicy.Evaluate(policy,
+            Tracks(audio: ["ja"]), isAnime: true).Accepted);
+
+        // Smart remains a preference rather than a hard English-only rule for ordinary foreign media.
+        Assert.True(MediaLanguagePolicy.Evaluate(policy,
+            Tracks(audio: ["it"]), isAnime: false).Accepted);
+    }
+
+    [Fact]
     public void EnglishOnly_IsARealInspectedTrackRequirement()
     {
         var policy = new MediaLanguagePolicyDto
@@ -496,6 +522,39 @@ public sealed class MediaLanguagePolicyTests
             var importedSubtitle = Assert.Single(result.Files, x => x.FileType == "subtitle");
             Assert.True(File.Exists(importedSubtitle.DestinationPath));
             Assert.EndsWith(".en.srt", importedSubtitle.DestinationPath, StringComparison.OrdinalIgnoreCase);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task SmartAnimeSidecarIsVerifiedAndImportedWhenGeneralRetentionIsOff()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "source.mkv");
+            var subtitle = Path.Combine(root, "source.en.srt");
+            await File.WriteAllBytesAsync(source, [1, 2, 3, 4]);
+            await File.WriteAllTextAsync(subtitle, "subtitle");
+            var inspector = new SidecarInspector();
+            var job = MovieJob(Path.Combine(root, "library"));
+            job.IsAnime = true;
+            job.MediaLanguagePolicy = new MediaLanguagePolicyDto
+            {
+                Preference = ReleaseLanguagePreference.Smart,
+                PreferredAudioLanguage = "en",
+                PreferredSubtitleLanguage = "en",
+                PreferForcedSubtitles = false,
+                SetPreferredTracksAsDefault = true
+            };
+
+            var result = await CreateOrganizer(inspector).OrganizeAsync(job,
+                new TransferItem("transfer", null, null, false), root,
+                Preferences(keepSubtitles: false), CancellationToken.None);
+
+            Assert.True(result.Success, result.FailReason);
+            Assert.Equal([subtitle], inspector.Companions);
+            Assert.Single(result.Files, file => file.FileType == "subtitle");
         }
         finally { Directory.Delete(root, recursive: true); }
     }

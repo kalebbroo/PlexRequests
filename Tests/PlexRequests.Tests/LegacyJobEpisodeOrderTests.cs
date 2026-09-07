@@ -50,7 +50,8 @@ public sealed class LegacyJobEpisodeOrderTests
                 }
             ]
         });
-        var queue = new FulfillmentQueue(db, null!, null!, null!, null!, null!, preferences,
+        var queue = new FulfillmentQueue(db, null!, null!,
+            new QualityProfileService(db, NullLogger<QualityProfileService>.Instance), null!, null!, preferences,
             NullLogger<FulfillmentQueue>.Instance);
 
         var claimed = await queue.ClaimNextAsync("worker", 3);

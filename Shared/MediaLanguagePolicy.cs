@@ -44,6 +44,17 @@ public static class MediaLanguagePolicy
         SetPreferredTracksAsDefault = profile?.SetPreferredTracksAsDefault ?? true
     };
 
+    /// <summary>The safe catch-all used when a legacy video job has no resolvable profile.</summary>
+    public static MediaLanguagePolicyDto SmartDefault() => new()
+    {
+        Preference = ReleaseLanguagePreference.Smart,
+        PreferredAudioLanguage = "en",
+        PreferredSubtitleLanguage = "en",
+        PreferForcedSubtitles = true,
+        AllowUnknownTrackLanguage = false,
+        SetPreferredTracksAsDefault = true
+    };
+
     public static bool IsActive(MediaLanguagePolicyDto? policy) => policy is not null &&
         (policy.Preference != ReleaseLanguagePreference.Any
          || policy.RequiredAudioLanguages.Count > 0 || policy.AllowedAudioLanguages.Count > 0
@@ -75,7 +86,7 @@ public static class MediaLanguagePolicy
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     public static (bool Accepted, string? Reason) Evaluate(MediaLanguagePolicyDto? policy,
-        MediaTrackSummaryDto tracks)
+        MediaTrackSummaryDto tracks, bool isAnime = false)
     {
         if (!IsActive(policy)) return (true, null);
         var p = policy!;
@@ -91,6 +102,25 @@ public static class MediaLanguagePolicy
         if (p.Preference == ReleaseLanguagePreference.OriginalWithEnglishSubtitles
             && !knownSubtitles.Contains(preferredSubtitle))
             return (false, $"missing required {preferredSubtitle} subtitles; found: {Found(knownSubtitles)}");
+
+        // Smart is deliberately permissive for ordinary foreign-language films: preferred audio wins, but
+        // an original-language copy remains usable. Anime has a narrower safe fallback contract. It must
+        // contain the preferred dub, or Japanese audio plus preferred-language subtitles. This keeps a
+        // German/Japanese (or Italian/Japanese) multi-audio pack from importing merely because "Smart" used
+        // to affect ranking only. Untagged streams remain compatible with the explicit admin setting.
+        if (p.Preference == ReleaseLanguagePreference.Smart && isAnime && knownAudio.Count > 0
+            && !knownAudio.Contains(preferredAudio))
+        {
+            var hasPreferredOrUnknownSubtitles = knownSubtitles.Contains(preferredSubtitle)
+                || (p.AllowUnknownTrackLanguage && subtitles.Any(language => language is null));
+            if (!knownAudio.Contains("ja") || !hasPreferredOrUnknownSubtitles)
+                return (false,
+                    $"Smart anime requires {preferredAudio} audio, or Japanese audio with {preferredSubtitle} subtitles; " +
+                    $"found audio: {Found(knownAudio)}; subtitles: {Found(knownSubtitles)}");
+        }
+        if (p.Preference == ReleaseLanguagePreference.Smart && isAnime && knownAudio.Count == 0
+            && !p.AllowUnknownTrackLanguage)
+            return (false, "Smart anime could not verify an audio language because every audio track is untagged");
 
         var missingAudio = p.RequiredAudioLanguages.Select(Normalize).Where(x => x is not null)
             .Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase)

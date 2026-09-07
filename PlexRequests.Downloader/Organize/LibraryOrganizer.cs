@@ -587,7 +587,7 @@ public class LibraryOrganizer(
             if (!tracks.HasVideo)
                 throw new MediaPolicyViolationException(
                     $"'{Path.GetFileName(file)}' contains no readable video stream and appears corrupt or incomplete");
-            var decision = MediaLanguagePolicy.Evaluate(job.MediaLanguagePolicy, tracks);
+            var decision = MediaLanguagePolicy.Evaluate(job.MediaLanguagePolicy, tracks, job.IsAnime);
             if (!decision.Accepted)
                 throw new MediaPolicyViolationException(
                     $"'{Path.GetFileName(file)}' failed the '{job.QualityProfile?.Name ?? "selected"}' media policy: {decision.Reason}");
@@ -640,7 +640,8 @@ public class LibraryOrganizer(
             { RequiredSubtitleLanguages.Count: > 0 }
             or { RequireForcedSubtitle: true }
             or { PreferForcedSubtitles: true }
-            or { Preference: ReleaseLanguagePreference.OriginalWithEnglishSubtitles };
+            or { Preference: ReleaseLanguagePreference.OriginalWithEnglishSubtitles }
+            || job is { IsAnime: true, MediaLanguagePolicy.Preference: ReleaseLanguagePreference.Smart };
 
     private static List<EpisodeRef> Coverage(int season, IEnumerable<int> episodes) => episodes
         .Distinct().OrderBy(x => x).Select(x => new EpisodeRef { Season = season, Episode = x }).ToList();

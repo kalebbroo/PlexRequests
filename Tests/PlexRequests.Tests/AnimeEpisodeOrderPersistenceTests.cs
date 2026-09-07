@@ -213,7 +213,8 @@ public sealed class AnimeEpisodeOrderPersistenceTests
         }
 
         public FulfillmentQueue Queue(ILibraryOrganizationPreferencesService preferences,
-            ITmdbEpisodeGroupImportService groups) => new(Db, null!, null!, null!, null!, null!, preferences,
+            ITmdbEpisodeGroupImportService groups) => new(Db, null!, null!,
+            new QualityProfileService(Db, NullLogger<QualityProfileService>.Instance), null!, null!, preferences,
             NullLogger<FulfillmentQueue>.Instance, groups);
 
         public async ValueTask DisposeAsync()

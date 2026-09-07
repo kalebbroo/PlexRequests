@@ -1,6 +1,7 @@
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
+using PlexRequestsHosted.Shared;
 using Xunit;
 
 namespace PlexRequests.Tests;
@@ -63,7 +64,7 @@ public class ReleaseEvaluatorTests
     }
 
     [Fact]
-    public void Smart_anime_PrefersDualThenSubbedWithoutRejectingFallbacks()
+    public void Smart_anime_PrefersDualThenSubbedWithoutRejectingJapaneseFallbacks()
     {
         var defs = TestData.Definitions();
         var profile = new QualityProfileDto
@@ -88,6 +89,49 @@ public class ReleaseEvaluatorTests
         Assert.True(dual > subbed);
         Assert.True(subbed > dub);
         Assert.True(dub > original);
+    }
+
+    [Fact]
+    public void Smart_anime_RejectsExplicitNonPreferredDubPairedWithJapanese()
+    {
+        var defs = TestData.Definitions();
+        var profile = TestData.Profile(defs);
+        profile.LanguagePreference = ReleaseLanguagePreference.Smart;
+        profile.PreferredAudioLanguage = "en";
+        var job = TestData.Job(title: "Monogatari");
+        job.IsAnime = true;
+
+        var wrongDub = _eval.Evaluate(TestData.Release(
+                "Monogatari.S01.1080p.WEB-DL.x265.Multi-Audio.German.Deutsch.Japanese.OmU"),
+            job, TestData.Context(profile, defs: defs));
+        var dual = _eval.Evaluate(TestData.Release(
+                "Monogatari.S01.1080p.WEB-DL.x265.Dual-Audio.English.Japanese"),
+            job, TestData.Context(profile, defs: defs));
+        var originalFallback = _eval.Evaluate(TestData.Release(
+                "Monogatari.S01.1080p.WEB-DL.x265.Japanese.Subbed"),
+            job, TestData.Context(profile, defs: defs));
+
+        Assert.False(wrongDub.Accepted);
+        Assert.True(Rejected(wrongDub, RejectionReason.LanguageNotAllowed));
+        Assert.Contains("no preferred en track", wrongDub.Rejections.Single(rejection =>
+            rejection.Reason == RejectionReason.LanguageNotAllowed).Detail);
+        Assert.True(dual.Accepted);
+        Assert.True(originalFallback.Accepted);
+    }
+
+    [Fact]
+    public void FrozenJobLanguagePolicyRemainsAuthoritativeWithoutAResolvableProfile()
+    {
+        var job = TestData.Job(title: "Monogatari");
+        job.IsAnime = true;
+        job.MediaLanguagePolicy = MediaLanguagePolicy.SmartDefault();
+
+        var ranked = _eval.Evaluate(TestData.Release(
+                "Monogatari.S01.1080p.WEB-DL.x265.Multi-Audio.German.Japanese"),
+            job, TestData.Context(profile: null));
+
+        Assert.False(ranked.Accepted);
+        Assert.True(Rejected(ranked, RejectionReason.LanguageNotAllowed));
     }
 
     // The headline behaviour of this phase: quality is judged against the profile's allowed tier list,

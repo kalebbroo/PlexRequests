@@ -97,6 +97,14 @@ Initial presets:
 - English dub: require English audio.
 - Any/original: no hard language requirement.
 
+The normal **Smart** profile is itself an enforceable anime safety contract, not merely a score bonus. For
+anime it accepts either the preferred audio language, or Japanese audio with subtitles in the preferred
+subtitle language. Thus English/Japanese dual audio and Japanese-with-English-subtitles both work, while a
+German/Japanese multi-audio release with no English translation does not slip through just because it has
+many seeders. Ordinary foreign films remain valid Smart fallbacks; the narrower rule is tied to the durable
+anime classification. Smart anime also retains matching sidecar subtitles even when the global library
+setting would otherwise discard subtitles.
+
 There are two enforcement stages:
 
 1. **Before download:** parsed release-title tokens and trusted release-group history rank/reject obvious
@@ -169,8 +177,9 @@ The decision ladder is deliberately fail-closed:
 5. Inspect actual audio/subtitle tracks before import as already required by the language policy. A title hint can
    improve ranking but never proves a dual-audio or English-subtitle requirement.
 6. If no candidate is provably safe after retries, notify an admin once. The review screen must show the real
-   rejection reasons and require a configured episode map before it allows an explicit force-download. Even then,
-   the organizer enforces the mapping and target set before any Plex write.
+   rejection reasons and require a configured episode map before it allows an explicit force-download. Releases
+   with conflicting language hints get a separate warning and confirmation. Even then, the organizer enforces
+   the mapping, target set, and actual audio/subtitle contract before any Plex write.
 
 The qualification slice implements steps 1, 2, and 6, including numbered story-arc folders and preservation of
 every canonical season target during a forced collection download. The manifest slice implements steps 3 and 4
@@ -210,6 +219,12 @@ missing group evidence in the job error, keeps retrying other releases, and reac
 notification after the retry threshold. The next manual-review layer can use that evidence to build a per-release
 custom map; it must never reinterpret the files silently.
 
+Jobs created before language-policy snapshots existed are repaired at claim time. The web service resolves the
+job/request's quality profile and freezes its current media policy before returning work to the downloader; an
+existing snapshot is never overwritten. If an old row cannot resolve any profile, it receives the conservative
+Smart English/English fallback instead of crossing the process boundary without track validation. This matters
+after long deferrals: retrying an old anime request must not bypass protections added while it was waiting.
+
 Release aliases should eventually come from a durable identity table populated from metadata aliases and AniDB's
 title dump, not an ever-growing stop-word list. Alias matches are ranking evidence only; canonical provider IDs and
 the manifest mapping remain the authority.
@@ -228,3 +243,5 @@ the manifest mapping remain the authority.
   coverage; the last-resort admin path preserves the same import and target safeguards.
 - Automatic episode-order discovery persists its authoritative TMDb group on the current job only and rejects
   zero-match or conflicting-match manifests without starting payload data.
+- Legacy queued anime jobs cannot be claimed without a frozen language contract, and Smart anime rejects actual
+  tracks unless they contain the preferred dub or Japanese audio with preferred-language subtitles.

@@ -35,6 +35,14 @@
         }
         else
         {
+            @if (_status.Results.Any(result => result.RequiresLanguageReview))
+            {
+                <MudAlert Severity="Severity.Warning" dense="true" Class="mb-3">
+                    Some releases explicitly advertise the wrong language mix. They stay blocked automatically.
+                    Force one only after confirming its audio and subtitle tracks; Plex Requests will still inspect
+                    the downloaded media and refuse an unsafe library import.
+                </MudAlert>
+            }
             <div class="d-flex justify-content-between align-items-center mb-2">
                 <MudText Typo="Typo.body2" Class="text-muted">
                     @_status.Results.Count(r => r.Accepted) acceptable of @_status.Results.Count found.
@@ -170,7 +178,9 @@
     {
         if (!result.Accepted)
         {
-            var warning = result.RequiresManifestReview
+            var warning = result.RequiresLanguageReview
+                ? "This release's language hints conflict with the selected profile. Only continue if its description confirms the preferred dub or Japanese audio with preferred-language subtitles. Actual tracks will still be inspected, and a mismatch will be rejected before Plex is changed."
+                : result.RequiresManifestReview
                 ? "This collection's internal file layout has not been verified automatically. The configured episode map will be enforced during import, but a mismatch can waste the download and will be rejected before Plex is changed."
                 : "This release failed the automatic checks. Import safeguards still apply, but forcing it may waste a download or fail during import.";
             var reasons = result.Rejections.Count == 0
