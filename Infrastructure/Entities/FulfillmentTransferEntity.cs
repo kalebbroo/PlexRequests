@@ -34,6 +34,8 @@ public class FulfillmentTransferEntity
 
     // --- What this torrent is meant to satisfy -----------------------------------------------------
     public int? Season { get; set; }
+    /// <summary>Season number used by this release before canonical season-name/order translation.</summary>
+    public int? SourceSeason { get; set; }
     public int? Episode { get; set; }
     public bool IsPack { get; set; }
     /// <summary>For a pack restricted to specific episodes, which ones we actually want.</summary>

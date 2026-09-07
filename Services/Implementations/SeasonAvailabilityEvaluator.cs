@@ -63,7 +63,8 @@ public class SeasonAvailabilityEvaluator(AppDbContext db, IMediaMetadataProvider
             var missing = countUnknown
                 ? new List<int>()
                 : Enumerable.Range(1, s.EpisodeCount).Where(n => !plexSet.Contains(n)).ToList();
-            result[s.SeasonNumber] = new SeasonCompleteness(s.SeasonNumber, plexCount, s.EpisodeCount, complete, aired, missing, countUnknown);
+            result[s.SeasonNumber] = new SeasonCompleteness(s.SeasonNumber, plexCount, s.EpisodeCount,
+                complete, aired, missing, countUnknown, s.Name);
         }
         return result;
     }

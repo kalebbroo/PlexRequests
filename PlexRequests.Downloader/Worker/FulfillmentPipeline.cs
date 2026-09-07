@@ -209,7 +209,8 @@ public class FulfillmentPipeline(
                     ReleaseName: item.Candidate.ReleaseName,
                     Protocol: resource.Protocol,
                     SourceId: resource.SourceId,
-                    NeededEpisodeRefs: item.NeededEpisodeRefs));
+                    NeededEpisodeRefs: item.NeededEpisodeRefs,
+                    SourceSeason: item.SourceSeason));
             }
 
             if (transfers.Count == 0)
@@ -243,6 +244,7 @@ public class FulfillmentPipeline(
                 Source = t.Source,
                 IndexerId = t.IndexerId,
                 Season = t.Season,
+                SourceSeason = t.SourceSeason,
                 Episode = t.Episode,
                 IsPack = t.IsPack,
                 NeededEpisodes = t.NeededEpisodes?.ToList() ?? new(),
@@ -933,6 +935,13 @@ public class FulfillmentPipeline(
                     if (EpisodeOrderMapping.TryTranslateFile(job.EpisodeOrderProfile, file,
                             sourceSeason, sourceEpisode, out var target))
                         canonical.Add((target.Season, target.Episode));
+            }
+            else if (transfer.SourceSeason is int expectedSource
+                     && transfer.Season is int remappedSeason
+                     && expectedSource != remappedSeason)
+            {
+                if (parsed.Season == expectedSource)
+                    canonical.AddRange(episodes.Select(episode => (remappedSeason, episode)));
             }
             else if ((parsed.Season ?? transfer.Season) is int canonicalSeason)
                 canonical.AddRange(episodes.Select(episode => (canonicalSeason, episode)));

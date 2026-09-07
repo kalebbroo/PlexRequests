@@ -134,6 +134,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         string? imdbId = null;
         List<string>? genres = null;
         int? year = null;
+        List<CanonicalSeasonIdentityDto> canonicalSeasons = new();
         bool isAnime = request.IsAnime == true || reqEntity?.IsAnime == true || request.MediaType == MediaType.Anime;
         MusicAcquisitionContextDto? music = null;
         try
@@ -142,6 +143,14 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             imdbId = detail?.ImdbId;
             genres = detail?.Genres;
             year = detail?.Year;
+            if (request.MediaType is MediaType.TvShow or MediaType.Anime)
+                canonicalSeasons = (detail?.Seasons ?? []).Where(season => season.SeasonNumber > 0)
+                    .Select(season => new CanonicalSeasonIdentityDto
+                    {
+                        Season = season.SeasonNumber,
+                        Name = season.Name,
+                        EpisodeCount = season.EpisodeCount
+                    }).ToList();
             isAnime = isAnime || AnimeClassifier.IsAnime(detail?.Genres, detail?.Languages, detail?.Countries);
             if (request.MediaType == MediaType.Music)
             {
@@ -213,6 +222,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             RequestedSeasonsCsv = seasonsCsv,
             RequestedEpisodesCsv = episodesCsv,
             SeasonTargetsJson = seasonTargets.Count > 0 ? JsonSerializer.Serialize(seasonTargets) : null,
+            CanonicalSeasonsJson = canonicalSeasons.Count > 0 ? JsonSerializer.Serialize(canonicalSeasons) : null,
             Quality = resolvedQuality,
             QualityProfileId = profileId,
             MediaLanguagePolicyJson = MediaLanguagePolicy.IsActive(languagePolicy)
@@ -299,7 +309,13 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             if (!s.Complete && s.Aired)
             {
                 missingSeasons.Add(s.SeasonNumber);
-                targets.Add(new SeasonTarget { Season = s.SeasonNumber, EpisodeCount = s.ExpectedCount, MissingEpisodes = s.MissingEpisodes });
+                targets.Add(new SeasonTarget
+                {
+                    Season = s.SeasonNumber,
+                    Name = s.Name,
+                    EpisodeCount = s.ExpectedCount,
+                    MissingEpisodes = s.MissingEpisodes
+                });
             }
         }
         if (missingSeasons.Count == 0) return (null, null, new(), false);
@@ -323,6 +339,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         // playback defaults and a retry can import a foreign-first release under today's Smart profile.
         await SnapshotMissingMediaLanguagePoliciesAsync(jobs);
         await SnapshotMissingEpisodeOrderProfilesAsync(jobs);
+        await SnapshotMissingSeasonTargetNamesAsync(jobs);
         var now = DateTime.UtcNow;
         foreach (var j in jobs)
         {
@@ -386,6 +403,63 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             }
 
             job.EpisodeOrderCandidates = candidates;
+        }
+    }
+
+    /// <summary>Backfill canonical season names on old queued jobs without changing their episode scope.
+    /// Names are immutable ranking evidence: they let anime releases such as uploader S04 "Second Season"
+    /// map to canonical S03, while a bare number remains only a number.</summary>
+    private async Task SnapshotMissingSeasonTargetNamesAsync(IReadOnlyList<FulfillmentJobEntity> jobs)
+    {
+        var candidates = jobs.Where(job => job.MediaType is MediaType.TvShow or MediaType.Anime)
+            .ToList();
+        foreach (var job in candidates)
+        {
+            List<SeasonTarget> targets = [];
+            List<CanonicalSeasonIdentityDto> identities = [];
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(job.SeasonTargetsJson))
+                    targets = JsonSerializer.Deserialize<List<SeasonTarget>>(job.SeasonTargetsJson) ?? [];
+                if (!string.IsNullOrWhiteSpace(job.CanonicalSeasonsJson))
+                    identities = JsonSerializer.Deserialize<List<CanonicalSeasonIdentityDto>>(job.CanonicalSeasonsJson) ?? [];
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Job {JobId}: cannot hydrate malformed canonical season identity", job.Id);
+                continue;
+            }
+            if (identities.Count > 0 && targets.All(target => !string.IsNullOrWhiteSpace(target.Name))) continue;
+
+            try
+            {
+                var tmdbId = job.TmdbId ?? (string.IsNullOrWhiteSpace(job.ExternalId) ? job.MediaId : 0);
+                if (tmdbId <= 0) continue;
+                var detail = await _metadata.GetDetailsAsync(tmdbId, MediaType.TvShow);
+                var names = (detail?.Seasons ?? []).Where(season => season.SeasonNumber >= 0)
+                    .ToDictionary(season => season.SeasonNumber, season => season.Name);
+                var canonical = (detail?.Seasons ?? []).Where(season => season.SeasonNumber > 0)
+                    .Select(season => new CanonicalSeasonIdentityDto
+                    {
+                        Season = season.SeasonNumber,
+                        Name = season.Name,
+                        EpisodeCount = season.EpisodeCount
+                    }).ToList();
+                var targetChanged = false;
+                foreach (var target in targets.Where(target => string.IsNullOrWhiteSpace(target.Name)))
+                {
+                    if (!names.TryGetValue(target.Season, out var name) || string.IsNullOrWhiteSpace(name)) continue;
+                    target.Name = name.Trim();
+                    targetChanged = true;
+                }
+                if (identities.Count == 0 && canonical.Count > 0)
+                    job.CanonicalSeasonsJson = JsonSerializer.Serialize(canonical);
+                if (targetChanged) job.SeasonTargetsJson = JsonSerializer.Serialize(targets);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Job {JobId}: canonical season names could not be hydrated", job.Id);
+            }
         }
     }
 
@@ -750,6 +824,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
                     .Select(target => new SeasonTarget
                     {
                         Season = target.Season,
+                        Name = target.Name,
                         EpisodeCount = target.EpisodeCount,
                         MissingEpisodes = target.MissingEpisodes.Distinct().Order()
                             .Where(episode => !imported.Contains((target.Season, episode))).ToList()
@@ -1016,6 +1091,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             ExternalId = externalId,
             ExternalSource = externalSource,
             RequestedEpisodesCsv = episodesCsv,
+            CanonicalSeasonsJson = origin?.CanonicalSeasonsJson,
             Quality = target,
             QualityProfileId = profileId,
             MediaLanguagePolicyJson = upgradePolicyJson,
@@ -1339,6 +1415,10 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         SeasonTargets = string.IsNullOrWhiteSpace(j.SeasonTargetsJson)
             ? new List<SeasonTarget>()
             : (JsonSerializer.Deserialize<List<SeasonTarget>>(j.SeasonTargetsJson) ?? new List<SeasonTarget>()),
+        CanonicalSeasons = string.IsNullOrWhiteSpace(j.CanonicalSeasonsJson)
+            ? new List<CanonicalSeasonIdentityDto>()
+            : (JsonSerializer.Deserialize<List<CanonicalSeasonIdentityDto>>(j.CanonicalSeasonsJson)
+               ?? new List<CanonicalSeasonIdentityDto>()),
         Quality = j.Quality,
         MediaLanguagePolicy = string.IsNullOrWhiteSpace(j.MediaLanguagePolicyJson)
             ? null

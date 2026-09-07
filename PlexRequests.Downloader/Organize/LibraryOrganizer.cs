@@ -279,6 +279,14 @@ public class LibraryOrganizer(
                     throw new EpisodeMappingException(
                         $"Standalone file '{Path.GetFileName(best)}' does not prove canonical identity S{s:D2}E{e:D2}; no files were imported.");
             }
+            else if (transfer.SourceSeason is int sourceSeason && sourceSeason != s)
+            {
+                var parsed = parser.Parse(Path.GetFileName(best));
+                var sourceEpisodes = parsed.EpisodeNumbers.Distinct().ToList();
+                if (parsed.Season != sourceSeason || sourceEpisodes.Count != 1 || sourceEpisodes[0] != e)
+                    throw new EpisodeMappingException(
+                        $"Standalone file '{Path.GetFileName(best)}' does not prove named-season translation S{sourceSeason:D2}E{e:D2} -> S{s:D2}E{e:D2}; no files were imported.");
+            }
 
             var inspected = await InspectSelectionAsync(job, [best], allFiles, prefs, ct);
             var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, s, e, CancellationToken.None).GetAwaiter().GetResult();
@@ -297,7 +305,7 @@ public class LibraryOrganizer(
                 mapped = MapTranslatedFiles(job, videoFiles);
             else
             {
-                var map = splitter.Map(videoFiles, season, expectedEpisodeCount);
+                var map = splitter.Map(videoFiles, season, expectedEpisodeCount, transfer.SourceSeason);
                 if (!map.IsUnambiguous)
                     throw new EpisodeMappingException(DescribeMappingFailure(season, map));
                 mapped = map.Mappings.Select(x => new CanonicalFileMapping(x.FilePath,

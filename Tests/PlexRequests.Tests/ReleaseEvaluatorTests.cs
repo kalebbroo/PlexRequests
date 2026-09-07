@@ -119,6 +119,68 @@ public class ReleaseEvaluatorTests
         Assert.True(originalFallback.Accepted);
     }
 
+    [Theory]
+    [InlineData("[smol] Monogatari (Season 4) 1080p | Monogatari Series: Second Season", 4, 3)]
+    [InlineData("[MTBB] Monogatari Series Off & Monster Season S1 1080p", 1, 5)]
+    public void AnimeCanonicalSeasonNameOverridesUploaderSeasonNumber(
+        string releaseName, int sourceSeason, int canonicalSeason)
+    {
+        var job = TestData.Job("Monogatari", MediaType.TvShow, seasonTargets:
+        [
+            new SeasonTarget { Season = 1, Name = "Bakemonogatari", EpisodeCount = 12, MissingEpisodes = [1] },
+            new SeasonTarget { Season = 3, Name = "Monogatari Series: Second Season", EpisodeCount = 23, MissingEpisodes = [1] },
+            new SeasonTarget { Season = 5, Name = "MONOGATARI Series OFF & MONSTER Season", EpisodeCount = 15, MissingEpisodes = [1] }
+        ]);
+        job.IsAnime = true;
+        job.CanonicalSeasons = job.SeasonTargets.Select(target => new CanonicalSeasonIdentityDto
+        {
+            Season = target.Season, Name = target.Name, EpisodeCount = target.EpisodeCount
+        }).ToList();
+
+        var ranked = _eval.Evaluate(TestData.Release(releaseName), job, TestData.Context());
+
+        Assert.True(ranked.Accepted, ranked.Summary);
+        Assert.Equal(sourceSeason, ranked.SourceSeason);
+        Assert.Equal(canonicalSeason, ranked.Season);
+        Assert.DoesNotContain(ranked.Rejections, rejection =>
+            rejection.Reason is RejectionReason.TitleMismatch or RejectionReason.ExtraTitleTokens);
+    }
+
+    [Fact]
+    public void GenericSeasonNamesCannotRemapAnimeNumbering()
+    {
+        var match = AnimeSeasonIdentity.Match("Different Show Season 4 1080p", "Monogatari",
+        [
+            new SeasonTarget { Season = 3, Name = "Season 3" },
+            new SeasonTarget { Season = 4, Name = "Season 4" }
+        ], sourceSeason: 4);
+
+        Assert.Null(match);
+    }
+
+    [Fact]
+    public void AlreadySatisfiedCanonicalSeasonNameStillPreventsAnotherTargetFromImpersonatingIt()
+    {
+        var job = TestData.Job("Monogatari", MediaType.TvShow, seasonTargets:
+        [
+            new SeasonTarget { Season = 4, Name = "Owarimonogatari", EpisodeCount = 12, MissingEpisodes = [1] }
+        ]);
+        job.IsAnime = true;
+        job.CanonicalSeasons =
+        [
+            new CanonicalSeasonIdentityDto { Season = 3, Name = "Monogatari Series: Second Season", EpisodeCount = 23 },
+            new CanonicalSeasonIdentityDto { Season = 4, Name = "Owarimonogatari", EpisodeCount = 12 }
+        ];
+
+        var ranked = _eval.Evaluate(TestData.Release(
+            "[smol] Monogatari Season 4 1080p | Monogatari Series Second Season"), job, TestData.Context());
+
+        Assert.Equal(4, ranked.SourceSeason);
+        Assert.Equal(3, ranked.Season);
+        var planned = new DownloadPlanner().Plan([ranked], job, TestData.Context());
+        Assert.True(planned.IsEmpty);
+    }
+
     [Fact]
     public void FrozenJobLanguagePolicyRemainsAuthoritativeWithoutAResolvableProfile()
     {

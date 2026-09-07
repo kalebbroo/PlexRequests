@@ -241,6 +241,15 @@ Partially available while retries continue. A legacy `MediaType.Anime` request a
 verification—one visible episode is never enough to complete a whole-series request. Only repeated searches with
 no safe match reach the one-time admin review notification.
 
+Uploader season numbers are not canonical identity. Every job freezes the provider's name and episode count for
+all seasons—not only the seasons currently missing—because franchise/arc uploaders routinely call canonical S03
+"S04" or restart a later named season at S01. A release number is translated only when its title uniquely contains
+one distinctive canonical season name and still carries the series identity; generic names such as "Season 4" are
+not evidence. The transfer stores both source and canonical season numbers, manifest preflight requires every
+selected filename to use the expected source season, and the organizer applies the same translation before naming
+or writing anything. Already-satisfied season identities remain in the frozen catalog so their releases cannot
+later impersonate a still-missing season. Configured/TMDb episode-order maps remain authoritative when present.
+
 Release aliases should eventually come from a durable identity table populated from metadata aliases and AniDB's
 title dump, not an ever-growing stop-word list. Alias matches are ranking evidence only; canonical provider IDs and
 the manifest mapping remain the authority.
@@ -263,3 +272,5 @@ the manifest mapping remain the authority.
   tracks unless they contain the preferred dub or Japanese audio with preferred-language subtitles.
 - A partial season/episode import automatically narrows and continues the same job without re-downloading proven
   coverage, replaying a manual grab, or falsely marking a legacy Anime series complete after one episode.
+- A distinctive canonical season name can safely translate an uploader season number, and that source/canonical
+  pair survives worker restarts; a generic or conflicting manifest stays blocked for admin review.

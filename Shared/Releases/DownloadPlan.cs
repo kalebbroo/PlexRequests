@@ -19,6 +19,8 @@ public enum DownloadPlanKind
 /// </summary>
 public record DownloadPlanItem(ReleaseCandidate Candidate, int? Season, int? Episode, bool IsPack, IReadOnlyList<int>? NeededEpisodes = null)
 {
+    /// <summary>Season number used inside this release when it differs from canonical <see cref="Season"/>.</summary>
+    public int? SourceSeason { get; init; }
     public IReadOnlyList<EpisodeRef>? NeededEpisodeRefs { get; init; }
 
     /// <summary>The candidate was acceptable only after its internal file manifest proves the immutable

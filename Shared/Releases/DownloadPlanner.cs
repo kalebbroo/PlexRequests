@@ -296,7 +296,11 @@ public class DownloadPlanner : IDownloadPlanner
     }
 
     private static DownloadPlanItem ToItem(RankedCandidate a) =>
-        new(a.Candidate, a.Season, a.Episode, a.IsPack) { Resolution = a.Resolution };
+        new(a.Candidate, a.Season, a.Episode, a.IsPack)
+        {
+            Resolution = a.Resolution,
+            SourceSeason = a.SourceSeason
+        };
 
     private static DownloadPlanItem ToPackItem(RankedCandidate candidate, int season,
         IReadOnlyList<int>? neededEpisodes)
