@@ -204,6 +204,9 @@ Import adoption is scoped to the transfer's current canonical episode targets. A
 which payload was used, but not which slice of a reusable season/franchise archive reached the library. The audit
 must cover every current target before a worker or reconciler treats that transfer as imported; an older import of
 different episodes and subtitle-only rows cannot prematurely complete a retry.
+If the worker-local monitor file is missing or corrupt after a restart, the worker rebuilds each job monitor from
+the durable transfer rows on its normal poll. It preserves the canonical target union and whether the original
+plan covered the whole request, so completion, partial continuation, and notifications still run normally.
 
 ### Stage 5 — VPN failsafe (the reason this is out-of-process)
 The torrent client must only ever talk through the VPN. Enforce **in depth**:
