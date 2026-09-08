@@ -69,13 +69,18 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         var seasonsCsv = request.RequestedSeasons.Count > 0 ? string.Join(",", request.RequestedSeasons) : null;
         var episodesCsv = request.RequestedEpisodesCsv;
         List<SeasonTarget> seasonTargets = new();
+        // Episode ordering and the desired custom episode universe are one immutable contract. Resolve it
+        // before missing-target calculation so TMDb cannot silently hide configured OVAs/ONAs/specials.
+        var librarySettings = await _libraryPreferences.GetAsync();
+        var resolvedEpisodeProfile = EpisodeOrderMapping.Resolve(librarySettings.SeriesEpisodeOrderProfiles,
+            mediaRef.TryGetTmdbId(out var configuredTmdbId) ? configuredTmdbId : null);
 
         // Never re-download content already on Plex: narrow a TV request to only the missing seasons/
         // episodes. If nothing is missing, don't enqueue at all — the reconciliation service marks the
         // request Available. (Movies fall through unchanged.) A forced re-download skips this entirely.
         if (request.MediaType is MediaType.TvShow or MediaType.Anime && !force)
         {
-            var (s, e, targets, hasTarget) = await ComputeMissingTvTargetsAsync(request);
+            var (s, e, targets, hasTarget) = await ComputeMissingTvTargetsAsync(request, resolvedEpisodeProfile);
             if (!hasTarget) return false;   // everything already on Plex
             seasonsCsv = s;
             episodesCsv = e;
@@ -163,6 +168,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         }
         catch { /* best-effort; downloader can still try by title/year */ }
 
+        if (EpisodeOrderMapping.HasCustomMetadata(resolvedEpisodeProfile))
+            canonicalSeasons = CustomCanonicalSeasons(resolvedEpisodeProfile!);
+
         // A metadata outage must not erase the identity needed by future retries. The fallback still gives
         // the ranker the correct request shape and title; it simply has less artist context for this pass.
         if (request.MediaType == MediaType.Music)
@@ -192,7 +200,6 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
 
         // Resolve exactly once at the enqueue/approval boundary. The snapshot below remains authoritative
         // even if an admin later reorders rules, edits a root, or disables the destination mid-download.
-        var librarySettings = await _libraryPreferences.GetAsync();
         var libraryDestination = LibraryRouting.Resolve(
             librarySettings, request.MediaType, resolvedQuality, genres, isAnime,
             isEpisode: mediaRef.Kind == MediaKind.Series,
@@ -228,8 +235,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             MediaLanguagePolicyJson = MediaLanguagePolicy.IsActive(languagePolicy)
                 ? JsonSerializer.Serialize(languagePolicy)
                 : null,
-            EpisodeOrderProfileJson = EpisodeOrderMapping.Resolve(librarySettings.SeriesEpisodeOrderProfiles,
-                    mediaRef.TryGetTmdbId(out var profileTmdbId) ? profileTmdbId : null) is { } episodeProfile
+            EpisodeOrderProfileJson = resolvedEpisodeProfile is { } episodeProfile
                 ? JsonSerializer.Serialize(episodeProfile)
                 : null,
             GenresCsv = genres is { Count: > 0 } ? string.Join(",", genres) : null,
@@ -268,7 +274,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
     /// from Plex) and whether there's anything to fetch at all. A season is considered satisfied when
     /// Plex already has at least its TMDB episode count.
     /// </summary>
-    private async Task<(string? seasonsCsv, string? episodesCsv, List<SeasonTarget> seasonTargets, bool hasTarget)> ComputeMissingTvTargetsAsync(MediaRequestDto request)
+    private async Task<(string? seasonsCsv, string? episodesCsv, List<SeasonTarget> seasonTargets, bool hasTarget)> ComputeMissingTvTargetsAsync(
+        MediaRequestDto request, SeriesEpisodeOrderProfileDto? episodeProfile)
     {
         // Episode-level request: keep only episodes not already on Plex. (Fan-out is precise via the CSV;
         // no SeasonTargets needed — the downloader uses RequestedEpisodes directly.)
@@ -279,6 +286,32 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             var missing = wanted.Where(w => !(onPlex.TryGetValue(w.Season, out var set) && set.Contains(w.Episode))).ToList();
             if (missing.Count == 0) return (null, null, new(), false);
             return (null, string.Join(",", missing.Select(m => $"S{m.Season}E{m.Episode}")), new(), true);
+        }
+
+        if (EpisodeOrderMapping.HasCustomMetadata(episodeProfile))
+        {
+            var onPlex = await _seasonEvaluator.GetPlexEpisodesAsync(request.MediaId);
+            var wanted = episodeProfile!.CustomEpisodes.Where(row => row.IncludeInMonitoring)
+                .Select(row => (row.Season, row.Episode)).Distinct().ToList();
+            // A whole-series request often retains the provider's numbered seasons in its legacy CSV.
+            // That is not an instruction to drop explicitly wanted Season 00 OVAs/ONAs from a custom
+            // contract. Only a genuinely season-scoped request narrows the custom universe.
+            if (!request.RequestAllSeasons && request.RequestedSeasons.Count > 0)
+                wanted = wanted.Where(target => request.RequestedSeasons.Contains(target.Season)).ToList();
+            var missing = wanted.Where(target => !onPlex.TryGetValue(target.Season, out var present)
+                                                   || !present.Contains(target.Episode)).ToList();
+            var names = episodeProfile.CustomSeasons.ToDictionary(row => row.Season, row => row.Name);
+            var customTargets = missing.GroupBy(target => target.Season).OrderBy(group => group.Key)
+                .Select(group => new SeasonTarget
+                {
+                    Season = group.Key,
+                    Name = names.GetValueOrDefault(group.Key),
+                    EpisodeCount = wanted.Count(target => target.Season == group.Key),
+                    MissingEpisodes = group.Select(target => target.Episode).Distinct().Order().ToList()
+                }).ToList();
+            return customTargets.Count == 0
+                ? (null, null, [], false)
+                : (string.Join(",", customTargets.Select(target => target.Season)), null, customTargets, true);
         }
 
         // Per-season completeness (Plex episode count vs. TMDB's expected count), from the single shared
@@ -320,6 +353,18 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         }
         if (missingSeasons.Count == 0) return (null, null, new(), false);
         return (string.Join(",", missingSeasons), null, targets, true);
+    }
+
+    private static List<CanonicalSeasonIdentityDto> CustomCanonicalSeasons(SeriesEpisodeOrderProfileDto profile)
+    {
+        var names = profile.CustomSeasons.ToDictionary(row => row.Season, row => row.Name);
+        return profile.CustomEpisodes.GroupBy(row => row.Season).OrderBy(group => group.Key)
+            .Select(group => new CanonicalSeasonIdentityDto
+            {
+                Season = group.Key,
+                Name = names.GetValueOrDefault(group.Key),
+                EpisodeCount = group.Select(row => row.Episode).Distinct().Count()
+            }).ToList();
     }
 
     public async Task<List<FulfillmentJobDto>> ClaimNextAsync(string workerId, int max = 1)
@@ -546,10 +591,68 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             if (EpisodeOrderMapping.Resolve(settings.SeriesEpisodeOrderProfiles, tmdbId) is not { } profile)
                 continue;
             job.EpisodeOrderProfileJson = JsonSerializer.Serialize(profile);
+            if (EpisodeOrderMapping.HasCustomMetadata(profile))
+                await ApplyCustomTargetContractAsync(job, profile);
             hydrated++;
         }
         if (hydrated > 0)
             _logger.LogInformation("Snapshotted episode-order profiles onto {Count} legacy queued job(s)", hydrated);
+    }
+
+    private async Task ApplyCustomTargetContractAsync(FulfillmentJobEntity job,
+        SeriesEpisodeOrderProfileDto profile)
+    {
+        var request = await _db.MediaRequests.AsNoTracking()
+            .FirstOrDefaultAsync(row => row.Id == job.MediaRequestId);
+        var desired = profile.CustomEpisodes.Where(row => row.IncludeInMonitoring)
+            .Select(row => (row.Season, row.Episode)).Distinct().ToList();
+        if (request is not null && !string.IsNullOrWhiteSpace(request.RequestedEpisodesCsv))
+        {
+            var exact = ParseEpisodes(request.RequestedEpisodesCsv)
+                .Select(row => (row.Season, row.Episode)).ToHashSet();
+            desired = desired.Where(exact.Contains).ToList();
+        }
+        else if (request is { RequestAllSeasons: false }
+                 && !string.IsNullOrWhiteSpace(request.RequestedSeasonsCsv))
+        {
+            var seasons = request.RequestedSeasonsCsv.Split(',',
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(value => int.TryParse(value, out var number) ? number : -1)
+                .Where(number => number >= 0).ToHashSet();
+            desired = desired.Where(target => seasons.Contains(target.Season)).ToList();
+        }
+
+        var present = await _seasonEvaluator.GetPlexEpisodesAsync(profile.TmdbId);
+        var siblingJobIds = await _db.FulfillmentJobs.AsNoTracking()
+            .Where(row => row.MediaRequestId == job.MediaRequestId)
+            .Select(row => row.Id).ToListAsync();
+        var imported = await _db.ImportedFiles.AsNoTracking().Include(row => row.EpisodeCoverage)
+            .Where(row => siblingJobIds.Contains(row.FulfillmentJobId) && row.FileType == "video")
+            .ToListAsync();
+        var audited = imported.SelectMany(AuditCoverage).ToHashSet();
+        var missing = desired.Where(target => !audited.Contains(target)
+                                              && (!present.TryGetValue(target.Season, out var episodes)
+                                                  || !episodes.Contains(target.Episode)))
+            .ToList();
+        var names = profile.CustomSeasons.ToDictionary(row => row.Season, row => row.Name);
+        var targets = missing.GroupBy(target => target.Season).OrderBy(group => group.Key)
+            .Select(group => new SeasonTarget
+            {
+                Season = group.Key,
+                Name = names.GetValueOrDefault(group.Key),
+                EpisodeCount = desired.Count(target => target.Season == group.Key),
+                MissingEpisodes = group.Select(target => target.Episode).Distinct().Order().ToList()
+            }).ToList();
+
+        job.CanonicalSeasonsJson = JsonSerializer.Serialize(CustomCanonicalSeasons(profile));
+        job.SeasonTargetsJson = targets.Count > 0 ? JsonSerializer.Serialize(targets) : null;
+        job.RequestedEpisodesCsv = null;
+        job.RequestedSeasonsCsv = targets.Count > 0
+            ? string.Join(',', targets.Select(target => target.Season))
+            : null;
+        _logger.LogInformation(
+            "Job {JobId}: custom metadata contract has {Wanted} wanted target(s), {Missing} still missing",
+            job.Id, desired.Count, missing.Count);
     }
 
     /// <summary>

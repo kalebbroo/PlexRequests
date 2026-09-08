@@ -10,6 +10,9 @@ public static partial class EpisodeOrderMapping
     public static bool IsActive(SeriesEpisodeOrderProfileDto? profile) =>
         profile is { Enabled: true, SourceOrder: not EpisodeOrderType.Aired };
 
+    public static bool HasCustomMetadata(SeriesEpisodeOrderProfileDto? profile) =>
+        IsActive(profile) && profile is { CustomMetadataEnabled: true, CustomEpisodes.Count: > 0 };
+
     public static SeriesEpisodeOrderProfileDto? Resolve(
         IEnumerable<SeriesEpisodeOrderProfileDto> profiles, int? tmdbId) =>
         tmdbId is > 0
@@ -33,10 +36,42 @@ public static partial class EpisodeOrderMapping
         profile.SourceEpisodeGroupName = null;
         profile.ImportedAt = null;
         profile.SourceGroups = [];
+        profile.CustomMetadataEnabled = false;
+        profile.CustomSeasons = [];
+        profile.CustomEpisodes = [];
         profile.MappingsText = string.Empty;
     }
 
+    public static bool TryParseDetailed(SeriesEpisodeOrderProfileDto profile,
+        out IReadOnlyDictionary<(int Season, int Episode), EpisodeMapTarget> mappings, out string? error)
+    {
+        if (profile.CustomMetadataEnabled)
+            return TryParseCustom(profile, out mappings, out error);
+
+        var legacy = TryParseLegacy(profile, out var parsed, out error);
+        mappings = parsed.ToDictionary(pair => pair.Key,
+            pair => new EpisodeMapTarget(new EpisodeRef
+            {
+                Season = pair.Value.Season,
+                Episode = pair.Value.Episode
+            }));
+        return legacy;
+    }
+
     public static bool TryParse(SeriesEpisodeOrderProfileDto profile,
+        out IReadOnlyDictionary<(int Season, int Episode), EpisodeRef> mappings, out string? error)
+    {
+        var valid = TryParseDetailed(profile, out var detailed, out error);
+        mappings = detailed.ToDictionary(pair => pair.Key,
+            pair => new EpisodeRef
+            {
+                Season = pair.Value.Episode.Season,
+                Episode = pair.Value.Episode.Episode
+            });
+        return valid;
+    }
+
+    private static bool TryParseLegacy(SeriesEpisodeOrderProfileDto profile,
         out IReadOnlyDictionary<(int Season, int Episode), EpisodeRef> mappings, out string? error)
     {
         var result = new Dictionary<(int, int), EpisodeRef>();
@@ -116,6 +151,118 @@ public static partial class EpisodeOrderMapping
         return error is null;
     }
 
+    private static bool TryParseCustom(SeriesEpisodeOrderProfileDto profile,
+        out IReadOnlyDictionary<(int Season, int Episode), EpisodeMapTarget> mappings, out string? error)
+    {
+        var result = new Dictionary<(int, int), EpisodeMapTarget>();
+        var sourceGroups = new HashSet<int>();
+        foreach (var group in profile.SourceGroups ?? [])
+        {
+            if (group.SourceSeason <= 0 || string.IsNullOrWhiteSpace(group.Name)
+                || group.Name.Trim().Length > 256 || !sourceGroups.Add(group.SourceSeason))
+            {
+                mappings = result;
+                error = "Custom source folders need a unique positive number and a name.";
+                return false;
+            }
+        }
+        var seasons = new HashSet<int>();
+        foreach (var season in profile.CustomSeasons ?? [])
+        {
+            if (season.Season < 0 || season.Season > 999 || string.IsNullOrWhiteSpace(season.Name)
+                || season.Name.Trim().Length > 256)
+            {
+                mappings = result;
+                error = "Custom seasons need a unique non-negative number and a name.";
+                return false;
+            }
+            if (!seasons.Add(season.Season))
+            {
+                mappings = result;
+                error = $"Custom season S{season.Season:D2} is repeated.";
+                return false;
+            }
+        }
+
+        var allowedKinds = new HashSet<string>(["episode", "ova", "ona", "special"],
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var row in profile.CustomEpisodes ?? [])
+        {
+            if (row.SourceSeason < 0 || row.SourceSeason > 999 || row.SourceEpisode <= 0
+                || row.SourceEpisode > 9999 || row.Season < 0 || row.Season > 999
+                || row.Episode <= 0 || row.Episode > 9999 || row.Part is < 1 or > 8)
+            {
+                mappings = result;
+                error = "Custom episode rows need valid source/Plex numbers and a part from 1 through 8.";
+                return false;
+            }
+            if (!allowedKinds.Contains(row.ContentKind?.Trim() ?? string.Empty))
+            {
+                mappings = result;
+                error = $"{SourceLabel(row.SourceSeason, row.SourceEpisode)} has an unsupported content type.";
+                return false;
+            }
+            if (!result.TryAdd((row.SourceSeason, row.SourceEpisode),
+                    new EpisodeMapTarget(new EpisodeRef { Season = row.Season, Episode = row.Episode }, row.Part)))
+            {
+                mappings = result;
+                error = $"Custom metadata repeats source episode {SourceLabel(row.SourceSeason, row.SourceEpisode)}.";
+                return false;
+            }
+        }
+
+        foreach (var target in (profile.CustomEpisodes ?? []).GroupBy(row => (row.Season, row.Episode)))
+        {
+            var parts = target.Select(row => row.Part).Order().ToList();
+            if (parts.Count > 1 && !parts.SequenceEqual(Enumerable.Range(1, parts.Count)))
+            {
+                mappings = result;
+                error = $"S{target.Key.Season:D2}E{target.Key.Episode:D2} parts must be unique and consecutive from 1.";
+                return false;
+            }
+            if (parts.Count == 1 && parts[0] != 1)
+            {
+                mappings = result;
+                error = $"A single source for S{target.Key.Season:D2}E{target.Key.Episode:D2} must be part 1.";
+                return false;
+            }
+            var titles = target.Select(row => row.Title?.Trim() ?? string.Empty)
+                .Where(title => title.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+            if (titles.Count > 1)
+            {
+                mappings = result;
+                error = $"S{target.Key.Season:D2}E{target.Key.Episode:D2} has conflicting custom titles.";
+                return false;
+            }
+            var metadataContracts = target.Select(row => new
+                {
+                    Title = row.Title?.Trim() ?? string.Empty,
+                    Summary = row.Summary?.Trim() ?? string.Empty,
+                    Date = row.OriginallyAvailableAt?.Date,
+                    Kind = row.ContentKind?.Trim().ToLowerInvariant(),
+                    row.IncludeInMonitoring
+                }).Distinct().Count();
+            if (metadataContracts > 1)
+            {
+                mappings = result;
+                error = $"S{target.Key.Season:D2}E{target.Key.Episode:D2} split parts have conflicting metadata or Wanted settings.";
+                return false;
+            }
+        }
+
+        if (sourceGroups.Count > 0 && result.Keys.Any(key => key.Item1 > 0 && !sourceGroups.Contains(key.Item1)))
+        {
+            var unknown = result.Keys.First(key => key.Item1 > 0 && !sourceGroups.Contains(key.Item1));
+            mappings = result;
+            error = $"Source mapping {SourceLabel(unknown.Item1, unknown.Item2)} has no matching source folder name.";
+            return false;
+        }
+
+        mappings = result;
+        error = result.Count == 0 ? "Add at least one custom episode mapping." : null;
+        return error is null;
+    }
+
     public static bool TryTranslate(SeriesEpisodeOrderProfileDto? profile, int sourceSeason, int sourceEpisode,
         out EpisodeRef target)
     {
@@ -124,12 +271,33 @@ public static partial class EpisodeOrderMapping
             target = new EpisodeRef { Season = sourceSeason, Episode = sourceEpisode };
             return true;
         }
-        if (TryParse(profile!, out var map, out _) && map.TryGetValue((sourceSeason, sourceEpisode), out var found))
+        if (TryParseDetailed(profile!, out var map, out _) && map.TryGetValue((sourceSeason, sourceEpisode), out var found))
         {
-            target = new EpisodeRef { Season = found.Season, Episode = found.Episode };
+            target = new EpisodeRef { Season = found.Episode.Season, Episode = found.Episode.Episode };
             return true;
         }
         target = new EpisodeRef();
+        return false;
+    }
+
+    public static bool TryTranslateDetailed(SeriesEpisodeOrderProfileDto? profile, int sourceSeason,
+        int sourceEpisode, out EpisodeMapTarget target)
+    {
+        if (!IsActive(profile))
+        {
+            target = new EpisodeMapTarget(new EpisodeRef { Season = sourceSeason, Episode = sourceEpisode });
+            return true;
+        }
+        if (TryParseDetailed(profile!, out var map, out _) && map.TryGetValue((sourceSeason, sourceEpisode), out var found))
+        {
+            target = new EpisodeMapTarget(new EpisodeRef
+            {
+                Season = found.Episode.Season,
+                Episode = found.Episode.Episode
+            }, found.Part);
+            return true;
+        }
+        target = new EpisodeMapTarget(new EpisodeRef());
         return false;
     }
 
@@ -144,11 +312,20 @@ public static partial class EpisodeOrderMapping
     public static bool TryTranslateFile(SeriesEpisodeOrderProfileDto? profile, string filePath,
         int parsedSeason, int sourceEpisode, out EpisodeRef target)
     {
+        var translated = TryTranslateFileDetailed(profile, filePath, parsedSeason, sourceEpisode,
+            out var detailed);
+        target = detailed.Episode;
+        return translated;
+    }
+
+    public static bool TryTranslateFileDetailed(SeriesEpisodeOrderProfileDto? profile, string filePath,
+        int parsedSeason, int sourceEpisode, out EpisodeMapTarget target)
+    {
         if (!IsActive(profile))
-            return TryTranslate(profile, parsedSeason, sourceEpisode, out target);
-        if (!TryParse(profile!, out var map, out _))
+            return TryTranslateDetailed(profile, parsedSeason, sourceEpisode, out target);
+        if (!TryParseDetailed(profile!, out var map, out _))
         {
-            target = new EpisodeRef();
+            target = new EpisodeMapTarget(new EpisodeRef());
             return false;
         }
 
@@ -160,7 +337,7 @@ public static partial class EpisodeOrderMapping
             {
                 if (!SourceGroupNameMatches(authoritativeGroups, parentSeason, parentName))
                 {
-                    target = new EpisodeRef();
+                    target = new EpisodeMapTarget(new EpisodeRef());
                     return false;
                 }
                 // A proven collection folder outranks an arc's own S1/S2 token. Mixing both identities can
@@ -174,15 +351,19 @@ public static partial class EpisodeOrderMapping
         var matches = sourceKeys.Distinct()
             .Where(map.ContainsKey)
             .Select(key => map[key])
-            .DistinctBy(episode => (episode.Season, episode.Episode))
+            .DistinctBy(destination => (destination.Episode.Season, destination.Episode.Episode, destination.Part))
             .ToList();
         if (matches.Count == 1)
         {
-            target = new EpisodeRef { Season = matches[0].Season, Episode = matches[0].Episode };
+            target = new EpisodeMapTarget(new EpisodeRef
+            {
+                Season = matches[0].Episode.Season,
+                Episode = matches[0].Episode.Episode
+            }, matches[0].Part);
             return true;
         }
 
-        target = new EpisodeRef();
+        target = new EpisodeMapTarget(new EpisodeRef());
         return false;
     }
 
@@ -195,11 +376,11 @@ public static partial class EpisodeOrderMapping
             source = new EpisodeRef { Season = canonicalSeason, Episode = canonicalEpisode };
             return true;
         }
-        if (TryParse(profile!, out var map, out _))
+        if (TryParseDetailed(profile!, out var map, out _))
         {
             foreach (var pair in map)
             {
-                if (pair.Value.Season != canonicalSeason || pair.Value.Episode != canonicalEpisode) continue;
+                if (pair.Value.Episode.Season != canonicalSeason || pair.Value.Episode.Episode != canonicalEpisode) continue;
                 source = new EpisodeRef { Season = pair.Key.Season, Episode = pair.Key.Episode };
                 return true;
             }
@@ -208,27 +389,49 @@ public static partial class EpisodeOrderMapping
         return false;
     }
 
+    public static IReadOnlyList<EpisodeRef> SourcesForCanonicalEpisode(
+        SeriesEpisodeOrderProfileDto profile, int canonicalSeason, int canonicalEpisode)
+    {
+        if (!TryParseDetailed(profile, out var map, out _)) return [];
+        return map.Where(pair => pair.Value.Episode.Season == canonicalSeason
+                                 && pair.Value.Episode.Episode == canonicalEpisode)
+            .OrderBy(pair => pair.Value.Part)
+            .Select(pair => new EpisodeRef { Season = pair.Key.Season, Episode = pair.Key.Episode })
+            .ToList();
+    }
+
     /// <summary>Returns release-numbered episodes whose canonical targets belong to the requested seasons.</summary>
     public static IReadOnlyList<EpisodeRef> SourcesForCanonicalSeasons(
         SeriesEpisodeOrderProfileDto profile, IEnumerable<int> canonicalSeasons)
     {
-        if (!TryParse(profile, out var map, out _)) return [];
+        if (!TryParseDetailed(profile, out var map, out _)) return [];
         var wanted = canonicalSeasons.ToHashSet();
-        return map.Where(x => wanted.Contains(x.Value.Season))
+        return map.Where(x => wanted.Contains(x.Value.Episode.Season))
             .Select(x => new EpisodeRef { Season = x.Key.Season, Episode = x.Key.Episode })
             .OrderBy(x => x.Season).ThenBy(x => x.Episode).ToList();
     }
 
     public static IReadOnlyList<EpisodeRef> SourceSeasonCoverage(SeriesEpisodeOrderProfileDto profile, int? sourceSeason)
     {
-        if (!TryParse(profile, out var map, out _)) return [];
+        if (!TryParseDetailed(profile, out var map, out _)) return [];
         return map.Where(x => sourceSeason is null || x.Key.Season == sourceSeason)
-            .Select(x => new EpisodeRef { Season = x.Value.Season, Episode = x.Value.Episode })
+            .Select(x => new EpisodeRef { Season = x.Value.Episode.Season, Episode = x.Value.Episode.Episode })
             .OrderBy(x => x.Season).ThenBy(x => x.Episode).ToList();
     }
 
     public static string Normalize(SeriesEpisodeOrderProfileDto profile)
     {
+        if (profile.CustomMetadataEnabled)
+        {
+            if (!TryParseDetailed(profile, out var custom, out _)) return profile.MappingsText.Trim();
+            return string.Join('\n', custom.OrderBy(x => x.Key.Season).ThenBy(x => x.Key.Episode)
+                .Select(x => $"{SourceLabel(x.Key.Season, x.Key.Episode)} -> "
+                             + $"S{x.Value.Episode.Season:D2}E{x.Value.Episode.Episode:D2}"
+                             + (x.Value.Part > 1 || custom.Values.Count(value =>
+                                 value.Episode.Season == x.Value.Episode.Season
+                                 && value.Episode.Episode == x.Value.Episode.Episode) > 1
+                                 ? $" pt{x.Value.Part}" : string.Empty)));
+        }
         if (!TryParse(profile, out var map, out _)) return profile.MappingsText.Trim();
         return string.Join('\n', map.OrderBy(x => x.Key.Season).ThenBy(x => x.Key.Episode)
             .Select(x => $"{SourceLabel(x.Key.Season, x.Key.Episode)} -> S{x.Value.Season:D2}E{x.Value.Episode:D2}"));

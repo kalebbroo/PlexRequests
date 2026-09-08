@@ -561,7 +561,8 @@ public sealed class MediaLanguagePolicyTests
 
     private static LibraryOrganizer CreateOrganizer(IMediaTrackInspector inspector) => new(
         new NoArchives(), new NoSeasonPacks(), new NoEpisodes(), new PlexNamingService(),
-        new ReleaseParser(), inspector, NullLogger<LibraryOrganizer>.Instance);
+        new ReleaseParser(), inspector, new TestMultipartEpisodeJoiner(),
+        NullLogger<LibraryOrganizer>.Instance);
 
     private static EffectiveLibraryOrganization Preferences(bool keepSubtitles = true) => new()
     {

@@ -146,6 +146,8 @@ public interface IPlexApiService
     // Admin server health extras
     Task<List<PlexSessionInfo>> GetActiveSessionsAsync();
     Task RefreshLibraryAsync(string sectionKey);
+    /// <summary>Apply and lock the saved custom season/episode fields for one series on Plex.</summary>
+    Task<CustomMetadataSyncResultDto> ApplyCustomMetadataAsync(int tmdbId, CancellationToken ct = default);
     /// <summary>Resolve the Plex library section key for a media type (first matching section), memoized
     /// briefly since sections rarely change. Null if Plex has no library of that type configured.</summary>
     Task<string?> ResolveSectionKeyAsync(MediaType mediaType);

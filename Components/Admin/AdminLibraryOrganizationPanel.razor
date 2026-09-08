@@ -4,6 +4,7 @@
 @using PlexRequestsHosted.Shared.Enums
 @inject PlexRequestsHosted.Services.Implementations.ILibraryOrganizationPreferencesService Prefs
 @inject PlexRequestsHosted.Services.Implementations.ITmdbEpisodeGroupImportService EpisodeGroups
+@inject PlexRequestsHosted.Services.Abstractions.IPlexApiService Plex
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
 @inject MudBlazor.IDialogService DialogService
 
@@ -189,6 +190,7 @@ else
                                   dense="true" Style="min-width:240px;" />
                     <MudSelect T="EpisodeOrderType" @bind-Value="profile.SourceOrder"
                                @bind-Value:after="@(() => OrderEdited(profile))" Label="Release order"
+                               Disabled="@profile.CustomMetadataEnabled"
                                Variant="Variant.Outlined" dense="true" Style="min-width:180px;">
                         <MudSelectItem Value="EpisodeOrderType.Absolute">Absolute</MudSelectItem>
                         <MudSelectItem Value="EpisodeOrderType.Dvd">DVD</MudSelectItem>
@@ -202,6 +204,133 @@ else
                 </div>
                 @if (profile.SourceOrder != EpisodeOrderType.Aired)
                 {
+                    <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
+                        <div>
+                            <MudText Typo="Typo.subtitle2">Custom metadata builder</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                                Use this when provider ordering cannot describe OVAs, ONAs, specials, or a split double-length episode.
+                            </MudText>
+                        </div>
+                        <MudSwitch T="bool" Value="@profile.CustomMetadataEnabled"
+                                   ValueChanged="@(value => SetCustomMetadata(profile, value))"
+                                   Color="Color.Primary" Label="Build manually" />
+                    </div>
+                    @if (profile.CustomMetadataEnabled)
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
+                            Every row is explicit and reusable. Season 0 means Plex Specials. Give files that form one
+                            episode the same Plex destination and consecutive parts 1, 2, …; Plex Requests joins them
+                            losslessly before import. Only checked rows are included in whole-series monitoring.
+                        </MudAlert>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <MudText Typo="Typo.subtitle2">Numbered release folders</MudText>
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add"
+                                       OnClick="@(() => AddSourceGroup(profile))">Add source folder</MudButton>
+                        </div>
+                        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-2">
+                            Optional but recommended for franchise collections such as <code>13 - Owarimonogatari</code>.
+                            Both the folder number and name must match before a file is trusted.
+                        </MudText>
+                        @for (var sourceIndex = 0; sourceIndex < profile.SourceGroups.Count; sourceIndex++)
+                        {
+                            var customSourceIndex = sourceIndex;
+                            var sourceGroup = profile.SourceGroups[customSourceIndex];
+                            <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
+                                <MudNumericField T="int" @bind-Value="sourceGroup.SourceSeason" Label="Folder number"
+                                                 Min="1" Max="999" Variant="Variant.Outlined" dense="true" Style="max-width:150px;" />
+                                <MudTextField @bind-Value="sourceGroup.Name" Label="Folder/arc name"
+                                              Variant="Variant.Outlined" dense="true" Style="min-width:280px;" />
+                                <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                               OnClick="@(() => RemoveSourceGroup(profile, customSourceIndex))" />
+                            </div>
+                        }
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <MudText Typo="Typo.subtitle2">Season labels</MudText>
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add"
+                                       OnClick="@(() => AddCustomSeason(profile))">Add season</MudButton>
+                        </div>
+                        @for (var seasonIndex = 0; seasonIndex < profile.CustomSeasons.Count; seasonIndex++)
+                        {
+                            var customSeasonIndex = seasonIndex;
+                            var customSeason = profile.CustomSeasons[customSeasonIndex];
+                            <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
+                                <MudNumericField T="int" @bind-Value="customSeason.Season" Label="Plex season"
+                                                 Min="0" Max="999" Variant="Variant.Outlined" dense="true" Style="max-width:140px;" />
+                                <MudTextField @bind-Value="customSeason.Name" Label="Season name"
+                                              Variant="Variant.Outlined" dense="true" Style="min-width:260px;" />
+                                <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                               OnClick="@(() => RemoveCustomSeason(profile, customSeasonIndex))" />
+                            </div>
+                        }
+                        <div class="d-flex justify-content-between align-items-center mt-4 mb-2">
+                            <MudText Typo="Typo.subtitle2">Episode and special mappings</MudText>
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add"
+                                       OnClick="@(() => AddCustomEpisode(profile))">Add mapping</MudButton>
+                        </div>
+                        @for (var episodeIndex = 0; episodeIndex < profile.CustomEpisodes.Count; episodeIndex++)
+                        {
+                            var customEpisodeIndex = episodeIndex;
+                            var customEpisode = profile.CustomEpisodes[customEpisodeIndex];
+                            <MudPaper Class="pa-2 mb-2" Outlined="true">
+                                <div class="d-flex gap-2 flex-wrap align-items-center">
+                                    <MudNumericField T="int" @bind-Value="customEpisode.SourceSeason" Label="Source season"
+                                                     Min="0" Max="999" Variant="Variant.Outlined" dense="true" Style="max-width:130px;" />
+                                    <MudNumericField T="int" @bind-Value="customEpisode.SourceEpisode" Label="Source episode"
+                                                     Min="1" Max="9999" Variant="Variant.Outlined" dense="true" Style="max-width:135px;" />
+                                    <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" />
+                                    <MudNumericField T="int" @bind-Value="customEpisode.Season" Label="Plex season"
+                                                     Min="0" Max="999" Variant="Variant.Outlined" dense="true" Style="max-width:125px;" />
+                                    <MudNumericField T="int" @bind-Value="customEpisode.Episode" Label="Plex episode"
+                                                     Min="1" Max="9999" Variant="Variant.Outlined" dense="true" Style="max-width:130px;" />
+                                    <MudNumericField T="int" @bind-Value="customEpisode.Part" Label="Part"
+                                                     Min="1" Max="8" Variant="Variant.Outlined" dense="true" Style="max-width:95px;" />
+                                    <MudSelect T="string" @bind-Value="customEpisode.ContentKind" Label="Type"
+                                               Variant="Variant.Outlined" dense="true" Style="min-width:130px;">
+                                        <MudSelectItem T="string" Value="@("Episode")">Episode</MudSelectItem>
+                                        <MudSelectItem T="string" Value="@("OVA")">OVA</MudSelectItem>
+                                        <MudSelectItem T="string" Value="@("ONA")">ONA</MudSelectItem>
+                                        <MudSelectItem T="string" Value="@("Special")">Special</MudSelectItem>
+                                    </MudSelect>
+                                    <MudCheckBox T="bool" @bind-Value="customEpisode.IncludeInMonitoring"
+                                                 Color="Color.Primary" Label="Wanted" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                                   OnClick="@(() => RemoveCustomEpisode(profile, customEpisodeIndex))" />
+                                </div>
+                                <div class="d-flex gap-2 flex-wrap mt-2">
+                                    <MudTextField @bind-Value="customEpisode.Title" Label="Episode title"
+                                                  Variant="Variant.Outlined" dense="true" Style="min-width:300px; flex:1;" />
+                                    <MudDatePicker @bind-Date="customEpisode.OriginallyAvailableAt" Label="Original date"
+                                                   Variant="Variant.Outlined" dense="true" Style="max-width:190px;" />
+                                </div>
+                                <MudTextField @bind-Value="customEpisode.Summary" Label="Optional summary"
+                                              Variant="Variant.Outlined" dense="true" Lines="2" FullWidth="true" Class="mt-2" />
+                            </MudPaper>
+                        }
+                        @if (profile.CustomEpisodes.Count == 0)
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-2">
+                                Add the first source-to-Plex mapping. Nothing is inferred or imported until the map validates.
+                            </MudText>
+                        }
+                        <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                            Preview: @(EpisodeOrderMapping.TryParse(profile, out _, out var customError)
+                                ? $"{profile.CustomEpisodes.Count} source files, {profile.CustomEpisodes.Select(row => (row.Season, row.Episode)).Distinct().Count()} Plex episodes"
+                                : customError)
+                        </MudText>
+                        <div class="mt-3">
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                                       StartIcon="@Icons.Material.Filled.Sync"
+                                       Disabled="@(_metadataSyncing.Contains(profile) || profile.TmdbId <= 0)"
+                                       OnClick="@(() => ApplyCustomMetadata(profile))">
+                                @(_metadataSyncing.Contains(profile) ? "Applying…" : "Apply saved metadata to Plex")
+                            </MudButton>
+                            <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="ms-2">
+                                Save changes first. Saved fields are also reapplied after library-index scans.
+                            </MudText>
+                        </div>
+                    }
+                    else
+                    {
                     <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
                         <MudButton Size="Size.Small" Variant="Variant.Outlined"
                                    StartIcon="@Icons.Material.Filled.CloudDownload"
@@ -247,6 +376,7 @@ else
                         One source-to-Plex mapping per line. Use <code>A13</code> for absolute episode 13 or
                         <code>S01E13</code> for a season-based DVD/digital/custom source.
                     </MudText>
+                    }
                 }
             </MudPaper>
         }
@@ -398,6 +528,7 @@ else
     private readonly Dictionary<SeriesEpisodeOrderProfileDto, string> _seriesSearches = new();
     private readonly Dictionary<SeriesEpisodeOrderProfileDto, List<MediaCardDto>> _seriesResults = new();
     private readonly HashSet<SeriesEpisodeOrderProfileDto> _seriesSearching = new();
+    private readonly HashSet<SeriesEpisodeOrderProfileDto> _metadataSyncing = new();
 
     protected override async Task OnInitializedAsync() => await Load();
 
@@ -478,6 +609,116 @@ else
         StateHasChanged();
     }
 
+    private void SetCustomMetadata(SeriesEpisodeOrderProfileDto profile, bool enabled)
+    {
+        if (enabled && profile.CustomEpisodes.Count == 0
+                    && EpisodeOrderMapping.TryParse(profile, out var legacy, out _))
+        {
+            profile.CustomEpisodes = legacy.OrderBy(pair => pair.Key.Season).ThenBy(pair => pair.Key.Episode)
+                .Select(pair => new CustomEpisodeMetadataDto
+                {
+                    SourceSeason = pair.Key.Season,
+                    SourceEpisode = pair.Key.Episode,
+                    Season = pair.Value.Season,
+                    Episode = pair.Value.Episode,
+                    Part = 1,
+                    ContentKind = pair.Value.Season == 0 ? "Special" : "Episode",
+                    IncludeInMonitoring = pair.Value.Season > 0
+                }).ToList();
+            profile.CustomSeasons = profile.CustomEpisodes.Select(row => row.Season).Distinct().Order()
+                .Select(season => new CustomSeasonMetadataDto
+                {
+                    Season = season,
+                    Name = season == 0 ? "Specials" : $"Season {season}"
+                }).ToList();
+        }
+        profile.CustomMetadataEnabled = enabled;
+        if (enabled) profile.SourceOrder = EpisodeOrderType.Custom;
+        StateHasChanged();
+    }
+
+    private void AddCustomSeason(SeriesEpisodeOrderProfileDto profile)
+    {
+        var number = Enumerable.Range(0, 1000).First(value => profile.CustomSeasons.All(row => row.Season != value));
+        profile.CustomSeasons.Add(new CustomSeasonMetadataDto
+        {
+            Season = number,
+            Name = number == 0 ? "Specials" : $"Season {number}"
+        });
+        StateHasChanged();
+    }
+
+    private void AddSourceGroup(SeriesEpisodeOrderProfileDto profile)
+    {
+        var number = Enumerable.Range(1, 999).First(value => profile.SourceGroups.All(row => row.SourceSeason != value));
+        profile.SourceGroups.Add(new EpisodeOrderSourceGroupDto { SourceSeason = number, Name = $"Arc {number}" });
+        StateHasChanged();
+    }
+
+    private void RemoveSourceGroup(SeriesEpisodeOrderProfileDto profile, int index)
+    {
+        profile.SourceGroups.RemoveAt(index);
+        StateHasChanged();
+    }
+
+    private void RemoveCustomSeason(SeriesEpisodeOrderProfileDto profile, int index)
+    {
+        profile.CustomSeasons.RemoveAt(index);
+        StateHasChanged();
+    }
+
+    private void AddCustomEpisode(SeriesEpisodeOrderProfileDto profile)
+    {
+        var previous = profile.CustomEpisodes.LastOrDefault();
+        profile.CustomEpisodes.Add(new CustomEpisodeMetadataDto
+        {
+            SourceSeason = previous?.SourceSeason ?? 1,
+            SourceEpisode = (previous?.SourceEpisode ?? 0) + 1,
+            Season = previous?.Season ?? 1,
+            Episode = (previous?.Episode ?? 0) + 1,
+            ContentKind = previous?.ContentKind ?? "Episode",
+            IncludeInMonitoring = true
+        });
+        StateHasChanged();
+    }
+
+    private void RemoveCustomEpisode(SeriesEpisodeOrderProfileDto profile, int index)
+    {
+        profile.CustomEpisodes.RemoveAt(index);
+        StateHasChanged();
+    }
+
+    private async Task ApplyCustomMetadata(SeriesEpisodeOrderProfileDto profile)
+    {
+        _metadataSyncing.Add(profile);
+        StateHasChanged();
+        try
+        {
+            var result = await Plex.ApplyCustomMetadataAsync(profile.TmdbId);
+            if (!result.Configured)
+                await Toast.ShowErrorAsync("No saved, valid custom metadata contract exists for this series. Save changes first.");
+            else if (!result.SeriesFound)
+                await Toast.ShowErrorAsync("The series is not matched in Plex yet.");
+            else if (result.Errors.Count > 0)
+                await Toast.ShowErrorAsync(result.Errors[0]);
+            else
+                await Toast.ShowSuccessAsync(
+                    $"Applied {result.SeasonsUpdated} season and {result.EpisodesUpdated} episode update(s). "
+                    + (result.MissingTargets.Count > 0
+                        ? $"{result.MissingTargets.Count} mapped episode(s) are not indexed in Plex yet."
+                        : "Every mapped episode is indexed."));
+        }
+        catch (Exception ex)
+        {
+            await Toast.ShowErrorAsync($"Plex metadata update failed: {ex.Message}");
+        }
+        finally
+        {
+            _metadataSyncing.Remove(profile);
+            StateHasChanged();
+        }
+    }
+
     private void RemoveEpisodeOrderProfile(int index)
     {
         var profile = _p!.SeriesEpisodeOrderProfiles[index];
@@ -488,6 +729,7 @@ else
         _seriesSearches.Remove(profile);
         _seriesResults.Remove(profile);
         _seriesSearching.Remove(profile);
+        _metadataSyncing.Remove(profile);
         _p.SeriesEpisodeOrderProfiles.RemoveAt(index);
         StateHasChanged();
     }
@@ -539,7 +781,8 @@ else
     private async Task<bool> ChangeSeriesIdentity(SeriesEpisodeOrderProfileDto profile, int tmdbId,
         string? title = null)
     {
-        if (profile.TmdbId != tmdbId && !string.IsNullOrWhiteSpace(profile.MappingsText))
+        if (profile.TmdbId != tmdbId
+            && (!string.IsNullOrWhiteSpace(profile.MappingsText) || profile.CustomEpisodes.Count > 0))
         {
             var confirmed = await DialogService.ShowMessageBox("Change episode-order series",
                 "Changing the TMDb series clears the current episode mappings so they cannot be applied to the wrong show.",
@@ -610,6 +853,9 @@ else
             profile.SourceEpisodeGroupName = preview.Profile.SourceEpisodeGroupName;
             profile.ImportedAt = preview.Profile.ImportedAt;
             profile.SourceGroups = preview.Profile.SourceGroups;
+            profile.CustomMetadataEnabled = false;
+            profile.CustomSeasons = preview.Profile.CustomSeasons;
+            profile.CustomEpisodes = preview.Profile.CustomEpisodes;
             profile.MappingsText = preview.Profile.MappingsText;
             profile.Enabled = true;
             await Toast.ShowSuccessAsync($"Imported {preview.MappedEpisodeCount} validated episode mapping(s). Click Save to persist them.");

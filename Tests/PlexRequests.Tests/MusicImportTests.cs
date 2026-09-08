@@ -369,7 +369,8 @@ public sealed class MusicImportTests
 
     private static LibraryOrganizer CreateOrganizer() => new(
         new NoArchives(), new NoSeasonPacks(), new NoEpisodes(), new PlexNamingService(),
-        new ReleaseParser(), new NoTrackInspector(), NullLogger<LibraryOrganizer>.Instance);
+        new ReleaseParser(), new NoTrackInspector(), new TestMultipartEpisodeJoiner(),
+        NullLogger<LibraryOrganizer>.Instance);
 
     private static EffectiveLibraryOrganization Preferences(string library, double minAudioFileSizeMb = 0) => new()
     {

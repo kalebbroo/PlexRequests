@@ -116,25 +116,30 @@ public sealed class TmdbEpisodeGroupImportService(
         var sourceGroupOffset = details.Type != TvGroupType.Absolute && groups.Any(group => group.Order == 0)
             ? 1 : 0;
         var lines = new List<string>();
+        var customEpisodes = new List<CustomEpisodeMetadataDto>();
         var skippedSpecials = 0;
         if (details.Type == TvGroupType.Absolute)
         {
-            var absolute = groups.SelectMany(group => (group.Episodes ?? []).OrderBy(x => x.Order))
-                .Where(episode =>
-                {
-                    if (episode.SeasonNumber != 0) return true;
-                    skippedSpecials++;
-                    return false;
-                })
-                .ToList();
+            var absolute = groups.SelectMany(group => (group.Episodes ?? []).OrderBy(x => x.Order)).ToList();
             foreach (var episode in absolute)
+            {
+                customEpisodes.Add(CustomEpisode(0, episode.Order + 1, episode));
+                if (episode.SeasonNumber == 0)
+                {
+                    skippedSpecials++;
+                    continue;
+                }
                 lines.Add($"A{episode.Order + 1} -> S{episode.SeasonNumber:D2}E{episode.EpisodeNumber:D2}");
+            }
         }
         else
         {
             foreach (var group in groups)
             foreach (var episode in (group.Episodes ?? []).OrderBy(x => x.Order))
+            {
                 lines.Add($"S{group.Order + sourceGroupOffset:D2}E{episode.Order + 1:D2} -> S{episode.SeasonNumber:D2}E{episode.EpisodeNumber:D2}");
+                customEpisodes.Add(CustomEpisode(group.Order + sourceGroupOffset, episode.Order + 1, episode));
+            }
         }
 
         var profile = new SeriesEpisodeOrderProfileDto
@@ -154,6 +159,13 @@ public sealed class TmdbEpisodeGroupImportService(
                         Name = group.Name.Trim()
                     })
                     .ToList(),
+            CustomSeasons = customEpisodes.Select(row => row.Season).Distinct().Order()
+                .Select(season => new CustomSeasonMetadataDto
+                {
+                    Season = season,
+                    Name = season == 0 ? "Specials" : $"Season {season}"
+                }).ToList(),
+            CustomEpisodes = customEpisodes,
             MappingsText = string.Join('\n', lines),
             Enabled = true
         };
@@ -172,6 +184,21 @@ public sealed class TmdbEpisodeGroupImportService(
                 : null
         };
     }
+
+    private static CustomEpisodeMetadataDto CustomEpisode(int sourceSeason, int sourceEpisode,
+        TvGroupEpisode episode) => new()
+    {
+        SourceSeason = sourceSeason,
+        SourceEpisode = sourceEpisode,
+        Season = episode.SeasonNumber,
+        Episode = episode.EpisodeNumber,
+        Title = episode.Name ?? string.Empty,
+        OriginallyAvailableAt = episode.AirDate,
+        ContentKind = episode.SeasonNumber == 0 ? "Special" : "Episode",
+        // Provider specials include recaps, promos, and unrelated shorts. Show them in the builder, but
+        // require an explicit opt-in before they become whole-series download targets.
+        IncludeInMonitoring = episode.SeasonNumber > 0
+    };
 
     private TmdbMetadataProvider Provider() =>
         providers.GetProvider(MetadataProviderType.TMDb) as TmdbMetadataProvider
