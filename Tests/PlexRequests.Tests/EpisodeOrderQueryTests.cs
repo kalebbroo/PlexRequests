@@ -139,6 +139,53 @@ public sealed class EpisodeOrderQueryTests
     }
 
     [Fact]
+    public void Standalone_arc_name_resolves_its_configured_source_group_and_file_mapping()
+    {
+        var profile = CustomArcProfile();
+        const string path = "/downloads/[MTBB] MONOGATARI Series OFF & MONSTER Season S01/"
+                            + "[MTBB] MONOGATARI Series OFF & MONSTER Season - 01.mkv";
+
+        Assert.True(EpisodeOrderMapping.TryResolveNamedSourceGroup(profile, path, out var sourceSeason));
+        Assert.Equal(16, sourceSeason);
+        Assert.True(EpisodeOrderMapping.TryTranslateFile(profile, path, parsedSeason: 1, sourceEpisode: 1,
+            out var target));
+        Assert.Equal((5, 1), (target.Season, target.Episode));
+    }
+
+    [Fact]
+    public void Overlapping_source_group_names_fail_closed()
+    {
+        var profile = CustomArcProfile();
+        profile.SourceGroups =
+        [
+            new EpisodeOrderSourceGroupDto { SourceSeason = 13, Name = "Owarimonogatari" },
+            new EpisodeOrderSourceGroupDto { SourceSeason = 14, Name = "Owarimonogatari S1" }
+        ];
+
+        Assert.False(EpisodeOrderMapping.TryResolveNamedSourceGroup(profile,
+            "[Group] Owarimonogatari S1 - 01 [1080p]", out _));
+    }
+
+    [Fact]
+    public void Alternate_order_search_includes_the_named_arc_before_numeric_fallbacks()
+    {
+        var queries = AcquisitionQuery.BuildScoped(new FulfillmentJobDto
+        {
+            MediaType = MediaType.TvShow,
+            IsAnime = true,
+            Title = "Monogatari",
+            SeasonTargets =
+            [
+                new SeasonTarget { Season = 5, EpisodeCount = 1, MissingEpisodes = [1] }
+            ],
+            EpisodeOrderProfile = CustomArcProfile()
+        });
+
+        Assert.Equal("Monogatari MONOGATARI Series OFF & MONSTER Season", queries[1]);
+        Assert.Contains("Monogatari season 16", queries);
+    }
+
+    [Fact]
     public void Renaming_the_same_profile_identity_preserves_its_validated_mapping()
     {
         var profile = Profile(EpisodeOrderType.Absolute, "A13 -> S02E01");
@@ -189,6 +236,28 @@ public sealed class EpisodeOrderQueryTests
         SourceOrder = type,
         MappingsText = mappings,
         Enabled = true
+    };
+
+    private static SeriesEpisodeOrderProfileDto CustomArcProfile() => new()
+    {
+        TmdbId = 46195,
+        SeriesTitle = "Monogatari",
+        SourceOrder = EpisodeOrderType.Custom,
+        Enabled = true,
+        CustomMetadataEnabled = true,
+        SourceGroups =
+        [
+            new EpisodeOrderSourceGroupDto
+                { SourceSeason = 16, Name = "MONOGATARI Series OFF & MONSTER Season" }
+        ],
+        CustomEpisodes =
+        [
+            new CustomEpisodeMetadataDto
+            {
+                SourceSeason = 16, SourceEpisode = 1, Season = 5, Episode = 1,
+                ContentKind = "episode", IncludeInMonitoring = true
+            }
+        ]
     };
 
     private sealed class RecordingHandler(string body) : HttpMessageHandler

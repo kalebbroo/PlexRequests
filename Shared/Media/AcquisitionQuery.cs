@@ -47,6 +47,12 @@ public static class AcquisitionQuery
         // season pack notation, so its individual mapped episodes are added below instead.
         var seasonScopes = job.RequestedSeasons.Concat(job.SeasonTargets.Select(t => t.Season)).Distinct().ToList();
         var seasonSources = EpisodeOrderMapping.SourcesForCanonicalSeasons(profile, seasonScopes);
+        var sourceGroupNames = (profile.SourceGroups ?? []).GroupBy(group => group.SourceSeason)
+            .Where(group => group.Count() == 1)
+            .ToDictionary(group => group.Key, group => group.Single().Name);
+        scoped.AddRange(seasonSources.Where(source => source.Season > 0).Select(source => source.Season).Distinct()
+            .Where(sourceGroupNames.ContainsKey)
+            .Select(season => $"{job.Title} {sourceGroupNames[season]}"));
         scoped.AddRange(seasonSources.Where(x => x.Season > 0).Select(x => x.Season).Distinct()
             .Select(season => $"{job.Title} season {season}"));
 

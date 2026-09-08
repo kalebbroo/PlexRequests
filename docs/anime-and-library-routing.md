@@ -226,6 +226,9 @@ notification after the retry threshold. The per-series custom metadata builder i
 
 - Each source folder and episode maps to one exact Plex season/episode. Numbered collection folders can also carry
   an expected arc name, so both the ordinal and title must agree.
+- Standalone arc releases may reuse `S01E01` regardless of their place in the full franchise. A complete configured
+  arc name can supply the source-group number for search, release evaluation, and file import, but only when exactly
+  one source group matches. Overlapping or generic names remain unresolved rather than guessing.
 - Season 0 rows are first-class OVA, ONA, or Special targets. The **Wanted** switch decides whether a whole-series
   request monitors that sparse target; unselected recaps and extras remain mapped for identity but never download
   merely because they exist in an archive.

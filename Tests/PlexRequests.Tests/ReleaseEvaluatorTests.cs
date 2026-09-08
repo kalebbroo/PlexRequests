@@ -180,6 +180,47 @@ public class ReleaseEvaluatorTests
     }
 
     [Fact]
+    public void Configured_arc_name_overrides_a_standalone_packs_local_season_number()
+    {
+        var job = TestData.Job("Monogatari", MediaType.TvShow, seasonTargets:
+        [
+            new SeasonTarget { Season = 5, Name = "OFF & MONSTER", EpisodeCount = 1, MissingEpisodes = [1] }
+        ]);
+        job.IsAnime = true;
+        job.EpisodeOrderProfile = new SeriesEpisodeOrderProfileDto
+        {
+            TmdbId = 46195,
+            SeriesTitle = "Monogatari",
+            SourceOrder = EpisodeOrderType.Custom,
+            Enabled = true,
+            CustomMetadataEnabled = true,
+            SourceGroups =
+            [
+                new EpisodeOrderSourceGroupDto
+                    { SourceSeason = 16, Name = "MONOGATARI Series OFF & MONSTER Season" }
+            ],
+            CustomEpisodes =
+            [
+                new CustomEpisodeMetadataDto
+                {
+                    SourceSeason = 16, SourceEpisode = 1, Season = 5, Episode = 1,
+                    ContentKind = "episode", IncludeInMonitoring = true
+                }
+            ]
+        };
+
+        var ranked = _eval.Evaluate(TestData.Release(
+            "[MTBB] MONOGATARI Series OFF & MONSTER Season S01 1080p BluRay"), job,
+            TestData.Context());
+
+        Assert.True(ranked.Accepted, ranked.Summary);
+        Assert.True(ranked.IsPack);
+        Assert.Equal(16, ranked.SourceSeason);
+        Assert.Equal(5, ranked.Season);
+        Assert.Contains(ranked.CanonicalEpisodeCoverage, episode => episode.Season == 5 && episode.Episode == 1);
+    }
+
+    [Fact]
     public void AlreadySatisfiedCanonicalSeasonNameStillPreventsAnotherTargetFromImpersonatingIt()
     {
         var job = TestData.Job("Monogatari", MediaType.TvShow, seasonTargets:

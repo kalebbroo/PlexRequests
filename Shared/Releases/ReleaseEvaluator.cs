@@ -96,6 +96,10 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         // ---- Season / episode ------------------------------------------------------------------------
         int? sourceSeason = c.Season ?? parsed.Season;
         int? sourceEpisode = c.Episode ?? parsed.Episode;
+        bool namedSourceGroupMatched = EpisodeOrderMapping.TryResolveNamedSourceGroup(
+            job.EpisodeOrderProfile, c.ReleaseName, out var namedSourceSeason);
+        if (namedSourceGroupMatched)
+            sourceSeason = namedSourceSeason;
         if (parsed.FractionalEpisodeNumber)
             rejections.Add(new Rejection(RejectionReason.EpisodeMappingMissing,
                 "fractional/special episode notation requires an explicit canonical mapping; it cannot be truncated to an integer episode"));
@@ -228,7 +232,7 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
 
         if (idMismatch)
             rejections.Add(new Rejection(RejectionReason.ImdbMismatch, $"IMDb {c.ImdbId} is a different title to {job.ImdbId}"));
-        else if (!idMatch && seasonIdentity is null)
+        else if (!idMatch && seasonIdentity is null && !namedSourceGroupMatched)
         {
             // The id is far stronger than fuzzy text, so the title gate only applies when there's no id.
             if (titleRecall < p.MinTitleSimilarity)

@@ -347,6 +347,12 @@ public static partial class EpisodeOrderMapping
             else if (parsedSeason == 0)
                 sourceKeys.Insert(0, (parentSeason, sourceEpisode));
         }
+        else if (TryResolveNamedSourceGroup(profile, filePath, out var namedSourceSeason))
+        {
+            // Standalone arc releases usually reset their own numbering to S01/E01. The configured,
+            // uniquely-matched arc name is stronger evidence than that uploader-local season number.
+            sourceKeys = [(namedSourceSeason, sourceEpisode)];
+        }
 
         var matches = sourceKeys.Distinct()
             .Where(map.ContainsKey)
@@ -365,6 +371,37 @@ public static partial class EpisodeOrderMapping
 
         target = new EpisodeMapTarget(new EpisodeRef());
         return false;
+    }
+
+    /// <summary>
+    /// Resolve a standalone release or path to one explicitly configured source group by title. A match
+    /// is accepted only when the complete group name occurs as a contiguous token sequence and exactly
+    /// one group matches; generic or overlapping names therefore cannot silently remap an episode.
+    /// </summary>
+    public static bool TryResolveNamedSourceGroup(SeriesEpisodeOrderProfileDto? profile, string value,
+        out int sourceSeason)
+    {
+        sourceSeason = 0;
+        if (!IsActive(profile) || string.IsNullOrWhiteSpace(value)) return false;
+
+        var valueTokens = TitleTokens(value);
+        if (valueTokens.Count == 0) return false;
+        var matches = (profile!.SourceGroups ?? [])
+            .Where(group => group.SourceSeason > 0)
+            .Where(group =>
+            {
+                var expected = TitleTokens(group.Name);
+                return expected.Count > 0
+                       && string.Concat(expected).Length >= 5
+                       && ContainsTokenSequence(valueTokens, expected);
+            })
+            .Select(group => group.SourceSeason)
+            .Distinct()
+            .Take(2)
+            .ToList();
+        if (matches.Count != 1) return false;
+        sourceSeason = matches[0];
+        return true;
     }
 
     /// <summary>Resolves Plex's canonical aired numbering back to the numbering used in release names.</summary>
@@ -470,6 +507,15 @@ public static partial class EpisodeOrderMapping
 
     private static List<string> TitleTokens(string value) => TitleTokenRegex().Matches(value)
         .Select(match => match.Value.ToLowerInvariant()).ToList();
+
+    private static bool ContainsTokenSequence(IReadOnlyList<string> value, IReadOnlyList<string> expected)
+    {
+        if (expected.Count > value.Count) return false;
+        for (var start = 0; start <= value.Count - expected.Count; start++)
+            if (value.Skip(start).Take(expected.Count).SequenceEqual(expected))
+                return true;
+        return false;
+    }
 
     private static bool IsStructuralSuffix(string token) =>
         token is "season" or "part" or "cour" or "arc"
