@@ -31,6 +31,19 @@ public class WorkerOptions
     public int PlexVerificationTimeoutMinutes { get; set; } = 10;
 }
 
+/// <summary>Worker-local storage paths and heartbeat cadence. Safety thresholds themselves are managed in
+/// the admin library settings so they can change without rebuilding the downloader.</summary>
+public sealed class StorageOptions
+{
+    public const string Section = "Storage";
+    public string WorkingPath { get; set; } = "/data";
+    public int StatusIntervalSeconds { get; set; } = 60;
+    /// <summary>Large library trees are inspected less frequently than the lightweight volume heartbeat.</summary>
+    public int ArtifactScanIntervalMinutes { get; set; } = 15;
+    public double UnknownVideoSizeGb { get; set; } = 8;
+    public double UnknownMusicSizeGb { get; set; } = 2;
+}
+
 /// <summary>Opt-in catalog ingestion with separately staged search and monitoring read paths.</summary>
 public sealed class CatalogWorkerOptions
 {

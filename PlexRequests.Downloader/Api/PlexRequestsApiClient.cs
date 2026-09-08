@@ -73,6 +73,32 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         return resp.IsSuccessStatusCode;
     }
 
+    public async Task<bool> ReportStorageStatusAsync(StorageStatusDto status, CancellationToken ct)
+    {
+        var response = await _http.PostAsJsonAsync("/api/fulfillment/storage/status", status, ct);
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<List<TrackedTransferDto>> GetPendingCleanupTransfersAsync(CancellationToken ct)
+    {
+        try
+        {
+            return await _http.GetFromJsonAsync<List<TrackedTransferDto>>(
+                "/api/fulfillment/transfers/cleanup-pending", ct) ?? new();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Pending transfer cleanup list unavailable");
+            return new();
+        }
+    }
+
+    public async Task<bool> ReportTransferCleanupAsync(TransferCleanupReportDto report, CancellationToken ct)
+    {
+        var response = await _http.PostAsJsonAsync("/api/fulfillment/transfers/cleanup", report, ct);
+        return response.IsSuccessStatusCode;
+    }
+
     public async Task<bool> MarkFulfilledAsync(int requestId, CancellationToken ct)
     {
         var resp = await _http.PostAsync($"/api/requests/{requestId}/fulfilled", content: null, ct);

@@ -120,6 +120,10 @@ public class NotificationService(
                 : $"Your report for \"{issue.Title}\" {IssueTarget(issue)} was marked resolved.", null)
         : Task.CompletedTask;
 
+    public Task StorageWarningAsync(StorageStatusDto status) =>
+        NotifyAdminsAsync(NotificationType.StorageWarning, "Storage needs attention",
+            status.Message, null);
+
     private static string IssueTarget(MediaIssueDto issue) => issue.SeasonNumber is int season && issue.EpisodeNumber is int episode
         ? $"episode S{season:D2}E{episode:D2}"
         : "the title";

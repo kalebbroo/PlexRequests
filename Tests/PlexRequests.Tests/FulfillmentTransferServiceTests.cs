@@ -13,6 +13,88 @@ namespace PlexRequests.Tests;
 public sealed class FulfillmentTransferServiceTests
 {
     [Fact]
+    public async Task Imported_cleanup_remains_pending_until_a_successful_attempt_is_durably_recorded()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity { MediaId = 11, MediaType = MediaType.Movie, Title = "Movie" };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var job = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId,
+            MediaType = request.MediaType, Title = request.Title
+        };
+        db.FulfillmentJobs.Add(job);
+        await db.SaveChangesAsync();
+        db.FulfillmentTransfers.Add(new FulfillmentTransferEntity
+        {
+            FulfillmentJobId = job.Id,
+            TransferId = "cleanup-transfer",
+            Protocol = AcquisitionProtocol.Torrent,
+            State = TransferTrackingState.Imported,
+            ImportedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var service = new FulfillmentTransferService(db, NullLogger<FulfillmentTransferService>.Instance);
+
+        Assert.Single(await service.GetPendingCleanupAsync());
+        Assert.True(await service.ReportCleanupAsync(new TransferCleanupReportDto(
+            job.Id, AcquisitionProtocol.Torrent, "cleanup-transfer", false, "Deluge unavailable")));
+        db.ChangeTracker.Clear();
+
+        var failed = Assert.Single(await service.GetPendingCleanupAsync());
+        Assert.NotNull(failed.CleanupLastAttemptAt);
+        Assert.Equal("Deluge unavailable", failed.CleanupError);
+        Assert.Null(failed.CleanupCompletedAt);
+
+        Assert.True(await service.ReportCleanupAsync(new TransferCleanupReportDto(
+            job.Id, AcquisitionProtocol.Torrent, "cleanup-transfer", true)));
+        db.ChangeTracker.Clear();
+
+        Assert.Empty(await service.GetPendingCleanupAsync());
+        var completed = await db.FulfillmentTransfers.SingleAsync();
+        Assert.NotNull(completed.CleanupCompletedAt);
+        Assert.Null(completed.CleanupError);
+    }
+
+    [Fact]
+    public async Task Cleanup_report_cannot_complete_an_active_transfer()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity { MediaId = 12, MediaType = MediaType.Movie, Title = "Movie" };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var job = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId,
+            MediaType = request.MediaType, Title = request.Title
+        };
+        db.FulfillmentJobs.Add(job);
+        await db.SaveChangesAsync();
+        db.FulfillmentTransfers.Add(new FulfillmentTransferEntity
+        {
+            FulfillmentJobId = job.Id,
+            TransferId = "active-transfer",
+            Protocol = AcquisitionProtocol.Torrent,
+            State = TransferTrackingState.Active
+        });
+        await db.SaveChangesAsync();
+        var service = new FulfillmentTransferService(db, NullLogger<FulfillmentTransferService>.Instance);
+
+        Assert.False(await service.ReportCleanupAsync(new TransferCleanupReportDto(
+            job.Id, AcquisitionProtocol.Torrent, "active-transfer", true)));
+        Assert.Null((await db.FulfillmentTransfers.SingleAsync()).CleanupCompletedAt);
+    }
+
+    [Fact]
     public async Task RetryingSameBackendIdReactivatesTerminalTrackingWithCurrentIntent()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

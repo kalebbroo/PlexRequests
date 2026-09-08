@@ -742,7 +742,17 @@ public class TrackedTransferDto
     public DateTime? ProgressChangedAt { get; set; }
     public string? TrackerStatus { get; set; }
     public string? FailReason { get; set; }
+    public DateTime? CleanupCompletedAt { get; set; }
+    public DateTime? CleanupLastAttemptAt { get; set; }
+    public string? CleanupError { get; set; }
 }
+
+public sealed record TransferCleanupReportDto(
+    int FulfillmentJobId,
+    AcquisitionProtocol Protocol,
+    string TransferId,
+    bool Completed,
+    string? Error = null);
 
 /// <summary>One transfer's outcome from a reconciliation pass.</summary>
 public class TransferStateUpdateDto
@@ -802,6 +812,52 @@ public class DownloadJobView
     /// <summary>Human lifecycle label for the whole job (e.g. "Approved — queued", "Downloading", "Available").</summary>
     public string Stage { get; set; } = string.Empty;
     public List<DownloadTransferTelemetry> Transfers { get; set; } = new();
+}
+
+/// <summary>One filesystem used by the downloader or a configured library destination.</summary>
+public sealed class StorageVolumeStatusDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string Path { get; set; } = string.Empty;
+    public long TotalBytes { get; set; }
+    public long FreeBytes { get; set; }
+    public long ReservedBytes { get; set; }
+    public long MinimumFreeBytes { get; set; }
+    public bool IsReady { get; set; } = true;
+    public string? Error { get; set; }
+}
+
+/// <summary>A narrowly-scoped artifact created by Plex Requests itself. Arbitrary download or library
+/// files are never classified as cleanup candidates.</summary>
+public sealed class StorageCleanupCandidateDto
+{
+    public string Kind { get; set; } = string.Empty;
+    public string Path { get; set; } = string.Empty;
+    public long SizeBytes { get; set; }
+    public DateTime LastModifiedAt { get; set; }
+    public string Reason { get; set; } = string.Empty;
+}
+
+/// <summary>Latest worker-owned storage and cleanup snapshot shown to administrators.</summary>
+public sealed class StorageStatusDto
+{
+    public string WorkerId { get; set; } = string.Empty;
+    public DateTime ObservedAt { get; set; }
+    public StorageHealthState State { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public int? BlockingJobId { get; set; }
+    public string? BlockingTitle { get; set; }
+    public long BlockingRequiredBytes { get; set; }
+    public int CleanupPendingCount { get; set; }
+    public int StaleArtifactCount { get; set; }
+    public long StaleArtifactBytes { get; set; }
+    public int RemovedArtifactCount { get; set; }
+    public long RemovedArtifactBytes { get; set; }
+    public DateTime? LastCleanupAt { get; set; }
+    public string? LastCleanupError { get; set; }
+    public List<StorageVolumeStatusDto> Volumes { get; set; } = new();
+    public List<StorageCleanupCandidateDto> CleanupCandidates { get; set; } = new();
 }
 public record RefreshLibraryRequest(MediaType MediaType);
 
@@ -1406,6 +1462,14 @@ public class LibraryOrganizationPreferencesDto
     /// <summary>Delete the source after import instead of leaving it for the torrent client to keep seeding.
     /// Forced off when TransferMode is Hardlink (the "source" and the library copy are the same inode).</summary>
     public bool DeleteSourceAfterImport { get; set; } = false;
+    /// <summary>Free space that must remain on every volume after reservations and temporary import work.</summary>
+    public double MinimumFreeSpaceGb { get; set; } = 20;
+    /// <summary>Additional workspace reserved for archive extraction, joins, and atomic partial files.</summary>
+    public int TemporaryHeadroomPercent { get; set; } = 20;
+    /// <summary>Automatically remove only stale staging folders and partial files created by Plex Requests.</summary>
+    public bool AutoCleanupStaleArtifacts { get; set; } = true;
+    /// <summary>Age before a Plex Requests-owned staging artifact is considered abandoned.</summary>
+    public int StaleArtifactHours { get; set; } = 6;
 }
 
 /// <summary>Maps the numbering advertised by one series' releases to Plex's canonical aired numbering.

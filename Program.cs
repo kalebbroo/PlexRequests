@@ -219,6 +219,7 @@ builder.Services.AddScoped<IFulfillmentQueue, FulfillmentQueue>();
 // Live download telemetry: the store is a singleton (shared by worker progress reports and the admin
 // circuit); the read model service is scoped (needs the DbContext).
 builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.IDownloadTelemetryStore, PlexRequestsHosted.Services.Implementations.DownloadTelemetryStore>();
+builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.IStorageTelemetryStore, PlexRequestsHosted.Services.Implementations.StorageTelemetryStore>();
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IDownloadMonitorService, PlexRequestsHosted.Services.Implementations.DownloadMonitorService>();
 builder.Services.AddScoped<IDiscordLinkService, DiscordLinkService>();
 builder.Services.AddScoped<IBridgeOutboxService, BridgeOutboxService>();
@@ -850,6 +851,25 @@ app.MapPost("/api/fulfillment/{jobId:int}/transfers", async (int jobId, List<Ple
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     return Results.Ok(await svc.RegisterAsync(jobId, body));
+});
+
+app.MapGet("/api/fulfillment/transfers/cleanup-pending", async (HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IFulfillmentTransferService svc) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return Results.Ok(await svc.GetPendingCleanupAsync());
+});
+
+app.MapPost("/api/fulfillment/transfers/cleanup", async (TransferCleanupReportDto body, HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IFulfillmentTransferService svc) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return await svc.ReportCleanupAsync(body) ? Results.Ok() : Results.NotFound();
+});
+
+app.MapPost("/api/fulfillment/storage/status", async (StorageStatusDto body, HttpContext ctx, IConfiguration cfg, IStorageTelemetryStore storage, INotificationService notify) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    if (storage.Update(body)) await notify.StorageWarningAsync(body);
+    return Results.Ok();
 });
 
 // Release catalog ingestion uses at-least-once batches. The catalog service advances the opaque source

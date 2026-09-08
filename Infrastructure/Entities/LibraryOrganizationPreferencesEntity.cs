@@ -45,6 +45,10 @@ public class LibraryOrganizationPreferencesEntity
     public double MinVideoFileSizeMb { get; set; } = 50;
     public double MinAudioFileSizeMb { get; set; } = 1;
     public bool DeleteSourceAfterImport { get; set; } = false;
+    public double MinimumFreeSpaceGb { get; set; } = 20;
+    public int TemporaryHeadroomPercent { get; set; } = 20;
+    public bool AutoCleanupStaleArtifacts { get; set; } = true;
+    public int StaleArtifactHours { get; set; } = 6;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

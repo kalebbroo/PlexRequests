@@ -60,6 +60,10 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
         e.MinAudioFileSizeMb = Math.Max(0, prefs.MinAudioFileSizeMb);
         // Deleting the source only makes sense when the library copy isn't the same inode as the source.
         e.DeleteSourceAfterImport = prefs.DeleteSourceAfterImport && prefs.TransferMode != Shared.Enums.TransferMode.Hardlink;
+        e.MinimumFreeSpaceGb = Math.Clamp(prefs.MinimumFreeSpaceGb, 1, 1024);
+        e.TemporaryHeadroomPercent = Math.Clamp(prefs.TemporaryHeadroomPercent, 0, 200);
+        e.AutoCleanupStaleArtifacts = prefs.AutoCleanupStaleArtifacts;
+        e.StaleArtifactHours = Math.Clamp(prefs.StaleArtifactHours, 1, 168);
         e.UpdatedAt = DateTime.UtcNow;
         return await db.SaveChangesAsync() > 0;
     }
@@ -104,7 +108,11 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
         AudioExtensionsCsv = e.AudioExtensionsCsv,
         MinVideoFileSizeMb = e.MinVideoFileSizeMb,
         MinAudioFileSizeMb = e.MinAudioFileSizeMb,
-        DeleteSourceAfterImport = e.DeleteSourceAfterImport
+        DeleteSourceAfterImport = e.DeleteSourceAfterImport,
+        MinimumFreeSpaceGb = e.MinimumFreeSpaceGb,
+        TemporaryHeadroomPercent = e.TemporaryHeadroomPercent,
+        AutoCleanupStaleArtifacts = e.AutoCleanupStaleArtifacts,
+        StaleArtifactHours = e.StaleArtifactHours
         };
         LibraryRouting.EnsureDestinationModel(dto);
         return dto;

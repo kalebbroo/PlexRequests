@@ -128,7 +128,10 @@ public enum NotificationType
     /// <summary>An administrator closed a report without taking replacement action.</summary>
     MediaIssueDismissed = 14,
     /// <summary>A request was cancelled before completion.</summary>
-    RequestCancelled = 15
+    RequestCancelled = 15,
+    /// <summary>The downloader paused new work or found cleanup that needs attention because a storage
+    /// volume is near its configured safety floor.</summary>
+    StorageWarning = 16
 }
 
 /// <summary>
@@ -139,6 +142,14 @@ public enum NotificationChannel
 {
     Web = 0,
     Discord = 1
+}
+
+public enum StorageHealthState
+{
+    Healthy = 0,
+    Warning = 1,
+    Paused = 2,
+    Offline = 3
 }
 
 public enum NotificationReadBehavior

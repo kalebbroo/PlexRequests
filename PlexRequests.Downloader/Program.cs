@@ -21,6 +21,7 @@ builder.Services.Configure<DirectAudioOptions>(builder.Configuration.GetSection(
 builder.Services.Configure<LibraryOptions>(builder.Configuration.GetSection(LibraryOptions.Section));
 builder.Services.Configure<QualityOptions>(builder.Configuration.GetSection(QualityOptions.Section));
 builder.Services.Configure<VpnOptions>(builder.Configuration.GetSection(VpnOptions.Section));
+builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection(StorageOptions.Section));
 
 // Typed client to the web app's fulfillment API; base URL + shared-secret header set here.
 builder.Services.AddHttpClient<IPlexRequestsApiClient, PlexRequestsApiClient>((sp, http) =>
@@ -189,6 +190,10 @@ builder.Services.AddSingleton<IAcquisitionBackend, TorrentAcquisitionBackend>();
 builder.Services.AddSingleton<IAcquisitionBackend, YouTubeMusicAcquisitionBackend>();
 builder.Services.AddSingleton<IAcquisitionBackendRegistry, AcquisitionBackendRegistry>();
 builder.Services.AddSingleton<IPostImportCleanup, PostImportCleanup>();
+builder.Services.AddSingleton<IStorageVolumeProbe, PhysicalStorageVolumeProbe>();
+builder.Services.AddSingleton<IStorageSafetyService, StorageSafetyService>();
+builder.Services.AddSingleton<IStorageArtifactCleaner, StorageArtifactCleaner>();
+builder.Services.AddHostedService<StorageMaintenanceWorker>();
 
 // Library organizer: archive extraction, season-pack splitting, Plex-convention naming/transfer.
 builder.Services.AddSingleton<IArchiveExtractor, ArchiveExtractor>();

@@ -34,6 +34,10 @@ public class EffectiveLibraryOrganization
     public double MinVideoFileSizeMb { get; init; } = 50;
     public double MinAudioFileSizeMb { get; init; } = 1;
     public bool DeleteSourceAfterImport { get; init; } = false;
+    public double MinimumFreeSpaceGb { get; init; } = 20;
+    public int TemporaryHeadroomPercent { get; init; } = 20;
+    public bool AutoCleanupStaleArtifacts { get; init; } = true;
+    public int StaleArtifactHours { get; init; } = 6;
 
     /// <summary>Resolve a legacy job that predates immutable destination snapshots.</summary>
     public (string Root, string Template) Resolve(MediaType mediaType, Quality? quality, IReadOnlyList<string>? genres, bool isAnime, bool isEpisode)
@@ -172,6 +176,10 @@ public class LibraryOrganizationPreferencesProvider : ILibraryOrganizationProvid
             : d.AudioExtensionsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
         MinVideoFileSizeMb = d.MinVideoFileSizeMb,
         MinAudioFileSizeMb = d.MinAudioFileSizeMb,
-        DeleteSourceAfterImport = d.DeleteSourceAfterImport
+        DeleteSourceAfterImport = d.DeleteSourceAfterImport,
+        MinimumFreeSpaceGb = Math.Clamp(d.MinimumFreeSpaceGb, 1, 1024),
+        TemporaryHeadroomPercent = Math.Clamp(d.TemporaryHeadroomPercent, 0, 200),
+        AutoCleanupStaleArtifacts = d.AutoCleanupStaleArtifacts,
+        StaleArtifactHours = Math.Clamp(d.StaleArtifactHours, 1, 168)
     };
 }

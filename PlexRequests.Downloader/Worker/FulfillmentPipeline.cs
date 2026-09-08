@@ -23,6 +23,13 @@ internal sealed record CanonicalPackFileSelection(
     IReadOnlyList<bool> Keep,
     IReadOnlyList<(int Season, int Episode)> MissingCoverage);
 
+internal sealed record PreparedDownloadItem(
+    DownloadPlanItem Item,
+    IAcquisitionBackend Backend,
+    AcquisitionManifest? Manifest,
+    IReadOnlyList<bool>? WantedFiles,
+    int? FractionalEpisodeInsertionAfter);
+
 /// <summary>
 /// End-to-end processing for a single job: search → plan → add to Deluge → monitor → import → callback.
 /// A plan may be one release (movie / season pack) or several (season packs, or individual episodes when
@@ -39,11 +46,13 @@ public class FulfillmentPipeline(
     ILibraryImporter importer,
     ITransferImportCoordinator importCoordinator,
     IPostImportCleanup postImportCleanup,
+    IStorageSafetyService storageSafety,
     IPlexRequestsApiClient api,
     IJobStateStore stateStore,
     IVpnGuard vpn,
     IOptions<DelugeOptions> deluge,
     IOptions<WorkerOptions> worker,
+    IOptions<StorageOptions> storageOptions,
     ILogger<FulfillmentPipeline> logger) : IFulfillmentPipeline
 {
     public async Task ProcessAsync(FulfillmentJobDto job, CancellationToken ct)
@@ -113,6 +122,7 @@ public class FulfillmentPipeline(
                 MediaType.Music => deluge.Value.MusicLabel,
                 _ => deluge.Value.TvLabel
             };
+            var prepared = new List<PreparedDownloadItem>();
             var transfers = new List<TransferItem>();
             var preflightFailures = new List<string>();
             foreach (var plannedItem in plan.Items)
@@ -206,10 +216,38 @@ public class FulfillmentPipeline(
                     }
                 }
 
-                var transferId = await backend.EnqueueAsync(new AcquisitionRequest(resource, label,
+                prepared.Add(new PreparedDownloadItem(item, backend, manifest, wantedFiles,
+                    fractionalEpisodeInsertionAfter));
+            }
+
+            if (prepared.Count == 0)
+            {
+                var detail = preflightFailures.Count > 0
+                    ? $"No anime collection passed manifest preflight: {string.Join("; ", preflightFailures.Take(3))}"
+                    : "No release has an available acquisition backend";
+                if (job.IsUpgrade && !job.IsReplacement) await api.MarkUpgradeExhaustedAsync(job.Id, ct);
+                else await api.MarkDeferredAsync(job.Id, detail, false, ct);
+                return;
+            }
+
+            var payloadBytes = prepared.Sum(x => EstimatedPayloadBytes(x, job.MediaType, storageOptions.Value));
+            var destinationRoot = libraryPrefs.Current.Resolve(job, job.MediaType, isEpisode: false).Root;
+            await using var storageReservation = await storageSafety.TryReserveAsync(
+                job, payloadBytes, destinationRoot, libraryPrefs.Current, ct);
+            if (!storageReservation.Admission.Allowed)
+            {
+                await api.MarkDeferredAsync(job.Id, storageReservation.Admission.Detail, false, ct);
+                return;
+            }
+
+            foreach (var preparedItem in prepared)
+            {
+                var item = preparedItem.Item;
+                var resource = item.Candidate.Acquisition;
+                var transferId = await preparedItem.Backend.EnqueueAsync(new AcquisitionRequest(resource, label,
                     item.Candidate.ReleaseName,
                     job.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    manifest, wantedFiles), ct);
+                    preparedItem.Manifest, preparedItem.WantedFiles), ct);
                 if (string.IsNullOrWhiteSpace(transferId))
                 {
                     logger.LogWarning("Failed to enqueue {Protocol} transfer for job {JobId} (S{Season}E{Episode})",
@@ -233,7 +271,7 @@ public class FulfillmentPipeline(
                     SourceId: resource.SourceId,
                     NeededEpisodeRefs: item.NeededEpisodeRefs,
                     SourceSeason: item.SourceSeason,
-                    FractionalEpisodeInsertionAfter: fractionalEpisodeInsertionAfter));
+                    FractionalEpisodeInsertionAfter: preparedItem.FractionalEpisodeInsertionAfter));
             }
 
             if (transfers.Count == 0)
@@ -279,7 +317,8 @@ public class FulfillmentPipeline(
             // A mixed plan can lose one item to an unavailable backend or failed preflight. The remaining
             // transfers may still import, but they cannot truthfully complete the entire request.
             var record = new ActiveJobRecord(job, transfers,
-                plan.CoversAllTargets && transfers.Count == plan.Items.Count);
+                plan.CoversAllTargets && transfers.Count == plan.Items.Count,
+                storageReservation.Admission.Reservations);
             await stateStore.SaveAsync(record, ct);
             await SafeReportProgress(job.Id, 0);
             await MonitorAndImportAllAsync(record, ct);
@@ -628,7 +667,9 @@ public class FulfillmentPipeline(
                     progressSum += 100 - status.Progress; // count the just-imported torrent as fully done this tick
                     items[i] = it with { Imported = true };
                     await stateStore.SaveAsync(record with { Transfers = items.ToList() }, ct); // persist so a restart resumes
-                    await postImportCleanup.RunAsync(it.Protocol, it.TransferId, result, ct);
+                    var cleanupCompleted = await postImportCleanup.RunAsync(it.Protocol, it.TransferId, result, ct);
+                    await SafeReportCleanup(job.Id, it, cleanupCompleted,
+                        cleanupCompleted ? null : "Backend cleanup was deferred and will be retried");
                 }
             }
 
@@ -1074,6 +1115,25 @@ public class FulfillmentPipeline(
         string.Join(",", targets.OrderBy(x => x.Season).ThenBy(x => x.Episode)
             .Select(x => $"S{x.Season:D2}E{x.Episode:D2}"));
 
+    internal static long EstimatedPayloadBytes(PreparedDownloadItem prepared, MediaType mediaType,
+        StorageOptions options)
+    {
+        if (prepared.Manifest is { Files.Count: > 0 } manifest)
+        {
+            var selected = prepared.WantedFiles is { Count: > 0 } wanted
+                ? manifest.Files.Where((_, index) => index < wanted.Count && wanted[index])
+                : manifest.Files;
+            var exact = selected.Sum(x => Math.Max(0, x.SizeBytes));
+            if (exact > 0) return exact;
+        }
+        if (prepared.Item.Candidate.SizeKnown && prepared.Item.Candidate.SizeBytes > 0)
+            return prepared.Item.Candidate.SizeBytes;
+        var fallbackGb = mediaType == MediaType.Music
+            ? options.UnknownMusicSizeGb
+            : options.UnknownVideoSizeGb;
+        return (long)(Math.Clamp(fallbackGb, 0.1, 1000) * 1024 * 1024 * 1024);
+    }
+
     internal static bool ReplacementReadyToFinalize(bool coversAllTargets, int importedCount, int transferCount) =>
         coversAllTargets && transferCount > 0 && importedCount == transferCount;
 
@@ -1109,5 +1169,19 @@ public class FulfillmentPipeline(
     {
         try { await stateStore.RemoveAsync(jobId, CancellationToken.None); }
         catch (Exception ex) { logger.LogDebug(ex, "State cleanup skipped for job {JobId}", jobId); }
+    }
+
+    private async Task SafeReportCleanup(int jobId, TransferItem transfer, bool completed, string? error)
+    {
+        try
+        {
+            await api.ReportTransferCleanupAsync(new TransferCleanupReportDto(
+                jobId, transfer.Protocol, transfer.TransferId, completed, error), CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Could not persist cleanup result for transfer {TransferId}; maintenance will retry",
+                transfer.TransferId);
+        }
     }
 }

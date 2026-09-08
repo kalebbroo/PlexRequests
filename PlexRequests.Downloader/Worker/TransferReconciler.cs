@@ -250,7 +250,18 @@ public class TransferReconciler(
         try { await api.RefreshLibraryAsync(job.MediaType, ct); }
         catch (Exception ex) { logger.LogDebug(ex, "Plex refresh trigger skipped"); }
 
-        await postImportCleanup.RunAsync(t.Protocol, t.TransferId, result, ct);
+        var cleanupCompleted = await postImportCleanup.RunAsync(t.Protocol, t.TransferId, result, ct);
+        try
+        {
+            await api.ReportTransferCleanupAsync(new TransferCleanupReportDto(
+                t.FulfillmentJobId, t.Protocol, t.TransferId, cleanupCompleted,
+                cleanupCompleted ? null : "Backend cleanup was deferred and will be retried"), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug(ex, "Could not persist cleanup result for transfer {TransferId}; maintenance will retry",
+                t.TransferId);
+        }
 
         logger.LogInformation("Imported {Count} file(s) for job {JobId} from {Release}",
             result.Files.Count, job.Id, t.ReleaseName ?? t.TransferId);

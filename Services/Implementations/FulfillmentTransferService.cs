@@ -23,6 +23,12 @@ public interface IFulfillmentTransferService
     /// <summary>Per-job transfers for the admin panel, newest job first.</summary>
     Task<List<TrackedTransferDto>> GetForJobAsync(int jobId);
 
+    /// <summary>Imported transfers whose verified post-import backend cleanup has not completed yet.</summary>
+    Task<List<TrackedTransferDto>> GetPendingCleanupAsync(int take = 100);
+
+    /// <summary>Persist one cleanup attempt so a worker restart can retry instead of orphaning its payload.</summary>
+    Task<bool> ReportCleanupAsync(TransferCleanupReportDto report);
+
     /// <summary>One-time repair for rows written off as Missing that had in fact been imported. Idempotent.</summary>
     Task<int> CorrectMisclassifiedMissingAsync();
 }
@@ -98,6 +104,9 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
                     row.TrackerStatus = null;
                     row.FailReason = null;
                     row.ImportedAt = null;
+                    row.CleanupCompletedAt = null;
+                    row.CleanupLastAttemptAt = null;
+                    row.CleanupError = null;
                     row.AddedAt = now;
                     reactivated++;
                 }
@@ -158,6 +167,36 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
             .OrderBy(t => t.Season).ThenBy(t => t.Episode).ThenBy(t => t.Id)
             .Select(t => ToDto(t))
             .ToListAsync();
+
+    public async Task<List<TrackedTransferDto>> GetPendingCleanupAsync(int take = 100) =>
+        await db.FulfillmentTransfers.AsNoTracking()
+            .Where(t => t.State == TransferTrackingState.Imported && t.CleanupCompletedAt == null)
+            .OrderBy(t => t.CleanupLastAttemptAt ?? t.ImportedAt ?? t.AddedAt)
+            .Take(Math.Clamp(take, 1, 500))
+            .Select(t => ToDto(t))
+            .ToListAsync();
+
+    public async Task<bool> ReportCleanupAsync(TransferCleanupReportDto report)
+    {
+        if (string.IsNullOrWhiteSpace(report.TransferId)) return false;
+        var rows = await db.FulfillmentTransfers
+            .Where(t => t.FulfillmentJobId == report.FulfillmentJobId
+                && t.Protocol == report.Protocol
+                && t.TransferId == report.TransferId
+                && t.State == TransferTrackingState.Imported)
+            .ToListAsync();
+        if (rows.Count == 0) return false;
+
+        var now = DateTime.UtcNow;
+        foreach (var row in rows)
+        {
+            row.CleanupLastAttemptAt = now;
+            row.CleanupCompletedAt = report.Completed ? now : null;
+            row.CleanupError = report.Completed ? null : Trim(report.Error ?? "Cleanup did not complete", 512);
+        }
+        await db.SaveChangesAsync();
+        return true;
+    }
 
     public async Task<int> ApplyAsync(IReadOnlyList<TransferStateUpdateDto> updates)
     {
@@ -305,7 +344,10 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
         AddedAt = t.AddedAt,
         ProgressChangedAt = t.ProgressChangedAt,
         TrackerStatus = t.TrackerStatus,
-        FailReason = t.FailReason
+        FailReason = t.FailReason,
+        CleanupCompletedAt = t.CleanupCompletedAt,
+        CleanupLastAttemptAt = t.CleanupLastAttemptAt,
+        CleanupError = t.CleanupError
     };
 
     private static string? SerializeEpisodeRefs(IReadOnlyList<EpisodeRef>? refs) =>

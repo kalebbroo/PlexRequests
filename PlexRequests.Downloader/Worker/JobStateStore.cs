@@ -31,7 +31,15 @@ public record ActiveJobRecord(
     FulfillmentJobDto Job,
     [property: System.Text.Json.Serialization.JsonPropertyName("Torrents")] List<TransferItem> Transfers,
     // Optional/defaulted so active-jobs.json written by older releases resumes as a complete plan.
-    bool CoversAllTargets = true);
+    bool CoversAllTargets = true,
+    // Durable per-volume admission reservation. Optional so old state files remain readable.
+    IReadOnlyList<StorageReservationRecord>? StorageReservations = null);
+
+public sealed record StorageReservationRecord(
+    string VolumeId,
+    string Path,
+    string Label,
+    long RequiredBytes);
 
 public interface IJobStateStore
 {

@@ -11,6 +11,7 @@ internal static class NotificationNavigation
         NotificationType.RequestSearchStalled when relatedRequestId is int requestId and > 0
             => $"/admin?tab=jobs&reviewRequest={requestId}",
         NotificationType.RequestSearchStalled or NotificationType.Error => "/admin?tab=jobs",
+        NotificationType.StorageWarning => "/admin?tab=overview",
         _ => "/requests"
     };
 }
