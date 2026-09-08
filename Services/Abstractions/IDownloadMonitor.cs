@@ -26,7 +26,8 @@ public interface IDownloadTelemetryStore
 public interface IDownloadMonitorService
 {
     /// <summary>Active jobs (queued/claimed/downloading) plus jobs that reached a terminal state within
-    /// <paramref name="recentMinutes"/>, newest activity first.</summary>
+    /// <paramref name="recentMinutes"/>. Results use stable lifecycle lanes: started transfers first in
+    /// start order, queued work, recent terminal work, then deferred release searches.</summary>
     Task<List<DownloadJobView>> GetActiveAndRecentAsync(int recentMinutes = 30);
     StorageStatusDto? GetStorageStatus();
 }
