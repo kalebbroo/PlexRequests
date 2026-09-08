@@ -67,6 +67,8 @@ were imported before that guarantee are repaired gradually by the downloader:
 - only the newest Plex Requests import-audit row for each destination is eligible;
 - a file is skipped while another fulfillment job for the same request is active;
 - the path must be an MKV beneath a currently configured library root on a ready filesystem;
+- early relative audit paths are resolved through the job's immutable destination when available, otherwise
+  through today's matching movie, series, or anime route, and cannot escape the selected root;
 - the saved job language policy is authoritative, with the assigned/default profile used only for jobs that
   predate policy snapshots;
 - one file is claimed at a time, and three actual failures stop automatic retries while mount/space deferrals

@@ -27,6 +27,9 @@ public sealed class PlaybackPreparationTests
             PreferredAudioLanguage = "en",
             SetPreferredTracksAsDefault = true
         });
+        job.Quality = Quality.FullHD;
+        job.GenresCsv = "Drama,Animation";
+        job.LibraryDestinationRootPath = "/library/show";
         var older = new ImportedFileEntity
         {
             FulfillmentJobId = job.Id, DestinationPath = "/library/show/episode.mkv",
@@ -58,6 +61,9 @@ public sealed class PlaybackPreparationTests
         Assert.NotNull(claimed);
         Assert.Equal(latest.Id, claimed.ImportedFileId);
         Assert.Equal("en", claimed.Policy.PreferredAudioLanguage);
+        Assert.Equal(Quality.FullHD, claimed.Quality);
+        Assert.Equal(["Drama", "Animation"], claimed.Genres);
+        Assert.Equal("/library/show", claimed.LibraryDestinationRootPath);
         // Claim and report are separate authenticated HTTP requests in production and therefore use separate
         // scoped DbContexts. Clear here to model that boundary after ClaimAsync's conditional bulk update.
         fixture.Db.ChangeTracker.Clear();
@@ -211,14 +217,47 @@ public sealed class PlaybackPreparationTests
             MoviePath = "/library/movies"
         };
 
-        var resolved = LegacyPlaybackPreparationWorker.ResolveLibraryPath(
-            "/library/tv/Show/episode.mkv", preferences);
+        var resolved = LegacyPlaybackPreparationWorker.ResolveLibraryPath(new PlaybackPreparationTaskDto
+        {
+            DestinationPath = "/library/tv/Show/episode.mkv"
+        }, preferences);
 
         Assert.Equal(Path.GetFullPath("/library/tv"), resolved.Root);
         Assert.Throws<InvalidOperationException>(() =>
-            LegacyPlaybackPreparationWorker.ResolveLibraryPath("/downloads/episode.mkv", preferences));
+            LegacyPlaybackPreparationWorker.ResolveLibraryPath(new PlaybackPreparationTaskDto
+            {
+                DestinationPath = "/downloads/episode.mkv"
+            }, preferences));
         Assert.Throws<InvalidOperationException>(() =>
-            LegacyPlaybackPreparationWorker.ResolveLibraryPath("/library/tv/Show/episode.mp4", preferences));
+            LegacyPlaybackPreparationWorker.ResolveLibraryPath(new PlaybackPreparationTaskDto
+            {
+                DestinationPath = "/library/tv/Show/episode.mp4"
+            }, preferences));
+    }
+
+    [Fact]
+    public void LegacyRelativeAuditPathsResolveUnderTheMatchingCurrentLibraryRoot()
+    {
+        var preferences = new EffectiveLibraryOrganization
+        {
+            TvPath = "/library/tv",
+            MoviePath = "/library/movies"
+        };
+        var task = new PlaybackPreparationTaskDto
+        {
+            DestinationPath = "Show (2022)/Season 01/Show - s01e01.mkv",
+            MediaType = MediaType.TvShow,
+            Quality = Quality.FullHD
+        };
+
+        var resolved = LegacyPlaybackPreparationWorker.ResolveLibraryPath(task, preferences);
+
+        Assert.Equal(Path.GetFullPath("/library/tv/Show (2022)/Season 01/Show - s01e01.mkv"),
+            resolved.Path);
+        Assert.Equal(Path.GetFullPath("/library/tv"), resolved.Root);
+        task.DestinationPath = "../movies/escape.mkv";
+        Assert.Throws<InvalidOperationException>(() =>
+            LegacyPlaybackPreparationWorker.ResolveLibraryPath(task, preferences));
     }
 
     [Fact]
