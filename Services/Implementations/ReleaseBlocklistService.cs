@@ -27,7 +27,7 @@ public interface IReleaseBlocklistService
 /// relevant version whenever a release previously rejected for that reason may now be mapped safely.</summary>
 public static class ReleaseBlocklistPolicy
 {
-    public const int CurrentEpisodeMappingVersion = 2;
+    public const int CurrentEpisodeMappingVersion = 3;
 
     public static bool IsDurableContentDecision(BlocklistReason reason) => reason is
         BlocklistReason.WrongContent or BlocklistReason.ManualBlock or BlocklistReason.MediaPolicyMismatch;

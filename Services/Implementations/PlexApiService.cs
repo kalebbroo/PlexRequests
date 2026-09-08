@@ -9,6 +9,7 @@ using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.Media;
 
 namespace PlexRequestsHosted.Services.Implementations;
@@ -743,6 +744,22 @@ public class PlexApiService : IPlexApiService
         _cache.Set(LastRebuildCacheKey, new LastRebuildResult(maps, seasons, episodes, prunedMaps, prunedSeasons, scanStart), TimeSpan.FromDays(30));
         _logger.LogInformation("Plex availability rebuilt: {Maps} id-maps, {Seasons} seasons, {Eps} episodes; pruned {PMaps} maps / {PSeasons} seasons",
             maps, seasons, episodes, prunedMaps, prunedSeasons);
+        try
+        {
+            var settingsJson = await _db.LibraryOrganizationPreferences.AsNoTracking()
+                .Where(row => row.IsSingleton).Select(row => row.SeriesEpisodeOrderProfilesJson)
+                .FirstOrDefaultAsync(ct);
+            var profiles = string.IsNullOrWhiteSpace(settingsJson)
+                ? []
+                : JsonSerializer.Deserialize<List<SeriesEpisodeOrderProfileDto>>(settingsJson) ?? [];
+            foreach (var tmdbId in profiles.Where(EpisodeOrderMapping.HasCustomMetadata)
+                         .Select(profile => profile.TmdbId).Distinct())
+                await ApplyCustomMetadataAsync(tmdbId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Saved custom Plex metadata could not be reapplied after availability scan");
+        }
         return new { maps, seasons, episodes, prunedMaps, prunedSeasons, prunePolicy = suspicious ?? "normal", at = scanStart };
     }
 
@@ -1628,6 +1645,150 @@ public class PlexApiService : IPlexApiService
             _logger.LogWarning(ex, "Plex server unreachable while refreshing library {Section}", sectionKey);
             throw;
         }
+    }
+
+    public async Task<CustomMetadataSyncResultDto> ApplyCustomMetadataAsync(int tmdbId,
+        CancellationToken ct = default)
+    {
+        var result = new CustomMetadataSyncResultDto();
+        if (tmdbId <= 0 || string.IsNullOrWhiteSpace(_cfg.PrimaryServerUrl)
+                        || string.IsNullOrWhiteSpace(_cfg.ServerToken)) return result;
+        var settingsJson = await _db.LibraryOrganizationPreferences.AsNoTracking()
+            .Where(row => row.IsSingleton).Select(row => row.SeriesEpisodeOrderProfilesJson)
+            .FirstOrDefaultAsync(ct);
+        var profiles = string.IsNullOrWhiteSpace(settingsJson)
+            ? []
+            : JsonSerializer.Deserialize<List<SeriesEpisodeOrderProfileDto>>(settingsJson) ?? [];
+        var profile = profiles.FirstOrDefault(row => row.TmdbId == tmdbId
+                                                     && EpisodeOrderMapping.HasCustomMetadata(row));
+        string? mappingError = null;
+        if (profile is null || !EpisodeOrderMapping.TryParseDetailed(profile, out _, out mappingError))
+        {
+            if (mappingError is not null) result.Errors.Add(mappingError);
+            return result;
+        }
+        result.Configured = true;
+
+        var ratingKey = await _seasonEvaluator.ResolveRatingKeyAsync(tmdbId, ct);
+        if (string.IsNullOrWhiteSpace(ratingKey)) return result;
+        var show = await GetPlexContainerAsync($"/library/metadata/{Uri.EscapeDataString(ratingKey)}", ct);
+        var showMetadata = PlexMetadataRows(show).FirstOrDefault();
+        var sectionId = showMetadata.ValueKind == JsonValueKind.Object
+            ? JsonStringOrNumber(showMetadata, "librarySectionID") : string.Empty;
+        if (string.IsNullOrWhiteSpace(sectionId))
+        {
+            result.Errors.Add("Plex did not return a library section for the series.");
+            return result;
+        }
+        result.SeriesFound = true;
+
+        var seasonsContainer = await GetPlexContainerAsync(
+            $"/library/metadata/{Uri.EscapeDataString(ratingKey)}/children", ct);
+        var plexSeasons = PlexMetadataRows(seasonsContainer)
+            .Where(row => JsonInt(row, "index") is >= 0)
+            .ToDictionary(row => JsonInt(row, "index")!.Value);
+        foreach (var season in profile.CustomSeasons)
+        {
+            if (string.IsNullOrWhiteSpace(season.Name) || !plexSeasons.TryGetValue(season.Season, out var plexSeason))
+                continue;
+            var seasonRatingKey = JsonStringOrNumber(plexSeason, "ratingKey");
+            if (await UpdatePlexMetadataAsync(sectionId, 3, seasonRatingKey,
+                    [("title", season.Name.Trim())], ct, result))
+                result.SeasonsUpdated++;
+        }
+
+        var customByTarget = profile.CustomEpisodes
+            .GroupBy(row => (row.Season, row.Episode))
+            .ToDictionary(group => group.Key, group => group.First());
+        foreach (var seasonGroup in customByTarget.GroupBy(pair => pair.Key.Season))
+        {
+            if (!plexSeasons.TryGetValue(seasonGroup.Key, out var plexSeason))
+            {
+                result.MissingTargets.AddRange(seasonGroup.Select(pair =>
+                    $"S{pair.Key.Season:D2}E{pair.Key.Episode:D2}"));
+                continue;
+            }
+            var seasonRatingKey = JsonStringOrNumber(plexSeason, "ratingKey");
+            var episodesContainer = await GetPlexContainerAsync(
+                $"/library/metadata/{Uri.EscapeDataString(seasonRatingKey)}/children", ct);
+            var plexEpisodes = PlexMetadataRows(episodesContainer)
+                .Where(row => JsonInt(row, "index") is > 0)
+                .ToDictionary(row => JsonInt(row, "index")!.Value);
+            foreach (var pair in seasonGroup)
+            {
+                var target = pair.Key;
+                var custom = pair.Value;
+                if (!plexEpisodes.TryGetValue(target.Episode, out var plexEpisode))
+                {
+                    result.MissingTargets.Add($"S{target.Season:D2}E{target.Episode:D2}");
+                    continue;
+                }
+                var fields = new List<(string Name, string Value)>();
+                if (!string.IsNullOrWhiteSpace(custom.Title)) fields.Add(("title", custom.Title.Trim()));
+                if (!string.IsNullOrWhiteSpace(custom.Summary)) fields.Add(("summary", custom.Summary.Trim()));
+                if (custom.OriginallyAvailableAt is DateTime date)
+                    fields.Add(("originallyAvailableAt", date.ToString("yyyy-MM-dd")));
+                if (fields.Count == 0) continue;
+                var episodeRatingKey = JsonStringOrNumber(plexEpisode, "ratingKey");
+                if (await UpdatePlexMetadataAsync(sectionId, 4, episodeRatingKey, fields, ct, result))
+                    result.EpisodesUpdated++;
+            }
+        }
+
+        _logger.LogInformation(
+            "Custom Plex metadata for TMDb {TmdbId}: {Seasons} season(s), {Episodes} episode(s), {Missing} target(s) not indexed",
+            tmdbId, result.SeasonsUpdated, result.EpisodesUpdated, result.MissingTargets.Count);
+        return result;
+    }
+
+    private async Task<JsonElement> GetPlexContainerAsync(string path, CancellationToken ct)
+    {
+        var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl)
+                      ?? throw new InvalidOperationException("Invalid Plex server URL.");
+        using var request = new HttpRequestMessage(HttpMethod.Get, baseUrl + path);
+        EnsureDefaultHeaders(request.Headers);
+        request.Headers.Add("X-Plex-Token", _cfg.ServerToken);
+        request.Headers.Accept.Clear();
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        using var response = await _http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        var root = document.RootElement;
+        return (root.TryGetProperty("MediaContainer", out var container) ? container : root).Clone();
+    }
+
+    private static IEnumerable<JsonElement> PlexMetadataRows(JsonElement container) =>
+        container.ValueKind == JsonValueKind.Object
+        && container.TryGetProperty("Metadata", out var metadata)
+        && metadata.ValueKind == JsonValueKind.Array
+            ? metadata.EnumerateArray().Select(row => row.Clone()).ToList()
+            : [];
+
+    private async Task<bool> UpdatePlexMetadataAsync(string sectionId, int type, string ratingKey,
+        IReadOnlyList<(string Name, string Value)> fields, CancellationToken ct,
+        CustomMetadataSyncResultDto result)
+    {
+        if (string.IsNullOrWhiteSpace(ratingKey)) return false;
+        var query = new List<string>
+        {
+            "type=" + type,
+            "id=" + Uri.EscapeDataString(ratingKey)
+        };
+        foreach (var field in fields)
+        {
+            query.Add($"{field.Name}.value={Uri.EscapeDataString(field.Value)}");
+            query.Add($"{field.Name}.locked=1");
+        }
+        var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl)
+                      ?? throw new InvalidOperationException("Invalid Plex server URL.");
+        var url = $"{baseUrl}/library/sections/{Uri.EscapeDataString(sectionId)}/all?{string.Join('&', query)}";
+        using var request = new HttpRequestMessage(HttpMethod.Put, url);
+        EnsureDefaultHeaders(request.Headers);
+        request.Headers.Add("X-Plex-Token", _cfg.ServerToken);
+        using var response = await _http.SendAsync(request, ct);
+        if (response.IsSuccessStatusCode) return true;
+        result.Errors.Add($"Plex rejected metadata {ratingKey} with HTTP {(int)response.StatusCode}.");
+        return false;
     }
 
     public async Task<string?> ResolveSectionKeyAsync(MediaType mediaType)

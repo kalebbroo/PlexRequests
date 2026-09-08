@@ -140,8 +140,16 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
             {
                 foreach (var source in sourceEpisodes)
                 {
-                    if (EpisodeOrderMapping.TryTranslate(job.EpisodeOrderProfile, ss, source, out var target))
-                        canonicalCoverage.Add(target);
+                    if (EpisodeOrderMapping.TryTranslateDetailed(job.EpisodeOrderProfile, ss, source,
+                            out var destination))
+                    {
+                        canonicalCoverage.Add(destination.Episode);
+                        if (!isPack && EpisodeOrderMapping.SourcesForCanonicalEpisode(
+                                job.EpisodeOrderProfile!, destination.Episode.Season,
+                                destination.Episode.Episode).Count > 1)
+                            rejections.Add(new Rejection(RejectionReason.EpisodeMappingMissing,
+                                $"S{destination.Episode.Season:D2}E{destination.Episode.Episode:D2} requires a pack containing every configured split part"));
+                    }
                     else
                         rejections.Add(new Rejection(RejectionReason.EpisodeMappingMissing,
                             $"{(ss == 0 ? $"A{source}" : $"S{ss:D2}E{source:D2}")} has no canonical episode mapping"));

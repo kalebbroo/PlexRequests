@@ -1423,8 +1423,56 @@ public class SeriesEpisodeOrderProfileDto
     /// parent folders, both the ordinal and this title must agree before that folder can identify a source
     /// season. Empty for absolute/manual legacy maps where no group-name evidence exists.</summary>
     public List<EpisodeOrderSourceGroupDto> SourceGroups { get; set; } = new();
+    /// <summary>
+    /// Enables the visual per-series metadata contract. Unlike the legacy text map, these rows may
+    /// deliberately map several ordered source files to one Plex episode (for example a Blu-ray that
+    /// splits a double-length broadcast) and may include selected Season 00 OVAs/ONAs/specials.
+    /// </summary>
+    public bool CustomMetadataEnabled { get; set; }
+    public List<CustomSeasonMetadataDto> CustomSeasons { get; set; } = new();
+    public List<CustomEpisodeMetadataDto> CustomEpisodes { get; set; } = new();
     public string MappingsText { get; set; } = string.Empty;
     public bool Enabled { get; set; } = true;
+}
+
+/// <summary>A season label managed by the custom metadata builder. Season zero is Plex's Specials season.</summary>
+public class CustomSeasonMetadataDto
+{
+    public int Season { get; set; }
+    public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// One immutable source-file identity and its Plex destination. Part is normally 1; two or more rows may
+/// share a destination only when their part numbers are the complete sequence 1..N. Included rows become
+/// explicit wanted targets even when TMDb omits them from its ordinary seasons.
+/// </summary>
+public class CustomEpisodeMetadataDto
+{
+    public int SourceSeason { get; set; }
+    public int SourceEpisode { get; set; }
+    public int Season { get; set; }
+    public int Episode { get; set; }
+    public int Part { get; set; } = 1;
+    public string Title { get; set; } = string.Empty;
+    public string? Summary { get; set; }
+    public DateTime? OriginallyAvailableAt { get; set; }
+    /// <summary>Episode, OVA, ONA, or Special. This is descriptive; Season/Episode controls Plex placement.</summary>
+    public string ContentKind { get; set; } = "Episode";
+    public bool IncludeInMonitoring { get; set; } = true;
+}
+
+/// <summary>Validated result of translating one source episode through a custom or imported order.</summary>
+public sealed record EpisodeMapTarget(EpisodeRef Episode, int Part = 1);
+
+public class CustomMetadataSyncResultDto
+{
+    public bool Configured { get; set; }
+    public bool SeriesFound { get; set; }
+    public int SeasonsUpdated { get; set; }
+    public int EpisodesUpdated { get; set; }
+    public List<string> MissingTargets { get; set; } = new();
+    public List<string> Errors { get; set; } = new();
 }
 
 public class EpisodeOrderSourceGroupDto

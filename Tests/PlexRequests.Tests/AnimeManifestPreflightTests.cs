@@ -18,6 +18,53 @@ public sealed class AnimeManifestPreflightTests
     private static readonly string[] SubtitleExtensions = [".srt", ".ass"];
 
     [Fact]
+    public void CustomSplitBroadcastEpisodeSelectsEveryPartAndCountsOneCanonicalTarget()
+    {
+        var job = new FulfillmentJobDto
+        {
+            Id = 255, Title = "Monogatari", TmdbId = 46195, MediaType = MediaType.TvShow,
+            IsAnime = true, EpisodeOrderProfile = OwarimonogatariSplitProfile()
+        };
+        var item = new DownloadPlanItem(TestData.Release("[MTBB] Owarimonogatari"), null, null, true)
+        {
+            NeededEpisodeRefs = [new EpisodeRef { Season = 4, Episode = 1 }]
+        };
+        var manifest = Manifest(
+            ("13 - Owarimonogatari S1/[MTBB] Owarimonogatari - 01.mkv", GiB(1)),
+            ("13 - Owarimonogatari S1/[MTBB] Owarimonogatari - 02.mkv", GiB(1)),
+            ("13 - Owarimonogatari S1/[MTBB] Owarimonogatari - 03.mkv", GiB(1)));
+
+        var result = AnimeManifestPreflight.Evaluate(manifest, job, item, _parser,
+            VideoExtensions, maxSelectedGb: 10);
+
+        Assert.True(result.Accepted, result.Detail);
+        Assert.Equal([true, true, false], result.WantedFiles);
+        var target = Assert.Single(result.CanonicalCoverage);
+        Assert.Equal((4, 1), (target.Season, target.Episode));
+    }
+
+    [Fact]
+    public void CustomSplitBroadcastEpisodeRejectsAnIncompletePartSet()
+    {
+        var job = new FulfillmentJobDto
+        {
+            Id = 255, Title = "Monogatari", TmdbId = 46195, MediaType = MediaType.TvShow,
+            IsAnime = true, EpisodeOrderProfile = OwarimonogatariSplitProfile()
+        };
+        var item = new DownloadPlanItem(TestData.Release("[MTBB] Owarimonogatari"), null, null, true)
+        {
+            NeededEpisodeRefs = [new EpisodeRef { Season = 4, Episode = 1 }]
+        };
+
+        var result = AnimeManifestPreflight.Evaluate(
+            Manifest(("13 - Owarimonogatari S1/[MTBB] Owarimonogatari - 01.mkv", GiB(1))),
+            job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.False(result.Accepted);
+        Assert.Contains("missing 1 requested canonical episode", result.Detail);
+    }
+
+    [Fact]
     public void NamedCollectionSelectsOnlyMissingCanonicalSeasons()
     {
         var (job, item) = NamedCollectionJobAndItem();
@@ -897,6 +944,35 @@ public sealed class AnimeManifestPreflightTests
                      "[MiniMTBB] Monogatari Series Off & Monster Season - 06.5 (BD 1080p).mkv", GiB(1)))
             .OrderBy(file => file.Item1, StringComparer.Ordinal)
             .ToArray();
+
+    private static SeriesEpisodeOrderProfileDto OwarimonogatariSplitProfile() => new()
+    {
+        TmdbId = 46195,
+        SeriesTitle = "Monogatari",
+        SourceOrder = EpisodeOrderType.Custom,
+        SourceGroups = [new EpisodeOrderSourceGroupDto { SourceSeason = 13, Name = "Owarimonogatari S1" }],
+        CustomMetadataEnabled = true,
+        CustomSeasons = [new CustomSeasonMetadataDto { Season = 4, Name = "Owarimonogatari" }],
+        CustomEpisodes =
+        [
+            new CustomEpisodeMetadataDto
+            {
+                SourceSeason = 13, SourceEpisode = 1, Season = 4, Episode = 1, Part = 1,
+                Title = "Ougi Formula", IncludeInMonitoring = true
+            },
+            new CustomEpisodeMetadataDto
+            {
+                SourceSeason = 13, SourceEpisode = 2, Season = 4, Episode = 1, Part = 2,
+                Title = "Ougi Formula", IncludeInMonitoring = true
+            },
+            new CustomEpisodeMetadataDto
+            {
+                SourceSeason = 13, SourceEpisode = 3, Season = 4, Episode = 2,
+                Title = "Sodachi Riddle (1)", IncludeInMonitoring = true
+            }
+        ],
+        Enabled = true
+    };
 
     private static SeriesEpisodeOrderProfileDto Profile(string id, string name, string mappings,
         params (int Season, string Name)[] groups) => new()

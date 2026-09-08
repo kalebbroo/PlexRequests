@@ -64,7 +64,15 @@ internal static class AnimeManifestPreflight
             .Select(extension => extension.StartsWith('.') ? extension : $".{extension}")
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var selected = Enumerable.Repeat(false, manifest.Files.Count).ToArray();
-        var selectedCoverage = new Dictionary<(int Season, int Episode), int>();
+        var selectedCoverage = new Dictionary<(int Season, int Episode), Dictionary<int, int>>();
+        var expectedParts = new Dictionary<(int Season, int Episode), HashSet<int>>();
+        if (EpisodeOrderMapping.IsActive(episodeOrderProfile)
+            && EpisodeOrderMapping.TryParseDetailed(episodeOrderProfile!, out var detailedMap, out _))
+        {
+            expectedParts = detailedMap.Values.GroupBy(value =>
+                    (value.Episode.Season, value.Episode.Episode))
+                .ToDictionary(group => group.Key, group => group.Select(value => value.Part).ToHashSet());
+        }
         var unmappedVideos = new List<string>();
         long selectedBytes = 0;
 
@@ -109,10 +117,14 @@ internal static class AnimeManifestPreflight
 
             var parsed = parser.Parse(Path.GetFileName(file.Path));
             var coverage = new List<(int Season, int Episode)>();
+            var mappedParts = new List<((int Season, int Episode) Target, int Part)>();
             if (namedSequence is not null
                 && namedSequence.CanonicalEpisodes.TryGetValue(file.Path, out var sequenceEpisode)
                 && item.Season is int sequenceSeason)
+            {
                 coverage.Add((sequenceSeason, sequenceEpisode));
+                mappedParts.Add(((sequenceSeason, sequenceEpisode), 1));
+            }
             else
             {
                 if (parsed.FractionalEpisodeNumber)
@@ -129,7 +141,10 @@ internal static class AnimeManifestPreflight
                     && job.CanonicalSeasons.Count > 0)
                 {
                     if (AnimeNamedCollectionMapper.TryMapFile(file.Path, job, parsed, out var namedCoverage))
+                    {
                         coverage.AddRange(namedCoverage.Select(target => (target.Season, target.Episode)));
+                        mappedParts.AddRange(namedCoverage.Select(target => ((target.Season, target.Episode), 1)));
+                    }
                     else
                         unmappedVideos.Add(file.Path);
                 }
@@ -137,7 +152,7 @@ internal static class AnimeManifestPreflight
                 {
                     foreach (var sourceEpisode in episodes)
                     {
-                        EpisodeRef target;
+                        EpisodeMapTarget destination;
                         if (!EpisodeOrderMapping.IsActive(episodeOrderProfile)
                             && item.SourceSeason is int expectedSource
                             && item.Season is int canonicalSeason
@@ -157,16 +172,19 @@ internal static class AnimeManifestPreflight
                                 return ManifestPreflightDecision.Reject(
                                     $"{file.Path} declares absolute episode {sourceEpisode}, outside canonical " +
                                     $"S{canonicalSeason:D2}'s known episode range.", manifest.Files.Count);
-                            target = new EpisodeRef { Season = canonicalSeason, Episode = sourceEpisode };
+                            destination = new EpisodeMapTarget(new EpisodeRef
+                                { Season = canonicalSeason, Episode = sourceEpisode });
                         }
-                        else if (!EpisodeOrderMapping.TryTranslateFile(episodeOrderProfile, file.Path,
-                                     sourceSeason, sourceEpisode, out target))
+                        else if (!EpisodeOrderMapping.TryTranslateFileDetailed(episodeOrderProfile, file.Path,
+                                     sourceSeason, sourceEpisode, out destination))
                         {
                             unmappedVideos.Add(file.Path);
                             coverage.Clear();
                             break;
                         }
-                        coverage.Add((target.Season, target.Episode));
+                        var target = (destination.Episode.Season, destination.Episode.Episode);
+                        coverage.Add(target);
+                        mappedParts.Add((target, destination.Part));
                     }
                 }
             }
@@ -179,13 +197,22 @@ internal static class AnimeManifestPreflight
             if (file.SizeBytes <= 0)
                 return ManifestPreflightDecision.Reject($"Selected video has no trustworthy byte length: {file.Path}", manifest.Files.Count);
 
-            foreach (var target in coverage)
+            if (mappedParts.GroupBy(item => item.Target).Any(group => group.Count() > 1))
+                return ManifestPreflightDecision.Reject(
+                    $"{file.Path} maps more than one source identity to the same canonical episode; split parts must be separate files.",
+                    manifest.Files.Count);
+            foreach (var (target, part) in mappedParts)
             {
-                if (selectedCoverage.TryGetValue(target, out var otherIndex))
+                if (!selectedCoverage.TryGetValue(target, out var parts))
+                {
+                    parts = new Dictionary<int, int>();
+                    selectedCoverage[target] = parts;
+                }
+                if (parts.TryGetValue(part, out var otherIndex))
                     return ManifestPreflightDecision.Reject(
-                        $"Canonical S{target.Season:D2}E{target.Episode:D2} appears in both {manifest.Files[otherIndex].Path} and {file.Path}.",
+                        $"Canonical S{target.Season:D2}E{target.Episode:D2} part {part} appears in both {manifest.Files[otherIndex].Path} and {file.Path}.",
                         manifest.Files.Count);
-                selectedCoverage[target] = index;
+                parts[part] = index;
             }
             selected[index] = true;
             try { selectedBytes = checked(selectedBytes + file.SizeBytes); }
@@ -195,7 +222,9 @@ internal static class AnimeManifestPreflight
             }
         }
 
-        var missing = targets.Where(target => !selectedCoverage.ContainsKey(target))
+        var missing = targets.Where(target => !selectedCoverage.TryGetValue(target, out var parts)
+                                              || expectedParts.TryGetValue(target, out var expected)
+                                              && !parts.Keys.ToHashSet().SetEquals(expected))
             .OrderBy(target => target.Season).ThenBy(target => target.Episode).ToList();
         if (missing.Count > 0)
         {

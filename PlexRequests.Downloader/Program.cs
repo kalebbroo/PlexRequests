@@ -196,6 +196,7 @@ builder.Services.AddSingleton<ISeasonPackSplitter, SeasonPackSplitter>();
 builder.Services.AddSingleton<IPlexNamingService, PlexNamingService>();
 builder.Services.AddSingleton<IEpisodeTitleProvider, EpisodeTitleProvider>();
 builder.Services.AddSingleton<IMediaTrackInspector, MediaInfoTrackInspector>();
+builder.Services.AddSingleton<IMultipartEpisodeJoiner, MkvMergeEpisodeJoiner>();
 builder.Services.AddSingleton<ILibraryOrganizer, LibraryOrganizer>();
 builder.Services.AddSingleton<ILibraryImporter, LibraryImporter>();
 // The legacy job monitor and the durable reconciler can see the same completed torrent. They share this

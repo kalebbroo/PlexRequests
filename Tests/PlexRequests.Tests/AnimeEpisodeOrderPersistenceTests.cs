@@ -72,6 +72,131 @@ public sealed class AnimeEpisodeOrderPersistenceTests
     }
 
     [Fact]
+    public async Task ClaimReplacesProviderTargetsWithWantedCustomSpecialsAndSplitEpisodes()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = Request("Monogatari");
+        request.RequestAllSeasons = true;
+        fixture.Db.MediaRequests.Add(request);
+        await fixture.Db.SaveChangesAsync();
+        fixture.Db.FulfillmentJobs.Add(Job(request, anime: true, episodeOrderJson: null));
+        await fixture.Db.SaveChangesAsync();
+        var custom = new SeriesEpisodeOrderProfileDto
+        {
+            TmdbId = 46195, SeriesTitle = "Monogatari", SourceOrder = EpisodeOrderType.Custom,
+            Enabled = true, CustomMetadataEnabled = true,
+            SourceGroups =
+            [
+                new EpisodeOrderSourceGroupDto { SourceSeason = 1, Name = "Bakemonogatari" },
+                new EpisodeOrderSourceGroupDto { SourceSeason = 13, Name = "Owarimonogatari S1" }
+            ],
+            CustomSeasons =
+            [
+                new CustomSeasonMetadataDto { Season = 0, Name = "Specials" },
+                new CustomSeasonMetadataDto { Season = 4, Name = "Owarimonogatari" }
+            ],
+            CustomEpisodes =
+            [
+                new CustomEpisodeMetadataDto
+                {
+                    SourceSeason = 1, SourceEpisode = 13, Season = 0, Episode = 2,
+                    ContentKind = "ONA", IncludeInMonitoring = true
+                },
+                new CustomEpisodeMetadataDto
+                {
+                    SourceSeason = 1, SourceEpisode = 14, Season = 0, Episode = 3,
+                    ContentKind = "ONA", IncludeInMonitoring = false
+                },
+                new CustomEpisodeMetadataDto
+                {
+                    SourceSeason = 13, SourceEpisode = 1, Season = 4, Episode = 1, Part = 1
+                },
+                new CustomEpisodeMetadataDto
+                {
+                    SourceSeason = 13, SourceEpisode = 2, Season = 4, Episode = 1, Part = 2
+                }
+            ]
+        };
+        var preferences = new FixedPreferences();
+        await preferences.UpdateAsync(new LibraryOrganizationPreferencesDto
+            { SeriesEpisodeOrderProfiles = [custom] });
+        var queue = fixture.Queue(preferences, new FakeEpisodeGroups(Profile("candidate")),
+            seasonAvailability: new FixedSeasonAvailability());
+
+        var claimed = Assert.Single(await queue.ClaimNextAsync("worker"));
+
+        Assert.NotNull(claimed.EpisodeOrderProfile);
+        Assert.Equal([0, 4], claimed.SeasonTargets.Select(target => target.Season).ToList());
+        Assert.Equal([2], claimed.SeasonTargets[0].MissingEpisodes);
+        Assert.Equal([1], claimed.SeasonTargets[1].MissingEpisodes);
+        Assert.Contains(claimed.CanonicalSeasons, season => season.Season == 0 && season.Name == "Specials");
+    }
+
+    [Fact]
+    public async Task EnqueueWholeSeriesKeepsWantedSpecialsOutsideLegacyNumberedSeasonList()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = Request("Monogatari");
+        request.RequestAllSeasons = true;
+        request.RequestedSeasonsCsv = "1,4";
+        request.IsAnime = true;
+        fixture.Db.MediaRequests.Add(request);
+        fixture.Db.QualityProfiles.Add(new QualityProfileEntity
+        {
+            Name = "Any", IsDefault = true, IsUserSelectable = true
+        });
+        await fixture.Db.SaveChangesAsync();
+        var custom = new SeriesEpisodeOrderProfileDto
+        {
+            TmdbId = 46195, SeriesTitle = "Monogatari", SourceOrder = EpisodeOrderType.Custom,
+            Enabled = true, CustomMetadataEnabled = true,
+            CustomSeasons =
+            [
+                new CustomSeasonMetadataDto { Season = 0, Name = "Specials" },
+                new CustomSeasonMetadataDto { Season = 4, Name = "Owarimonogatari" }
+            ],
+            CustomEpisodes =
+            [
+                new CustomEpisodeMetadataDto
+                {
+                    SourceSeason = 1, SourceEpisode = 13, Season = 0, Episode = 2,
+                    ContentKind = "ONA", IncludeInMonitoring = true
+                },
+                new CustomEpisodeMetadataDto
+                {
+                    SourceSeason = 13, SourceEpisode = 1, Season = 4, Episode = 1,
+                    ContentKind = "Episode", IncludeInMonitoring = true
+                }
+            ]
+        };
+        var preferences = new FixedPreferences();
+        await preferences.UpdateAsync(new LibraryOrganizationPreferencesDto
+        {
+            TvPath = "/library/tv", SeriesEpisodeOrderProfiles = [custom]
+        });
+        var detail = new MediaDetailDto
+        {
+            Id = 46195, MediaType = MediaType.TvShow, Title = "Monogatari",
+            Genres = ["Animation"], Languages = ["ja"], Countries = ["JP"]
+        };
+        var queue = fixture.Queue(preferences, new FakeEpisodeGroups(Profile("candidate")),
+            new FixedMetadata(detail), new FixedSeasonAvailability());
+        var dto = new MediaRequestDto
+        {
+            Id = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
+            Title = request.Title, Status = request.Status, RequestScopeKind = RequestScopeKind.Series,
+            RequestAllSeasons = true, RequestedSeasons = [1, 4], IsAnime = true
+        };
+
+        Assert.True(await queue.EnqueueAsync(dto));
+
+        var job = await fixture.Db.FulfillmentJobs.SingleAsync();
+        var targets = JsonSerializer.Deserialize<List<SeasonTarget>>(job.SeasonTargetsJson!);
+        Assert.Equal([0, 4], targets!.Select(target => target.Season).ToList());
+        Assert.Equal("0,4", job.RequestedSeasonsCsv);
+    }
+
+    [Fact]
     public async Task SelectedGroupIsReimportedThenFrozenOnCurrentJobOnly()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -256,8 +381,9 @@ public sealed class AnimeEpisodeOrderPersistenceTests
         }
 
         public FulfillmentQueue Queue(ILibraryOrganizationPreferencesService preferences,
-            ITmdbEpisodeGroupImportService groups, IMediaMetadataProvider? metadata = null) => new(Db, metadata!, null!,
-            new QualityProfileService(Db, NullLogger<QualityProfileService>.Instance), null!, null!, preferences,
+            ITmdbEpisodeGroupImportService groups, IMediaMetadataProvider? metadata = null,
+            ISeasonAvailabilityEvaluator? seasonAvailability = null) => new(Db, metadata!, null!,
+            new QualityProfileService(Db, NullLogger<QualityProfileService>.Instance), null!, seasonAvailability!, preferences,
             NullLogger<FulfillmentQueue>.Instance, groups);
 
         public async ValueTask DisposeAsync()
@@ -265,5 +391,19 @@ public sealed class AnimeEpisodeOrderPersistenceTests
             await Db.DisposeAsync();
             await connection.DisposeAsync();
         }
+    }
+
+    private sealed class FixedSeasonAvailability : ISeasonAvailabilityEvaluator
+    {
+        public Task<string?> ResolveRatingKeyAsync(int tmdbShowId, CancellationToken ct = default) =>
+            Task.FromResult<string?>("show");
+        public Task<Dictionary<int, HashSet<int>>> GetPlexEpisodesAsync(int tmdbShowId,
+            CancellationToken ct = default) => Task.FromResult(new Dictionary<int, HashSet<int>>());
+        public Task<Dictionary<int, SeasonCompleteness>> EvaluateAsync(int tmdbShowId,
+            CancellationToken ct = default) => Task.FromResult(new Dictionary<int, SeasonCompleteness>());
+        public Task<List<int>> GetCompleteSeasonsAsync(int tmdbShowId, CancellationToken ct = default) =>
+            Task.FromResult(new List<int>());
+        public Task<bool> IsWholeSeriesSatisfiedAsync(int tmdbShowId, CancellationToken ct = default) =>
+            Task.FromResult(false);
     }
 }

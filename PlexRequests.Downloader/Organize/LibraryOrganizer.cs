@@ -27,6 +27,7 @@ public class LibraryOrganizer(
     IPlexNamingService naming,
     IReleaseParser parser,
     IMediaTrackInspector trackInspector,
+    IMultipartEpisodeJoiner multipartJoiner,
     ILogger<LibraryOrganizer> logger) : ILibraryOrganizer
 {
     public async Task<ImportResult> OrganizeAsync(FulfillmentJobDto job, TransferItem transfer, string sourcePath, EffectiveLibraryOrganization prefs, CancellationToken ct)
@@ -270,6 +271,10 @@ public class LibraryOrganizer(
 
             if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
             {
+                if (job.EpisodeOrderProfile is { } order
+                    && EpisodeOrderMapping.SourcesForCanonicalEpisode(order, s, e).Count > 1)
+                    throw new EpisodeMappingException(
+                        $"Canonical S{s:D2}E{e:D2} requires every configured split part; a standalone file cannot satisfy it.");
                 var parsed = parser.Parse(Path.GetFileName(best));
                 var sourceEpisodes = parsed.EpisodeNumbers.Distinct().ToList();
                 if (parsed.Season is not int sourceSeason || sourceEpisodes.Count != 1
@@ -289,7 +294,7 @@ public class LibraryOrganizer(
             }
 
             var inspected = await InspectSelectionAsync(job, [best], allFiles, prefs, ct);
-            var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, s, e, CancellationToken.None).GetAwaiter().GetResult();
+            var title = await GetEpisodeTitleAsync(job, s, e, ct);
             var dest = naming.BuildEpisodePath(prefs, job, s, e, title, Path.GetExtension(best));
             var coverage = Coverage(s, [e]);
             TransferOne(best, dest, s, e, "video", records, prefs, inspected.GetValueOrDefault(best), coverage,
@@ -348,8 +353,15 @@ public class LibraryOrganizer(
                 throw new EpisodeMappingException($"Season pack S{season:D2} contained no confidently mapped episode files.");
 
             var inspected = await InspectSelectionAsync(job, mapped.Select(x => x.FilePath), allFiles, prefs, ct);
-            foreach (var mapping in mapped)
+            foreach (var mappingGroup in GroupCanonicalMappings(mapped))
             {
+                if (mappingGroup.Count > 1)
+                {
+                    records.Add(await JoinMultipartEpisodeAsync(job, mappingGroup, prefs,
+                        inspected, ct));
+                    continue;
+                }
+                var mapping = mappingGroup[0];
                 var file = mapping.FilePath;
                 var episodes = mapping.Coverage.Select(x => x.Episode).Distinct().OrderBy(x => x).ToList();
                 var first = episodes[0];
@@ -358,8 +370,7 @@ public class LibraryOrganizer(
                 {
                     if (episodes.Count == 1)
                     {
-                        var title = episodeTitles.GetEpisodeTitleAsync(job.TmdbId, season, first,
-                            CancellationToken.None).GetAwaiter().GetResult();
+                        var title = await GetEpisodeTitleAsync(job, season, first, ct);
                         dest = naming.BuildEpisodePath(prefs, job, season, first, title, Path.GetExtension(file));
                     }
                     else
@@ -417,16 +428,22 @@ public class LibraryOrganizer(
                     canonicalMappings.Count, before, DescribeTargets(wholePackTargets));
             }
             var inspection = await InspectSelectionAsync(job, canonicalMappings.Select(x => x.FilePath), allFiles, prefs, ct);
-            foreach (var mapping in canonicalMappings)
+            foreach (var mappingGroup in GroupCanonicalMappings(canonicalMappings))
             {
+                if (mappingGroup.Count > 1)
+                {
+                    records.Add(await JoinMultipartEpisodeAsync(job, mappingGroup, prefs,
+                        inspection, ct));
+                    continue;
+                }
+                var mapping = mappingGroup[0];
                 var file = mapping.FilePath;
                 var canonicalSeason = mapping.Coverage[0].Season;
                 var episodes = mapping.Coverage.Select(x => x.Episode).ToList();
                 var first = episodes[0];
                 var dest = episodes.Count == 1
                     ? naming.BuildEpisodePath(prefs, job, canonicalSeason, first,
-                        episodeTitles.GetEpisodeTitleAsync(job.TmdbId, canonicalSeason, first, CancellationToken.None).GetAwaiter().GetResult(),
-                        Path.GetExtension(file))
+                        await GetEpisodeTitleAsync(job, canonicalSeason, first, ct), Path.GetExtension(file))
                     : naming.BuildEpisodeRangePath(prefs, job, canonicalSeason, first, episodes[^1], Path.GetExtension(file));
                 TransferOne(file, dest, canonicalSeason, first, "video", records, prefs,
                     inspection.GetValueOrDefault(file), mapping.Coverage, job);
@@ -480,7 +497,7 @@ public class LibraryOrganizer(
         return records;
     }
 
-    private sealed record CanonicalFileMapping(string FilePath, IReadOnlyList<EpisodeRef> Coverage);
+    private sealed record CanonicalFileMapping(string FilePath, IReadOnlyList<EpisodeRef> Coverage, int Part = 1);
 
     private static HashSet<(int Season, int Episode)> CanonicalTargets(TransferItem transfer)
     {
@@ -515,34 +532,53 @@ public class LibraryOrganizer(
             }
 
             var coverage = new List<EpisodeRef>();
+            var parts = new List<int>();
             foreach (var sourceEpisode in sourceEpisodes)
             {
-                if (!EpisodeOrderMapping.TryTranslateFile(job.EpisodeOrderProfile, file,
-                        sourceSeason, sourceEpisode, out var target))
+                if (!EpisodeOrderMapping.TryTranslateFileDetailed(job.EpisodeOrderProfile, file,
+                        sourceSeason, sourceEpisode, out var destination))
                 {
                     coverage.Clear();
                     break;
                 }
-                coverage.Add(target);
+                coverage.Add(destination.Episode);
+                parts.Add(destination.Part);
             }
 
             coverage = coverage.DistinctBy(x => (x.Season, x.Episode))
                 .OrderBy(x => x.Season).ThenBy(x => x.Episode).ToList();
-            if (coverage.Count == 0 || coverage.Any(x => x.Season != coverage[0].Season)
+            if (coverage.Count == 0 || parts.Distinct().Count() != 1
+                || coverage.Any(x => x.Season != coverage[0].Season)
                 || !IsContiguous(coverage.Select(x => x.Episode).ToList()))
                 unmapped.Add(file);
             else
-                mapped.Add(new CanonicalFileMapping(file, coverage));
+                mapped.Add(new CanonicalFileMapping(file, coverage, parts[0]));
         }
 
-        var conflicts = mapped.SelectMany(x => x.Coverage)
-            .GroupBy(x => (x.Season, x.Episode)).Where(x => x.Count() > 1).Select(x => x.Key).ToList();
+        var conflicts = mapped.SelectMany(mapping => mapping.Coverage.Select(target => (mapping, target)))
+            .GroupBy(item => (item.target.Season, item.target.Episode))
+            .Where(group => !ValidMultipartGroup(job.EpisodeOrderProfile, group.Key,
+                group.Select(item => item.mapping).ToList()))
+            .Select(group => group.Key).ToList();
         if (unmapped.Count > 0 || conflicts.Count > 0)
             throw new EpisodeMappingException(
                 $"Configured episode order could not map the pack safely: {unmapped.Count} unmapped file(s), {conflicts.Count} overlapping canonical episode(s); no files were imported.");
         if (mapped.Count == 0)
             throw new EpisodeMappingException("Configured episode order produced no canonical episode files.");
         return mapped;
+    }
+
+    private static bool ValidMultipartGroup(SeriesEpisodeOrderProfileDto? profile,
+        (int Season, int Episode) target, IReadOnlyList<CanonicalFileMapping> mappings)
+    {
+        if (!EpisodeOrderMapping.HasCustomMetadata(profile) || mappings.Count < 2
+            || mappings.Any(mapping => mapping.Coverage.Count != 1)) return mappings.Count == 1;
+        var actual = mappings.Select(mapping => mapping.Part).Order().ToList();
+        if (!EpisodeOrderMapping.TryParseDetailed(profile!, out var configured, out _)) return false;
+        var expected = configured.Values.Where(value => value.Episode.Season == target.Season
+                                                        && value.Episode.Episode == target.Episode)
+            .Select(value => value.Part).Order().ToList();
+        return actual.SequenceEqual(expected);
     }
 
     private List<CanonicalFileMapping> MapNamedCollectionFiles(
@@ -617,6 +653,93 @@ public class LibraryOrganizer(
             throw new EpisodeMappingException(
                 "Fractional named-season transfer contained no confidently mapped episode files.");
         return mapped;
+    }
+
+    private static IReadOnlyList<List<CanonicalFileMapping>> GroupCanonicalMappings(
+        IReadOnlyList<CanonicalFileMapping> mappings) => mappings
+        .GroupBy(mapping => (mapping.Coverage[0].Season, mapping.Coverage[0].Episode))
+        .OrderBy(group => group.Key.Season).ThenBy(group => group.Key.Episode)
+        .Select(group => group.OrderBy(mapping => mapping.Part).ToList()).ToList();
+
+    private async Task<string?> GetEpisodeTitleAsync(FulfillmentJobDto job, int season, int episode,
+        CancellationToken ct)
+    {
+        var custom = job.EpisodeOrderProfile?.CustomEpisodes
+            .FirstOrDefault(row => row.Season == season && row.Episode == episode
+                                   && !string.IsNullOrWhiteSpace(row.Title));
+        return custom?.Title.Trim()
+               ?? await episodeTitles.GetEpisodeTitleAsync(job.TmdbId, season, episode, ct);
+    }
+
+    /// <summary>
+    /// Joins an explicitly configured split broadcast episode into one Plex file. Plex has limited pt1/pt2
+    /// support, but joining preserves intro detection and stream selection across clients. The output is
+    /// built beside its destination and atomically renamed; every torrent source stays untouched until the
+    /// joined file and playback defaults have both been verified.
+    /// </summary>
+    private async Task<ImportedFileRecord> JoinMultipartEpisodeAsync(FulfillmentJobDto job,
+        IReadOnlyList<CanonicalFileMapping> mappings, EffectiveLibraryOrganization prefs,
+        IReadOnlyDictionary<string, MediaTrackSummaryDto> inspections,
+        CancellationToken ct)
+    {
+        if (mappings.Count is < 2 or > 8 || mappings.Any(mapping => mapping.Coverage.Count != 1))
+            throw new EpisodeMappingException("A split episode must contain 2 through 8 ordered one-episode parts.");
+        var target = mappings[0].Coverage[0];
+        if (mappings.Any(mapping => mapping.Coverage[0].Season != target.Season
+                                    || mapping.Coverage[0].Episode != target.Episode)
+            || !mappings.Select(mapping => mapping.Part).SequenceEqual(Enumerable.Range(1, mappings.Count)))
+            throw new EpisodeMappingException(
+                $"S{target.Season:D2}E{target.Episode:D2} has an incomplete or out-of-order split-part contract.");
+        if (mappings.Any(mapping => !Path.GetExtension(mapping.FilePath).Equals(".mkv",
+                StringComparison.OrdinalIgnoreCase)))
+            throw new EpisodeMappingException(
+                $"S{target.Season:D2}E{target.Episode:D2} split parts must all be MKV files for lossless joining.");
+
+        var summaries = mappings.Select(mapping => inspections.GetValueOrDefault(mapping.FilePath)
+                                                    ?? throw new MediaPolicyViolationException(
+                                                        $"No media inspection exists for '{Path.GetFileName(mapping.FilePath)}'."))
+            .ToList();
+        if (summaries.Any(summary => summary.Audio.Concat(summary.Subtitles).Any(track => track.IsExternal)))
+            throw new EpisodeMappingException(
+                $"S{target.Season:D2}E{target.Episode:D2} has external subtitles across split parts; join them manually before import.");
+        var contracts = summaries.Select(TrackContract).Distinct(StringComparer.Ordinal).ToList();
+        if (contracts.Count != 1)
+            throw new EpisodeMappingException(
+                $"S{target.Season:D2}E{target.Episode:D2} split parts do not have identical audio/subtitle stream layouts.");
+
+        var title = await GetEpisodeTitleAsync(job, target.Season, target.Episode, ct);
+        var destination = naming.BuildEpisodePath(prefs, job, target.Season, target.Episode, title, ".mkv");
+        var summary = summaries[0];
+        var selection = MediaTrackDefaultSelection.Create(job.MediaLanguagePolicy, summary, job.IsAnime);
+        var defaultsApplied = false;
+        Action<string>? prepare = selection is null ? null : staged =>
+            defaultsApplied = trackInspector.SetDefaults(staged, ".mkv", selection);
+        var size = await multipartJoiner.JoinAsync(mappings.Select(mapping => mapping.FilePath).ToList(),
+            destination, prepare, ct);
+        if (defaultsApplied && selection is not null) RecordAppliedDefaults(summary, selection);
+
+        if (prefs.TransferMode == TransferMode.Move
+            || prefs.TransferMode == TransferMode.Copy && prefs.DeleteSourceAfterImport)
+            foreach (var mapping in mappings)
+                TryDeleteJoinedSource(mapping.FilePath);
+
+        logger.LogInformation("Joined {Count} source part(s) into canonical S{Season:D2}E{Episode:D2}",
+            mappings.Count, target.Season, target.Episode);
+        return new ImportedFileRecord(mappings[0].FilePath, destination, "video", target.Season,
+            target.Episode, size, summary,
+            [new EpisodeRef { Season = target.Season, Episode = target.Episode }]);
+    }
+
+    private static string TrackContract(MediaTrackSummaryDto summary) => string.Join('|',
+        summary.Audio.Concat(summary.Subtitles).Where(track => !track.IsExternal)
+            // Track titles can legitimately describe the individual half while codec, language, type and
+            // order remain append-compatible. Do not reject that harmless metadata difference.
+            .Select(track => $"{track.Type}:{track.Codec}:{MediaLanguagePolicy.Normalize(track.Language)}"));
+
+    private void TryDeleteJoinedSource(string path)
+    {
+        try { File.Delete(path); }
+        catch (Exception ex) { logger.LogDebug(ex, "Could not delete joined source part {Path}", path); }
     }
 
     private void TransferOne(string source, string dest, int? season, int? episode, string fileType,

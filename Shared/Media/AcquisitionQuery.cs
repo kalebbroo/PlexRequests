@@ -39,7 +39,8 @@ public static class AcquisitionQuery
 
         // Explicit episode requests should be searched as that exact source episode first.
         foreach (var target in job.RequestedEpisodes)
-            if (EpisodeOrderMapping.TryTranslateCanonicalToSource(profile, target.Season, target.Episode, out var source))
+        foreach (var source in EpisodeOrderMapping.SourcesForCanonicalEpisode(profile,
+                     target.Season, target.Episode))
                 scoped.Add(EpisodeTerm(job.Title, source));
 
         // Season requests prefer source-order season packs. An absolute-order source has no meaningful
@@ -53,7 +54,8 @@ public static class AcquisitionQuery
         // absolute-order series this is also the only useful scope narrower than the title-only query.
         foreach (var target in job.SeasonTargets.SelectMany(t => t.MissingEpisodes
                      .Select(episode => new EpisodeRef { Season = t.Season, Episode = episode })))
-            if (EpisodeOrderMapping.TryTranslateCanonicalToSource(profile, target.Season, target.Episode, out var source))
+        foreach (var source in EpisodeOrderMapping.SourcesForCanonicalEpisode(profile,
+                     target.Season, target.Episode))
                 scoped.Add(EpisodeTerm(job.Title, source));
         scoped.AddRange(seasonSources.Where(x => x.Season == 0).Select(x => EpisodeTerm(job.Title, x)));
 

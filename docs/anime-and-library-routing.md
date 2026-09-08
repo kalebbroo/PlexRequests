@@ -222,8 +222,25 @@ Mixed franchise archives intentionally remain a last-resort review case. A colle
 arcs, resets numbering under title folders, splits one official group across multiple folders, or predates current
 episodes cannot be made safe by an episode-count coincidence. It stays payload-free, records the conflicting or
 missing group evidence in the job error, keeps retrying other releases, and reaches the existing one-time admin
-notification after the retry threshold. The next manual-review layer can use that evidence to build a per-release
-custom map; it must never reinterpret the files silently.
+notification after the retry threshold. The per-series custom metadata builder is that explicit review layer:
+
+- Each source folder and episode maps to one exact Plex season/episode. Numbered collection folders can also carry
+  an expected arc name, so both the ordinal and title must agree.
+- Season 0 rows are first-class OVA, ONA, or Special targets. The **Wanted** switch decides whether a whole-series
+  request monitors that sparse target; unselected recaps and extras remain mapped for identity but never download
+  merely because they exist in an archive.
+- Several source rows may share one Plex target only with a complete, consecutive `Part 1..N` contract. The manifest
+  requires every part, and the organizer losslessly appends compatible MKV streams into one atomic Plex file. A
+  missing part, duplicate part, external subtitle sidecar, incompatible stream layout, or join failure publishes
+  nothing and leaves the source material intact.
+- Custom season labels, episode titles, summaries, and original dates are locked through Plex's metadata API after
+  availability scans. This preserves an administrator's chosen order without changing the metadata agent for the
+  entire library. Mapped targets that Plex has not indexed yet are reported rather than fabricated.
+
+The builder can be seeded from a TMDb episode group and then edited, or authored entirely by hand. Saving validates
+the whole contract before it can be snapshotted onto a job. In-flight jobs keep their immutable snapshot; applying a
+new contract requires a deliberate requeue, preventing a mid-download edit from changing destinations underneath
+the worker. It must never reinterpret the files silently.
 
 Jobs created before language-policy snapshots existed are repaired at claim time. The web service resolves the
 job/request's quality profile and freezes its current media policy before returning work to the downloader; an

@@ -156,6 +156,44 @@ public sealed class MultiEpisodeCoverageTests
     }
 
     [Fact]
+    public void CustomMetadataAllowsOnlyExplicitCompleteSplitParts()
+    {
+        var profile = CustomProfile(
+            new() { SourceSeason = 13, SourceEpisode = 1, Season = 4, Episode = 1, Part = 1 },
+            new() { SourceSeason = 13, SourceEpisode = 2, Season = 4, Episode = 1, Part = 2 });
+
+        Assert.True(EpisodeOrderMapping.TryParseDetailed(profile, out var map, out var error), error);
+        Assert.Equal(2, map.Count);
+        Assert.Equal((4, 1, 1), (map[(13, 1)].Episode.Season, map[(13, 1)].Episode.Episode,
+            map[(13, 1)].Part));
+        Assert.Equal(2, EpisodeOrderMapping.SourcesForCanonicalEpisode(profile, 4, 1).Count);
+
+        profile.CustomEpisodes[1].Part = 3;
+        Assert.False(EpisodeOrderMapping.TryParseDetailed(profile, out _, out error));
+        Assert.Contains("consecutive", error);
+    }
+
+    [Fact]
+    public void CustomMetadataRetainsSparseWantedSpecialsAndTitles()
+    {
+        var profile = CustomProfile(
+            new()
+            {
+                SourceSeason = 1, SourceEpisode = 13, Season = 0, Episode = 2, Title = "Tsubasa Cat (3)",
+                ContentKind = "ONA", IncludeInMonitoring = true
+            },
+            new()
+            {
+                SourceSeason = 1, SourceEpisode = 14, Season = 0, Episode = 3, Title = "Tsubasa Cat (4)",
+                ContentKind = "ONA", IncludeInMonitoring = false
+            });
+
+        Assert.True(EpisodeOrderMapping.TryParse(profile, out var map, out var error), error);
+        Assert.Equal((0, 2), (map[(1, 13)].Season, map[(1, 13)].Episode));
+        Assert.Single(profile.CustomEpisodes, row => row.IncludeInMonitoring);
+    }
+
+    [Fact]
     public void SplitterReportsRangesAndOverlapsWithoutGuessing()
     {
         var splitter = new SeasonPackSplitter(_parser, NullLogger<SeasonPackSplitter>.Instance);
@@ -228,6 +266,53 @@ public sealed class MultiEpisodeCoverageTests
             Assert.Equal([(1, 1), (1, 2)], video.EpisodeCoverage!
                 .Select(x => (x.Season, x.Episode)).ToList());
             Assert.True(File.Exists(video.DestinationPath));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task OrganizerAtomicallyJoinsConfiguredSplitEpisodeParts()
+    {
+        var root = NewRoot();
+        try
+        {
+            var source = Path.Combine(root, "13 - Owarimonogatari S1");
+            Directory.CreateDirectory(source);
+            var first = Path.Combine(source, "[MTBB] Owarimonogatari - 01.mkv");
+            var second = Path.Combine(source, "[MTBB] Owarimonogatari - 02.mkv");
+            await File.WriteAllBytesAsync(first, [1, 2, 3]);
+            await File.WriteAllBytesAsync(second, [4, 5]);
+            var library = Path.Combine(root, "library");
+            var job = TvJob(library);
+            job.Title = "Monogatari";
+            job.IsAnime = true;
+            job.EpisodeOrderProfile = CustomProfile(
+                new()
+                {
+                    SourceSeason = 13, SourceEpisode = 1, Season = 4, Episode = 1, Part = 1,
+                    Title = "Ougi Formula"
+                },
+                new()
+                {
+                    SourceSeason = 13, SourceEpisode = 2, Season = 4, Episode = 1, Part = 2,
+                    Title = "Ougi Formula"
+                });
+            job.EpisodeOrderProfile.SourceGroups =
+                [new EpisodeOrderSourceGroupDto { SourceSeason = 13, Name = "Owarimonogatari S1" }];
+
+            var result = await CreateOrganizer().OrganizeAsync(job,
+                new TransferItem("transfer", 4, null, true, NeededEpisodes: [1]), source,
+                Preferences(), CancellationToken.None);
+
+            Assert.True(result.Success, result.FailReason);
+            var video = Assert.Single(result.Files, row => row.FileType == "video");
+            Assert.Equal(5, video.SizeBytes);
+            Assert.Contains("s04e01", video.DestinationPath, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Ougi Formula", video.DestinationPath);
+            Assert.True(File.Exists(video.DestinationPath));
+            Assert.True(File.Exists(first));
+            Assert.True(File.Exists(second));
+            Assert.Empty(Directory.EnumerateFiles(library, "*.partial", SearchOption.AllDirectories));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -739,6 +824,7 @@ public sealed class MultiEpisodeCoverageTests
     private LibraryOrganizer CreateOrganizer() => new(
         new NoArchives(), new SeasonPackSplitter(_parser, NullLogger<SeasonPackSplitter>.Instance),
         new TwoEpisodes(), new PlexNamingService(), _parser, new NoInspection(),
+        new TestMultipartEpisodeJoiner(),
         NullLogger<LibraryOrganizer>.Instance);
 
     private static EffectiveLibraryOrganization Preferences() => new()
@@ -786,6 +872,21 @@ public sealed class MultiEpisodeCoverageTests
         SeriesTitle = "Show",
         SourceOrder = EpisodeOrderType.Absolute,
         MappingsText = mappings,
+        Enabled = true
+    };
+
+    private static SeriesEpisodeOrderProfileDto CustomProfile(params CustomEpisodeMetadataDto[] episodes) => new()
+    {
+        TmdbId = 123,
+        SeriesTitle = "Show",
+        SourceOrder = EpisodeOrderType.Custom,
+        CustomMetadataEnabled = true,
+        CustomSeasons =
+        [
+            new() { Season = 0, Name = "Specials" },
+            new() { Season = 4, Name = "Owarimonogatari" }
+        ],
+        CustomEpisodes = episodes.ToList(),
         Enabled = true
     };
 
