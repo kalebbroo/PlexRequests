@@ -61,7 +61,7 @@ internal sealed class LegacyPlaybackPreparationWorker(
         try
         {
             var preferences = libraryPreferences.Current;
-            var (path, root) = ResolveLibraryPath(task.DestinationPath, preferences);
+            var (path, root) = ResolveLibraryPath(task, preferences);
             var volume = volumes.Read(root);
             if (!volume.IsReady)
             {
@@ -175,14 +175,14 @@ internal sealed class LegacyPlaybackPreparationWorker(
             : subtitles.All(track => !track.IsDefault);
     }
 
-    internal static (string Path, string Root) ResolveLibraryPath(string destinationPath,
+    internal static (string Path, string Root) ResolveLibraryPath(PlaybackPreparationTaskDto task,
         EffectiveLibraryOrganization preferences)
     {
+        var destinationPath = task.DestinationPath;
         if (string.IsNullOrWhiteSpace(destinationPath)
             || !Path.GetExtension(destinationPath).Equals(".mkv", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Only audited MKV library files can be prepared");
 
-        var fullPath = Path.GetFullPath(destinationPath);
         var comparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
@@ -196,12 +196,42 @@ internal sealed class LegacyPlaybackPreparationWorker(
                 ? StringComparer.OrdinalIgnoreCase
                 : StringComparer.Ordinal)
             .OrderByDescending(root => root.Length);
+        var fullPath = Path.IsPathFullyQualified(destinationPath)
+            ? Path.GetFullPath(destinationPath)
+            : ResolveLegacyRelativePath(task, preferences, roots, comparison);
         foreach (var root in roots)
         {
-            var normalized = Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar;
-            if (fullPath.StartsWith(normalized, comparison)) return (fullPath, root);
+            if (IsWithin(fullPath, root, comparison)) return (fullPath, root);
         }
 
         throw new InvalidOperationException("The audited file is outside every configured library root");
+    }
+
+    private static string ResolveLegacyRelativePath(PlaybackPreparationTaskDto task,
+        EffectiveLibraryOrganization preferences, IEnumerable<string> configuredRoots,
+        StringComparison comparison)
+    {
+        var selectedRoot = task.LibraryDestinationRootPath;
+        if (string.IsNullOrWhiteSpace(selectedRoot))
+            selectedRoot = preferences.Resolve(task.MediaType, task.Quality, task.Genres,
+                task.IsAnime, isEpisode: true).Root;
+        if (string.IsNullOrWhiteSpace(selectedRoot))
+            throw new InvalidOperationException("The legacy relative audit path has no configured library destination");
+
+        selectedRoot = Path.GetFullPath(selectedRoot);
+        if (!configuredRoots.Any(root => string.Equals(Path.TrimEndingDirectorySeparator(root),
+                Path.TrimEndingDirectorySeparator(selectedRoot), comparison)))
+            throw new InvalidOperationException("The legacy audit destination is no longer configured");
+
+        var fullPath = Path.GetFullPath(Path.Combine(selectedRoot, task.DestinationPath));
+        if (!IsWithin(fullPath, selectedRoot, comparison))
+            throw new InvalidOperationException("The legacy relative audit path escapes its library root");
+        return fullPath;
+    }
+
+    private static bool IsWithin(string path, string root, StringComparison comparison)
+    {
+        var normalized = Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar;
+        return path.StartsWith(normalized, comparison);
     }
 }

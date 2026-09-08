@@ -1684,7 +1684,12 @@ public sealed class PlaybackPreparationTaskDto
     public string DestinationPath { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public MediaType MediaType { get; set; }
+    public Quality Quality { get; set; }
+    public List<string> Genres { get; set; } = new();
     public bool IsAnime { get; set; }
+    /// <summary>The immutable root used by newer jobs. Null for legacy jobs whose relative import audit
+    /// path must be resolved against today's matching library destination.</summary>
+    public string? LibraryDestinationRootPath { get; set; }
     public MediaLanguagePolicyDto Policy { get; set; } = new();
 }
 

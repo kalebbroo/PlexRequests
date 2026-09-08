@@ -75,8 +75,11 @@ public sealed class PlaybackPreparationService(AppDbContext db, ILogger<Playback
                 DestinationPath = row.DestinationPath,
                 Title = job.Title,
                 MediaType = job.MediaType,
+                Quality = job.Quality,
+                Genres = Split(job.GenresCsv),
                 IsAnime = job.IsAnime || job.MediaRequest?.IsAnime == true
                     || job.MediaType == MediaType.Anime,
+                LibraryDestinationRootPath = job.LibraryDestinationRootPath,
                 Policy = await PolicyAsync(job, ct)
             };
         }
@@ -155,4 +158,8 @@ public sealed class PlaybackPreparationService(AppDbContext db, ILogger<Playback
     private static string? Trim(string? value, int max) => string.IsNullOrWhiteSpace(value)
         ? null
         : value.Trim()[..Math.Min(max, value.Trim().Length)];
+
+    private static List<string> Split(string? csv) => string.IsNullOrWhiteSpace(csv)
+        ? new List<string>()
+        : csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 }
