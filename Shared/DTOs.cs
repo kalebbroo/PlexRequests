@@ -1698,6 +1698,10 @@ public sealed record PlaybackPreparationClaimRequest(string WorkerId);
 /// <summary>Durable outcome of a legacy playback-order preparation attempt.</summary>
 public sealed class PlaybackPreparationReportDto
 {
+    /// <summary>Failure emitted by the first legacy backfill release before retired roots and relative
+    /// audit paths had distinct outcomes. Kept as a recovery marker until those rows are reclaimed.</summary>
+    public const string LegacyOutsideRootFailure = "The audited file is outside every configured library root";
+
     public int ImportedFileId { get; set; }
     public string WorkerId { get; set; } = string.Empty;
     /// <summary>True when no further work is needed, including a library file that was already removed.</summary>
