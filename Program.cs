@@ -1248,8 +1248,8 @@ app.MapPost("/api/fulfillment/{jobId:int}/progress", async (int jobId, ProgressR
     return Results.Ok();
 });
 
-// Worker reports success -> mark Available, close the job, rebuild the Plex index, notify requester.
-app.MapPost("/api/requests/{id:int}/fulfilled", async (int id, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IPlexApiService plex) =>
+// Worker reports success -> mark Available, close the job, queue a Plex index refresh, notify requester.
+app.MapPost("/api/requests/{id:int}/fulfilled", async (int id, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IJobAdminService jobs) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == id);
@@ -1269,7 +1269,7 @@ app.MapPost("/api/requests/{id:int}/fulfilled", async (int id, HttpContext ctx, 
 
     if (!alreadyAvailable)
     {
-        try { await plex.RebuildAvailabilityIndexAsync(); } catch { /* index refresh is best-effort */ }
+        try { await jobs.QueueJobRunAsync(JobType.AvailabilityRefresh); } catch { /* refresh scheduling is best-effort */ }
         await notify.RequestAvailableAsync(ToRequestDto(req));
     }
     return Results.Ok(new { req.Id, status = req.Status.ToString() });
@@ -1293,7 +1293,7 @@ app.MapPost("/api/requests/{id:int}/failed", async (int id, FailRequest body, Ht
 
 // Worker reports a partial success. The queue atomically subtracts durable episode coverage and schedules
 // another pass over only the remainder; the request stays visibly partial while that continuation runs.
-app.MapPost("/api/requests/{id:int}/partially-completed", async (int id, FailRequest body, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IPlexApiService plex) =>
+app.MapPost("/api/requests/{id:int}/partially-completed", async (int id, FailRequest body, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IJobAdminService jobs) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == id);
@@ -1302,7 +1302,7 @@ app.MapPost("/api/requests/{id:int}/partially-completed", async (int id, FailReq
     var reason = string.IsNullOrWhiteSpace(body.Reason) ? "Some content imported before the rest failed" : body.Reason!;
     var wasPartiallyAvailable = req.Status == RequestStatus.PartiallyAvailable;
     await queue.MarkPartiallyCompletedAsync(id, reason);
-    try { await plex.RebuildAvailabilityIndexAsync(); } catch { /* index refresh is best-effort */ }
+    try { await jobs.QueueJobRunAsync(JobType.AvailabilityRefresh); } catch { /* refresh scheduling is best-effort */ }
     if (req.Status == RequestStatus.Available)
     {
         try { await queue.RecomputeAchievedQualityAsync(id); } catch { /* best-effort */ }
@@ -1354,8 +1354,8 @@ app.MapPost("/api/fulfillment/{jobId:int}/upgrade-exhausted", async (int jobId, 
 });
 
 // Worker reports a successful quality upgrade: the better release imported and the old files were deleted on
-// disk. Drop the superseded audit rows, recompute the request's achieved quality, refresh Plex, and notify.
-app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IPlexApiService plex) =>
+// disk. Drop the superseded audit rows, recompute the request's achieved quality, queue a Plex refresh, and notify.
+app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IJobAdminService jobs) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     var job = await db.FulfillmentJobs.FirstOrDefaultAsync(j => j.Id == jobId);
@@ -1402,7 +1402,7 @@ app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpConte
     var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == job.MediaRequestId);
     if (req is not null)
     {
-        try { await plex.RebuildAvailabilityIndexAsync(); } catch { /* best-effort */ }
+        try { await jobs.QueueJobRunAsync(JobType.AvailabilityRefresh); } catch { /* best-effort */ }
         if (job.IsReplacement)
         {
             int? issueReporterUserId = null;

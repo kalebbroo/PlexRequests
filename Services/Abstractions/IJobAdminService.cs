@@ -18,6 +18,8 @@ public interface IJobAdminService
     Task<bool> SetJobIntervalAsync(JobType type, int intervalSeconds);
     /// <summary>Trigger a recurring job to run as soon as the scheduler next ticks (sets its NextRunAt to now).</summary>
     Task<bool> RunJobNowAsync(JobType type);
+    /// <summary>Queue an immediate system-triggered run without presenting it as a manual admin action.</summary>
+    Task<bool> QueueJobRunAsync(JobType type);
     /// <summary>Clear a stuck "running" flag so the job type can be dispatched again. Last-resort recovery;
     /// the scheduler clears the flag itself on completion and on startup.</summary>
     Task<bool> ClearRunningFlagAsync(JobType type);

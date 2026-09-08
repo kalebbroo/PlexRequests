@@ -182,6 +182,10 @@ public class JobSchedulerService(
         schedule.IsRunning = true;
         schedule.RunningSince = startedAt;
         schedule.ManualRunRequested = false;
+        // Null means this run has consumed the pending schedule. A callback that arrives while the handler is
+        // running writes a new due time. Finalization uses COALESCE so that concurrent request wins and causes
+        // one follow-up run instead of being overwritten by the normal interval reschedule.
+        schedule.NextRunAt = null;
         var run = new JobRunEntity
         {
             JobType = schedule.JobType,
@@ -250,20 +254,16 @@ public class JobSchedulerService(
             run.ItemsProcessed = result.ItemsProcessed;
             run.Message = Trim(result.Message, 2000);
 
-            schedule.IsRunning = false;
-            schedule.RunningSince = null;
-            schedule.LastRunAt = now;
-            schedule.LastStatus = result.Status;
-            schedule.LastMessage = Trim(result.Message, 1000);
-            schedule.LastRunDurationMs = durationMs;
-            schedule.ConsecutiveFailures = result.Status == JobRunStatus.Failed ? schedule.ConsecutiveFailures + 1 : 0;
-
             var interval = Math.Max(MinRescheduleSeconds, schedule.IntervalSeconds);
-            schedule.NextRunAt = result.NextRunAtOverride is DateTime requested
+            var normalNextRun = result.NextRunAtOverride is DateTime requested
                 ? ClampNextRun(requested, now, interval)
                 : now.AddSeconds(interval);
 
             await db.SaveChangesAsync(CancellationToken.None);
+            // This update is deliberately atomic and does not blindly write NextRunAt. If RunJobNowAsync or
+            // QueueJobRunAsync wrote a due time after dispatch began, preserve it; otherwise use the handler's
+            // normal cadence. That closes the completion-during-refresh race without double-dispatching jobs.
+            await FinalizeScheduleAsync(db, schedule.Id, result, now, durationMs, normalNextRun);
         }
         catch (Exception ex)
         {
@@ -271,6 +271,25 @@ public class JobSchedulerService(
             logger.LogError(ex, "Could not record the outcome of job {JobType}", schedule.JobType);
         }
     }
+
+    internal static Task<int> FinalizeScheduleAsync(
+        AppDbContext db,
+        int scheduleId,
+        JobResult result,
+        DateTime finishedAt,
+        int durationMs,
+        DateTime normalNextRun) =>
+        db.ScheduledJobs.Where(j => j.Id == scheduleId).ExecuteUpdateAsync(updates => updates
+            .SetProperty(j => j.IsRunning, false)
+            .SetProperty(j => j.RunningSince, (DateTime?)null)
+            .SetProperty(j => j.LastRunAt, finishedAt)
+            .SetProperty(j => j.LastStatus, result.Status)
+            .SetProperty(j => j.LastMessage, Trim(result.Message, 1000))
+            .SetProperty(j => j.LastRunDurationMs, durationMs)
+            .SetProperty(j => j.ConsecutiveFailures,
+                j => result.Status == JobRunStatus.Failed ? j.ConsecutiveFailures + 1 : 0)
+            .SetProperty(j => j.NextRunAt, j => j.NextRunAt ?? normalNextRun),
+            CancellationToken.None);
 
     /// <summary>
     /// A handler may pull its next run in (it knows when its work actually falls due) but may not push it past

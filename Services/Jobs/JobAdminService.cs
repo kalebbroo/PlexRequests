@@ -69,12 +69,17 @@ public class JobAdminService(
         return true;
     }
 
-    public async Task<bool> RunJobNowAsync(JobType type)
+    public Task<bool> RunJobNowAsync(JobType type) => RequestImmediateRunAsync(type, manual: true);
+
+    public Task<bool> QueueJobRunAsync(JobType type) => RequestImmediateRunAsync(type, manual: false);
+
+    private async Task<bool> RequestImmediateRunAsync(JobType type, bool manual)
     {
         var j = await db.ScheduledJobs.FirstOrDefaultAsync(x => x.JobType == type);
         if (j is null) return false;
         j.NextRunAt = DateTime.UtcNow;   // the scheduler picks it up on its next tick
-        j.ManualRunRequested = true;
+        // Never clear an admin request when a system trigger is coalesced into the same pending run.
+        if (manual) j.ManualRunRequested = true;
         await db.SaveChangesAsync();
         return true;
     }

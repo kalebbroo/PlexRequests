@@ -14,7 +14,7 @@ deployable anywhere and the VPN/kill-switch failsafes live where they belong.
 │  Secured worker API (X-Fulfillment-Key header, constant-time compare):                      │
 │    POST /api/fulfillment/claim                 -> claim N queued jobs                        │
 │    POST /api/fulfillment/{jobId}/progress      -> job Downloading, request Processing        │
-│    POST /api/requests/{id}/fulfilled           -> request Available + Plex reindex + notify   │
+│    POST /api/requests/{id}/fulfilled           -> Available + queue Plex refresh + notify     │
 │    POST /api/requests/{id}/failed              -> request Failed + notify admins              │
 └───────────────────────────────────────────────▲───────────────────┬───────────────────────┘
                                                  │ claim / callbacks  │ jobs
@@ -34,7 +34,7 @@ deployable anywhere and the VPN/kill-switch failsafes live where they belong.
 - Enqueue-on-approve, gated by `Fulfillment:Enabled`.
 - The four worker endpoints above, gated by a shared secret (`Fulfillment:ApiKey`).
 - Request status transitions Approved → Processing → Available (or → Failed), requester/admin
-  notifications, and a best-effort Plex availability reindex on completion.
+  notifications, and a best-effort durable Plex availability-refresh trigger on completion.
 
 **Not built (this document is the design):** the downloader service itself. Nothing in this repo
 touches torrents, indexers, or a VPN — "Available" is still a manual admin action unless a downloader
@@ -85,7 +85,10 @@ linked request `Approved → Processing` (so the UI can show "Downloading… 42%
 
 ### `POST /api/requests/{id}/fulfilled`
 No body. Idempotent. Marks the request `Available` (+`AvailableAt`), closes the job `Completed`,
-triggers `RebuildAvailabilityIndexAsync` (best-effort), and notifies the requester. Re-calling on an
+queues the scheduled Plex availability refresh (best-effort), and notifies the requester. The callback does
+not wait for a full library walk, so a large Plex server cannot make the worker time out. Multiple completions
+before the scheduler dispatches are coalesced; a completion during a running scan schedules one follow-up pass.
+Re-calling on an
 already-available request is a no-op 200.
 
 ### `POST /api/requests/{id}/failed`
@@ -235,7 +238,7 @@ owns its network namespace and restart lifecycle.
 On client "completed" (webhook or poll):
 1. Move/hardlink files into the Plex library path for that category (hardlink to keep seeding).
 2. Optionally verify the import.
-3. Call `POST /api/requests/{id}/fulfilled`. The app reindexes Plex and notifies the requester.
+3. Call `POST /api/requests/{id}/fulfilled`. The app queues a durable Plex refresh and notifies the requester.
 On unrecoverable failure (no candidate, repeated errors, import failure): call
 `POST /api/requests/{id}/failed` with the reason. Retry callbacks until 2xx.
 
@@ -267,8 +270,8 @@ Notes:
   web app holds none of them. Compromise of the web host doesn't expose the tracker/VPN stack.
 - **Idempotency & retries:** all callbacks are idempotent; the worker retries with backoff. A claimed
   job that never completes should be re-queueable (see below).
-- **Reindex cost:** `/fulfilled` currently reindexes per call. For bursts, debounce/coalesce reindex
-  triggers or batch completions.
+- **Reindex cost:** completion callbacks queue the existing availability-refresh job. Bursts coalesce into one
+  scan, while a completion received during a scan leaves one follow-up run pending.
 
 ## Status surfacing (4.4)
 
