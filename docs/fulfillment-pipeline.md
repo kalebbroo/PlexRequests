@@ -193,6 +193,14 @@ Accepted file priorities are included when the verified metadata is added, so un
 begin downloading.
 
 ### Stage 4 — Hand to the torrent client
+Before this stage, the worker resolves the immutable library destination and computes one conservative
+admission reservation across every filesystem involved. Manifest-selected byte counts take precedence over
+indexer estimates; releases without a trustworthy size use a media-specific fallback. The reservation
+includes download workspace, final destination space when it is distinct (or Copy mode needs a second copy),
+temporary import headroom, and the configured free-space floor. If any volume is unavailable or cannot meet
+the contract, the entire job is deferred before its first backend enqueue, so a multi-item plan cannot be
+half-started because the disk filled between additions.
+
 Add the chosen magnet/torrent to **qBittorrent** or **Deluge** via its Web API, tagged with a
 category that routes the completed files to the correct library path (movies vs TV vs music). Record the
 client's torrent hash against the job for progress polling and cleanup.
@@ -210,6 +218,11 @@ different episodes and subtitle-only rows cannot prematurely complete a retry.
 If the worker-local monitor file is missing or corrupt after a restart, the worker rebuilds each job monitor from
 the durable transfer rows on its normal poll. It preserves the canonical target union and whether the original
 plan covered the whole request, so completion, partial continuation, and notifications still run normally.
+
+Successful import and backend removal are separate durable phases. The web database retains imported
+transfers until the worker records cleanup completion. A maintenance pass retries incomplete cleanup after a
+worker or API restart, but only after matching the exact protocol, backend id, and verified import audit. A
+missing backend transfer is treated as already cleaned; missing audit evidence retains the source.
 
 ### Stage 5 — VPN failsafe (the reason this is out-of-process)
 The torrent client must only ever talk through the VPN. Enforce **in depth**:

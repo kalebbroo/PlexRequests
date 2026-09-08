@@ -46,6 +46,10 @@ public interface IPlexRequestsApiClient
     Task<bool> RegisterTransfersAsync(int jobId, IReadOnlyList<TrackedTransferDto> transfers, CancellationToken ct);
     /// <summary>Everything the database still believes is in flight — the reconciler's work list.</summary>
     Task<List<TrackedTransferDto>> GetActiveTransfersAsync(CancellationToken ct);
+    Task<List<TrackedTransferDto>> GetPendingCleanupTransfersAsync(CancellationToken ct) =>
+        Task.FromResult(new List<TrackedTransferDto>());
+    Task<bool> ReportTransferCleanupAsync(TransferCleanupReportDto report, CancellationToken ct) =>
+        Task.FromResult(false);
     /// <summary>One job's context, so a torrent can be imported by whoever finds it finished — not only by
     /// the process that added it.</summary>
     Task<FulfillmentJobDto?> GetJobAsync(int jobId, CancellationToken ct);
@@ -90,4 +94,5 @@ public interface IPlexRequestsApiClient
     Task<bool> RefreshLibraryAsync(MediaType mediaType, CancellationToken ct);
     /// <summary>Ask the web app to verify that Plex has actually indexed a completed import.</summary>
     Task<PlexVerificationResult> VerifyLibraryAsync(FulfillmentJobDto job, CancellationToken ct);
+    Task<bool> ReportStorageStatusAsync(StorageStatusDto status, CancellationToken ct) => Task.FromResult(false);
 }

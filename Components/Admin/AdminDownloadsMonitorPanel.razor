@@ -16,6 +16,65 @@
         </div>
     </div>
 
+    @if (_storage is null || DateTime.UtcNow - _storage.ObservedAt.ToUniversalTime() > TimeSpan.FromMinutes(3))
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true">
+            Waiting for a current storage heartbeat from the downloader. New downloads should not be assumed safe until it reconnects.
+        </MudAlert>
+    }
+    else
+    {
+        <section class="storage-card @StorageClass(_storage.State)" aria-labelledby="storage-heading">
+            <div class="storage-summary">
+                <span class="storage-icon"><MudIcon Icon="@StorageIcon(_storage.State)" /></span>
+                <div>
+                    <MudText Typo="Typo.subtitle1" HtmlTag="h4" id="storage-heading">Storage · @StorageLabel(_storage.State)</MudText>
+                    <MudText Typo="Typo.body2" Class="text-secondary">@_storage.Message</MudText>
+                </div>
+                <span class="storage-time">Checked @RelativeTime(_storage.ObservedAt)</span>
+            </div>
+            <div class="storage-volumes">
+                @foreach (var volume in _storage.Volumes)
+                {
+                    var usable = Math.Max(0, volume.FreeBytes - volume.ReservedBytes - volume.MinimumFreeBytes);
+                    <div class="storage-volume">
+                        <div><strong>@volume.Label</strong><span>@volume.Path</span></div>
+                        @if (volume.IsReady)
+                        {
+                            <div class="storage-meter" role="progressbar" aria-label="@($"{volume.Label} disk usage")"
+                                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="@UsedPercent(volume)">
+                                <span style="width:@($"{UsedPercent(volume)}%")"></span>
+                            </div>
+                            <small>@FmtSize(volume.FreeBytes) free · @FmtSize(volume.ReservedBytes) reserved · @FmtSize(usable) safely available</small>
+                        }
+                        else
+                        {
+                            <small class="storage-error">@volume.Error</small>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="cleanup-summary">
+                <span><MudIcon Icon="@Icons.Material.Filled.CleaningServices" Size="Size.Small" /> @_storage.CleanupPendingCount transfer cleanups pending</span>
+                <span>@_storage.StaleArtifactCount stale temporary items (@FmtSize(_storage.StaleArtifactBytes))</span>
+                @if (_storage.RemovedArtifactCount > 0)
+                {
+                    <span>@_storage.RemovedArtifactCount removed on the last pass (@FmtSize(_storage.RemovedArtifactBytes))</span>
+                }
+            </div>
+            @if (_storage.CleanupCandidates.Count > 0)
+            {
+                <details class="cleanup-candidates">
+                    <summary>Cleanup requiring attention</summary>
+                    @foreach (var candidate in _storage.CleanupCandidates)
+                    {
+                        <div><strong>@candidate.Kind · @FmtSize(candidate.SizeBytes)</strong><span>@candidate.Reason</span><code>@candidate.Path</code></div>
+                    }
+                </details>
+            }
+        </section>
+    }
+
     @if (_loading && _jobs.Count == 0)
     {
         <div class="downloads-loading"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
@@ -101,6 +160,7 @@
 @code {
     private const int PollSeconds = 5;
     private List<DownloadJobView> _jobs = new();
+    private StorageStatusDto? _storage;
     private bool _loading = true;
     private bool _loadInProgress;
     private PeriodicTimer? _timer;
@@ -128,7 +188,11 @@
     {
         if (_loadInProgress) return;
         _loadInProgress = true;
-        try { _jobs = await DownloadMonitor.GetActiveAndRecentAsync(); }
+        try
+        {
+            _jobs = await DownloadMonitor.GetActiveAndRecentAsync();
+            _storage = DownloadMonitor.GetStorageStatus();
+        }
         catch { }
         finally
         {
@@ -186,13 +250,34 @@
 
     private static string FmtSize(long bytes)
     {
-        if (bytes <= 0) return "—";
+        if (bytes < 0) return "—";
+        if (bytes == 0) return "0 B";
         string[] units = { "B", "KB", "MB", "GB", "TB" };
         double value = bytes;
         var unit = 0;
         while (value >= 1024 && unit < units.Length - 1) { value /= 1024; unit++; }
         return $"{value:0.#} {units[unit]}";
     }
+
+    private static int UsedPercent(StorageVolumeStatusDto volume) => volume.TotalBytes <= 0
+        ? 0
+        : (int)Math.Clamp(Math.Round(100d * (volume.TotalBytes - volume.FreeBytes) / volume.TotalBytes), 0, 100);
+
+    private static string StorageClass(StorageHealthState state) => state.ToString().ToLowerInvariant();
+    private static string StorageLabel(StorageHealthState state) => state switch
+    {
+        StorageHealthState.Healthy => "Ready",
+        StorageHealthState.Warning => "Low headroom",
+        StorageHealthState.Paused => "New downloads paused",
+        _ => "Unavailable"
+    };
+    private static string StorageIcon(StorageHealthState state) => state switch
+    {
+        StorageHealthState.Healthy => Icons.Material.Filled.Storage,
+        StorageHealthState.Warning => Icons.Material.Filled.WarningAmber,
+        StorageHealthState.Paused => Icons.Material.Filled.PauseCircle,
+        _ => Icons.Material.Filled.CloudOff
+    };
 
     private static string Eta(long? seconds)
     {

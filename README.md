@@ -267,6 +267,16 @@ preventing a healthy-looking Deluge API with every tracker stuck on `No such dev
 Full design, the worker API contract, indexer notes (including the Cloudflare caveat for scraped sources),
 and VPN details are in **[docs/fulfillment-pipeline.md](docs/fulfillment-pipeline.md)**.
 
+Before any selected release is submitted to a backend, the downloader now reserves its estimated payload,
+final library space when the destination is a different filesystem (or Copy mode needs both copies), and
+the configured temporary-work allowance. Every affected volume must retain the admin-defined free-space
+floor. Insufficient or unavailable storage defers the job without enqueueing it. Admins can configure the
+floor and cleanup policy under **Admin → Library → Import and file handling**, and see the current volumes,
+reservations, blocked job, and cleanup status under **Admin → Overview → Downloads**. Imported-transfer
+cleanup is durable and retried after restarts; the stale-file sweeper recognizes only Plex Requests' own
+staging and atomic-partial names. See **[docs/storage-safety.md](docs/storage-safety.md)** for the exact safety
+boundaries.
+
 > **Legal note:** you are responsible for what you download and for complying with your local laws and
 > the terms of any service you use. The indexer integrations are provided as-is.
 
@@ -318,6 +328,8 @@ All settings are read from `.env` (mapped to the app's config keys). Only the fi
 | `CATALOG_POLL_MINUTES` | | Structured-feed polling interval; default `15`. |
 | `FIREFOX_CAPTURE_ENABLED` | | Permit paired Firefox profiles to submit rendered 1337x and ext.to releases; requires the catalog. |
 | `DELUGE_URL` / `DELUGE_PASSWORD` | | Your torrent client's Web API (downloader). |
+| `STORAGE_STATUS_INTERVAL_SECONDS` | | Downloader storage heartbeat interval; default `60` seconds. |
+| `STORAGE_ARTIFACT_SCAN_INTERVAL_MINUTES` | | Bounded Plex Requests temporary-artifact scan cadence; default `15` minutes. |
 | `VPN_ENABLED` | | Only meaningful when the downloader runs inside a VPN namespace. |
 | `VPN_PROVIDER`, `WIREGUARD_*`, `VPN_COUNTRIES`, `DOCKER_SUBNET` | | Managed-VPN stack only (`docker-compose.vpn.yml`). |
 | `TZ` | | Container timezone, e.g. `America/New_York`. |

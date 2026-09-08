@@ -75,6 +75,7 @@ public interface INotificationService
     Task MediaIssueReportedAsync(MediaIssueDto issue);
     Task MediaIssueApprovedAsync(MediaIssueDto issue);
     Task MediaIssueClosedAsync(MediaIssueDto issue, bool dismissed);
+    Task StorageWarningAsync(StorageStatusDto status);
 
     // Persistence-backed reads for the notification bell (survive page refresh/restart).
     Task<List<NotificationDto>> GetForUserAsync(int userId, int take = 20);

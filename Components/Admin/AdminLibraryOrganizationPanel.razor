@@ -509,6 +509,26 @@ else
         <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
             Files below the minimum size are treated as samples/junk, not real episodes/movies.
         </MudText>
+        <MudDivider Class="my-4" />
+        <MudText Typo="Typo.h6" Class="mb-1">Storage safety</MudText>
+        <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
+            Plex Requests reserves room for the selected download, its final library copy when needed, and
+            temporary extraction or joining work. A job waits and retries later instead of filling a volume.
+        </MudText>
+        <div class="d-flex gap-3 flex-wrap align-items-center">
+            <MudNumericField T="double" @bind-Value="_p.MinimumFreeSpaceGb" Label="Always keep free (GB)"
+                             Variant="Variant.Outlined" dense="true" Min="1" Max="1024" Style="max-width:220px;" />
+            <MudNumericField T="int" @bind-Value="_p.TemporaryHeadroomPercent" Label="Temporary work allowance (%)"
+                             Variant="Variant.Outlined" dense="true" Min="0" Max="200" Style="max-width:260px;" />
+            <MudNumericField T="int" @bind-Value="_p.StaleArtifactHours" Label="Temporary file grace (hours)"
+                             Variant="Variant.Outlined" dense="true" Min="1" Max="168" Style="max-width:245px;" />
+            <MudSwitch T="bool" @bind-Value="_p.AutoCleanupStaleArtifacts" Color="Color.Primary"
+                       Label="Remove abandoned Plex Requests temporary files" />
+        </div>
+        <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2">
+            Automatic cleanup recognizes only Plex Requests staging folders and its uniquely named atomic
+            <code>.partial</code> files. Active jobs, ordinary downloads, seeding torrents, and library media are excluded.
+        </MudText>
         </div>
     </details>
     </div>

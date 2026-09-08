@@ -88,6 +88,9 @@ services:
       Library__MoviePath: /data/library/movies
       Library__TvPath: /data/library/tv
       Library__Hardlink: "true"
+      Storage__WorkingPath: /data
+      Storage__StatusIntervalSeconds: ${STORAGE_STATUS_INTERVAL_SECONDS:-60}
+      Storage__ArtifactScanIntervalMinutes: ${STORAGE_ARTIFACT_SCAN_INTERVAL_MINUTES:-15}
       # Optional standards-compatible Torznab endpoint. Empty = disabled.
       Indexer__Torznab__0__Name: ${TORZNAB_NAME:-torznab}
       Indexer__Torznab__0__Url: ${TORZNAB_URL:-}

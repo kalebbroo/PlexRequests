@@ -8,7 +8,10 @@ using PlexRequestsHosted.Shared.Enums;
 namespace PlexRequestsHosted.Services.Implementations;
 
 /// <summary>Assembles the admin live-downloads read model from persisted jobs + in-memory telemetry.</summary>
-public sealed class DownloadMonitorService(AppDbContext db, IDownloadTelemetryStore telemetry) : IDownloadMonitorService
+public sealed class DownloadMonitorService(
+    AppDbContext db,
+    IDownloadTelemetryStore telemetry,
+    IStorageTelemetryStore storageTelemetry) : IDownloadMonitorService
 {
     // Jobs the worker is still working on — always shown.
     private static readonly FulfillmentStatus[] Active =
@@ -67,6 +70,8 @@ public sealed class DownloadMonitorService(AppDbContext db, IDownloadTelemetrySt
         }
         return views;
     }
+
+    public StorageStatusDto? GetStorageStatus() => storageTelemetry.Get();
 
     private static DownloadTransferTelemetry ToTelemetry(FulfillmentTransferEntity transfer) => new()
     {

@@ -69,6 +69,13 @@ public class FulfillmentTransferEntity
     public DateTime AddedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ImportedAt { get; set; }
 
+    /// <summary>Cleanup is a durable second phase after import. Null means the worker must retry removing
+    /// this verified transfer from its backend; completion is recorded even when source data is retained by
+    /// policy, because the backend removal itself succeeded.</summary>
+    public DateTime? CleanupCompletedAt { get; set; }
+    public DateTime? CleanupLastAttemptAt { get; set; }
+    [MaxLength(512)] public string? CleanupError { get; set; }
+
     [ForeignKey(nameof(FulfillmentJobId))]
     public FulfillmentJobEntity? Job { get; set; }
 }

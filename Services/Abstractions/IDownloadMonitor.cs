@@ -28,4 +28,12 @@ public interface IDownloadMonitorService
     /// <summary>Active jobs (queued/claimed/downloading) plus jobs that reached a terminal state within
     /// <paramref name="recentMinutes"/>, newest activity first.</summary>
     Task<List<DownloadJobView>> GetActiveAndRecentAsync(int recentMinutes = 30);
+    StorageStatusDto? GetStorageStatus();
+}
+
+public interface IStorageTelemetryStore
+{
+    /// <summary>Replace the latest worker snapshot. Returns true when a new actionable alert should be sent.</summary>
+    bool Update(StorageStatusDto status);
+    StorageStatusDto? Get();
 }

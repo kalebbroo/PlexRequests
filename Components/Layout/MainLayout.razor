@@ -465,6 +465,7 @@
         NotificationType.MediaIssueDismissed => Icons.Material.Filled.RemoveCircleOutline,
         NotificationType.Error => Icons.Material.Filled.ErrorOutline,
         NotificationType.Warning => Icons.Material.Filled.WarningAmber,
+        NotificationType.StorageWarning => Icons.Material.Filled.Storage,
         NotificationType.Success => Icons.Material.Filled.CheckCircle,
         _ => Icons.Material.Filled.Info
     };
@@ -474,7 +475,7 @@
         NotificationType.RequestApproved or NotificationType.RequestAvailable or NotificationType.RequestReplaced
             or NotificationType.MediaIssueResolved or NotificationType.Success => Color.Success,
         NotificationType.RequestRejected or NotificationType.Error => Color.Error,
-        NotificationType.MediaIssueDismissed or NotificationType.Warning => Color.Warning,
+        NotificationType.MediaIssueDismissed or NotificationType.Warning or NotificationType.StorageWarning => Color.Warning,
         _ => Color.Info
     };
 
