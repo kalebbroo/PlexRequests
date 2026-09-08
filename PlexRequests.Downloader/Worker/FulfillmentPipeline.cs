@@ -993,9 +993,11 @@ public class FulfillmentPipeline(
         if (transfer.NeededEpisodeRefs is { Count: > 0 })
             return transfer.NeededEpisodeRefs.Where(x => x.Season >= 0 && x.Episode > 0)
                 .Select(x => (x.Season, x.Episode)).ToHashSet();
-        return transfer.Season is int season && transfer.NeededEpisodes is { Count: > 0 }
-            ? transfer.NeededEpisodes.Where(x => x > 0).Select(x => (season, x)).ToHashSet()
-            : new();
+        if (transfer.Season is int season && transfer.NeededEpisodes is { Count: > 0 })
+            return transfer.NeededEpisodes.Where(x => x > 0).Select(x => (season, x)).ToHashSet();
+        return transfer.Season is int singleSeason && transfer.Episode is int singleEpisode && singleEpisode > 0
+            ? [(singleSeason, singleEpisode)]
+            : [];
     }
 
     /// <summary>Re-derive a pack's wanted-file priorities after the backend exposes its live file list.
