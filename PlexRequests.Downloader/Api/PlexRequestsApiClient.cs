@@ -501,6 +501,45 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         }
     }
 
+    public async Task<PlaybackPreparationTaskDto?> ClaimPlaybackPreparationAsync(string workerId,
+        CancellationToken ct)
+    {
+        try
+        {
+            var response = await _http.PostAsJsonAsync("/api/fulfillment/playback-preparation/claim",
+                new PlaybackPreparationClaimRequest(workerId), ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.NoContent) return null;
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogDebug("Playback preparation claim returned {Status}", (int)response.StatusCode);
+                return null;
+            }
+            return await response.Content.ReadFromJsonAsync<PlaybackPreparationTaskDto>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not claim a legacy playback preparation task");
+            return null;
+        }
+    }
+
+    public async Task<bool> ReportPlaybackPreparationAsync(PlaybackPreparationReportDto report,
+        CancellationToken ct)
+    {
+        try
+        {
+            var response = await _http.PostAsJsonAsync("/api/fulfillment/playback-preparation/report",
+                report, ct);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not report playback preparation for imported file {FileId}",
+                report.ImportedFileId);
+            return false;
+        }
+    }
+
     public async Task<bool> RefreshLibraryAsync(MediaType mediaType, CancellationToken ct)
     {
         var now = DateTime.UtcNow;

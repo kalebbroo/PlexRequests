@@ -16,6 +16,7 @@
 .storage-error { color:var(--mud-palette-error)!important; }
 .cleanup-summary { display:flex; flex-wrap:wrap; gap:.55rem 1rem; color:var(--text-secondary); font-size:.78rem; }
 .cleanup-summary span { display:flex; align-items:center; gap:.3rem; }
+.cleanup-summary .playback-repair-error { color:var(--mud-palette-error); }
 .cleanup-candidates summary { cursor:pointer; font-weight:600; }
 .cleanup-candidates>div { display:grid; gap:.15rem; padding:.55rem 0; border-top:1px solid rgba(255,255,255,.07); }
 .cleanup-candidates span,.cleanup-candidates code { color:var(--text-secondary); font-size:.75rem; overflow-wrap:anywhere; }

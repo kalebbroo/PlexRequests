@@ -194,6 +194,9 @@ builder.Services.AddSingleton<IStorageVolumeProbe, PhysicalStorageVolumeProbe>()
 builder.Services.AddSingleton<IStorageSafetyService, StorageSafetyService>();
 builder.Services.AddSingleton<IStorageArtifactCleaner, StorageArtifactCleaner>();
 builder.Services.AddHostedService<StorageMaintenanceWorker>();
+// Backfills files imported before physical preferred-track ordering existed. It is deliberately serial and
+// storage-admitted because an atomic MKV remux temporarily needs one additional file's worth of NAS space.
+builder.Services.AddHostedService<LegacyPlaybackPreparationWorker>();
 
 // Library organizer: archive extraction, season-pack splitting, Plex-convention naming/transfer.
 builder.Services.AddSingleton<IArchiveExtractor, ArchiveExtractor>();

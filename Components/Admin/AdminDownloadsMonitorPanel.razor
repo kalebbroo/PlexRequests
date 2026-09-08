@@ -57,6 +57,15 @@
             <div class="cleanup-summary">
                 <span><MudIcon Icon="@Icons.Material.Filled.CleaningServices" Size="Size.Small" /> @_storage.CleanupPendingCount transfer cleanups pending</span>
                 <span>@_storage.StaleArtifactCount stale temporary items (@FmtSize(_storage.StaleArtifactBytes))</span>
+                @if (_playbackPreparation.InProgressCount > 0 || _playbackPreparation.PendingCount > 0)
+                {
+                    <span><MudIcon Icon="@Icons.Material.Filled.GraphicEq" Size="Size.Small" />
+                        @_playbackPreparation.InProgressCount preparing · @_playbackPreparation.PendingCount legacy playback files queued</span>
+                }
+                @if (_playbackPreparation.FailedCount > 0)
+                {
+                    <span class="playback-repair-error">@_playbackPreparation.FailedCount playback files need attention</span>
+                }
                 @if (_storage.RemovedArtifactCount > 0)
                 {
                     <span>@_storage.RemovedArtifactCount removed on the last pass (@FmtSize(_storage.RemovedArtifactBytes))</span>
@@ -161,6 +170,7 @@
     private const int PollSeconds = 5;
     private List<DownloadJobView> _jobs = new();
     private StorageStatusDto? _storage;
+    private PlaybackPreparationStatusDto _playbackPreparation = new();
     private bool _loading = true;
     private bool _loadInProgress;
     private PeriodicTimer? _timer;
@@ -191,6 +201,7 @@
         try
         {
             _jobs = await DownloadMonitor.GetActiveAndRecentAsync();
+            _playbackPreparation = await DownloadMonitor.GetPlaybackPreparationStatusAsync();
             _storage = DownloadMonitor.GetStorageStatus();
         }
         catch { }

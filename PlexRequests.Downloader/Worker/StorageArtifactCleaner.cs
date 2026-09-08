@@ -92,9 +92,13 @@ public sealed class StorageArtifactCleaner(ILogger<StorageArtifactCleaner> logge
                         continue;
                     }
                     var name = Path.GetFileName(entry);
-                    if (!name.StartsWith(".", StringComparison.Ordinal)
-                        || !name.Contains(".plexrequests-", StringComparison.Ordinal)
-                        || !name.EndsWith(".partial", StringComparison.Ordinal))
+                    var ownedPartial = name.StartsWith(".", StringComparison.Ordinal)
+                        && name.Contains(".plexrequests-", StringComparison.Ordinal)
+                        && name.EndsWith(".partial", StringComparison.Ordinal);
+                    var ownedRemux = name.StartsWith(".", StringComparison.Ordinal)
+                        && name.Contains(".plexrequests-remux-", StringComparison.Ordinal)
+                        && name.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase);
+                    if (!ownedPartial && !ownedRemux)
                         continue;
                     DateTime modified;
                     long size;

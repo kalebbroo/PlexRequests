@@ -1677,6 +1677,40 @@ public class MediaTrackSummaryDto
     public List<MediaTrackDto> Subtitles { get; set; } = new();
 }
 
+/// <summary>One legacy library file claimed by the downloader for playback-order normalization.</summary>
+public sealed class PlaybackPreparationTaskDto
+{
+    public int ImportedFileId { get; set; }
+    public string DestinationPath { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public MediaType MediaType { get; set; }
+    public bool IsAnime { get; set; }
+    public MediaLanguagePolicyDto Policy { get; set; } = new();
+}
+
+public sealed record PlaybackPreparationClaimRequest(string WorkerId);
+
+/// <summary>Durable outcome of a legacy playback-order preparation attempt.</summary>
+public sealed class PlaybackPreparationReportDto
+{
+    public int ImportedFileId { get; set; }
+    public string WorkerId { get; set; } = string.Empty;
+    /// <summary>True when no further work is needed, including a library file that was already removed.</summary>
+    public bool Completed { get; set; }
+    public bool Changed { get; set; }
+    /// <summary>False for temporary admission failures such as an offline mount or insufficient headroom.</summary>
+    public bool Attempted { get; set; } = true;
+    public string? Detail { get; set; }
+    public MediaTrackSummaryDto? MediaTracks { get; set; }
+}
+
+public sealed class PlaybackPreparationStatusDto
+{
+    public int PendingCount { get; set; }
+    public int InProgressCount { get; set; }
+    public int FailedCount { get; set; }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Network shares (NAS / network drives). Admins add an SMB or NFS share in the admin UI; both the
 // web app (read-only, for the folder browser) and the downloader (read-write, for placing files)

@@ -48,7 +48,8 @@ Every 15 minutes by default, the worker performs a bounded scan of configured st
 cleanup is intentionally limited to names exclusively created by Plex Requests:
 
 - inactive child folders beneath `.plexrequests-staging`; and
-- hidden atomic files matching `.*.plexrequests-*.partial`.
+- hidden atomic files matching `.*.plexrequests-*.partial`, plus interrupted
+  `.plexrequests-remux-*.mkv` outputs owned by the importer.
 
 Active job staging, recent artifacts inside the grace period, symbolic-link directories, ordinary partial
 downloads, torrent payloads, and library media do not qualify. When automatic cleanup is disabled, the same
@@ -56,3 +57,23 @@ candidates are reported to the admin dashboard without being removed.
 
 `STORAGE_STATUS_INTERVAL_SECONDS` controls the lightweight heartbeat. `STORAGE_ARTIFACT_SCAN_INTERVAL_MINUTES`
 controls the bounded tree scan. Safety thresholds and cleanup behavior remain live admin settings.
+
+## Legacy playback-order preparation
+
+Current MKV imports physically place the profile's preferred audio stream first (and, when applicable, the
+preferred subtitle stream first) because Plex intentionally ignores Matroska default-audio flags. Files that
+were imported before that guarantee are repaired gradually by the downloader:
+
+- only the newest Plex Requests import-audit row for each destination is eligible;
+- a file is skipped while another fulfillment job for the same request is active;
+- the path must be an MKV beneath a currently configured library root on a ready filesystem;
+- the saved job language policy is authoritative, with the assigned/default profile used only for jobs that
+  predate policy snapshots;
+- one file is claimed at a time, and three actual failures stop automatic retries while mount/space deferrals
+  do not consume that failure budget; and
+- every change uses a same-directory temporary file and atomic replacement. This also breaks a legacy
+  hardlink instead of modifying the torrent client's seeding inode.
+
+A remux reserves one full file's worth of temporary library space in addition to the configured free-space
+floor and existing download reservations. Video and audio streams are copied, not re-encoded. New imports
+are marked prepared at their normal verified import boundary and never enter the legacy queue.

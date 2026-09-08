@@ -86,6 +86,27 @@ public sealed class StorageSafetyTests
     }
 
     [Fact]
+    public async Task LegacyRemuxReservationUsesOnlyTheLibraryVolumeAndKeepsTheFreeSpaceFloor()
+    {
+        var preferences = new EffectiveLibraryOrganization { MinimumFreeSpaceGb = 20 };
+        var service = new StorageSafetyService(
+            new FixedVolumeProbe(40 * GiB),
+            new FixedStateStore([]),
+            new FixedLibraryPreferences(preferences),
+            Options.Create(new StorageOptions { WorkingPath = "/small-local-disk" }),
+            Options.Create(new WorkerOptions { WorkerId = "test" }),
+            NullLogger<StorageSafetyService>.Instance);
+
+        await using var lease = await service.TryReserveLibraryRewriteAsync(
+            12, "Legacy show", 25 * GiB, "/large-library", preferences, CancellationToken.None);
+
+        Assert.False(lease.Admission.Allowed);
+        Assert.Equal(25 * GiB, lease.Admission.RequiredBytes);
+        Assert.Single(lease.Admission.Reservations);
+        Assert.Equal("/large-library", lease.Admission.Reservations[0].Path);
+    }
+
+    [Fact]
     public void Manifest_estimate_counts_only_files_selected_during_preflight()
     {
         var prepared = Prepared(
@@ -130,9 +151,11 @@ public sealed class StorageSafetyTests
             File.WriteAllText(activeFile, "active");
 
             var ownedPartial = Path.Combine(root, ".episode.mkv.plexrequests-test.partial");
+            var ownedRemux = Path.Combine(root, ".episode.plexrequests-remux-test.mkv");
             var unrelatedPartial = Path.Combine(root, "another-app.partial");
             var ordinaryMedia = Path.Combine(root, "episode.mkv");
             File.WriteAllText(ownedPartial, "partial");
+            File.WriteAllText(ownedRemux, "remux");
             File.WriteAllText(unrelatedPartial, "keep");
             File.WriteAllText(ordinaryMedia, "keep");
 
@@ -142,17 +165,19 @@ public sealed class StorageSafetyTests
             File.SetLastWriteTimeUtc(activeFile, old);
             Directory.SetLastWriteTimeUtc(active, old);
             File.SetLastWriteTimeUtc(ownedPartial, old);
+            File.SetLastWriteTimeUtc(ownedRemux, old);
             File.SetLastWriteTimeUtc(unrelatedPartial, old);
             File.SetLastWriteTimeUtc(ordinaryMedia, old);
 
             var cleaner = new StorageArtifactCleaner(NullLogger<StorageArtifactCleaner>.Instance);
             var result = cleaner.Sweep([root], new HashSet<int> { 7 }, TimeSpan.FromHours(6), remove: true);
 
-            Assert.Equal(2, result.RemovedCount);
+            Assert.Equal(3, result.RemovedCount);
             Assert.True(result.RemovedBytes > 0);
             Assert.Empty(result.Remaining);
             Assert.False(Directory.Exists(abandoned));
             Assert.False(File.Exists(ownedPartial));
+            Assert.False(File.Exists(ownedRemux));
             Assert.True(Directory.Exists(active));
             Assert.True(File.Exists(unrelatedPartial));
             Assert.True(File.Exists(ordinaryMedia));
