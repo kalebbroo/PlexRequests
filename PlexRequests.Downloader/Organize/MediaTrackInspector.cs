@@ -14,6 +14,10 @@ public interface IMediaTrackInspector
 
     /// <summary>Changes only the staged library copy. Implementations must never edit the torrent payload.</summary>
     bool SetDefaults(string stagedPath, string sourceExtension, MediaTrackDefaultSelection selection) => false;
+
+    /// <summary>Prepares an already-imported library file through atomic replacement. This must not mutate
+    /// the existing inode in place because a legacy hardlink may still be owned by a seeding torrent.</summary>
+    bool PrepareExistingLibraryFile(string libraryPath, MediaTrackDefaultSelection selection) => false;
 }
 
 public sealed record MediaTrackDefaultSelection(
@@ -177,6 +181,13 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
     }
 
     public bool SetDefaults(string stagedPath, string sourceExtension, MediaTrackDefaultSelection selection)
+        => Prepare(stagedPath, sourceExtension, selection, isolateFlagEdits: false);
+
+    public bool PrepareExistingLibraryFile(string libraryPath, MediaTrackDefaultSelection selection)
+        => Prepare(libraryPath, ".mkv", selection, isolateFlagEdits: true);
+
+    private bool Prepare(string stagedPath, string sourceExtension, MediaTrackDefaultSelection selection,
+        bool isolateFlagEdits)
     {
         if (!sourceExtension.Equals(".mkv", StringComparison.OrdinalIgnoreCase))
         {
@@ -189,6 +200,8 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
         var plan = MkvTrackPlan.Create(before, selection);
         if (plan.RequiresRemux)
             Remux(stagedPath, plan);
+        else if (isolateFlagEdits)
+            EditFlagsAtomically(stagedPath, plan, selection);
         else
             EditFlags(stagedPath, selection);
 
@@ -199,6 +212,16 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
             selection.EditSubtitles ? selection.SubtitleOrdinal?.ToString() ?? "off" : "unchanged",
             plan.RequiresRemux);
         return true;
+    }
+
+    private static void EditFlagsAtomically(string path, MkvTrackPlan plan,
+        MediaTrackDefaultSelection selection)
+    {
+        AtomicLibraryFile.Replace(path, preparedPath =>
+        {
+            EditFlags(preparedPath, selection);
+            VerifyPrepared(plan.Source, Identify(preparedPath), plan, selection, path);
+        });
     }
 
     private static void EditFlags(string stagedPath, MediaTrackDefaultSelection selection)
@@ -556,6 +579,30 @@ internal sealed record MkvProbe(
         root.TryGetProperty(property, out var element) && element.ValueKind == JsonValueKind.Array
             ? element.GetArrayLength()
             : 0;
+}
+
+/// <summary>Runs a metadata-only preparation on a private same-directory copy, then atomically replaces the
+/// library name. This breaks a legacy hardlink without ever modifying the torrent client's inode.</summary>
+internal static class AtomicLibraryFile
+{
+    public static void Replace(string path, Action<string> prepare)
+    {
+        var directory = Path.GetDirectoryName(path) ?? Directory.GetCurrentDirectory();
+        var preparedPath = Path.Combine(directory,
+            $".{Path.GetFileName(path)}.plexrequests-playback-{Guid.NewGuid():N}.partial");
+        try
+        {
+            File.Copy(path, preparedPath, overwrite: false);
+            prepare(preparedPath);
+            if (new FileInfo(preparedPath).Length <= 0)
+                throw new IOException($"Playback preparation produced an empty file for '{Path.GetFileName(path)}'");
+            File.Move(preparedPath, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(preparedPath)) File.Delete(preparedPath);
+        }
+    }
 }
 
 internal sealed record MkvTrackPlan(

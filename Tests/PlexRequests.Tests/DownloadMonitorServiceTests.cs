@@ -54,6 +54,52 @@ public sealed class DownloadMonitorServiceTests
             jobs.Select(job => job.JobId));
     }
 
+    [Fact]
+    public async Task PlaybackPreparationStatusCountsOnlyLatestUnpreparedMkvDestinations()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var job = await fixture.AddJobAsync("Library", FulfillmentStatus.Completed,
+            createdMinutesAgo: 60, completedMinutesAgo: 30);
+        fixture.Db.ImportedFiles.AddRange(
+            new ImportedFileEntity
+            {
+                FulfillmentJobId = job.Id, FileType = "video", SourcePath = "/downloads/old.mkv",
+                DestinationPath = "/library/duplicate.mkv", PlaybackPreparationAttempts = 3
+            },
+            new ImportedFileEntity
+            {
+                FulfillmentJobId = job.Id, FileType = "video", SourcePath = "/downloads/new.mkv",
+                DestinationPath = "/library/duplicate.mkv"
+            },
+            new ImportedFileEntity
+            {
+                FulfillmentJobId = job.Id, FileType = "video", SourcePath = "/downloads/active.mkv",
+                DestinationPath = "/library/active.mkv", PlaybackPreparationClaimedAt = DateTime.UtcNow
+            },
+            new ImportedFileEntity
+            {
+                FulfillmentJobId = job.Id, FileType = "video", SourcePath = "/downloads/failed.mkv",
+                DestinationPath = "/library/failed.mkv", PlaybackPreparationAttempts = 3
+            },
+            new ImportedFileEntity
+            {
+                FulfillmentJobId = job.Id, FileType = "video", SourcePath = "/downloads/current.mkv",
+                DestinationPath = "/library/current.mkv", PlaybackPreparedAt = DateTime.UtcNow
+            },
+            new ImportedFileEntity
+            {
+                FulfillmentJobId = job.Id, FileType = "video", SourcePath = "/downloads/other.mp4",
+                DestinationPath = "/library/other.mp4"
+            });
+        await fixture.Db.SaveChangesAsync();
+
+        var status = await fixture.Service.GetPlaybackPreparationStatusAsync();
+
+        Assert.Equal(1, status.PendingCount);
+        Assert.Equal(1, status.InProgressCount);
+        Assert.Equal(1, status.FailedCount);
+    }
+
     private sealed class Fixture(SqliteConnection connection, AppDbContext db) : IAsyncDisposable
     {
         public AppDbContext Db { get; } = db;

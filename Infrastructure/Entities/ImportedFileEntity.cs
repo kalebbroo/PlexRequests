@@ -45,6 +45,15 @@ public class ImportedFileEntity
     /// <summary>Serialized MediaTrackSummaryDto observed by MediaInfo before this file entered the library.</summary>
     public string? MediaTracksJson { get; set; }
 
+    /// <summary>Durable migration state for library files imported before preferred streams were physically
+    /// ordered first. New imports are prepared before commit and set this immediately; legacy rows are claimed
+    /// by the downloader and normalized atomically on the library filesystem.</summary>
+    public DateTime? PlaybackPreparedAt { get; set; }
+    public DateTime? PlaybackPreparationClaimedAt { get; set; }
+    [MaxLength(128)] public string? PlaybackPreparationClaimedBy { get; set; }
+    public int PlaybackPreparationAttempts { get; set; }
+    [MaxLength(2000)] public string? PlaybackPreparationDetail { get; set; }
+
     public DateTime ImportedAt { get; set; } = DateTime.UtcNow;
 
     [ForeignKey(nameof(FulfillmentJobId))]

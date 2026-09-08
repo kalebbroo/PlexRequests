@@ -246,6 +246,9 @@ builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexReq
 // The durable job<->torrent link the reconciler joins on. Without it the link lived only in the worker's
 // local file and an in-memory store, so a worker restart orphaned every in-flight download.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IFulfillmentTransferService, PlexRequestsHosted.Services.Implementations.FulfillmentTransferService>();
+// One-time, durable repair queue for library files imported before preferred audio/subtitle streams were
+// physically ordered first. The downloader owns filesystem writes; the web app owns claims and audit state.
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IPlaybackPreparationService, PlexRequestsHosted.Services.Implementations.PlaybackPreparationService>();
 // Re-derives tier + format score for already-imported files from their stored release names, so editing a
 // custom format reaches the library you already have and not only the next download.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.RecomputeFormatScoresJob>();
@@ -865,6 +868,21 @@ app.MapPost("/api/fulfillment/transfers/cleanup", async (TransferCleanupReportDt
     return await svc.ReportCleanupAsync(body) ? Results.Ok() : Results.NotFound();
 });
 
+app.MapPost("/api/fulfillment/playback-preparation/claim", async (PlaybackPreparationClaimRequest body,
+    HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IPlaybackPreparationService svc) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var task = await svc.ClaimAsync(body.WorkerId, ctx.RequestAborted);
+    return task is null ? Results.NoContent() : Results.Ok(task);
+});
+
+app.MapPost("/api/fulfillment/playback-preparation/report", async (PlaybackPreparationReportDto body,
+    HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IPlaybackPreparationService svc) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return await svc.ReportAsync(body, ctx.RequestAborted) ? Results.Ok() : Results.NotFound();
+});
+
 app.MapPost("/api/fulfillment/storage/status", async (StorageStatusDto body, HttpContext ctx, IConfiguration cfg, IStorageTelemetryStore storage, INotificationService notify) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
@@ -1183,6 +1201,9 @@ app.MapPost("/api/fulfillment/{jobId:int}/imported-files", async (int jobId, Lis
                     ? PlexRequestsHosted.Shared.Releases.MagnetUtil.Normalize(f.SourceId)
                     : null,
                 MediaTracksJson = f.MediaTracks is null ? null : JsonSerializer.Serialize(f.MediaTracks),
+                // Current workers normalize their private staged copy before this audit boundary. Null is
+                // reserved for rows that predate that guarantee and drives the one-time legacy repair queue.
+                PlaybackPreparedAt = DateTime.UtcNow,
                 EpisodeCoverage = episodeCoverage
                     .Select(x => new PlexRequestsHosted.Infrastructure.Entities.ImportedEpisodeCoverageEntity
                     {

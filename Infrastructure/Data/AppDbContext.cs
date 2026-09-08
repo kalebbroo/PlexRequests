@@ -302,6 +302,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasKey(x => x.Id);
             b.Property(x => x.TransferId).HasColumnName("TorrentId");
             b.HasIndex(x => x.FulfillmentJobId);
+            b.HasIndex(x => new
+            {
+                x.PlaybackPreparedAt,
+                x.PlaybackPreparationAttempts,
+                x.PlaybackPreparationClaimedAt
+            });
 
             b.HasOne(x => x.FulfillmentJob)
                 .WithMany()

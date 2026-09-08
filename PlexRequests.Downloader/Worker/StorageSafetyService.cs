@@ -108,6 +108,10 @@ public interface IStorageSafetyService
 {
     Task<IStorageReservationLease> TryReserveAsync(FulfillmentJobDto job, long payloadBytes,
         string destinationRoot, EffectiveLibraryOrganization preferences, CancellationToken ct);
+    /// <summary>Reserve one file's worth of temporary space beside an existing library file for an atomic,
+    /// lossless container remux. Unlike a download reservation, this does not reserve the work directory.</summary>
+    Task<IStorageReservationLease> TryReserveLibraryRewriteAsync(int importedFileId, string title,
+        long fileBytes, string destinationRoot, EffectiveLibraryOrganization preferences, CancellationToken ct);
     Task<StorageStatusDto> GetStatusAsync(CancellationToken ct);
     void RecordMaintenance(StorageMaintenanceResult result, int cleanupPendingCount, string? error = null);
 }
@@ -176,6 +180,44 @@ internal sealed class StorageSafetyService(
                 FormatBytes(total), requirements.Count, job.Id, job.Title);
             return new Lease(this, job.Id, new StorageAdmission(true,
                 $"Reserved {FormatBytes(total)} for download and import", total, requirements));
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async Task<IStorageReservationLease> TryReserveLibraryRewriteAsync(int importedFileId, string title,
+        long fileBytes, string destinationRoot, EffectiveLibraryOrganization preferences, CancellationToken ct)
+    {
+        fileBytes = Math.Max(1, fileBytes);
+        // Job ids are positive. Negative ids give maintenance reservations their own collision-free lane.
+        var reservationId = -Math.Max(1, importedFileId);
+        await _gate.WaitAsync(ct);
+        try
+        {
+            var reading = volumes.Read(destinationRoot);
+            var requirement = new StorageReservationRecord(reading.Id, destinationRoot,
+                "Library playback preparation", fileBytes);
+            var requirements = new[] { requirement };
+            var reserved = (await DurableReservationsAsync(null, ct))
+                .Where(item => item.VolumeId == reading.Id)
+                .Sum(item => item.RequiredBytes);
+            var minimum = ToBytes(preferences.MinimumFreeSpaceGb);
+            string? blocked = !reading.IsReady
+                ? $"Playback preparation paused for '{title}': the library filesystem is unavailable ({reading.Error})."
+                : !HasCapacity(reading.FreeBytes, reserved, fileBytes, minimum)
+                    ? $"Playback preparation paused for '{title}': the library needs "
+                      + $"{FormatBytes(minimum + reserved + fileBytes)} free for an atomic remux, but only "
+                      + $"{FormatBytes(reading.FreeBytes)} is available."
+                    : null;
+            if (blocked is not null)
+            {
+                logger.LogWarning("{Detail}", blocked);
+                return new Lease(this, reservationId,
+                    new StorageAdmission(false, blocked, fileBytes, requirements));
+            }
+
+            _activeReservations[reservationId] = requirements;
+            return new Lease(this, reservationId, new StorageAdmission(true,
+                $"Reserved {FormatBytes(fileBytes)} for atomic playback preparation", fileBytes, requirements));
         }
         finally { _gate.Release(); }
     }

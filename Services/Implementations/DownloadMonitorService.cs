@@ -81,6 +81,27 @@ public sealed class DownloadMonitorService(
 
     public StorageStatusDto? GetStorageStatus() => storageTelemetry.Get();
 
+    public async Task<PlaybackPreparationStatusDto> GetPlaybackPreparationStatusAsync()
+    {
+        const int maxAttempts = 3;
+        var state = await db.ImportedFiles.AsNoTracking()
+            .Where(file => file.FileType == "video"
+                && EF.Functions.Like(file.DestinationPath, "%.mkv")
+                && file.PlaybackPreparedAt == null
+                && !db.ImportedFiles.Any(later => later.DestinationPath == file.DestinationPath
+                    && later.Id > file.Id))
+            .GroupBy(_ => 1)
+            .Select(group => new PlaybackPreparationStatusDto
+            {
+                PendingCount = group.Count(file => file.PlaybackPreparationAttempts < maxAttempts
+                    && file.PlaybackPreparationClaimedAt == null),
+                InProgressCount = group.Count(file => file.PlaybackPreparationClaimedAt != null),
+                FailedCount = group.Count(file => file.PlaybackPreparationAttempts >= maxAttempts)
+            })
+            .FirstOrDefaultAsync();
+        return state ?? new PlaybackPreparationStatusDto();
+    }
+
     private static int DisplayRank(FulfillmentStatus status) => status switch
     {
         FulfillmentStatus.Claimed or FulfillmentStatus.Downloading => 0,
