@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 
@@ -176,16 +177,17 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
         {
             if (!byId.TryGetValue((u.Protocol, u.TransferId), out var matchingRows)) continue;
 
-            var state = u.State;
-            if (state == TransferTrackingState.Missing && await WasImportedAsync(u.Protocol, u.TransferId))
-            {
-                state = TransferTrackingState.Imported;
-                logger.LogDebug("Transfer {Transfer} is gone from its backend but its files were imported — recording Imported, not Missing",
-                    u.TransferId);
-            }
-
             foreach (var row in matchingRows)
             {
+                var state = u.State;
+                if (state == TransferTrackingState.Missing && await WasImportedAsync(row))
+                {
+                    state = TransferTrackingState.Imported;
+                    logger.LogDebug(
+                        "Transfer {Transfer} for job {JobId} is gone from its backend, but its current target scope was imported — recording Imported, not Missing",
+                        u.TransferId, row.FulfillmentJobId);
+                }
+
                 // ProgressChangedAt tracks when the number MOVED, not when we last looked — stall detection is
                 // meaningless otherwise, since polling frequently would keep a dead torrent looking fresh.
                 if (Math.Abs(u.Progress - row.Progress) > 0.01) row.ProgressChangedAt = now;
@@ -219,10 +221,29 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
         return changed;
     }
 
-    /// <summary>Did this transfer's files reach the library? The import audit is the authority — it is
-    /// written only after files are actually placed.</summary>
-    private Task<bool> WasImportedAsync(AcquisitionProtocol protocol, string transferId) =>
-        db.ImportedFiles.AsNoTracking().AnyAsync(f => f.Protocol == protocol && f.TransferId == transferId);
+    /// <summary>Did this transfer's current target scope reach the library? The same content-addressed
+    /// payload can be reused for another season/episode slice, so the backend id alone is insufficient.</summary>
+    private async Task<bool> WasImportedAsync(FulfillmentTransferEntity transfer)
+    {
+        var files = await db.ImportedFiles.AsNoTracking().Include(file => file.EpisodeCoverage)
+            .Where(file => file.Protocol == transfer.Protocol && file.TransferId == transfer.TransferId)
+            .ToListAsync();
+        var intent = ToDto(transfer);
+        return ImportAuditCoverage.Covers(intent.Protocol, intent.TransferId, intent.NeededEpisodeRefs,
+            intent.Season, intent.Episode, intent.NeededEpisodes, files.Select(file => new ImportedFileDto
+            {
+                TransferId = file.TransferId,
+                Protocol = file.Protocol,
+                FileType = file.FileType,
+                SeasonNumber = file.SeasonNumber,
+                EpisodeNumber = file.EpisodeNumber,
+                EpisodeCoverage = file.EpisodeCoverage.Select(coverage => new EpisodeRef
+                {
+                    Season = coverage.SeasonNumber,
+                    Episode = coverage.EpisodeNumber
+                }).ToList()
+            }));
+    }
 
     public async Task<int> CorrectMisclassifiedMissingAsync()
     {
@@ -234,18 +255,10 @@ public class FulfillmentTransferService(AppDbContext db, ILogger<FulfillmentTran
             .ToListAsync();
         if (missing.Count == 0) return 0;
 
-        var ids = missing.Select(t => t.TransferId).Distinct().ToList();
-        var importedKeys = await db.ImportedFiles.AsNoTracking()
-            .Where(f => f.TransferId != null && ids.Contains(f.TransferId))
-            .Select(f => new { f.Protocol, TransferId = f.TransferId! })
-            .Distinct()
-            .ToListAsync();
-        if (importedKeys.Count == 0) return 0;
-
-        var set = importedKeys.Select(x => (x.Protocol, x.TransferId)).ToHashSet(TransferKeyComparer.Instance);
         var fixedUp = 0;
-        foreach (var row in missing.Where(t => set.Contains((t.Protocol, t.TransferId))))
+        foreach (var row in missing)
         {
+            if (!await WasImportedAsync(row)) continue;
             row.State = TransferTrackingState.Imported;
             row.ImportedAt ??= row.LastSeenAt ?? DateTime.UtcNow;
             row.FailReason = null;

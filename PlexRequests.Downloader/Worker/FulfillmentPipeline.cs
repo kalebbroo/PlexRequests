@@ -365,14 +365,12 @@ public class FulfillmentPipeline(
                 if (!string.IsNullOrWhiteSpace(file.DestinationPath))
                     importedDestinations.Add(file.DestinationPath);
 
-            var importedTransfers = audit
-                .Where(file => !string.IsNullOrWhiteSpace(file.TransferId))
-                .Select(file => TransferKey(file.Protocol, file.TransferId!))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var changed = false;
             for (var i = 0; i < items.Count; i++)
             {
-                if (items[i].Imported || !importedTransfers.Contains(TransferKey(items[i]))) continue;
+                if (items[i].Imported || !ImportAuditCoverage.Covers(items[i].Protocol,
+                        items[i].TransferId, items[i].NeededEpisodeRefs, items[i].Season,
+                        items[i].Episode, items[i].NeededEpisodes, audit)) continue;
                 items[i] = items[i] with { Imported = true };
                 missingSince.Remove(TransferKey(items[i]));
                 changed = true;
