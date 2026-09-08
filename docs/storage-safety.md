@@ -69,6 +69,8 @@ were imported before that guarantee are repaired gradually by the downloader:
 - the path must be an MKV beneath a currently configured library root on a ready filesystem;
 - early relative audit paths are resolved through the job's immutable destination when available, otherwise
   through today's matching movie, series, or anime route, and cannot escape the selected root;
+- absolute audits under a library root that has since been retired are recorded as safely skipped rather
+  than consuming the failure budget or touching the old location;
 - the saved job language policy is authoritative, with the assigned/default profile used only for jobs that
   predate policy snapshots;
 - one file is claimed at a time, and three actual failures stop automatic retries while mount/space deferrals

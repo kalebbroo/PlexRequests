@@ -39,7 +39,9 @@ public sealed class PlaybackPreparationService(AppDbContext db, ILogger<Playback
                 .Where(file => file.FileType == "video"
                     && EF.Functions.Like(file.DestinationPath, "%.mkv")
                     && file.PlaybackPreparedAt == null
-                    && file.PlaybackPreparationAttempts < MaxAttempts
+                    && (file.PlaybackPreparationAttempts < MaxAttempts
+                        || (file.PlaybackPreparationAttempts == MaxAttempts
+                            && file.PlaybackPreparationDetail == PlaybackPreparationReportDto.LegacyOutsideRootFailure))
                     && (file.PlaybackPreparationClaimedAt == null
                         || file.PlaybackPreparationClaimedAt < staleBefore)
                     && !db.ImportedFiles.Any(later => later.DestinationPath == file.DestinationPath

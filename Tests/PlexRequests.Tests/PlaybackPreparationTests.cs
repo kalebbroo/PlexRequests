@@ -131,6 +131,37 @@ public sealed class PlaybackPreparationTests
     }
 
     [Fact]
+    public async Task FirstReleaseOutsideRootFailureIsReclaimedAfterPathResolutionFix()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var job = await fixture.AddJobAsync(null);
+        fixture.Db.ImportedFiles.Add(new ImportedFileEntity
+        {
+            FulfillmentJobId = job.Id,
+            DestinationPath = "Show/Season 01/episode.mkv",
+            SourcePath = "/downloads/episode.mkv",
+            FileType = "video",
+            PlaybackPreparationAttempts = 3,
+            PlaybackPreparationDetail = PlaybackPreparationReportDto.LegacyOutsideRootFailure
+        });
+        await fixture.Db.SaveChangesAsync();
+
+        var claim = await fixture.Service.ClaimAsync("worker", CancellationToken.None);
+
+        Assert.NotNull(claim);
+        fixture.Db.ChangeTracker.Clear();
+        Assert.True(await fixture.Service.ReportAsync(new PlaybackPreparationReportDto
+        {
+            ImportedFileId = claim!.ImportedFileId,
+            WorkerId = "worker",
+            Completed = true,
+            Attempted = false,
+            Detail = "resolved after update"
+        }, CancellationToken.None));
+        Assert.NotNull((await fixture.Db.ImportedFiles.SingleAsync()).PlaybackPreparedAt);
+    }
+
+    [Fact]
     public async Task ClaimWaitsWhileAReplacementForTheSameRequestIsActive()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -223,7 +254,7 @@ public sealed class PlaybackPreparationTests
         }, preferences);
 
         Assert.Equal(Path.GetFullPath("/library/tv"), resolved.Root);
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<RetiredLibraryPathException>(() =>
             LegacyPlaybackPreparationWorker.ResolveLibraryPath(new PlaybackPreparationTaskDto
             {
                 DestinationPath = "/downloads/episode.mkv"

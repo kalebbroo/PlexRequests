@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Implementations;
+using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using Xunit;
 
@@ -83,6 +84,12 @@ public sealed class DownloadMonitorServiceTests
             },
             new ImportedFileEntity
             {
+                FulfillmentJobId = job.Id, FileType = "video", SourcePath = "/downloads/recover.mkv",
+                DestinationPath = "/library/recover.mkv", PlaybackPreparationAttempts = 3,
+                PlaybackPreparationDetail = PlaybackPreparationReportDto.LegacyOutsideRootFailure
+            },
+            new ImportedFileEntity
+            {
                 FulfillmentJobId = job.Id, FileType = "video", SourcePath = "/downloads/current.mkv",
                 DestinationPath = "/library/current.mkv", PlaybackPreparedAt = DateTime.UtcNow
             },
@@ -95,7 +102,7 @@ public sealed class DownloadMonitorServiceTests
 
         var status = await fixture.Service.GetPlaybackPreparationStatusAsync();
 
-        Assert.Equal(1, status.PendingCount);
+        Assert.Equal(2, status.PendingCount);
         Assert.Equal(1, status.InProgressCount);
         Assert.Equal(1, status.FailedCount);
     }

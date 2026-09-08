@@ -93,10 +93,13 @@ public sealed class DownloadMonitorService(
             .GroupBy(_ => 1)
             .Select(group => new PlaybackPreparationStatusDto
             {
-                PendingCount = group.Count(file => file.PlaybackPreparationAttempts < maxAttempts
+                PendingCount = group.Count(file => (file.PlaybackPreparationAttempts < maxAttempts
+                        || (file.PlaybackPreparationAttempts == maxAttempts
+                            && file.PlaybackPreparationDetail == PlaybackPreparationReportDto.LegacyOutsideRootFailure))
                     && file.PlaybackPreparationClaimedAt == null),
                 InProgressCount = group.Count(file => file.PlaybackPreparationClaimedAt != null),
-                FailedCount = group.Count(file => file.PlaybackPreparationAttempts >= maxAttempts)
+                FailedCount = group.Count(file => file.PlaybackPreparationAttempts >= maxAttempts
+                    && file.PlaybackPreparationDetail != PlaybackPreparationReportDto.LegacyOutsideRootFailure)
             })
             .FirstOrDefaultAsync();
         return state ?? new PlaybackPreparationStatusDto();

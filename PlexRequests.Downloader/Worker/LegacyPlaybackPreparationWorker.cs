@@ -14,6 +14,8 @@ internal enum PlaybackPreparationPass
     Deferred
 }
 
+internal sealed class RetiredLibraryPathException(string message) : InvalidOperationException(message);
+
 /// <summary>Gradually brings Plex Requests-managed legacy MKV files under the same playback-order guarantee
 /// as new imports. Work is claimed durably, performed one file at a time, and committed by mkvmerge's
 /// same-directory atomic replacement; torrent payloads and files outside configured library roots are never
@@ -113,6 +115,14 @@ internal sealed class LegacyPlaybackPreparationWorker(
                 task.Title, Path.GetFileName(path));
             return PlaybackPreparationPass.Changed;
         }
+        catch (RetiredLibraryPathException ex)
+        {
+            logger.LogInformation("Skipping legacy playback preparation for retired library path {Path}: {Detail}",
+                task.DestinationPath, ex.Message);
+            await ReportAsync(task, completed: true, changed: false, attempted: false,
+                $"Retired library path skipped: {ex.Message}", null, ct);
+            return PlaybackPreparationPass.Completed;
+        }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
@@ -204,7 +214,7 @@ internal sealed class LegacyPlaybackPreparationWorker(
             if (IsWithin(fullPath, root, comparison)) return (fullPath, root);
         }
 
-        throw new InvalidOperationException("The audited file is outside every configured library root");
+        throw new RetiredLibraryPathException(PlaybackPreparationReportDto.LegacyOutsideRootFailure);
     }
 
     private static string ResolveLegacyRelativePath(PlaybackPreparationTaskDto task,
@@ -221,7 +231,7 @@ internal sealed class LegacyPlaybackPreparationWorker(
         selectedRoot = Path.GetFullPath(selectedRoot);
         if (!configuredRoots.Any(root => string.Equals(Path.TrimEndingDirectorySeparator(root),
                 Path.TrimEndingDirectorySeparator(selectedRoot), comparison)))
-            throw new InvalidOperationException("The legacy audit destination is no longer configured");
+            throw new RetiredLibraryPathException("The legacy audit destination is no longer configured");
 
         var fullPath = Path.GetFullPath(Path.Combine(selectedRoot, task.DestinationPath));
         if (!IsWithin(fullPath, selectedRoot, comparison))
