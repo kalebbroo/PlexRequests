@@ -88,7 +88,7 @@
         <div class="download-list">
             @foreach (var job in _jobs)
             {
-                <article class="download-card">
+                <article @key="job.JobId" class="download-card">
                     <div class="download-poster">
                         <img src="@(string.IsNullOrWhiteSpace(job.PosterUrl) ? "/img/poster-placeholder.svg" : job.PosterUrl)" alt="" loading="lazy" onerror="this.src='/img/poster-placeholder.svg'" />
                         <span><MudIcon Icon="@(job.MediaType == MediaType.TvShow ? Icons.Material.Filled.Tv : Icons.Material.Filled.Movie)" Size="Size.Small" /></span>

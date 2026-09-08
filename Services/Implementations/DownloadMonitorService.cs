@@ -26,8 +26,16 @@ public sealed class DownloadMonitorService(
             .AsNoTracking()
             .Include(j => j.MediaRequest)
             .Where(j => Active.Contains(j.Status) || (j.CompletedAt != null && j.CompletedAt >= cutoff))
-            .OrderByDescending(j => j.CompletedAt ?? j.LastUpdatedAt ?? j.CreatedAt)
             .ToListAsync();
+        // Progress heartbeats update LastUpdatedAt every few seconds. Sorting on that value made cards trade
+        // places on every poll even though nothing meaningful about their lifecycle had changed. Keep each
+        // lifecycle lane deterministic instead: transfers first in the order they started, queued work next,
+        // the recent terminal tail after that, and release searches parked at the bottom.
+        jobs = jobs
+            .OrderBy(j => DisplayRank(j.Status))
+            .ThenBy(j => j.ClaimedAt ?? j.CreatedAt)
+            .ThenBy(j => j.Id)
+            .ToList();
         var jobIds = jobs.Select(job => job.Id).ToList();
         var persistedTransfers = jobIds.Count == 0
             ? new List<FulfillmentTransferEntity>()
@@ -72,6 +80,16 @@ public sealed class DownloadMonitorService(
     }
 
     public StorageStatusDto? GetStorageStatus() => storageTelemetry.Get();
+
+    private static int DisplayRank(FulfillmentStatus status) => status switch
+    {
+        FulfillmentStatus.Claimed or FulfillmentStatus.Downloading => 0,
+        FulfillmentStatus.Queued => 1,
+        FulfillmentStatus.Completed or FulfillmentStatus.PartiallyCompleted or
+            FulfillmentStatus.Failed or FulfillmentStatus.Cancelled => 2,
+        FulfillmentStatus.Deferred => 3,
+        _ => 2
+    };
 
     private static DownloadTransferTelemetry ToTelemetry(FulfillmentTransferEntity transfer) => new()
     {
