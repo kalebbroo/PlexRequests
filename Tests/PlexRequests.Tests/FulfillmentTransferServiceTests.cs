@@ -137,6 +137,68 @@ public sealed class FulfillmentTransferServiceTests
     }
 
     [Fact]
+    public async Task Missing_reused_transfer_is_not_imported_when_audit_covers_only_its_old_scope()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity { MediaId = 46195, MediaType = MediaType.TvShow, Title = "Monogatari" };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var job = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId,
+            MediaType = request.MediaType, Title = request.Title
+        };
+        db.FulfillmentJobs.Add(job);
+        await db.SaveChangesAsync();
+        const string transferId = "same-franchise-archive";
+        db.FulfillmentTransfers.Add(new FulfillmentTransferEntity
+        {
+            FulfillmentJobId = job.Id,
+            TransferId = transferId,
+            Protocol = AcquisitionProtocol.Torrent,
+            State = TransferTrackingState.Active,
+            IsPack = true,
+            NeededEpisodeRefsJson = "[{\"Season\":0,\"Episode\":2},{\"Season\":4,\"Episode\":1}]"
+        });
+        db.ImportedFiles.Add(new ImportedFileEntity
+        {
+            FulfillmentJobId = job.Id,
+            TransferId = transferId,
+            Protocol = AcquisitionProtocol.Torrent,
+            SourcePath = "/downloads/old-scope.mkv",
+            DestinationPath = "/library/Season 01/episode.mkv",
+            FileType = "video",
+            SeasonNumber = 1,
+            EpisodeNumber = 1,
+            EpisodeCoverage =
+            [
+                new ImportedEpisodeCoverageEntity { SeasonNumber = 1, EpisodeNumber = 1 }
+            ]
+        });
+        await db.SaveChangesAsync();
+        var service = new FulfillmentTransferService(db, NullLogger<FulfillmentTransferService>.Instance);
+
+        await service.ApplyAsync([
+            new TransferStateUpdateDto
+            {
+                TransferId = transferId,
+                Protocol = AcquisitionProtocol.Torrent,
+                State = TransferTrackingState.Missing,
+                Reason = "backend payload disappeared"
+            }
+        ]);
+
+        var transfer = await db.FulfillmentTransfers.SingleAsync();
+        Assert.Equal(TransferTrackingState.Missing, transfer.State);
+        Assert.Equal("backend payload disappeared", transfer.FailReason);
+        Assert.Null(transfer.ImportedAt);
+    }
+
+    [Fact]
     public async Task Canonical_cross_season_targets_round_trip_through_durable_tracking()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

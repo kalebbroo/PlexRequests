@@ -200,6 +200,11 @@ the row and replaces its target/telemetry fields with the current attempt. Impor
 Without that distinction the worker's local state can monitor the retry while the database reconciler stays
 blind to it, making a deploy during the download capable of stranding the import.
 
+Import adoption is scoped to the transfer's current canonical episode targets. A matching torrent hash proves
+which payload was used, but not which slice of a reusable season/franchise archive reached the library. The audit
+must cover every current target before a worker or reconciler treats that transfer as imported; an older import of
+different episodes and subtitle-only rows cannot prematurely complete a retry.
+
 ### Stage 5 — VPN failsafe (the reason this is out-of-process)
 The torrent client must only ever talk through the VPN. Enforce **in depth**:
 - Bind the torrent client to the VPN interface (e.g. `wg0`/`tun0`) — not the default route.
