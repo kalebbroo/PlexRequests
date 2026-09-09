@@ -44,6 +44,7 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         var languagePreference = job.MediaLanguagePolicy?.Preference ?? context.Profile?.LanguagePreference;
         var preferredAudio = MediaLanguagePolicy.Normalize(job.MediaLanguagePolicy?.PreferredAudioLanguage
                                                             ?? context.Profile?.PreferredAudioLanguage) ?? "en";
+        var optimization = job.StorageOptimizationPolicy;
         var resolution = EffectiveResolution(c, parsed);
         var rejections = new List<Rejection>();
 
@@ -52,7 +53,18 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         var (rank, allowed) = RankInProfile(definition, context.Profile);
         int floor = (int)job.Quality;
 
-        if (context.Profile is not null)
+        if (optimization is not null)
+        {
+            // A deliberate storage job may cross the profile's ordinary cutoff (for example a one-off 4K
+            // conversion), but it never admits an unknown tier or a camera source. Its exact immutable goal
+            // is checked below once episode/pack coverage is known.
+            if (definition is null)
+                rejections.Add(new Rejection(RejectionReason.NotInProfile,
+                    $"no quality tier matches {(resolution > 0 ? resolution + "p" : "an unknown resolution")} from {parsed.Source}"));
+            if (parsed.Source == ReleaseSource.Cam)
+                rejections.Add(new Rejection(RejectionReason.NotInProfile, "CAM releases are never acceptable"));
+        }
+        else if (context.Profile is not null)
         {
             // The cutoff is a ceiling, not just the point where auto-upgrade searches stop. Every seeded
             // profile marks every tier from its floor up through 8K "allowed" — that list only ever existed
@@ -89,7 +101,7 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
 
         // An upgrade must actually be an upgrade. Enforced regardless of relaxation: replacing a file with
         // something no better is pure churn.
-        if (job.IsUpgrade && floor > 0 && resolution < floor)
+        if (job.IsUpgrade && optimization is null && floor > 0 && resolution < floor)
             rejections.Add(new Rejection(RejectionReason.NotAnUpgrade,
                 $"{resolution}p is not better than the {floor}p already in the library"));
 
@@ -263,8 +275,83 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         // Custom formats: a user-defined score on top of the structural one, and a floor the profile can
         // set so "never take anything scoring below X" is expressible.
         var (formatScore, matchedFormats) = context.CustomFormats.Count == 0
-            ? (0, new List<string>())
+                        ? (0, new List<string>())
             : CustomFormatMatcher.Score(parsed, c, context.CustomFormats, context.CustomFormatScores);
+
+        var matchedFormatIds = context.CustomFormats
+            .Where(format => format.Enabled && CustomFormatMatcher.Matches(format, parsed, c))
+            .Select(format => format.Id).ToHashSet();
+
+        if (context.Profile is not null)
+        {
+            foreach (var requiredId in context.Profile.RequiredCustomFormatIds.Distinct()
+                         .Where(id => context.CustomFormats.Any(item => item.Id == id && item.Enabled)))
+            {
+                if (matchedFormatIds.Contains(requiredId)) continue;
+                var format = context.CustomFormats.FirstOrDefault(item => item.Id == requiredId);
+                rejections.Add(new Rejection(RejectionReason.RequiredCustomFormatMissing,
+                    $"required format '{format?.Name ?? $"#{requiredId}"}' did not match"));
+            }
+            foreach (var blockedId in context.Profile.BlockedCustomFormatIds.Distinct()
+                         .Where(id => context.CustomFormats.Any(item => item.Id == id && item.Enabled)))
+            {
+                if (!matchedFormatIds.Contains(blockedId)) continue;
+                var format = context.CustomFormats.FirstOrDefault(item => item.Id == blockedId);
+                rejections.Add(new Rejection(RejectionReason.BlockedCustomFormat,
+                    $"blocked format '{format?.Name ?? $"#{blockedId}"}' matched"));
+            }
+        }
+
+        if (optimization is not null)
+        {
+            var relevantTargets = RelevantOptimizationTargets(optimization, job.MediaType, season, episode,
+                canonicalCoverage, isPack);
+            var candidateTier = QualityHelper.FromHeight(resolution);
+            if (optimization.TargetQuality != Quality.Any)
+            {
+                if (candidateTier != optimization.TargetQuality)
+                    rejections.Add(new Rejection(RejectionReason.OptimizationQualityMismatch,
+                        $"{(resolution > 0 ? candidateTier.Label() : "unknown quality")} does not match the " +
+                        $"{optimization.TargetQuality.Label()} optimization target"));
+            }
+            else
+            {
+                var currentTier = relevantTargets.Select(target => QualityHelper.FromHeight(target.CurrentResolutionHeight))
+                    .DefaultIfEmpty(Quality.Any).Max();
+                if (currentTier != Quality.Any && candidateTier < currentTier)
+                    rejections.Add(new Rejection(RejectionReason.OptimizationQualityMismatch,
+                        $"{candidateTier.Label()} would lower the selected files from {currentTier.Label()}"));
+            }
+
+            if (!string.IsNullOrWhiteSpace(optimization.RequiredVideoCodec)
+                && !VideoCodecPolicy.Matches(parsed.Codec, optimization.RequiredVideoCodec))
+                rejections.Add(new Rejection(RejectionReason.VideoCodecMismatch,
+                    $"release advertises {VideoCodecPolicy.Display(parsed.Codec)}, not required " +
+                    VideoCodecPolicy.Display(optimization.RequiredVideoCodec)));
+
+            foreach (var requiredId in optimization.RequiredCustomFormatIds.Distinct())
+            {
+                if (matchedFormatIds.Contains(requiredId)) continue;
+                var format = context.CustomFormats.FirstOrDefault(item => item.Id == requiredId);
+                rejections.Add(new Rejection(RejectionReason.RequiredCustomFormatMissing,
+                    $"optimization requires '{format?.Name ?? $"format #{requiredId}"}'"));
+            }
+
+            if (optimization.MinimumSavingsPercent > 0)
+            {
+                var currentBytes = relevantTargets.Sum(target => Math.Max(0, target.CurrentSizeBytes));
+                var maximum = (long)Math.Floor(currentBytes *
+                    (100d - Math.Clamp(optimization.MinimumSavingsPercent, 0, 95)) / 100d);
+                var candidateBytes = c.SizeKnown ? c.SizeBytes : 0;
+                if (currentBytes <= 0 || candidateBytes <= 0)
+                    rejections.Add(new Rejection(RejectionReason.InsufficientStorageSavings,
+                        "release size is unknown, so the requested storage saving cannot be proven"));
+                else if (candidateBytes > maximum)
+                    rejections.Add(new Rejection(RejectionReason.InsufficientStorageSavings,
+                        $"{c.SizeGb:F2} GB would not save {optimization.MinimumSavingsPercent}% " +
+                        $"from {currentBytes / 1_000_000_000d:F2} GB"));
+            }
+        }
 
         if (context.Profile is { MinCustomFormatScore: var minScore } && minScore != 0 && formatScore < minScore)
             rejections.Add(new Rejection(RejectionReason.CustomFormatScoreTooLow,
@@ -338,6 +425,20 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
             CustomFormatScore = formatScore,
             MatchedFormats = matchedFormats
         };
+    }
+
+    private static IReadOnlyList<StorageOptimizationTargetDto> RelevantOptimizationTargets(
+        StorageOptimizationPolicyDto policy, MediaType mediaType, int? season, int? episode,
+        IReadOnlyList<EpisodeRef> canonicalCoverage, bool isPack)
+    {
+        if (mediaType == MediaType.Movie || policy.Targets.Count <= 1) return policy.Targets;
+        var coverage = canonicalCoverage.Select(item => (item.Season, item.Episode)).ToHashSet();
+        if (coverage.Count == 0 && season is int s && episode is int e) coverage.Add((s, e));
+        var relevant = policy.Targets.Where(target => target.EpisodeCoverage.Any(item =>
+                coverage.Contains((item.Season, item.Episode))
+                || (coverage.Count == 0 && isPack && season == item.Season)))
+            .ToList();
+        return relevant.Count > 0 ? relevant : policy.Targets;
     }
 
     // ---- Quality tiers ------------------------------------------------------------------------------

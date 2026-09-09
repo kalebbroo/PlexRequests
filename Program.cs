@@ -261,6 +261,7 @@ builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IMonitori
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.ISeriesMonitoringService, PlexRequestsHosted.Services.Implementations.SeriesMonitoringService>();
 // User-defined release scoring rules, scored per quality profile.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.ICustomFormatService, PlexRequestsHosted.Services.Implementations.CustomFormatService>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IStorageOptimizationService, PlexRequestsHosted.Services.Implementations.StorageOptimizationService>();
 // Registered concretely as well as via IJobHandler: the admin "Upgrade now" action calls straight into it
 // rather than keeping a second copy of the same logic.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.UpgradeScanJob>();
@@ -1444,7 +1445,7 @@ app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpConte
     if (req is not null)
     {
         try { await jobs.QueueJobRunAsync(JobType.AvailabilityRefresh); } catch { /* best-effort */ }
-        if (job.IsReplacement)
+        if (job.IsReplacement && string.IsNullOrWhiteSpace(job.StorageOptimizationPolicyJson))
         {
             int? issueReporterUserId = null;
             if (job.MediaIssueId is int issueId)

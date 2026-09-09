@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Shared.DTOs;
+using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequestsHosted.Services.Implementations;
@@ -10,18 +11,20 @@ namespace PlexRequestsHosted.Services.Implementations;
 public interface ICustomFormatService
 {
     Task<List<CustomFormatDto>> GetAllAsync();
-    /// <summary>Formats with their score in one profile, for the profile's scoring grid.</summary>
+    /// <summary>Formats with their human preference and optional advanced score in one profile.</summary>
     Task<List<CustomFormatDto>> GetForProfileAsync(int profileId);
     Task<(bool ok, string? error)> SaveAsync(CustomFormatDto dto);
     Task<(bool ok, string? error)> DeleteAsync(int id);
     Task<bool> SetScoreAsync(int profileId, int formatId, int score);
+    Task<bool> SetPreferenceAsync(int profileId, int formatId, CustomFormatPreference preference,
+        int? advancedScore = null);
     /// <summary>Format id → score for one profile, as the ranking context needs it.</summary>
     Task<Dictionary<int, int>> ScoresForProfileAsync(int profileId);
     Task SeedAsync();
 }
 
 /// <summary>
-/// CRUD over custom formats plus their per-profile scores.
+/// CRUD over reusable custom formats plus their per-profile behavior.
 ///
 /// Scores deliberately live on the (profile, format) pair rather than on the format: "x265" is worth
 /// having in a space-conscious 1080p profile and irrelevant in a remux one, and the same rule shouldn't
@@ -42,7 +45,21 @@ public class CustomFormatService(AppDbContext db, ILogger<CustomFormatService> l
     {
         var formats = await GetAllAsync();
         var scores = await ScoresForProfileAsync(profileId);
-        foreach (var f in formats) f.Score = scores.TryGetValue(f.Id, out var s) ? s : 0;
+        var profile = await db.QualityProfiles.AsNoTracking().Where(p => p.Id == profileId)
+            .Select(p => new { p.RequiredCustomFormatIdsCsv, p.BlockedCustomFormatIdsCsv })
+            .FirstOrDefaultAsync();
+        var required = ParseIds(profile?.RequiredCustomFormatIdsCsv);
+        var blocked = ParseIds(profile?.BlockedCustomFormatIdsCsv);
+        foreach (var f in formats)
+        {
+            f.Score = scores.TryGetValue(f.Id, out var s) ? s : 0;
+            f.Preference = required.Contains(f.Id) ? CustomFormatPreference.Require
+                : blocked.Contains(f.Id) ? CustomFormatPreference.Block
+                : f.Score == 50 ? CustomFormatPreference.Prefer
+                : f.Score == -50 ? CustomFormatPreference.Avoid
+                : f.Score == 0 ? CustomFormatPreference.Neutral
+                : CustomFormatPreference.Advanced;
+        }
         return formats;
     }
 
@@ -82,7 +99,7 @@ public class CustomFormatService(AppDbContext db, ILogger<CustomFormatService> l
     {
         var row = await db.CustomFormats.FirstOrDefaultAsync(f => f.Id == id);
         if (row is null) return (false, "Format not found.");
-        if (row.IsSystem) return (false, "Built-in formats can't be deleted — disable it or set its score to 0.");
+        if (row.IsSystem) return (false, "Built-in formats can't be deleted — disable it or set it to Not important in each profile.");
         db.CustomFormats.Remove(row);
         await db.SaveChangesAsync();
         return (true, null);
@@ -100,6 +117,51 @@ public class CustomFormatService(AppDbContext db, ILogger<CustomFormatService> l
         row.Score = Math.Clamp(score, -100000, 100000);
         await db.SaveChangesAsync();
         return true;
+    }
+
+    public async Task<bool> SetPreferenceAsync(int profileId, int formatId,
+        CustomFormatPreference preference, int? advancedScore = null)
+    {
+        var profile = await db.QualityProfiles.FirstOrDefaultAsync(p => p.Id == profileId);
+        if (profile is null || !await db.CustomFormats.AnyAsync(f => f.Id == formatId)) return false;
+
+        var required = ParseIds(profile.RequiredCustomFormatIdsCsv);
+        var blocked = ParseIds(profile.BlockedCustomFormatIdsCsv);
+        required.Remove(formatId);
+        blocked.Remove(formatId);
+        if (preference == CustomFormatPreference.Require) required.Add(formatId);
+        if (preference == CustomFormatPreference.Block) blocked.Add(formatId);
+        profile.RequiredCustomFormatIdsCsv = JoinIds(required);
+        profile.BlockedCustomFormatIdsCsv = JoinIds(blocked);
+
+        var score = preference switch
+        {
+            CustomFormatPreference.Prefer or CustomFormatPreference.Require => 50,
+            CustomFormatPreference.Avoid or CustomFormatPreference.Block => -50,
+            CustomFormatPreference.Advanced => Math.Clamp(advancedScore ?? 0, -100000, 100000),
+            _ => 0
+        };
+        var row = await db.CustomFormatScores
+            .FirstOrDefaultAsync(s => s.QualityProfileId == profileId && s.CustomFormatId == formatId);
+        if (row is null)
+        {
+            row = new CustomFormatScoreEntity { QualityProfileId = profileId, CustomFormatId = formatId };
+            db.CustomFormatScores.Add(row);
+        }
+        row.Score = score;
+        await db.SaveChangesAsync();
+        return true;
+    }
+
+    private static HashSet<int> ParseIds(string? csv) => string.IsNullOrWhiteSpace(csv)
+        ? new HashSet<int>()
+        : csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(value => int.TryParse(value, out var id) ? id : 0).Where(id => id > 0).ToHashSet();
+
+    private static string? JoinIds(IEnumerable<int> ids)
+    {
+        var value = string.Join(',', ids.Where(id => id > 0).Distinct().Order());
+        return value.Length == 0 ? null : value;
     }
 
     // ---- Seeding ------------------------------------------------------------------------------------

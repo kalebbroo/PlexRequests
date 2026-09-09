@@ -919,6 +919,10 @@ public class FulfillmentJobDto
     /// Null keeps jobs and profiles created before media-track enforcement fully backward compatible.</summary>
     public MediaLanguagePolicyDto? MediaLanguagePolicy { get; set; }
 
+    /// <summary>Scoped, admin-created storage replacement requirements. Unlike a normal upgrade this can
+    /// require a same-resolution codec change, several custom formats, or an explicit 4K target.</summary>
+    public StorageOptimizationPolicyDto? StorageOptimizationPolicy { get; set; }
+
     /// <summary>Immutable per-series release-number translation captured when this job was enqueued.
     /// Null means release numbering already matches Plex's aired order.</summary>
     public SeriesEpisodeOrderProfileDto? EpisodeOrderProfile { get; set; }
@@ -1040,6 +1044,8 @@ public class QualityProfileDto
     public bool UpgradeAllowed { get; set; } = true;
     public int MinCustomFormatScore { get; set; }
     public int CutoffFormatScore { get; set; }
+    public List<int> RequiredCustomFormatIds { get; set; } = new();
+    public List<int> BlockedCustomFormatIds { get; set; } = new();
     public double? MinSizeGb { get; set; }
     public double? MaxSizeGb { get; set; }
     public double? MaxSeasonPackSizeGb { get; set; }
@@ -1667,12 +1673,15 @@ public class MediaTrackDto
     public bool IsDefault { get; set; }
     public bool IsForced { get; set; }
     public bool IsExternal { get; set; }
+    public int? Width { get; set; }
+    public int? Height { get; set; }
 }
 
 /// <summary>Machine-observed track inventory for one selected media file.</summary>
 public class MediaTrackSummaryDto
 {
     public bool HasVideo { get; set; }
+    public List<MediaTrackDto> Video { get; set; } = new();
     public List<MediaTrackDto> Audio { get; set; } = new();
     public List<MediaTrackDto> Subtitles { get; set; } = new();
 }
@@ -2159,4 +2168,87 @@ public class CustomFormatDto
     /// <summary>Score this format carries in the profile currently being edited. Not persisted here —
     /// scores live per (profile, format).</summary>
     public int Score { get; set; }
+    public CustomFormatPreference Preference { get; set; }
+}
+
+/// <summary>One existing physical file selected by an administrator for a scoped optimization.</summary>
+public sealed class StorageOptimizationTargetDto
+{
+    public string DestinationPath { get; set; } = string.Empty;
+    public List<EpisodeRef> EpisodeCoverage { get; set; } = new();
+    public long CurrentSizeBytes { get; set; }
+    public int CurrentResolutionHeight { get; set; }
+    public string? CurrentVideoCodec { get; set; }
+}
+
+/// <summary>Immutable constraints carried by a targeted replacement job from search through import.</summary>
+public sealed class StorageOptimizationPolicyDto
+{
+    public Quality TargetQuality { get; set; }
+    public string? RequiredVideoCodec { get; set; }
+    public List<int> RequiredCustomFormatIds { get; set; } = new();
+    public int MinimumSavingsPercent { get; set; }
+    public List<StorageOptimizationTargetDto> Targets { get; set; } = new();
+    public long CurrentBytes => Targets.Sum(target => Math.Max(0, target.CurrentSizeBytes));
+    public long MaximumReplacementBytes => MinimumSavingsPercent <= 0
+        ? long.MaxValue
+        : (long)Math.Floor(CurrentBytes * (100d - Math.Clamp(MinimumSavingsPercent, 0, 95)) / 100d);
+}
+
+public sealed class StorageOptimizationSeasonDto
+{
+    public int Season { get; set; }
+    public int FileCount { get; set; }
+    public long SizeBytes { get; set; }
+    public string ResolutionSummary { get; set; } = string.Empty;
+    public string CodecSummary { get; set; } = string.Empty;
+}
+
+public sealed class StorageOptimizationTitleDto
+{
+    public int RequestId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public int? Year { get; set; }
+    public MediaType MediaType { get; set; }
+    public bool IsAnime { get; set; }
+    public string? PosterUrl { get; set; }
+    public int FileCount { get; set; }
+    public long SizeBytes { get; set; }
+    public int HevcFileCount { get; set; }
+    public int UnknownCodecCount { get; set; }
+    public bool HasActiveJob { get; set; }
+    public List<StorageOptimizationSeasonDto> Seasons { get; set; } = new();
+}
+
+public sealed class StorageOptimizationRequestDto
+{
+    public int RequestId { get; set; }
+    public List<int> Seasons { get; set; } = new();
+    /// <summary>Any means preserve the best current tier in the selected scope.</summary>
+    public Quality TargetQuality { get; set; }
+    public bool RequireHevc { get; set; }
+    public List<int> RequiredCustomFormatIds { get; set; } = new();
+    public int MinimumSavingsPercent { get; set; }
+}
+
+public sealed class StorageOptimizationPreviewDto
+{
+    public bool CanQueue { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public int RequestId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public int SelectedFileCount { get; set; }
+    public int UnknownCodecCount { get; set; }
+    public long CurrentBytes { get; set; }
+    public long MaximumReplacementBytes { get; set; }
+    public Quality EffectiveTargetQuality { get; set; }
+    public List<int> Seasons { get; set; } = new();
+    public List<string> Goals { get; set; } = new();
+}
+
+public sealed class StorageOptimizationQueueResultDto
+{
+    public bool Success { get; set; }
+    public int? JobId { get; set; }
+    public string Message { get; set; } = string.Empty;
 }

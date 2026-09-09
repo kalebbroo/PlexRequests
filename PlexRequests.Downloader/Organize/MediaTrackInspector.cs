@@ -397,6 +397,7 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
     {
         var document = JsonSerializer.Deserialize<MediaInfoDocument>(json, Json) ?? new();
         var result = new MediaTrackSummaryDto();
+        var videoOrdinal = 0;
         var audioOrdinal = 0;
         var subtitleOrdinal = 0;
         foreach (var stream in document.Media?.Tracks ?? [])
@@ -412,6 +413,15 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
             if (type == "video")
             {
                 result.HasVideo = true;
+                result.Video.Add(new MediaTrackDto
+                {
+                    Index = ++videoOrdinal,
+                    Type = type,
+                    Codec = stream.Format ?? stream.CodecId,
+                    Title = stream.Title,
+                    Width = ParseDimension(stream.Width),
+                    Height = ParseDimension(stream.Height)
+                });
                 continue;
             }
             var track = new MediaTrackDto
@@ -489,6 +499,14 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
         && value.Split([' ', '.', '_', '-', '(', ')', '[', ']'], StringSplitOptions.RemoveEmptyEntries)
             .Any(token => token.Equals("forced", StringComparison.OrdinalIgnoreCase));
 
+    private static int? ParseDimension(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var digits = new string(value.TakeWhile(character => char.IsDigit(character) || char.IsWhiteSpace(character))
+            .Where(char.IsDigit).ToArray());
+        return int.TryParse(digits, out var number) && number > 0 ? number : null;
+    }
+
     private sealed class MediaInfoDocument
     {
         [JsonPropertyName("media")] public MediaInfoMedia? Media { get; set; }
@@ -504,6 +522,8 @@ public sealed class MediaInfoTrackInspector(ILogger<MediaInfoTrackInspector> log
         [JsonPropertyName("@type")] public string? Type { get; set; }
         [JsonPropertyName("Format")] public string? Format { get; set; }
         [JsonPropertyName("CodecID")] public string? CodecId { get; set; }
+        [JsonPropertyName("Width")] public string? Width { get; set; }
+        [JsonPropertyName("Height")] public string? Height { get; set; }
         [JsonPropertyName("Language")] public string? Language { get; set; }
         [JsonPropertyName("Title")] public string? Title { get; set; }
         [JsonPropertyName("Default")] public string? Default { get; set; }

@@ -1064,14 +1064,30 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
     }
 
     public async Task<bool> EnqueueUpgradeAsync(MediaRequestDto request, Quality target, IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes)
-        => await EnqueueFileReplacementAsync(request, target, replacePaths, episodes, mediaIssueId: null) is not null;
+        => await EnqueueFileReplacementAsync(request, target, replacePaths, episodes, mediaIssueId: null,
+            optimizationPolicy: null) is not null;
 
     public Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor,
         IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId) =>
-        EnqueueFileReplacementAsync(request, floor, replacePaths, episodes, mediaIssueId);
+        EnqueueFileReplacementAsync(request, floor, replacePaths, episodes, mediaIssueId,
+            optimizationPolicy: null);
+
+    public Task<int?> EnqueueOptimizationAsync(MediaRequestDto request, StorageOptimizationPolicyDto policy)
+    {
+        var target = policy.TargetQuality != Quality.Any
+            ? policy.TargetQuality
+            : policy.Targets.Select(item => QualityHelper.FromHeight(item.CurrentResolutionHeight))
+                .DefaultIfEmpty(Quality.Any).Max();
+        var paths = policy.Targets.Select(item => item.DestinationPath)
+            .Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var episodes = policy.Targets.SelectMany(item => item.EpisodeCoverage)
+            .Select(item => (item.Season, item.Episode)).Distinct().ToList();
+        return EnqueueFileReplacementAsync(request, target, paths, episodes, mediaIssueId: null, policy);
+    }
 
     private async Task<int?> EnqueueFileReplacementAsync(MediaRequestDto request, Quality target,
-        IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int? mediaIssueId)
+        IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int? mediaIssueId,
+        StorageOptimizationPolicyDto? optimizationPolicy)
     {
         // The database also enforces this invariant. Checking here gives callers an idempotent result instead
         // of turning a concurrent/live job into an exception.
@@ -1134,7 +1150,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         var mediaKind = origin?.MediaKind ?? request.RequestScopeKind.ToMediaKind(request.MediaType);
         if (request.MediaType is MediaType.TvShow or MediaType.Anime) mediaKind = MediaKind.Series;
         var requestScope = origin?.RequestScopeKind ?? requestEntity?.RequestScopeKind ?? request.RequestScopeKind;
-        if (mediaKind == MediaKind.Series && episodes.Count > 0) requestScope = RequestScopeKind.Episodes;
+        if (mediaKind == MediaKind.Series && episodes.Count > 0)
+            requestScope = optimizationPolicy is null ? RequestScopeKind.Episodes : RequestScopeKind.Seasons;
         var tmdbId = origin?.TmdbId
             ?? (mediaRef.TryGetTmdbId(out var resolvedTmdbId) ? resolvedTmdbId : null);
 
@@ -1169,6 +1186,19 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         var episodesCsv = episodes.Count > 0
             ? string.Join(",", episodes.Select(e => $"S{e.season}E{e.episode}"))
             : null;
+        var optimizationSeasonTargets = optimizationPolicy is not null && mediaKind == MediaKind.Series
+            ? episodes.GroupBy(item => item.season).OrderBy(group => group.Key)
+                .Select(group =>
+                {
+                    var numbers = group.Select(item => item.episode).Distinct().Order().ToList();
+                    return new SeasonTarget
+                    {
+                        Season = group.Key,
+                        EpisodeCount = numbers.Count,
+                        MissingEpisodes = numbers
+                    };
+                }).ToList()
+            : [];
         var upgradePolicyJson = origin?.MediaLanguagePolicyJson;
         if (string.IsNullOrWhiteSpace(upgradePolicyJson) && profileId is int upgradeProfileId)
         {
@@ -1193,11 +1223,20 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             TvdbId = origin?.TvdbId ?? refreshedDetail?.TvdbId,
             ExternalId = externalId,
             ExternalSource = externalSource,
-            RequestedEpisodesCsv = episodesCsv,
+            RequestedSeasonsCsv = optimizationSeasonTargets.Count > 0
+                ? string.Join(',', optimizationSeasonTargets.Select(item => item.Season))
+                : null,
+            RequestedEpisodesCsv = optimizationSeasonTargets.Count > 0 ? null : episodesCsv,
+            SeasonTargetsJson = optimizationSeasonTargets.Count > 0
+                ? JsonSerializer.Serialize(optimizationSeasonTargets)
+                : null,
             CanonicalSeasonsJson = origin?.CanonicalSeasonsJson,
             Quality = target,
             QualityProfileId = profileId,
             MediaLanguagePolicyJson = upgradePolicyJson,
+            StorageOptimizationPolicyJson = optimizationPolicy is null
+                ? null
+                : JsonSerializer.Serialize(optimizationPolicy),
             EpisodeOrderProfileJson = episodeOrderJson,
             GenresCsv = genres.Count > 0 ? string.Join(",", genres) : null,
             IsAnime = isAnime,
@@ -1210,7 +1249,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             LibrarySeasonPackFolderTemplate = hasDestinationSnapshot
                 ? origin!.LibrarySeasonPackFolderTemplate : destination!.SeasonPackFolderTemplate,
             IsUpgrade = true,
-            IsReplacement = mediaIssueId.HasValue,
+            // Optimization has the same completeness guarantee as an issue replacement: retain every old
+            // file and keep searching until all selected targets have verified replacements.
+            IsReplacement = mediaIssueId.HasValue || optimizationPolicy is not null,
             MediaIssueId = mediaIssueId,
             ReplacePathsJson = replacePaths.Count > 0 ? JsonSerializer.Serialize(replacePaths) : null,
             Status = FulfillmentStatus.Queued,
@@ -1526,6 +1567,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         MediaLanguagePolicy = string.IsNullOrWhiteSpace(j.MediaLanguagePolicyJson)
             ? null
             : JsonSerializer.Deserialize<MediaLanguagePolicyDto>(j.MediaLanguagePolicyJson),
+        StorageOptimizationPolicy = string.IsNullOrWhiteSpace(j.StorageOptimizationPolicyJson)
+            ? null
+            : JsonSerializer.Deserialize<StorageOptimizationPolicyDto>(j.StorageOptimizationPolicyJson),
         EpisodeOrderProfile = string.IsNullOrWhiteSpace(j.EpisodeOrderProfileJson)
             ? null
             : JsonSerializer.Deserialize<SeriesEpisodeOrderProfileDto>(j.EpisodeOrderProfileJson),
