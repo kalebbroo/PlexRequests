@@ -2281,6 +2281,9 @@ public sealed class LibraryEfficiencyTitleDto
 public sealed class MediaMetadataScanRequestDto
 {
     public List<int> RequestIds { get; set; } = new();
+    /// <summary>Optional exact audit-row scope used by a season/title preview. RequestIds remains the
+    /// convenient bulk-report scope; the server revalidates both forms against the newest physical path.</summary>
+    public List<int> ImportedFileIds { get; set; } = new();
 }
 
 public sealed class MediaMetadataScanQueueResultDto
@@ -2335,6 +2338,8 @@ public sealed class StorageOptimizationPreviewDto
     public string Title { get; set; } = string.Empty;
     public int SelectedFileCount { get; set; }
     public int UnknownCodecCount { get; set; }
+    public bool RequiresCodecScan { get; set; }
+    public List<int> CodecScanFileIds { get; set; } = new();
     public long CurrentBytes { get; set; }
     public long MaximumReplacementBytes { get; set; }
     public Quality EffectiveTargetQuality { get; set; }

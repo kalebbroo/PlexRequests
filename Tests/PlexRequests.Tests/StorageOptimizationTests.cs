@@ -114,6 +114,79 @@ public sealed class StorageOptimizationTests
     }
 
     [Fact]
+    public async Task HevcOptimizationRequiresObservedCodecButUnrelatedResolutionGoalDoesNot()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity
+        {
+            Id = 11, MediaId = 110, MediaType = MediaType.Movie, Title = "Inferred Movie",
+            Status = RequestStatus.Available
+        };
+        var job = new FulfillmentJobEntity
+        {
+            Id = 12, MediaRequestId = request.Id, MediaId = request.MediaId,
+            MediaType = request.MediaType, Title = request.Title, Status = FulfillmentStatus.Completed
+        };
+        var file = Video(13, job.Id, "/movies/inferred.mkv", null, "", 2_000_000_000);
+        file.MediaTracksJson = null;
+        file.ReleaseName = "Inferred.Movie.2025.1080p.x265-GROUP";
+        db.AddRange(request, job, file);
+        await db.SaveChangesAsync();
+        var capture = new CapturingQueue();
+        var service = new StorageOptimizationService(db, capture, new EmptyFormats(), new ReleaseParser());
+
+        var blocked = await service.PreviewAsync(new StorageOptimizationRequestDto
+        {
+            RequestId = request.Id,
+            RequireHevc = true,
+            MinimumSavingsPercent = 0
+        });
+        var queueAttempt = await service.QueueAsync(new StorageOptimizationRequestDto
+        {
+            RequestId = request.Id,
+            RequireHevc = true,
+            MinimumSavingsPercent = 0
+        });
+        var qualityOnly = await service.PreviewAsync(new StorageOptimizationRequestDto
+        {
+            RequestId = request.Id,
+            TargetQuality = Quality.UHD4K,
+            RequireHevc = false,
+            MinimumSavingsPercent = 0
+        });
+
+        Assert.False(blocked.CanQueue);
+        Assert.True(blocked.RequiresCodecScan);
+        Assert.Equal(1, blocked.UnknownCodecCount);
+        Assert.Equal([file.Id], blocked.CodecScanFileIds);
+        Assert.Contains("read-only codec scan", blocked.Message);
+        Assert.False(queueAttempt.Success);
+        Assert.Null(capture.Policy);
+        Assert.True(qualityOnly.CanQueue, qualityOnly.Message);
+        Assert.False(qualityOnly.RequiresCodecScan);
+        var report = await service.GetEfficiencyReportAsync();
+        Assert.Equal(1, report.UnknownCodecFileCount);
+        Assert.Equal(0, report.ModernCodecFileCount);
+        Assert.Equal("Needs scan", Assert.Single(report.Titles).CodecSummary);
+
+        file.MediaTracksJson = """{"hasVideo":true,"video":[{"type":"video","codec":"AVC","width":1920,"height":1080}]}""";
+        await db.SaveChangesAsync();
+        var measured = await service.PreviewAsync(new StorageOptimizationRequestDto
+        {
+            RequestId = request.Id,
+            RequireHevc = true,
+            MinimumSavingsPercent = 0
+        });
+        Assert.True(measured.CanQueue, measured.Message);
+        Assert.False(measured.RequiresCodecScan);
+        Assert.Equal(0, measured.UnknownCodecCount);
+    }
+
+    [Fact]
     public async Task EfficiencyReportSeparatesMeasuredCodecStorageWithoutEstimatingSavings()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

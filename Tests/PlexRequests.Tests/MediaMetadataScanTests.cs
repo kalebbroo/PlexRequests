@@ -9,7 +9,6 @@ using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Implementations;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
-using PlexRequestsHosted.Shared.Releases;
 using Xunit;
 
 namespace PlexRequests.Tests;
@@ -17,7 +16,7 @@ namespace PlexRequests.Tests;
 public sealed class MediaMetadataScanTests
 {
     [Fact]
-    public async Task QueueClaimsOnlyLatestCurrentUnknownFilesAndPersistsObservedMetadata()
+    public async Task QueueClaimsLatestUnmeasuredFilesEvenWhenReleaseNamesContainCodecHints()
     {
         await using var fixture = await Fixture.CreateAsync();
         var available = await fixture.AddTitleAsync(1, "Legacy movie");
@@ -40,21 +39,24 @@ public sealed class MediaMetadataScanTests
 
         var queued = await fixture.Service.QueueAsync(new MediaMetadataScanRequestDto
         {
-            RequestIds = [available.Request.Id, busy.Request.Id]
+            ImportedFileIds = [old.Id, latest.Id, knownFromName.Id, busyFile.Id]
         });
 
         Assert.True(queued.Success, queued.Message);
-        Assert.Equal(1, queued.QueuedCount);
+        Assert.Equal(2, queued.QueuedCount);
         Assert.Equal(1, queued.BusyCount);
         Assert.Equal(MediaMetadataScanStatus.None, old.MediaMetadataScanStatus);
         Assert.Equal(MediaMetadataScanStatus.Queued, latest.MediaMetadataScanStatus);
-        Assert.Equal(MediaMetadataScanStatus.None, knownFromName.MediaMetadataScanStatus);
+        Assert.Equal(MediaMetadataScanStatus.Queued, knownFromName.MediaMetadataScanStatus);
 
         var claim = Assert.IsType<MediaMetadataScanTaskDto>(
             await fixture.Service.ClaimAsync("worker-a", CancellationToken.None));
         Assert.Equal(latest.Id, claim.ImportedFileId);
         Assert.Equal("/movies", claim.LibraryDestinationRootPath);
-        Assert.Null(await fixture.Service.ClaimAsync("worker-b", CancellationToken.None));
+        var hintedClaim = Assert.IsType<MediaMetadataScanTaskDto>(
+            await fixture.Service.ClaimAsync("worker-b", CancellationToken.None));
+        Assert.Equal(knownFromName.Id, hintedClaim.ImportedFileId);
+        Assert.Null(await fixture.Service.ClaimAsync("worker-c", CancellationToken.None));
 
         fixture.Db.ChangeTracker.Clear();
         Assert.False(await fixture.Service.ReportAsync(new MediaMetadataScanReportDto
@@ -70,6 +72,13 @@ public sealed class MediaMetadataScanTests
             WorkerId = "worker-a",
             Succeeded = true,
             MediaTracks = Tracks("AVC")
+        }, CancellationToken.None));
+        Assert.True(await fixture.Service.ReportAsync(new MediaMetadataScanReportDto
+        {
+            ImportedFileId = hintedClaim.ImportedFileId,
+            WorkerId = "worker-b",
+            Succeeded = true,
+            MediaTracks = Tracks("HEVC")
         }, CancellationToken.None));
 
         fixture.Db.ChangeTracker.Clear();
@@ -173,7 +182,7 @@ public sealed class MediaMetadataScanTests
     private sealed class Fixture(SqliteConnection connection, AppDbContext db) : IAsyncDisposable
     {
         public AppDbContext Db { get; } = db;
-        public MediaMetadataScanService Service { get; } = new(db, new ReleaseParser(),
+        public MediaMetadataScanService Service { get; } = new(db,
             NullLogger<MediaMetadataScanService>.Instance);
 
         public static async Task<Fixture> CreateAsync()
