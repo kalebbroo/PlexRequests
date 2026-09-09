@@ -223,7 +223,7 @@ else
                 <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
                     <div>
                         <MudText Typo="Typo.h6">@_selected.Title</MudText>
-                        <MudText Typo="Typo.caption" Class="text-muted">@_selected.FileCount files · @FormatBytes(_selected.SizeBytes) · @_selected.HevcFileCount already HEVC</MudText>
+                        <MudText Typo="Typo.caption" Class="text-muted">@_selected.FileCount files · @FormatBytes(_selected.SizeBytes) · @_selected.HevcFileCount measured HEVC@(_selected.UnknownCodecCount > 0 ? $" · {_selected.UnknownCodecCount} need a codec scan" : string.Empty)</MudText>
                     </div>
                     @if (_selected.IsAnime) { <MudChip T="string" Size="Size.Small" Color="Color.Secondary">Anime</MudChip> }
                 </div>
@@ -251,7 +251,7 @@ else
                     <div class="optimizer-goals">
                         <label class="optimizer-goal">
                             <MudSwitch T="bool" Value="_requireHevc" ValueChanged="SetHevcGoal" Color="Color.Primary" />
-                            <span><b>Use HEVC (H.265)</b><small>Backfill H.264 or unknown files with verified HEVC. Best current space-saving option.</small></span>
+                            <span><b>Use HEVC (H.265)</b><small>Backfill measured non-HEVC files. Missing codec data is scanned before any replacement search.</small></span>
                         </label>
                         <div class="optimizer-goal field">
                             <span><b>Resolution</b><small>Keep current avoids a downgrade; choose an exact tier for a targeted conversion.</small></span>
@@ -303,6 +303,17 @@ else
                     <MudAlert Severity="@(_preview.CanQueue ? Severity.Info : Severity.Warning)" Variant="Variant.Outlined" Class="mt-3">
                         <b>@(_preview.CanQueue ? $"{_preview.SelectedFileCount} file(s) selected" : "Nothing queued")</b><br />
                         @_preview.Message
+                        @if (_preview.RequiresCodecScan)
+                        {
+                            <div class="mt-2">
+                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.DocumentScanner"
+                                           Disabled="@(_metadataQueueing || SelectedScanFileCount == 0)"
+                                           OnClick="QueueSelectedCodecScansAsync">
+                                    @(_metadataQueueing ? "Queueing…" : SelectedScanFileCount == 0 ? "Scan already queued" : "Scan codec metadata")
+                                </MudButton>
+                            </div>
+                        }
                         @if (_preview.CanQueue)
                         {
                             <div class="mt-2">Goals: @string.Join(" + ", _preview.Goals) · Current @FormatBytes(_preview.CurrentBytes)@SavingsPreview(_preview)</div>
@@ -518,6 +529,8 @@ else
     private string ScanButtonLabel => ScanScopeFileCount == 1
         ? "Scan 1 file"
         : $"Scan {ScanScopeFileCount} files";
+    private int SelectedScanFileCount => _preview?.CodecScanFileIds.Count
+        ?? _selected?.UnknownCodecCount ?? 0;
 
     private List<StorageOptimizationTitleDto> FilteredTitles => _titles
         .Where(item => string.IsNullOrWhiteSpace(_search)
@@ -637,7 +650,7 @@ else
             while (await _activityTimer!.WaitForNextTickAsync(cancellationToken))
             {
                 if (_workspaceTab == 2) await InvokeAsync(LoadActivityAsync);
-                else if (_workspaceTab == 0
+                else if ((_workspaceTab is 0 or 1)
                          && _report.MetadataScanQueuedCount + _report.MetadataScanInProgressCount > 0)
                     await InvokeAsync(LoadEfficiencyReportAsync);
             }
@@ -662,7 +675,18 @@ else
     {
         if (_reportLoading) return;
         _reportLoading = true;
-        try { _report = await Optimizer.GetEfficiencyReportAsync(); }
+        try
+        {
+            _report = await Optimizer.GetEfficiencyReportAsync();
+            if (_workspaceTab == 1 && _selected is not null)
+            {
+                var selectedId = _selected.RequestId;
+                _titles = await Optimizer.GetTitlesAsync();
+                _selected = _titles.FirstOrDefault(item => item.RequestId == selectedId);
+                if (_selected is not null && _preview?.RequiresCodecScan == true)
+                    _preview = await Optimizer.PreviewAsync(BuildRequest());
+            }
+        }
         catch (Exception ex) { await Toasts.ShowErrorAsync($"Could not load the efficiency report: {ex.Message}"); }
         finally
         {
@@ -671,13 +695,26 @@ else
         }
     }
 
-    private async Task QueueCodecScansAsync()
+    private Task QueueCodecScansAsync() => QueueCodecScansAsync(new MediaMetadataScanRequestDto
+        {
+            RequestIds = ScanScopeTitles.Select(item => item.RequestId).Distinct().ToList()
+        }, ScanScopeFileCount,
+        "the current report scope");
+
+    private Task QueueSelectedCodecScansAsync() => _selected is null
+        ? Task.CompletedTask
+        : QueueCodecScansAsync(new MediaMetadataScanRequestDto
+        {
+            ImportedFileIds = _preview?.CodecScanFileIds.ToList() ?? []
+        }, SelectedScanFileCount, $"“{_selected.Title}”");
+
+    private async Task QueueCodecScansAsync(MediaMetadataScanRequestDto request, int count, string scope)
     {
-        if (_metadataQueueing || ScanScopeFileCount == 0) return;
-        var count = ScanScopeFileCount;
+        if (_metadataQueueing || count == 0
+            || (request.RequestIds.Count == 0 && request.ImportedFileIds.Count == 0)) return;
         var confirmed = await Dialogs.ShowMessageBox(
             "Read missing codec metadata?",
-            $"Queue a read-only MediaInfo inspection for {count} file{(count == 1 ? string.Empty : "s")}? "
+            $"Queue a read-only MediaInfo inspection for {count} file{(count == 1 ? string.Empty : "s")} in {scope}? "
             + "This does not download, rename, move, replace, or alter any media.",
             yesText: "Queue scan", cancelText: "Cancel");
         if (confirmed != true) return;
@@ -685,11 +722,9 @@ else
         _metadataQueueing = true;
         try
         {
-            var result = await MetadataScans.QueueAsync(new MediaMetadataScanRequestDto
-            {
-                RequestIds = ScanScopeTitles.Select(item => item.RequestId).Distinct().ToList()
-            });
+            var result = await MetadataScans.QueueAsync(request);
             if (result.Success) await Toasts.ShowSuccessAsync(result.Message);
+            else if (result.AlreadyRunningCount > 0) await Toasts.ShowInfoAsync(result.Message);
             else await Toasts.ShowErrorAsync(result.Message);
             await LoadEfficiencyReportAsync();
         }

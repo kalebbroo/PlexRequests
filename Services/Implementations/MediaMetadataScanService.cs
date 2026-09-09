@@ -5,7 +5,6 @@ using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
-using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
@@ -22,7 +21,6 @@ public interface IMediaMetadataScanService
 /// changing the contents of a library file.</summary>
 public sealed class MediaMetadataScanService(
     AppDbContext db,
-    IReleaseParser parser,
     ILogger<MediaMetadataScanService> logger) : IMediaMetadataScanService
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
@@ -34,11 +32,18 @@ public sealed class MediaMetadataScanService(
         CancellationToken ct = default)
     {
         var requestIds = (request.RequestIds ?? []).Where(id => id > 0).Distinct().Take(200).ToList();
-        if (requestIds.Count == 0)
+        var importedFileIds = (request.ImportedFileIds ?? []).Where(id => id > 0).Distinct().Take(2000).ToList();
+        if (requestIds.Count == 0 && importedFileIds.Count == 0)
             return new MediaMetadataScanQueueResultDto { Message = "Choose at least one title with missing codec data." };
 
+        var fileRequestIds = importedFileIds.Count == 0
+            ? []
+            : await db.ImportedFiles.AsNoTracking()
+                .Where(file => importedFileIds.Contains(file.Id) && file.FulfillmentJob != null)
+                .Select(file => file.FulfillmentJob!.MediaRequestId).Distinct().ToListAsync(ct);
+        var scopeRequestIds = requestIds.Concat(fileRequestIds).Distinct().ToList();
         var activeRequestIds = await db.FulfillmentJobs.AsNoTracking()
-            .Where(job => requestIds.Contains(job.MediaRequestId) && ActiveJobs.Contains(job.Status))
+            .Where(job => scopeRequestIds.Contains(job.MediaRequestId) && ActiveJobs.Contains(job.Status))
             .Select(job => job.MediaRequestId).Distinct().ToListAsync(ct);
         var active = activeRequestIds.ToHashSet();
         var files = await db.ImportedFiles
@@ -46,14 +51,16 @@ public sealed class MediaMetadataScanService(
             .ThenInclude(job => job!.MediaRequest)
             .Where(file => file.FileType == "video"
                 && file.FulfillmentJob != null
-                && requestIds.Contains(file.FulfillmentJob.MediaRequestId))
+                && scopeRequestIds.Contains(file.FulfillmentJob.MediaRequestId))
             .ToListAsync(ct);
         var current = files.GroupBy(file => file.DestinationPath, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.OrderByDescending(file => file.ImportedAt)
                 .ThenByDescending(file => file.Id).First())
+            .Where(file => requestIds.Contains(file.FulfillmentJob!.MediaRequestId)
+                || importedFileIds.Contains(file.Id))
             .Where(file => file.FulfillmentJob?.MediaRequest is
                 { Status: RequestStatus.Available, MediaType: not MediaType.Music })
-            .Where(IsCodecUnknown)
+            .Where(file => !HasObservedCodec(file))
             .ToList();
 
         var now = DateTime.UtcNow;
@@ -202,23 +209,15 @@ public sealed class MediaMetadataScanService(
         return true;
     }
 
-    private bool IsCodecUnknown(ImportedFileEntity file)
+    private static bool HasObservedCodec(ImportedFileEntity file)
     {
-        string? observedCodec = null;
         try
         {
-            if (!string.IsNullOrWhiteSpace(file.MediaTracksJson))
-            {
-                var tracks = JsonSerializer.Deserialize<MediaTrackSummaryDto>(file.MediaTracksJson, Json);
-                observedCodec = tracks?.Video.FirstOrDefault()?.Codec;
-            }
+            if (string.IsNullOrWhiteSpace(file.MediaTracksJson)) return false;
+            var tracks = JsonSerializer.Deserialize<MediaTrackSummaryDto>(file.MediaTracksJson, Json);
+            return VideoCodecPolicy.Normalize(tracks?.Video.FirstOrDefault()?.Codec) is not null;
         }
-        catch (JsonException) { }
-
-        var parsedCodec = string.IsNullOrWhiteSpace(file.ReleaseName)
-            ? null
-            : parser.Parse(file.ReleaseName).Codec;
-        return VideoCodecPolicy.Normalize(observedCodec ?? parsedCodec) is null;
+        catch (JsonException) { return false; }
     }
 
     private static string? Trim(string? value, int max) => string.IsNullOrWhiteSpace(value)
