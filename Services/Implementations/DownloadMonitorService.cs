@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Abstractions;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 
@@ -46,10 +48,12 @@ public sealed class DownloadMonitorService(
         var persistedByJob = persistedTransfers
             .GroupBy(transfer => transfer.FulfillmentJobId)
             .ToDictionary(group => group.Key, group => group.ToList());
+        var formatNames = await db.CustomFormats.AsNoTracking().ToDictionaryAsync(format => format.Id, format => format.Name);
 
         var views = new List<DownloadJobView>(jobs.Count);
         foreach (var j in jobs)
         {
+            var optimization = ParseOptimization(j.StorageOptimizationPolicyJson);
             var isActive = Array.IndexOf(Active, j.Status) >= 0;
             var transfers = isActive ? telemetry.Get(j.Id).ToList() : new List<DownloadTransferTelemetry>();
             // The in-memory snapshot is the freshest source, but it is deliberately lost on a web/worker
@@ -72,7 +76,14 @@ public sealed class DownloadMonitorService(
                 LastError = j.LastError,
                 UpdatedAt = j.CompletedAt ?? j.LastUpdatedAt ?? j.CreatedAt,
                 IsActive = isActive,
-                Stage = StageLabel(j.Status, transfers),
+                Stage = StageLabel(j.Status, transfers, optimization is not null),
+                IsStorageOptimization = optimization is not null,
+                OptimizationTargetFileCount = optimization?.Targets.Count ?? 0,
+                OptimizationSeasons = optimization?.Targets.SelectMany(target => target.EpisodeCoverage)
+                    .Select(episode => episode.Season).Distinct().Order().ToList() ?? [],
+                OptimizationGoals = optimization is null ? [] : DescribeGoals(optimization, formatNames),
+                OptimizationOriginalBytes = optimization?.CurrentBytes,
+                OptimizationReplacementBytes = j.StorageOptimizationReplacementBytes,
                 Transfers = transfers
             });
         }
@@ -139,20 +150,56 @@ public sealed class DownloadMonitorService(
     };
 
     // Human lifecycle label spanning approved → downloading → renaming/moving → available.
-    private static string StageLabel(FulfillmentStatus status, List<DownloadTransferTelemetry> transfers) => status switch
+    private static string StageLabel(FulfillmentStatus status, List<DownloadTransferTelemetry> transfers,
+        bool optimization) => (status, optimization) switch
+        {
+            (FulfillmentStatus.Queued, true) => "Optimization queued",
+            (FulfillmentStatus.Claimed, true) => "Searching for optimized release",
+            (FulfillmentStatus.Downloading, true) when transfers.Any(t => t.Stage == DownloadTransferStage.Importing)
+                => "Verifying & replacing",
+            (FulfillmentStatus.Downloading, true) when transfers.Count > 0
+                                                           && transfers.All(t => t.Stage is DownloadTransferStage.Finishing
+                                                               or DownloadTransferStage.Imported)
+                => "Verifying replacement",
+            (FulfillmentStatus.Downloading, true) => "Downloading replacement",
+            (FulfillmentStatus.Deferred, true) => "Waiting for matching release",
+            (FulfillmentStatus.Completed, true) => "Optimized",
+            (FulfillmentStatus.PartiallyCompleted, true) => "Waiting for remaining replacements",
+            (FulfillmentStatus.Failed, true) => "Optimization needs attention",
+            (FulfillmentStatus.Cancelled, true) => "Optimization cancelled",
+            (FulfillmentStatus.Queued, false) => "Approved — queued",
+            (FulfillmentStatus.Claimed, false) => "Starting download",
+            (FulfillmentStatus.Downloading, false) when transfers.Any(t => t.Stage == DownloadTransferStage.Importing)
+                => "Renaming & moving",
+            (FulfillmentStatus.Downloading, false) when transfers.Count > 0
+                                                            && transfers.All(t => t.Stage is DownloadTransferStage.Finishing
+                                                                or DownloadTransferStage.Imported)
+                => "Finishing",
+            (FulfillmentStatus.Downloading, false) => "Downloading",
+            (FulfillmentStatus.Deferred, false) => "Waiting for a release",
+            (FulfillmentStatus.Completed, false) => "Available",
+            (FulfillmentStatus.PartiallyCompleted, false) => "Partially available",
+            (FulfillmentStatus.Failed, false) => "Failed",
+            (FulfillmentStatus.Cancelled, false) => "Cancelled",
+            _ => status.ToString()
+        };
+
+    private static StorageOptimizationPolicyDto? ParseOptimization(string? json)
     {
-        FulfillmentStatus.Queued => "Approved — queued",
-        FulfillmentStatus.Claimed => "Starting download",
-        FulfillmentStatus.Downloading when transfers.Any(t => t.Stage == DownloadTransferStage.Importing)
-            => "Renaming & moving",
-        FulfillmentStatus.Downloading when transfers.Count > 0 && transfers.All(t => t.Stage is DownloadTransferStage.Finishing or DownloadTransferStage.Imported)
-            => "Finishing",
-        FulfillmentStatus.Downloading => "Downloading",
-        FulfillmentStatus.Deferred => "Waiting for a release",
-        FulfillmentStatus.Completed => "Available",
-        FulfillmentStatus.PartiallyCompleted => "Partially available",
-        FulfillmentStatus.Failed => "Failed",
-        FulfillmentStatus.Cancelled => "Cancelled",
-        _ => status.ToString()
-    };
+        try { return string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<StorageOptimizationPolicyDto>(json); }
+        catch (JsonException) { return null; }
+    }
+
+    private static List<string> DescribeGoals(StorageOptimizationPolicyDto policy,
+        IReadOnlyDictionary<int, string> formatNames)
+    {
+        var goals = new List<string>();
+        if (!string.IsNullOrWhiteSpace(policy.RequiredVideoCodec))
+            goals.Add(VideoCodecPolicy.Display(policy.RequiredVideoCodec));
+        if (policy.TargetQuality != Quality.Any) goals.Add(policy.TargetQuality.Label());
+        goals.AddRange(policy.RequiredCustomFormatIds.Distinct()
+            .Select(id => formatNames.TryGetValue(id, out var name) ? name : $"Format #{id}"));
+        if (policy.MinimumSavingsPercent > 0) goals.Add($"Save at least {policy.MinimumSavingsPercent}%");
+        return goals;
+    }
 }

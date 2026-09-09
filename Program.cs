@@ -1318,13 +1318,19 @@ app.MapPost("/api/requests/{id:int}/fulfilled", async (int id, HttpContext ctx, 
 });
 
 // Worker reports unrecoverable failure -> mark Failed (needs admin attention), close the job, notify admins.
-app.MapPost("/api/requests/{id:int}/failed", async (int id, FailRequest body, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify) =>
+app.MapPost("/api/requests/{id:int}/failed", async (int id, FailRequest body, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Implementations.IStorageOptimizationService optimizer, PlexRequestsHosted.Services.Abstractions.INotificationService notify) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == id);
     if (req is null) return Results.NotFound();
 
     var reason = string.IsNullOrWhiteSpace(body.Reason) ? "Fulfillment failed" : body.Reason!;
+    // An optimization is maintenance on media that is already available. Even if an old or future worker
+    // reports its terminal error through the generic endpoint, never turn the underlying request/library
+    // into Failed. Keep the result in optimization history where an admin can retry it deliberately.
+    if (await optimizer.RecordFailureAsync(id, reason))
+        return Results.Ok(new { req.Id, status = req.Status.ToString(), optimization = true });
+
     req.Status = RequestStatus.Failed;
     req.DenialReason = reason.Length > 1000 ? reason[..1000] : reason;
     await db.SaveChangesAsync();
@@ -1435,6 +1441,11 @@ app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpConte
     }
     if (superseded.Count > 0) { db.ImportedFiles.RemoveRange(superseded); await db.SaveChangesAsync(); }
 
+    if (!string.IsNullOrWhiteSpace(job.StorageOptimizationPolicyJson))
+        job.StorageOptimizationReplacementBytes = newFiles
+            .Where(file => string.Equals(file.FileType, "video", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(file => file.DestinationPath, StringComparer.OrdinalIgnoreCase)
+            .Sum(group => Math.Max(0, group.OrderByDescending(file => file.Id).First().SizeBytes));
     job.Status = FulfillmentStatus.Completed;
     job.Progress = 100;
     job.CompletedAt = DateTime.UtcNow;

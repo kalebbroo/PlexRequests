@@ -106,6 +106,10 @@
                         <div class="download-title-row">
                             <div>
                                 <span class="stage-pill @StageClass(job)">@job.Stage</span>
+                                @if (job.IsStorageOptimization)
+                                {
+                                    <span class="optimization-pill"><MudIcon Icon="@Icons.Material.Filled.Compress" Size="Size.Small" /> Storage optimization</span>
+                                }
                                 <MudText Typo="Typo.subtitle1" HtmlTag="h4">@job.Title@(job.Year is int y ? $" ({y})" : "")</MudText>
                                 <div class="download-requester">
                                     @if (!string.IsNullOrWhiteSpace(job.RequestedBy)) { <span>Requested by @job.RequestedBy</span> }
@@ -120,9 +124,34 @@
                             <span class="@StageClass(job)" style="width:@($"{job.Progress}%")"></span>
                         </div>
 
-                        @if (!string.IsNullOrWhiteSpace(job.LastError) && job.Status is FulfillmentStatus.Failed or FulfillmentStatus.PartiallyCompleted)
+                        @if (job.IsStorageOptimization)
                         {
-                            <MudAlert Severity="@(job.Status == FulfillmentStatus.Failed ? Severity.Error : Severity.Warning)" dense="true" Class="download-alert">@job.LastError</MudAlert>
+                            <div class="optimization-summary">
+                                <div>
+                                    <span>Scope</span>
+                                    <strong>@OptimizationScope(job)</strong>
+                                </div>
+                                <div class="optimization-goals">
+                                    <span>Required result</span>
+                                    <p>@string.Join(" + ", job.OptimizationGoals)</p>
+                                </div>
+                                @if (job.OptimizationOriginalBytes is long original)
+                                {
+                                    <div>
+                                        <span>Storage</span>
+                                        <strong>@OptimizationStorage(job, original)</strong>
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        @if (!string.IsNullOrWhiteSpace(job.LastError)
+                            && job.Status is FulfillmentStatus.Failed or FulfillmentStatus.PartiallyCompleted
+                                or FulfillmentStatus.Deferred or FulfillmentStatus.Cancelled)
+                        {
+                            <MudAlert Severity="@(job.Status == FulfillmentStatus.Failed ? Severity.Error : Severity.Warning)" dense="true" Class="download-alert">
+                                <b>@(job.Status == FulfillmentStatus.Deferred ? "Last search: " : string.Empty)</b>@job.LastError
+                            </MudAlert>
                         }
 
                         @if (job.Transfers.Count > 0)
@@ -309,6 +338,23 @@
     }
 
     private static string Plural(int count, string singular, string plural) => count == 1 ? singular : plural;
+
+    private static string OptimizationScope(DownloadJobView job)
+    {
+        var files = $"{job.OptimizationTargetFileCount} {Plural(job.OptimizationTargetFileCount, "file", "files")}";
+        if (job.OptimizationSeasons.Count == 0) return files;
+        var seasons = string.Join(", ", job.OptimizationSeasons.Select(season => season == 0 ? "Specials" : $"S{season:00}"));
+        return $"{files} · {seasons}";
+    }
+
+    private static string OptimizationStorage(DownloadJobView job, long original)
+    {
+        if (job.OptimizationReplacementBytes is not long replacement) return $"{FmtSize(original)} original";
+        var difference = original - replacement;
+        return difference >= 0
+            ? $"{FmtSize(original)} → {FmtSize(replacement)} · {FmtSize(difference)} saved"
+            : $"{FmtSize(original)} → {FmtSize(replacement)} · {FmtSize(-difference)} larger";
+    }
 
     public void Dispose()
     {

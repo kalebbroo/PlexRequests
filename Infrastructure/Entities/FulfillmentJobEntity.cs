@@ -117,6 +117,11 @@ public class FulfillmentJobEntity
     /// scoped storage optimization. Null for ordinary fulfillment and automatic quality upgrades.</summary>
     public string? StorageOptimizationPolicyJson { get; set; }
 
+    /// <summary>Actual bytes in the verified replacement video files. The original byte count remains in
+    /// <see cref="StorageOptimizationPolicyJson"/>; persisting the result keeps savings history accurate even
+    /// when a later optimization supersedes these import-audit rows.</summary>
+    public long? StorageOptimizationReplacementBytes { get; set; }
+
     /// <summary>Serialized SeriesEpisodeOrderProfileDto captured at enqueue. Imports and ranking must use
     /// this snapshot rather than mutable admin configuration.</summary>
     public string? EpisodeOrderProfileJson { get; set; }

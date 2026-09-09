@@ -16,6 +16,10 @@ public interface IStorageOptimizationService
     Task<List<StorageOptimizationTitleDto>> GetTitlesAsync();
     Task<StorageOptimizationPreviewDto> PreviewAsync(StorageOptimizationRequestDto request);
     Task<StorageOptimizationQueueResultDto> QueueAsync(StorageOptimizationRequestDto request);
+    Task<List<StorageOptimizationActivityDto>> GetActivityAsync(int take = 50);
+    Task<StorageOptimizationActionResultDto> CancelAsync(int jobId);
+    Task<StorageOptimizationActionResultDto> RetryAsync(int jobId);
+    Task<bool> RecordFailureAsync(int requestId, string reason);
 }
 
 /// <summary>
@@ -93,6 +97,152 @@ public sealed class StorageOptimizationService(
             {
                 Message = "This title already has active download or replacement work. Try again after it finishes."
             };
+    }
+
+    public async Task<List<StorageOptimizationActivityDto>> GetActivityAsync(int take = 50)
+    {
+        var jobs = await db.FulfillmentJobs.AsNoTracking().Include(job => job.MediaRequest)
+            .Where(job => job.StorageOptimizationPolicyJson != null)
+            .OrderByDescending(job => job.Id)
+            .Take(Math.Clamp(take, 1, 200))
+            .ToListAsync();
+        var formatNames = (await customFormats.GetAllAsync()).ToDictionary(format => format.Id, format => format.Name);
+        return jobs.Select(job =>
+        {
+            var policy = ParsePolicy(job.StorageOptimizationPolicyJson);
+            return new StorageOptimizationActivityDto
+            {
+                JobId = job.Id,
+                RequestId = job.MediaRequestId,
+                Title = job.Title,
+                Year = job.Year,
+                MediaType = job.MediaType,
+                PosterUrl = job.MediaRequest?.PosterUrl,
+                Status = job.Status,
+                Stage = ActivityStage(job.Status, job.Progress),
+                Progress = job.Progress,
+                Attempts = job.Attempts,
+                DeferCount = job.DeferCount,
+                TargetFileCount = policy?.Targets.Count ?? 0,
+                Seasons = policy?.Targets.SelectMany(target => target.EpisodeCoverage)
+                    .Select(episode => episode.Season).Distinct().Order().ToList() ?? [],
+                Goals = policy is null ? [] : DescribeGoals(policy, formatNames),
+                OriginalBytes = policy?.CurrentBytes ?? 0,
+                ReplacementBytes = job.StorageOptimizationReplacementBytes,
+                LastError = job.LastError,
+                CreatedAt = job.CreatedAt,
+                UpdatedAt = job.CompletedAt ?? job.LastUpdatedAt ?? job.CreatedAt,
+                NextRetryAt = job.NextRetryAt,
+                CanCancel = job.Status is FulfillmentStatus.Queued or FulfillmentStatus.Deferred,
+                CanRetry = job.Status is FulfillmentStatus.Deferred or FulfillmentStatus.Failed
+                    or FulfillmentStatus.Cancelled
+            };
+        }).ToList();
+    }
+
+    public async Task<StorageOptimizationActionResultDto> CancelAsync(int jobId)
+    {
+        var now = DateTime.UtcNow;
+        var changed = await db.FulfillmentJobs
+            .Where(job => job.Id == jobId && job.StorageOptimizationPolicyJson != null
+                          && (job.Status == FulfillmentStatus.Queued || job.Status == FulfillmentStatus.Deferred))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(job => job.Status, FulfillmentStatus.Cancelled)
+                .SetProperty(job => job.LastError, "Cancelled by admin; original media was retained")
+                .SetProperty(job => job.CompletedAt, now)
+                .SetProperty(job => job.LastUpdatedAt, now)
+                .SetProperty(job => job.NextRetryAt, (DateTime?)null)
+                .SetProperty(job => job.ClaimedBy, (string?)null)
+                .SetProperty(job => job.Progress, 0));
+        return changed == 1
+            ? new StorageOptimizationActionResultDto
+            {
+                Success = true,
+                Message = "Optimization cancelled. Existing library files were left in place."
+            }
+            : new StorageOptimizationActionResultDto
+            {
+                Message = "This optimization is already transferring or has finished, so it was not cancelled."
+            };
+    }
+
+    public async Task<StorageOptimizationActionResultDto> RetryAsync(int jobId)
+    {
+        var job = await db.FulfillmentJobs.Include(item => item.MediaRequest)
+            .FirstOrDefaultAsync(item => item.Id == jobId && item.StorageOptimizationPolicyJson != null);
+        if (job is null || job.Status is not (FulfillmentStatus.Deferred or FulfillmentStatus.Failed
+                or FulfillmentStatus.Cancelled))
+            return new StorageOptimizationActionResultDto { Message = "This optimization is not retryable." };
+
+        var anotherActive = await db.FulfillmentJobs.AnyAsync(item => item.Id != job.Id
+            && item.MediaRequestId == job.MediaRequestId && ActiveStatuses.Contains(item.Status));
+        if (anotherActive)
+            return new StorageOptimizationActionResultDto
+            {
+                Message = "Another download or replacement already owns this title. Retry after it finishes."
+            };
+
+        job.Status = FulfillmentStatus.Queued;
+        job.Progress = 0;
+        job.LastError = null;
+        job.CompletedAt = null;
+        job.NextRetryAt = null;
+        job.ClaimedBy = null;
+        job.ClaimedAt = null;
+        job.LastUpdatedAt = DateTime.UtcNow;
+        // An optimization starts from an available title. Repair the old generic failure behavior if this
+        // row was ever sent through that endpoint, without changing first-time fulfillment requests.
+        if (job.MediaRequest is { } request && request.Status == RequestStatus.Failed)
+        {
+            request.Status = RequestStatus.Available;
+            request.DenialReason = null;
+            request.AvailableAt ??= DateTime.UtcNow;
+        }
+        try
+        {
+            await db.SaveChangesAsync();
+            return new StorageOptimizationActionResultDto
+            {
+                Success = true,
+                Message = "Optimization queued for another search."
+            };
+        }
+        catch (DbUpdateException)
+        {
+            db.ChangeTracker.Clear();
+            return new StorageOptimizationActionResultDto
+            {
+                Message = "Another download or replacement claimed this title first."
+            };
+        }
+    }
+
+    /// <summary>Keep generic worker failures from changing an already-available request. This compatibility
+    /// boundary matters while workers report failures by request id rather than by optimization job id.</summary>
+    public async Task<bool> RecordFailureAsync(int requestId, string reason)
+    {
+        var job = await db.FulfillmentJobs.Include(item => item.MediaRequest)
+            .Where(item => item.MediaRequestId == requestId && item.StorageOptimizationPolicyJson != null
+                           && ActiveStatuses.Contains(item.Status))
+            .OrderByDescending(item => item.Id)
+            .FirstOrDefaultAsync();
+        if (job is null) return false;
+
+        var now = DateTime.UtcNow;
+        job.Status = FulfillmentStatus.Failed;
+        job.LastError = reason.Length > 2000 ? reason[..2000] : reason;
+        job.CompletedAt = now;
+        job.LastUpdatedAt = now;
+        job.ClaimedBy = null;
+        job.NextRetryAt = null;
+        if (job.MediaRequest is { } request)
+        {
+            request.Status = RequestStatus.Available;
+            request.DenialReason = null;
+            request.AvailableAt ??= now;
+        }
+        await db.SaveChangesAsync();
+        return true;
     }
 
     private async Task<BuiltOptimization> BuildAsync(StorageOptimizationRequestDto input)
@@ -268,6 +418,39 @@ public sealed class StorageOptimizationService(
             .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase).ToList();
         return string.Join(" · ", counts.Select(group => counts.Count == 1 ? group.Key : $"{group.Key} ×{group.Count()}"));
     }
+
+    private static StorageOptimizationPolicyDto? ParsePolicy(string? json)
+    {
+        try { return string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<StorageOptimizationPolicyDto>(json, Json); }
+        catch (JsonException) { return null; }
+    }
+
+    private static List<string> DescribeGoals(StorageOptimizationPolicyDto policy,
+        IReadOnlyDictionary<int, string> formatNames)
+    {
+        var goals = new List<string>();
+        if (!string.IsNullOrWhiteSpace(policy.RequiredVideoCodec))
+            goals.Add(VideoCodecPolicy.Display(policy.RequiredVideoCodec));
+        if (policy.TargetQuality != Quality.Any) goals.Add(policy.TargetQuality.Label());
+        goals.AddRange(policy.RequiredCustomFormatIds.Distinct()
+            .Select(id => formatNames.TryGetValue(id, out var name) ? name : $"Format #{id}"));
+        if (policy.MinimumSavingsPercent > 0) goals.Add($"Save at least {policy.MinimumSavingsPercent}%");
+        return goals;
+    }
+
+    private static string ActivityStage(FulfillmentStatus status, int progress) => status switch
+    {
+        FulfillmentStatus.Queued => "Queued to optimize",
+        FulfillmentStatus.Claimed => "Searching for a replacement",
+        FulfillmentStatus.Downloading when progress >= 100 => "Verifying and replacing",
+        FulfillmentStatus.Downloading => "Downloading replacement",
+        FulfillmentStatus.Deferred => "Waiting for a matching release",
+        FulfillmentStatus.Completed => "Optimization completed",
+        FulfillmentStatus.PartiallyCompleted => "Waiting for remaining files",
+        FulfillmentStatus.Failed => "Needs attention",
+        FulfillmentStatus.Cancelled => "Cancelled",
+        _ => status.ToString()
+    };
 
     private static MediaRequestDto ToRequest(MediaRequestEntity request) => new()
     {
