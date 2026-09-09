@@ -24,7 +24,8 @@ public sealed class MediaMetadataScanService(
     ILogger<MediaMetadataScanService> logger) : IMediaMetadataScanService
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
-    private static readonly TimeSpan ClaimTimeout = TimeSpan.FromHours(2);
+    private static readonly TimeSpan ClaimTimeout = TimeSpan.FromMinutes(15);
+    private const int MaxAutomaticAttempts = 3;
     private static readonly FulfillmentStatus[] ActiveJobs =
         [FulfillmentStatus.Queued, FulfillmentStatus.Claimed, FulfillmentStatus.Downloading, FulfillmentStatus.Deferred];
 
@@ -87,6 +88,9 @@ public sealed class MediaMetadataScanService(
             file.MediaMetadataScanClaimedBy = null;
             file.MediaMetadataScanCompletedAt = null;
             file.MediaMetadataScanDetail = null;
+            // An explicit administrator retry starts a fresh bounded attempt budget. Without this reset,
+            // a file that exhausted automatic retries could never receive those protections again.
+            file.MediaMetadataScanAttempts = 0;
             queued++;
         }
 
@@ -124,6 +128,8 @@ public sealed class MediaMetadataScanService(
                     && (file.MediaMetadataScanStatus == MediaMetadataScanStatus.Queued
                         || (file.MediaMetadataScanStatus == MediaMetadataScanStatus.Claimed
                             && file.MediaMetadataScanClaimedAt < staleBefore))
+                    && (file.MediaMetadataScanRequestedAt == null
+                        || file.MediaMetadataScanRequestedAt <= now)
                     && !db.ImportedFiles.Any(later => later.DestinationPath == file.DestinationPath
                         && later.Id > file.Id)
                     && !db.FulfillmentJobs.Any(active => active.MediaRequestId == file.FulfillmentJob!.MediaRequestId
@@ -139,6 +145,8 @@ public sealed class MediaMetadataScanService(
                     && (file.MediaMetadataScanStatus == MediaMetadataScanStatus.Queued
                         || (file.MediaMetadataScanStatus == MediaMetadataScanStatus.Claimed
                             && file.MediaMetadataScanClaimedAt < staleBefore))
+                    && (file.MediaMetadataScanRequestedAt == null
+                        || file.MediaMetadataScanRequestedAt <= now)
                     && !db.ImportedFiles.Any(later => later.DestinationPath == file.DestinationPath
                         && later.Id > file.Id)
                     && !db.FulfillmentJobs.Any(active => active.MediaRequestId == file.FulfillmentJob!.MediaRequestId
@@ -184,20 +192,43 @@ public sealed class MediaMetadataScanService(
         var video = report.MediaTracks?.Video.FirstOrDefault();
         var succeeded = report.Succeeded && report.MediaTracks?.HasVideo == true
             && VideoCodecPolicy.Normalize(video?.Codec) is not null;
+        var retrying = !succeeded && report.Retryable
+            && row.MediaMetadataScanAttempts < MaxAutomaticAttempts;
         row.MediaMetadataScanStatus = succeeded
             ? MediaMetadataScanStatus.Succeeded
-            : MediaMetadataScanStatus.Failed;
+            : retrying ? MediaMetadataScanStatus.Queued : MediaMetadataScanStatus.Failed;
         row.MediaMetadataScanClaimedAt = null;
         row.MediaMetadataScanClaimedBy = null;
-        row.MediaMetadataScanCompletedAt = DateTime.UtcNow;
-        row.MediaMetadataScanDetail = Trim(succeeded
-            ? report.Detail ?? $"Detected {VideoCodecPolicy.Display(video!.Codec)}"
-            : report.Detail ?? "MediaInfo did not return a readable video codec", 2000);
+        var now = DateTime.UtcNow;
+        row.MediaMetadataScanCompletedAt = retrying ? null : now;
+        if (retrying)
+        {
+            var delay = RetryDelay(row.MediaMetadataScanAttempts);
+            row.MediaMetadataScanRequestedAt = now + delay;
+            row.MediaMetadataScanDetail = Trim(
+                $"Temporary inspection failure; automatic attempt {row.MediaMetadataScanAttempts + 1} "
+                + $"of {MaxAutomaticAttempts} will run after {delay.TotalMinutes:0} minute"
+                + (delay == TimeSpan.FromMinutes(1) ? string.Empty : "s")
+                + $": {report.Detail ?? "library infrastructure was unavailable"}", 2000);
+        }
+        else
+        {
+            row.MediaMetadataScanDetail = Trim(succeeded
+                ? report.Detail ?? $"Detected {VideoCodecPolicy.Display(video!.Codec)}"
+                : report.Detail ?? "MediaInfo did not return a readable video codec", 2000);
+        }
         if (succeeded)
         {
             row.MediaTracksJson = JsonSerializer.Serialize(report.MediaTracks, Json);
             var quality = VideoResolutionPolicy.FromDimensions(video!.Width, video.Height);
             if (quality != Quality.Any) row.ResolutionHeight = (int)quality;
+        }
+        else if (retrying)
+        {
+            logger.LogWarning("Codec metadata inspection for imported file {FileId} was temporarily unavailable; "
+                              + "attempt {NextAttempt} of {MaxAttempts} is delayed until {RetryAt}: {Detail}",
+                row.Id, row.MediaMetadataScanAttempts + 1, MaxAutomaticAttempts,
+                row.MediaMetadataScanRequestedAt, report.Detail);
         }
         else
         {
@@ -219,6 +250,12 @@ public sealed class MediaMetadataScanService(
         }
         catch (JsonException) { return false; }
     }
+
+    private static TimeSpan RetryDelay(int completedAttempts) => completedAttempts switch
+    {
+        <= 1 => TimeSpan.FromMinutes(1),
+        _ => TimeSpan.FromMinutes(5)
+    };
 
     private static string? Trim(string? value, int max) => string.IsNullOrWhiteSpace(value)
         ? null
