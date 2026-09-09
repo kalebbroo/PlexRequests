@@ -2226,6 +2226,49 @@ public sealed class StorageOptimizationTitleDto
     public List<StorageOptimizationSeasonDto> Seasons { get; set; } = new();
 }
 
+/// <summary>A read-only view of measured library files. Candidate bytes are storage under review, not a
+/// promised saving; an administrator must still preview one explicit title before anything is queued.</summary>
+public sealed class LibraryEfficiencyReportDto
+{
+    public DateTime GeneratedAt { get; set; }
+    public List<LibraryEfficiencyTitleDto> Titles { get; set; } = new();
+    public int TitleCount => Titles.Count;
+    public int FileCount => Titles.Sum(title => title.FileCount);
+    public long TotalBytes => Titles.Sum(title => title.SizeBytes);
+    public int ModernCodecFileCount => Titles.Sum(title => title.ModernCodecFileCount);
+    public long ModernCodecBytes => Titles.Sum(title => title.ModernCodecBytes);
+    public int LegacyCodecFileCount => Titles.Sum(title => title.LegacyCodecFileCount);
+    public long LegacyCodecBytes => Titles.Sum(title => title.LegacyCodecBytes);
+    public int UnknownCodecFileCount => Titles.Sum(title => title.UnknownCodecFileCount);
+    public long UnknownCodecBytes => Titles.Sum(title => title.UnknownCodecBytes);
+    public int KnownCandidateTitleCount => Titles.Count(title => title.LegacyCodecFileCount > 0);
+}
+
+public sealed class LibraryEfficiencyTitleDto
+{
+    public int RequestId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public int? Year { get; set; }
+    public MediaType MediaType { get; set; }
+    public bool IsAnime { get; set; }
+    public string? PosterUrl { get; set; }
+    public List<string> Libraries { get; set; } = new();
+    public int FileCount { get; set; }
+    public long SizeBytes { get; set; }
+    public int ModernCodecFileCount { get; set; }
+    public long ModernCodecBytes { get; set; }
+    public int LegacyCodecFileCount { get; set; }
+    public long LegacyCodecBytes { get; set; }
+    public int UnknownCodecFileCount { get; set; }
+    public long UnknownCodecBytes { get; set; }
+    public int UltraHdFileCount { get; set; }
+    public long UltraHdBytes { get; set; }
+    public string CodecSummary { get; set; } = string.Empty;
+    public string ResolutionSummary { get; set; } = string.Empty;
+    public bool HasActiveJob { get; set; }
+    public long ReviewBytes => LegacyCodecBytes + UnknownCodecBytes;
+}
+
 public sealed class StorageOptimizationRequestDto
 {
     public int RequestId { get; set; }

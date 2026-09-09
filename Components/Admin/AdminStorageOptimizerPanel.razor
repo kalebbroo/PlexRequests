@@ -24,6 +24,134 @@ else
         <MudChip T="string" Icon="@Icons.Material.Filled.Security" Color="Color.Success" Variant="Variant.Outlined">Original stays until verified</MudChip>
     </div>
 
+    <div class="optimizer-workspace">
+    <MudTabs Elevation="0" Rounded="true" Border="true" ApplyEffectsToContainer="true"
+             ActivePanelIndex="_workspaceTab" ActivePanelIndexChanged="WorkspaceTabChanged"
+             SliderColor="Color.Primary" Class="custom-tabs custom-subtabs" PanelClass="optimizer-workspace-panel">
+    <MudTabPanel Text="Library report" Icon="@Icons.Material.Filled.Assessment">
+    <MudPaper Outlined="true" Class="pa-4 efficiency-report">
+        <div class="efficiency-heading">
+            <div>
+                <MudText Typo="Typo.subtitle1"><b>Library efficiency report</b></MudText>
+                <MudText Typo="Typo.caption" Class="text-muted">Measured import data only. Candidate storage is not an estimate of space saved.</MudText>
+            </div>
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small" Disabled="_reportLoading"
+                           OnClick="LoadEfficiencyReportAsync" aria-label="Refresh library efficiency report" />
+        </div>
+
+        @if (_reportLoading && _report.Titles.Count == 0)
+        {
+            <div class="d-flex justify-content-center py-5"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+        }
+        else if (_report.Titles.Count == 0)
+        {
+            <div class="activity-empty compact"><MudIcon Icon="@Icons.Material.Filled.Inventory2" /><strong>No imported video inventory yet</strong><span>The report appears after files are successfully imported.</span></div>
+        }
+        else
+        {
+            <div class="efficiency-filters">
+                <MudTextField T="string" @bind-Value="_reportSearch" Label="Find a title" Immediate="true"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search" />
+                <MudSelect T="string" @bind-Value="_reportLibrary" Label="Library" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="@AllLibraries">All libraries</MudSelectItem>
+                    @foreach (var library in ReportLibraries)
+                    {
+                        <MudSelectItem Value="@library">@library</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudSelect T="string" @bind-Value="_reportMedia" Label="Media" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="@AllMedia">All media</MudSelectItem>
+                    <MudSelectItem Value="@MoviesMedia">Movies</MudSelectItem>
+                    <MudSelectItem Value="@SeriesMedia">TV series</MudSelectItem>
+                    <MudSelectItem Value="@AnimeMedia">Anime</MudSelectItem>
+                </MudSelect>
+                <MudSelect T="string" @bind-Value="_reportView" Label="Show" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="@OpportunityView">Opportunities</MudSelectItem>
+                    <MudSelectItem Value="@LegacyView">Known HEVC candidates</MudSelectItem>
+                    <MudSelectItem Value="@UnknownView">Needs codec scan</MudSelectItem>
+                    <MudSelectItem Value="@EfficientView">Already HEVC / AV1</MudSelectItem>
+                    <MudSelectItem Value="@UltraHdView">4K storage</MudSelectItem>
+                    <MudSelectItem Value="@AllView">All titles</MudSelectItem>
+                </MudSelect>
+            </div>
+
+            <div class="efficiency-summary">
+                <div><MudIcon Icon="@Icons.Material.Filled.Storage" /><span><small>Measured scope</small><strong>@FormatBytes(ScopedBytes)</strong><em>@ScopedTitles.Count titles · @ScopedFileCount files</em></span></div>
+                <div><MudIcon Icon="@Icons.Material.Filled.Compress" /><span><small>Known HEVC candidates</small><strong>@FormatBytes(ScopedLegacyBytes)</strong><em>@ScopedLegacyFiles non-HEVC / AV1 files</em></span></div>
+                <div><MudIcon Icon="@Icons.Material.Filled.CheckCircle" /><span><small>HEVC / AV1 now</small><strong>@FormatBytes(ScopedModernBytes)</strong><em>@Percent(ScopedModernBytes, ScopedBytes) of measured storage</em></span></div>
+                <div><MudIcon Icon="@Icons.Material.Filled.Help" /><span><small>Needs codec scan</small><strong>@ScopedUnknownFiles files</strong><em>@FormatBytes(ScopedUnknownBytes) cannot be classified yet</em></span></div>
+            </div>
+
+            @if (ScopedBytes > 0)
+            {
+                <div class="efficiency-composition" role="img" aria-label="Storage by codec classification">
+                    @if (ScopedModernBytes > 0) { <span class="modern" style="width:@WidthPercent(ScopedModernBytes, ScopedBytes)"></span> }
+                    @if (ScopedLegacyBytes > 0) { <span class="legacy" style="width:@WidthPercent(ScopedLegacyBytes, ScopedBytes)"></span> }
+                    @if (ScopedUnknownBytes > 0) { <span class="unknown" style="width:@WidthPercent(ScopedUnknownBytes, ScopedBytes)"></span> }
+                </div>
+                <div class="efficiency-legend"><span class="modern">HEVC / AV1</span><span class="legacy">Other known codecs</span><span class="unknown">Unknown</span></div>
+            }
+
+            <div class="efficiency-results-heading">
+                <span>Showing @ReportRows.Count of @ScopedTitles.Count titles · updated @RelativeTime(_report.GeneratedAt)</span>
+                <MudSelect T="string" @bind-Value="_reportSort" Label="Sort" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="@ReviewSort">Most storage to review</MudSelectItem>
+                    <MudSelectItem Value="@LargestSort">Largest title</MudSelectItem>
+                    <MudSelectItem Value="@UltraHdSort">Most 4K storage</MudSelectItem>
+                    <MudSelectItem Value="@TitleSort">Title A–Z</MudSelectItem>
+                </MudSelect>
+            </div>
+
+            @if (ReportRows.Count == 0)
+            {
+                <div class="activity-empty compact"><MudIcon Icon="@Icons.Material.Filled.SearchOff" /><strong>No titles match these filters</strong></div>
+            }
+            else
+            {
+                <div class="efficiency-list">
+                    @foreach (var item in ReportRows)
+                    {
+                        <article class="efficiency-row" @key="item.RequestId">
+                            <div class="efficiency-title">
+                                <strong>@item.Title@(item.Year is int year ? $" ({year})" : string.Empty)</strong>
+                                <span>@MediaLabel(item) · @string.Join(", ", item.Libraries) · @item.FileCount files</span>
+                                <small>@item.ResolutionSummary · @item.CodecSummary</small>
+                            </div>
+                            <div class="efficiency-storage">
+                                <span><small>Total</small><strong>@FormatBytes(item.SizeBytes)</strong></span>
+                                <span><small>Review</small><strong>@FormatBytes(item.ReviewBytes)</strong></span>
+                                @if (item.UltraHdFileCount > 0)
+                                {
+                                    <span><small>4K+</small><strong>@FormatBytes(item.UltraHdBytes)</strong></span>
+                                }
+                            </div>
+                            <div class="efficiency-reasons">
+                                @if (item.LegacyCodecFileCount > 0)
+                                {
+                                    <span class="candidate"><MudIcon Icon="@Icons.Material.Filled.Compress" Size="Size.Small" /> @item.LegacyCodecFileCount known HEVC candidate@(item.LegacyCodecFileCount == 1 ? string.Empty : "s")</span>
+                                }
+                                @if (item.UnknownCodecFileCount > 0)
+                                {
+                                    <span class="audit"><MudIcon Icon="@Icons.Material.Filled.Help" Size="Size.Small" /> @item.UnknownCodecFileCount need@(item.UnknownCodecFileCount == 1 ? "s" : string.Empty) codec data</span>
+                                }
+                                @if (item.LegacyCodecFileCount == 0 && item.UnknownCodecFileCount == 0)
+                                {
+                                    <span class="efficient"><MudIcon Icon="@Icons.Material.Filled.Check" Size="Size.Small" /> Efficient codec throughout</span>
+                                }
+                            </div>
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.Tune" Disabled="@item.HasActiveJob"
+                                       OnClick="() => SelectFromReport(item.RequestId)">@(item.HasActiveJob ? "Work in progress" : "Build a plan")</MudButton>
+                        </article>
+                    }
+                </div>
+            }
+        }
+    </MudPaper>
+    </MudTabPanel>
+
+    <MudTabPanel Text="Build a plan" Icon="@Icons.Material.Filled.Tune">
     <div class="optimizer-layout">
         <MudPaper Outlined="true" Class="pa-3 optimizer-browser">
             <MudTextField T="string" @bind-Value="_search" Label="Find a movie or series" Immediate="true"
@@ -157,7 +285,9 @@ else
             }
         </MudPaper>
     </div>
+    </MudTabPanel>
 
+    <MudTabPanel Text="Activity" Icon="@Icons.Material.Filled.History">
     <MudPaper Outlined="true" Class="pa-4 optimizer-activity-panel">
         <div class="optimizer-activity-heading">
             <div>
@@ -174,7 +304,7 @@ else
         }
         else if (_activity.Count == 0)
         {
-            <div class="activity-empty compact"><MudIcon Icon="@Icons.Material.Filled.History" /><strong>No optimization history yet</strong><span>Preview and queue a title above when you are ready.</span></div>
+            <div class="activity-empty compact"><MudIcon Icon="@Icons.Material.Filled.History" /><strong>No optimization history yet</strong><span>Preview and queue a title from Build a plan when you are ready.</span></div>
         }
         else
         {
@@ -245,14 +375,25 @@ else
             </div>
         }
     </MudPaper>
+    </MudTabPanel>
+    </MudTabs>
+    </div>
 }
 
 @code {
     private bool _loading = true;
     private bool _previewing;
     private bool _queueing;
+    private bool _reportLoading;
+    private int _workspaceTab;
     private string _search = string.Empty;
+    private string _reportSearch = string.Empty;
+    private string _reportLibrary = AllLibraries;
+    private string _reportMedia = AllMedia;
+    private string _reportView = OpportunityView;
+    private string _reportSort = ReviewSort;
     private List<StorageOptimizationTitleDto> _titles = new();
+    private LibraryEfficiencyReportDto _report = new();
     private List<CustomFormatDto> _formats = new();
     private StorageOptimizationTitleDto? _selected;
     private HashSet<int> _seasons = new();
@@ -267,6 +408,69 @@ else
     private PeriodicTimer? _activityTimer;
     private CancellationTokenSource? _activityCts;
 
+    private const string AllLibraries = "all-libraries";
+    private const string AllMedia = "all-media";
+    private const string MoviesMedia = "movies";
+    private const string SeriesMedia = "series";
+    private const string AnimeMedia = "anime";
+    private const string OpportunityView = "opportunities";
+    private const string LegacyView = "legacy";
+    private const string UnknownView = "unknown";
+    private const string EfficientView = "efficient";
+    private const string UltraHdView = "ultra-hd";
+    private const string AllView = "all";
+    private const string ReviewSort = "review";
+    private const string LargestSort = "largest";
+    private const string UltraHdSort = "ultra-hd";
+    private const string TitleSort = "title";
+
+    private List<string> ReportLibraries => _report.Titles.SelectMany(item => item.Libraries)
+        .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+
+    private List<LibraryEfficiencyTitleDto> ScopedTitles => _report.Titles.Where(item =>
+            (_reportLibrary == AllLibraries || item.Libraries.Contains(_reportLibrary, StringComparer.OrdinalIgnoreCase))
+            && (_reportMedia switch
+            {
+                MoviesMedia => item.MediaType == MediaType.Movie,
+                SeriesMedia => item.MediaType == MediaType.TvShow && !item.IsAnime,
+                AnimeMedia => item.IsAnime,
+                _ => true
+            })).ToList();
+
+    private List<LibraryEfficiencyTitleDto> ReportRows
+    {
+        get
+        {
+            var query = ScopedTitles.Where(item => string.IsNullOrWhiteSpace(_reportSearch)
+                || item.Title.Contains(_reportSearch, StringComparison.OrdinalIgnoreCase));
+            query = _reportView switch
+            {
+                LegacyView => query.Where(item => item.LegacyCodecFileCount > 0),
+                UnknownView => query.Where(item => item.UnknownCodecFileCount > 0),
+                EfficientView => query.Where(item => item.LegacyCodecFileCount == 0 && item.UnknownCodecFileCount == 0),
+                UltraHdView => query.Where(item => item.UltraHdFileCount > 0),
+                AllView => query,
+                _ => query.Where(item => item.LegacyCodecFileCount > 0 || item.UnknownCodecFileCount > 0)
+            };
+            IOrderedEnumerable<LibraryEfficiencyTitleDto> ordered = _reportSort switch
+            {
+                LargestSort => query.OrderByDescending(item => item.SizeBytes),
+                UltraHdSort => query.OrderByDescending(item => item.UltraHdBytes),
+                TitleSort => query.OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase),
+                _ => query.OrderByDescending(item => item.ReviewBytes)
+            };
+            return ordered.ThenBy(item => item.Title, StringComparer.OrdinalIgnoreCase).Take(80).ToList();
+        }
+    }
+
+    private long ScopedBytes => ScopedTitles.Sum(item => item.SizeBytes);
+    private int ScopedFileCount => ScopedTitles.Sum(item => item.FileCount);
+    private long ScopedModernBytes => ScopedTitles.Sum(item => item.ModernCodecBytes);
+    private long ScopedLegacyBytes => ScopedTitles.Sum(item => item.LegacyCodecBytes);
+    private int ScopedLegacyFiles => ScopedTitles.Sum(item => item.LegacyCodecFileCount);
+    private long ScopedUnknownBytes => ScopedTitles.Sum(item => item.UnknownCodecBytes);
+    private int ScopedUnknownFiles => ScopedTitles.Sum(item => item.UnknownCodecFileCount);
+
     private List<StorageOptimizationTitleDto> FilteredTitles => _titles
         .Where(item => string.IsNullOrWhiteSpace(_search)
                        || item.Title.Contains(_search, StringComparison.OrdinalIgnoreCase))
@@ -275,6 +479,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         _titles = await Optimizer.GetTitlesAsync();
+        _report = await Optimizer.GetEfficiencyReportAsync();
         _formats = await Formats.GetAllAsync();
         await LoadActivityAsync();
         _loading = false;
@@ -292,6 +497,20 @@ else
         _quality = Quality.Any;
         _minimumSavings = 10;
         _preview = null;
+    }
+
+    private void SelectFromReport(int requestId)
+    {
+        var title = _titles.FirstOrDefault(item => item.RequestId == requestId);
+        if (title is null) return;
+        SelectTitle(title);
+        _workspaceTab = 1;
+    }
+
+    private async Task WorkspaceTabChanged(int value)
+    {
+        _workspaceTab = value;
+        if (value == 2) await LoadActivityAsync();
     }
 
     private void ToggleSeason(int season, bool selected)
@@ -352,6 +571,7 @@ else
             {
                 await Toasts.ShowSuccessAsync(result.Message);
                 _titles = await Optimizer.GetTitlesAsync();
+                _report = await Optimizer.GetEfficiencyReportAsync();
                 _selected = _titles.FirstOrDefault(item => item.RequestId == _selected?.RequestId);
                 await LoadActivityAsync();
                 _preview = null;
@@ -367,7 +587,9 @@ else
         try
         {
             while (await _activityTimer!.WaitForNextTickAsync(cancellationToken))
-                await InvokeAsync(LoadActivityAsync);
+            {
+                if (_workspaceTab == 2) await InvokeAsync(LoadActivityAsync);
+            }
         }
         catch (OperationCanceledException) { }
     }
@@ -381,6 +603,19 @@ else
         finally
         {
             _activityLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadEfficiencyReportAsync()
+    {
+        if (_reportLoading) return;
+        _reportLoading = true;
+        try { _report = await Optimizer.GetEfficiencyReportAsync(); }
+        catch (Exception ex) { await Toasts.ShowErrorAsync($"Could not load the efficiency report: {ex.Message}"); }
+        finally
+        {
+            _reportLoading = false;
             StateHasChanged();
         }
     }
@@ -429,6 +664,7 @@ else
     {
         var selectedRequestId = _selected?.RequestId;
         _titles = await Optimizer.GetTitlesAsync();
+        _report = await Optimizer.GetEfficiencyReportAsync();
         _selected = _titles.FirstOrDefault(item => item.RequestId == selectedRequestId);
         await LoadActivityAsync();
     }
@@ -442,6 +678,15 @@ else
     private static string SavingsPreview(StorageOptimizationPreviewDto preview) =>
         preview.MaximumReplacementBytes == long.MaxValue ? string.Empty
             : $" · Replacement must be at most {FormatBytes(preview.MaximumReplacementBytes)}";
+
+    private static string MediaLabel(LibraryEfficiencyTitleDto item) => item.IsAnime ? "Anime"
+        : item.MediaType == MediaType.Movie ? "Movie" : "TV series";
+
+    private static string Percent(long part, long total) => total <= 0 ? "0%"
+        : $"{part * 100d / total:0.#}%";
+
+    private static string WidthPercent(long part, long total) => total <= 0 ? "0%"
+        : $"{part * 100d / total:0.###}%";
 
     private static string ActivityScope(StorageOptimizationActivityDto item)
     {
