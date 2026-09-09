@@ -14,6 +14,7 @@ namespace PlexRequestsHosted.Services.Implementations;
 public interface IStorageOptimizationService
 {
     Task<List<StorageOptimizationTitleDto>> GetTitlesAsync();
+    Task<LibraryEfficiencyReportDto> GetEfficiencyReportAsync();
     Task<StorageOptimizationPreviewDto> PreviewAsync(StorageOptimizationRequestDto request);
     Task<StorageOptimizationQueueResultDto> QueueAsync(StorageOptimizationRequestDto request);
     Task<List<StorageOptimizationActivityDto>> GetActivityAsync(int take = 50);
@@ -56,7 +57,7 @@ public sealed class StorageOptimizationService(
                 FileCount = files.Count,
                 SizeBytes = files.Sum(file => Math.Max(0, file.SizeBytes)),
                 HevcFileCount = descriptors.Count(item => VideoCodecPolicy.Matches(item.Codec, "hevc")),
-                UnknownCodecCount = descriptors.Count(item => item.Codec is null),
+                UnknownCodecCount = descriptors.Count(item => VideoCodecPolicy.Normalize(item.Codec) is null),
                 HasActiveJob = group.Any(item => item.HasActiveJob),
                 Seasons = request.MediaType is MediaType.TvShow or MediaType.Anime
                     ? descriptors.SelectMany(item => Coverage(item.Row.File).Select(ep => new { ep.Season, Item = item }))
@@ -74,6 +75,53 @@ public sealed class StorageOptimizationService(
                     : new List<StorageOptimizationSeasonDto>()
             };
         }).OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    public async Task<LibraryEfficiencyReportDto> GetEfficiencyReportAsync()
+    {
+        var inventory = await LoadInventoryAsync();
+        var titles = inventory.GroupBy(row => row.Request.Id).Select(group =>
+        {
+            var request = group.First().Request;
+            var descriptors = group.Select(Describe).ToList();
+            var modern = descriptors.Where(item => VideoCodecPolicy.Normalize(item.Codec) is "hevc" or "av1").ToList();
+            var legacy = descriptors.Where(item => VideoCodecPolicy.Normalize(item.Codec) is { } codec
+                                                   && codec is not ("hevc" or "av1")).ToList();
+            var unknown = descriptors.Where(item => VideoCodecPolicy.Normalize(item.Codec) is null).ToList();
+            var ultraHd = descriptors.Where(item => QualityHelper.FromHeight(item.Height) >= Quality.UHD4K).ToList();
+            var libraries = group.Select(item => item.Job.LibraryDestinationName)
+                .Where(name => !string.IsNullOrWhiteSpace(name)).Select(name => name!)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+            if (libraries.Count == 0) libraries.Add("Unassigned library");
+
+            return new LibraryEfficiencyTitleDto
+            {
+                RequestId = request.Id,
+                Title = request.Title,
+                Year = group.Select(item => item.Job.Year).FirstOrDefault(year => year.HasValue),
+                MediaType = request.MediaType,
+                IsAnime = request.IsAnime == true || request.MediaType == MediaType.Anime,
+                PosterUrl = request.PosterUrl,
+                Libraries = libraries,
+                FileCount = descriptors.Count,
+                SizeBytes = descriptors.Sum(item => Math.Max(0, item.Row.File.SizeBytes)),
+                ModernCodecFileCount = modern.Count,
+                ModernCodecBytes = modern.Sum(item => Math.Max(0, item.Row.File.SizeBytes)),
+                LegacyCodecFileCount = legacy.Count,
+                LegacyCodecBytes = legacy.Sum(item => Math.Max(0, item.Row.File.SizeBytes)),
+                UnknownCodecFileCount = unknown.Count,
+                UnknownCodecBytes = unknown.Sum(item => Math.Max(0, item.Row.File.SizeBytes)),
+                UltraHdFileCount = ultraHd.Count,
+                UltraHdBytes = ultraHd.Sum(item => Math.Max(0, item.Row.File.SizeBytes)),
+                CodecSummary = Summary(descriptors.Select(item => VideoCodecPolicy.Display(item.Codec))),
+                ResolutionSummary = Summary(descriptors.Select(item => item.Height > 0
+                    ? QualityHelper.FromHeight(item.Height).Label() : "Unknown")),
+                HasActiveJob = group.Any(item => item.HasActiveJob)
+            };
+        }).OrderByDescending(item => item.ReviewBytes).ThenBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new LibraryEfficiencyReportDto { GeneratedAt = DateTime.UtcNow, Titles = titles };
     }
 
     public async Task<StorageOptimizationPreviewDto> PreviewAsync(StorageOptimizationRequestDto request) =>
@@ -294,7 +342,7 @@ public sealed class StorageOptimizationService(
             var currentMatches = MatchedFormats(row.File, formats);
             var formatMissing = requiredIds.Any(id => !currentMatches.Contains(id));
             if (!codecMissing && !resolutionMissing && !formatMissing) continue;
-            if (descriptor.Codec is null) unknown++;
+            if (VideoCodecPolicy.Normalize(descriptor.Codec) is null) unknown++;
             if (input.TargetQuality != Quality.Any && tier > input.TargetQuality) downscaleCount++;
             targets.Add(new StorageOptimizationTargetDto
             {

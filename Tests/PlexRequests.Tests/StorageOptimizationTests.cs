@@ -114,6 +114,51 @@ public sealed class StorageOptimizationTests
     }
 
     [Fact]
+    public async Task EfficiencyReportSeparatesMeasuredCodecStorageWithoutEstimatingSavings()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity
+        {
+            Id = 21, MediaId = 210, MediaType = MediaType.Movie, Title = "Measured Movie",
+            Status = RequestStatus.Available
+        };
+        var job = new FulfillmentJobEntity
+        {
+            Id = 22, MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
+            Title = request.Title, Year = 2024, Status = FulfillmentStatus.Completed,
+            LibraryDestinationName = "Movies"
+        };
+        db.AddRange(request, job);
+        db.ImportedFiles.AddRange(
+            Video(20, job.Id, "/movies/h264.mkv", null, "AVC", 6_000_000_000, 2160, 3840),
+            Video(21, job.Id, "/movies/h264.mkv", null, "AVC", 4_000_000_000, 2160, 3840),
+            Video(22, job.Id, "/movies/hevc.mkv", null, "HEVC", 2_000_000_000),
+            Video(23, job.Id, "/movies/av1.mkv", null, "AV1", 1_000_000_000),
+            Video(24, job.Id, "/movies/unknown.mkv", null, "", 3_000_000_000));
+        await db.SaveChangesAsync();
+        var capture = new CapturingQueue();
+        var service = new StorageOptimizationService(db, capture, new EmptyFormats(), new ReleaseParser());
+
+        var report = await service.GetEfficiencyReportAsync();
+        var title = Assert.Single(report.Titles);
+
+        Assert.Equal(10_000_000_000, report.TotalBytes);
+        Assert.Equal((2, 3_000_000_000), (report.ModernCodecFileCount, report.ModernCodecBytes));
+        Assert.Equal((1, 4_000_000_000), (report.LegacyCodecFileCount, report.LegacyCodecBytes));
+        Assert.Equal((1, 3_000_000_000), (report.UnknownCodecFileCount, report.UnknownCodecBytes));
+        Assert.Equal(1, report.KnownCandidateTitleCount);
+        Assert.Equal(7_000_000_000, title.ReviewBytes);
+        Assert.Equal((1, 4_000_000_000), (title.UltraHdFileCount, title.UltraHdBytes));
+        Assert.Equal(["Movies"], title.Libraries);
+        Assert.Null(capture.Policy);
+        Assert.Equal(FulfillmentStatus.Completed, (await db.FulfillmentJobs.SingleAsync()).Status);
+    }
+
+    [Fact]
     public async Task ActivityExplainsFrozenScopeAndPersistsActualSavings()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -248,7 +293,7 @@ public sealed class StorageOptimizationTests
     }
 
     private static ImportedFileEntity Video(int id, int jobId, string path, int? season,
-        string codec, long bytes) => new()
+        string codec, long bytes, int height = 1080, int width = 1920) => new()
         {
             Id = id,
             FulfillmentJobId = jobId,
@@ -257,9 +302,9 @@ public sealed class StorageOptimizationTests
             FileType = "video",
             SeasonNumber = season,
             EpisodeNumber = season.HasValue ? 1 : null,
-            ResolutionHeight = 1080,
+            ResolutionHeight = height,
             SizeBytes = bytes,
-            MediaTracksJson = $$"""{"hasVideo":true,"video":[{"type":"video","codec":"{{codec}}","width":1920,"height":1080}]}""",
+            MediaTracksJson = $$"""{"hasVideo":true,"video":[{"type":"video","codec":"{{codec}}","width":{{width}},"height":{{height}}}]}""",
             EpisodeCoverage = season.HasValue
             ? [new ImportedEpisodeCoverageEntity { SeasonNumber = season.Value, EpisodeNumber = 1 }]
             : []
