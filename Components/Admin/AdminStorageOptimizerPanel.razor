@@ -3,6 +3,7 @@
 @using PlexRequestsHosted.Shared.Enums
 @implements IDisposable
 @inject PlexRequestsHosted.Services.Implementations.IStorageOptimizationService Optimizer
+@inject PlexRequestsHosted.Services.Implementations.IMediaMetadataScanService MetadataScans
 @inject PlexRequestsHosted.Services.Implementations.ICustomFormatService Formats
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
 @inject IDialogService Dialogs
@@ -83,6 +84,31 @@ else
                 <div><MudIcon Icon="@Icons.Material.Filled.Help" /><span><small>Needs codec scan</small><strong>@ScopedUnknownFiles files</strong><em>@FormatBytes(ScopedUnknownBytes) cannot be classified yet</em></span></div>
             </div>
 
+            @if (ScopedUnknownFiles > 0)
+            {
+                <div class="metadata-scan-callout">
+                    <MudIcon Icon="@Icons.Material.Filled.FindInPage" />
+                    <div>
+                        <strong>Fill missing codec data from the library</strong>
+                        <span>MediaInfo reads each audited file in place. It does not download, rename, move, replace, or alter media.</span>
+                        @if (ScopedMetadataScanQueuedCount + ScopedMetadataScanInProgressCount > 0)
+                        {
+                            <small>@ScopedMetadataScanQueuedCount queued · @ScopedMetadataScanInProgressCount being inspected</small>
+                        }
+                        else if (ScopedMetadataScanFailedCount > 0)
+                        {
+                            <small>@ScopedMetadataScanFailedCount scan@(ScopedMetadataScanFailedCount == 1 ? string.Empty : "s") need attention and can be retried.</small>
+                        }
+                    </div>
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.DocumentScanner"
+                               Disabled="@(_metadataQueueing || ScanScopeFileCount == 0)"
+                               OnClick="QueueCodecScansAsync">
+                        @(_metadataQueueing ? "Queueing…" : ScanButtonLabel)
+                    </MudButton>
+                </div>
+            }
+
             @if (ScopedBytes > 0)
             {
                 <div class="efficiency-composition" role="img" aria-label="Storage by codec classification">
@@ -134,6 +160,14 @@ else
                                 @if (item.UnknownCodecFileCount > 0)
                                 {
                                     <span class="audit"><MudIcon Icon="@Icons.Material.Filled.Help" Size="Size.Small" /> @item.UnknownCodecFileCount need@(item.UnknownCodecFileCount == 1 ? "s" : string.Empty) codec data</span>
+                                }
+                                @if (item.MetadataScanQueuedCount > 0 || item.MetadataScanInProgressCount > 0)
+                                {
+                                    <span class="scan-active"><MudIcon Icon="@Icons.Material.Filled.HourglassTop" Size="Size.Small" /> @ScanStatus(item)</span>
+                                }
+                                @if (item.MetadataScanFailedCount > 0)
+                                {
+                                    <span class="scan-failed" title="@item.MetadataScanDetail"><MudIcon Icon="@Icons.Material.Filled.ErrorOutline" Size="Size.Small" /> @item.MetadataScanFailedCount scan@(item.MetadataScanFailedCount == 1 ? "" : "s") failed · retry available</span>
                                 }
                                 @if (item.LegacyCodecFileCount == 0 && item.UnknownCodecFileCount == 0)
                                 {
@@ -385,6 +419,7 @@ else
     private bool _previewing;
     private bool _queueing;
     private bool _reportLoading;
+    private bool _metadataQueueing;
     private int _workspaceTab;
     private string _search = string.Empty;
     private string _reportSearch = string.Empty;
@@ -470,6 +505,19 @@ else
     private int ScopedLegacyFiles => ScopedTitles.Sum(item => item.LegacyCodecFileCount);
     private long ScopedUnknownBytes => ScopedTitles.Sum(item => item.UnknownCodecBytes);
     private int ScopedUnknownFiles => ScopedTitles.Sum(item => item.UnknownCodecFileCount);
+    private int ScopedMetadataScanQueuedCount => ScopedTitles.Sum(item => item.MetadataScanQueuedCount);
+    private int ScopedMetadataScanInProgressCount => ScopedTitles.Sum(item => item.MetadataScanInProgressCount);
+    private int ScopedMetadataScanFailedCount => ScopedTitles.Sum(item => item.MetadataScanFailedCount);
+    private List<LibraryEfficiencyTitleDto> ScanScopeTitles => ScopedTitles
+        .Where(item => item.UnknownCodecFileCount > 0 && !item.HasActiveJob
+                       && (string.IsNullOrWhiteSpace(_reportSearch)
+                           || item.Title.Contains(_reportSearch, StringComparison.OrdinalIgnoreCase)))
+        .Take(200).ToList();
+    private int ScanScopeFileCount => ScanScopeTitles.Sum(item => Math.Max(0,
+        item.UnknownCodecFileCount - item.MetadataScanQueuedCount - item.MetadataScanInProgressCount));
+    private string ScanButtonLabel => ScanScopeFileCount == 1
+        ? "Scan 1 file"
+        : $"Scan {ScanScopeFileCount} files";
 
     private List<StorageOptimizationTitleDto> FilteredTitles => _titles
         .Where(item => string.IsNullOrWhiteSpace(_search)
@@ -589,6 +637,9 @@ else
             while (await _activityTimer!.WaitForNextTickAsync(cancellationToken))
             {
                 if (_workspaceTab == 2) await InvokeAsync(LoadActivityAsync);
+                else if (_workspaceTab == 0
+                         && _report.MetadataScanQueuedCount + _report.MetadataScanInProgressCount > 0)
+                    await InvokeAsync(LoadEfficiencyReportAsync);
             }
         }
         catch (OperationCanceledException) { }
@@ -616,6 +667,36 @@ else
         finally
         {
             _reportLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task QueueCodecScansAsync()
+    {
+        if (_metadataQueueing || ScanScopeFileCount == 0) return;
+        var count = ScanScopeFileCount;
+        var confirmed = await Dialogs.ShowMessageBox(
+            "Read missing codec metadata?",
+            $"Queue a read-only MediaInfo inspection for {count} file{(count == 1 ? string.Empty : "s")}? "
+            + "This does not download, rename, move, replace, or alter any media.",
+            yesText: "Queue scan", cancelText: "Cancel");
+        if (confirmed != true) return;
+
+        _metadataQueueing = true;
+        try
+        {
+            var result = await MetadataScans.QueueAsync(new MediaMetadataScanRequestDto
+            {
+                RequestIds = ScanScopeTitles.Select(item => item.RequestId).Distinct().ToList()
+            });
+            if (result.Success) await Toasts.ShowSuccessAsync(result.Message);
+            else await Toasts.ShowErrorAsync(result.Message);
+            await LoadEfficiencyReportAsync();
+        }
+        catch (Exception ex) { await Toasts.ShowErrorAsync($"Could not queue codec scans: {ex.Message}"); }
+        finally
+        {
+            _metadataQueueing = false;
             StateHasChanged();
         }
     }
@@ -720,6 +801,14 @@ else
         FulfillmentStatus.Failed => "Review the error, then retry when ready.",
         _ => "Original media remains available while this runs."
     };
+
+    private static string ScanStatus(LibraryEfficiencyTitleDto item)
+    {
+        var parts = new List<string>();
+        if (item.MetadataScanQueuedCount > 0) parts.Add($"{item.MetadataScanQueuedCount} queued");
+        if (item.MetadataScanInProgressCount > 0) parts.Add($"{item.MetadataScanInProgressCount} inspecting");
+        return string.Join(" · ", parts);
+    }
 
     private static string RelativeTime(DateTime value)
     {

@@ -54,6 +54,10 @@ public interface IPlexRequestsApiClient
         Task.FromResult<PlaybackPreparationTaskDto?>(null);
     Task<bool> ReportPlaybackPreparationAsync(PlaybackPreparationReportDto report, CancellationToken ct) =>
         Task.FromResult(false);
+    Task<MediaMetadataScanTaskDto?> ClaimMediaMetadataScanAsync(string workerId, CancellationToken ct) =>
+        Task.FromResult<MediaMetadataScanTaskDto?>(null);
+    Task<bool> ReportMediaMetadataScanAsync(MediaMetadataScanReportDto report, CancellationToken ct) =>
+        Task.FromResult(false);
     /// <summary>One job's context, so a torrent can be imported by whoever finds it finished — not only by
     /// the process that added it.</summary>
     Task<FulfillmentJobDto?> GetJobAsync(int jobId, CancellationToken ct);

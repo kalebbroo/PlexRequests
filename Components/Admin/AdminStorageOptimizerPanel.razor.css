@@ -98,6 +98,32 @@
     background: var(--mud-palette-action-default);
 }
 
+.metadata-scan-callout {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: .75rem;
+    margin-top: .85rem;
+    padding: .75rem;
+    border: 1px solid color-mix(in srgb, var(--mud-palette-info) 35%, var(--mud-palette-lines-default));
+    border-radius: .55rem;
+    background: color-mix(in srgb, var(--mud-palette-info) 7%, transparent);
+}
+
+.metadata-scan-callout > svg { color: var(--mud-palette-info); }
+
+.metadata-scan-callout > div {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.metadata-scan-callout span,
+.metadata-scan-callout small {
+    color: var(--mud-palette-text-secondary);
+    font-size: .72rem;
+}
+
 .efficiency-composition .modern { background: var(--mud-palette-success); }
 .efficiency-composition .legacy { background: var(--mud-palette-warning); }
 .efficiency-composition .unknown { background: var(--mud-palette-action-disabled); }
@@ -184,6 +210,8 @@
 
 .efficiency-reasons .candidate { color: var(--mud-palette-warning); }
 .efficiency-reasons .audit { color: var(--mud-palette-text-secondary); }
+.efficiency-reasons .scan-active { color: var(--mud-palette-info); }
+.efficiency-reasons .scan-failed { color: var(--mud-palette-error); }
 .efficiency-reasons .efficient { color: var(--mud-palette-success); }
 
 .optimizer-layout {
@@ -452,6 +480,15 @@
 }
 
 @media (max-width: 600px) {
+    .metadata-scan-callout {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .metadata-scan-callout > ::deep .mud-button-root {
+        grid-column: 1 / -1;
+        justify-self: stretch;
+    }
+
     .efficiency-heading,
     .efficiency-results-heading {
         align-items: flex-start;
