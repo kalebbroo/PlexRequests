@@ -15,6 +15,69 @@ public class ReleaseEvaluatorTests
         r.Rejections.Any(x => x.Reason == reason);
 
     [Fact]
+    public void ProfileFormatChoices_RequireAndBlockWithoutMagicScoreThresholds()
+    {
+        var defs = TestData.Definitions();
+        var profile = TestData.Profile(defs);
+        var hevc = new CustomFormatDto
+        {
+            Id = 41, Name = "HEVC", Enabled = true,
+            Specifications = [new FormatSpecificationDto
+                { Field = FormatField.VideoCodec, Op = FormatOp.Equals, Value = "x265" }]
+        };
+        var dubbed = new CustomFormatDto
+        {
+            Id = 42, Name = "Dubbed", Enabled = true,
+            Specifications = [new FormatSpecificationDto
+                { Field = FormatField.ReleaseTitle, Op = FormatOp.Contains, Value = "dubbed" }]
+        };
+        profile.RequiredCustomFormatIds = [hevc.Id];
+        profile.BlockedCustomFormatIds = [dubbed.Id];
+        var context = TestData.Context(profile, defs: defs, formats: [hevc, dubbed]);
+
+        var missing = _eval.Evaluate(TestData.Release("Movie.2024.1080p.WEB-DL.x264"),
+            TestData.Job("Movie", MediaType.Movie), context);
+        var blocked = _eval.Evaluate(TestData.Release("Movie.2024.1080p.WEB-DL.x265.DUBBED"),
+            TestData.Job("Movie", MediaType.Movie), context);
+        var accepted = _eval.Evaluate(TestData.Release("Movie.2024.1080p.WEB-DL.x265"),
+            TestData.Job("Movie", MediaType.Movie), context);
+
+        Assert.True(Rejected(missing, RejectionReason.RequiredCustomFormatMissing));
+        Assert.True(Rejected(blocked, RejectionReason.BlockedCustomFormat));
+        Assert.True(accepted.Accepted, accepted.Summary);
+    }
+
+    [Fact]
+    public void StorageOptimization_CombinesCodecResolutionAndSavingsAndCanCrossProfileCutoff()
+    {
+        var defs = TestData.Definitions();
+        var job = TestData.Job("Movie", MediaType.Movie, isUpgrade: true);
+        job.StorageOptimizationPolicy = new StorageOptimizationPolicyDto
+        {
+            TargetQuality = Quality.UHD4K,
+            RequiredVideoCodec = "hevc",
+            MinimumSavingsPercent = 25,
+            Targets = [new StorageOptimizationTargetDto
+            {
+                DestinationPath = "/library/Movie.mkv",
+                CurrentResolutionHeight = 1080,
+                CurrentSizeBytes = 20L * 1024 * 1024 * 1024
+            }]
+        };
+        var context = TestData.Context(TestData.Profile(defs), defs: defs);
+
+        var good = _eval.Evaluate(TestData.Release("Movie.2024.2160p.WEB-DL.x265", sizeGb: 12), job, context);
+        var wrongCodec = _eval.Evaluate(TestData.Release("Movie.2024.2160p.WEB-DL.x264", sizeGb: 12), job, context);
+        var wrongResolution = _eval.Evaluate(TestData.Release("Movie.2024.1080p.WEB-DL.x265", sizeGb: 8), job, context);
+        var tooLarge = _eval.Evaluate(TestData.Release("Movie.2024.2160p.WEB-DL.x265", sizeGb: 18), job, context);
+
+        Assert.True(good.Accepted, good.Summary);
+        Assert.True(Rejected(wrongCodec, RejectionReason.VideoCodecMismatch));
+        Assert.True(Rejected(wrongResolution, RejectionReason.OptimizationQualityMismatch));
+        Assert.True(Rejected(tooLarge, RejectionReason.InsufficientStorageSavings));
+    }
+
+    [Fact]
     public void Accepts_a_release_matching_the_profile()
     {
         var defs = TestData.Definitions();

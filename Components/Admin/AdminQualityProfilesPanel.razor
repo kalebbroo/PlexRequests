@@ -195,32 +195,61 @@ else
                     </div>
                 </details>
 
-                @* Scores live here rather than on the format, so the same rule can be worth having in one
-                   profile and disqualifying in another. *@
+                @* Reusable formats stay modular, but everyday admins choose intent instead of reverse-
+                   engineering numeric thresholds. Exact scores remain available behind Advanced. *@
                 @if (_formatsByProfile.TryGetValue(p.Id, out var formats) && formats.Count > 0)
                 {
                     <details class="profile-option">
                         <summary>
-                            <span><b>Advanced matching scores</b><small>Score reusable custom formats differently for this profile.</small></span>
-                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">minimum @p.MinCustomFormatScore</MudChip>
+                            <span><b>Release preferences</b><small>Combine as many reusable format rules as this profile needs.</small></span>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@FormatPreferenceSummary(formats)</MudChip>
                         </summary>
                         <div class="profile-option-content">
-                        <div class="d-flex flex-wrap gap-2">
-                        @foreach (var f in formats.Where(f => f.Enabled))
-                        {
-                            <MudNumericField T="int" Label="@f.Name" Value="f.Score" Variant="Variant.Outlined"
-                                             Margin="Margin.Dense" Style="max-width:180px;"
-                                             ValueChanged="@(v => SetScore(p, f, v))" />
-                        }
-                    </div>
-                    <div class="d-flex flex-wrap gap-3 mt-2">
-                        <MudNumericField T="int" Label="Minimum score" Value="p.MinCustomFormatScore"
-                                         Variant="Variant.Outlined" Style="max-width:170px;"
-                                         ValueChanged="@(v => { p.MinCustomFormatScore = v; return Save(p, "minimum score"); })" />
-                        <MudText Typo="Typo.caption" Class="text-muted align-self-center">
-                            Releases scoring below this are rejected outright.
-                        </MudText>
-                    </div>
+                            <MudText Typo="Typo.caption" Class="text-muted d-block mb-3">
+                                Prefer and Avoid change ranking. Require and Block are hard rules. Rules combine, so HEVC can be
+                                required while a trusted release group is preferred and unwanted editions are blocked.
+                            </MudText>
+                            <MudTable Items="@formats.Where(f => f.Enabled)" dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="elevation-1">
+                                <HeaderContent>
+                                    <MudTh>Reusable format</MudTh>
+                                    <MudTh Style="width:220px;">Behavior</MudTh>
+                                    <MudTh>What it does</MudTh>
+                                </HeaderContent>
+                                <RowTemplate>
+                                    <MudTd DataLabel="Reusable format"><b>@context.Name</b></MudTd>
+                                    <MudTd DataLabel="Behavior">
+                                        <MudSelect T="CustomFormatPreference" Value="context.Preference" Dense="true"
+                                                   Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                   ValueChanged="@(value => SetFormatPreference(p, context, value))">
+                                            <MudSelectItem Value="CustomFormatPreference.Neutral">Not important</MudSelectItem>
+                                            <MudSelectItem Value="CustomFormatPreference.Prefer">Prefer</MudSelectItem>
+                                            <MudSelectItem Value="CustomFormatPreference.Require">Require</MudSelectItem>
+                                            <MudSelectItem Value="CustomFormatPreference.Avoid">Avoid</MudSelectItem>
+                                            <MudSelectItem Value="CustomFormatPreference.Block">Block</MudSelectItem>
+                                            <MudSelectItem Value="CustomFormatPreference.Advanced">Advanced score</MudSelectItem>
+                                        </MudSelect>
+                                        @if (context.Preference == CustomFormatPreference.Advanced)
+                                        {
+                                            <MudNumericField T="int" Label="Score" Value="context.Score" Variant="Variant.Outlined"
+                                                             Margin="Margin.Dense" Class="mt-2" Min="-100000" Max="100000"
+                                                             ValueChanged="@(value => SetAdvancedScore(p, context, value))" />
+                                        }
+                                    </MudTd>
+                                    <MudTd DataLabel="What it does" Class="text-muted">@FormatPreferenceHelp(context.Preference)</MudTd>
+                                </RowTemplate>
+                            </MudTable>
+
+                            <details class="profile-option mt-3">
+                                <summary><span><b>Advanced score compatibility</b><small>Only needed when migrating exact legacy score math.</small></span></summary>
+                                <div class="profile-option-content d-flex flex-wrap gap-3 align-items-center">
+                                    <MudNumericField T="int" Label="Minimum total score" Value="p.MinCustomFormatScore"
+                                                     Variant="Variant.Outlined" Style="max-width:190px;"
+                                                     ValueChanged="@(v => { p.MinCustomFormatScore = v; return Save(p, "minimum score"); })" />
+                                    <MudText Typo="Typo.caption" Class="text-muted">
+                                        Leave at 0 when using the clear choices above. Releases below this legacy total are rejected.
+                                    </MudText>
+                                </div>
+                            </details>
                         </div>
                     </details>
                 }
@@ -308,10 +337,47 @@ else
         await Save(p, item.N);
     }
 
-    private async Task SetScore(QualityProfileDto profile, CustomFormatDto format, int score)
+    private async Task SetFormatPreference(QualityProfileDto profile, CustomFormatDto format,
+        CustomFormatPreference preference)
     {
-        await Formats.SetScoreAsync(profile.Id, format.Id, score);
+        await Formats.SetPreferenceAsync(profile.Id, format.Id, preference,
+            preference == CustomFormatPreference.Advanced ? format.Score : null);
+        await Toasts.ShowSuccessAsync($"{profile.Name}: {format.Name} is now {PreferenceLabel(preference)}.");
         await Load();
+    }
+
+    private async Task SetAdvancedScore(QualityProfileDto profile, CustomFormatDto format, int score)
+    {
+        await Formats.SetPreferenceAsync(profile.Id, format.Id, CustomFormatPreference.Advanced, score);
+        await Load();
+    }
+
+    private static string PreferenceLabel(CustomFormatPreference preference) => preference switch
+    {
+        CustomFormatPreference.Neutral => "not important",
+        CustomFormatPreference.Prefer => "preferred",
+        CustomFormatPreference.Require => "required",
+        CustomFormatPreference.Avoid => "avoided",
+        CustomFormatPreference.Block => "blocked",
+        _ => "using an advanced score"
+    };
+
+    private static string FormatPreferenceHelp(CustomFormatPreference preference) => preference switch
+    {
+        CustomFormatPreference.Prefer => "Ranks matching releases above otherwise similar choices.",
+        CustomFormatPreference.Require => "Rejects every release that does not match.",
+        CustomFormatPreference.Avoid => "Ranks matching releases lower but keeps them as a fallback.",
+        CustomFormatPreference.Block => "Rejects every release that matches.",
+        CustomFormatPreference.Advanced => "Uses the exact numeric score shown below.",
+        _ => "Does not affect this profile."
+    };
+
+    private static string FormatPreferenceSummary(IEnumerable<CustomFormatDto> formats)
+    {
+        var active = formats.Where(format => format.Enabled && format.Preference != CustomFormatPreference.Neutral).ToList();
+        if (active.Count == 0) return "No format rules";
+        var hard = active.Count(format => format.Preference is CustomFormatPreference.Require or CustomFormatPreference.Block);
+        return hard > 0 ? $"{active.Count} configured · {hard} hard" : $"{active.Count} configured";
     }
 
     private async Task ApplyLanguagePreset(QualityProfileDto profile, string preset)

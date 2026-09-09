@@ -1,0 +1,151 @@
+.optimizer-intro,
+.optimizer-layout,
+.optimizer-actions,
+.optimizer-goal,
+.optimizer-season,
+.optimizer-title {
+    display: flex;
+}
+
+.optimizer-intro {
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.optimizer-layout {
+    gap: 1rem;
+    align-items: flex-start;
+}
+
+.optimizer-browser {
+    width: min(360px, 100%);
+    flex: 0 0 360px;
+}
+
+.optimizer-builder {
+    flex: 1;
+    min-width: 0;
+}
+
+.optimizer-title-list {
+    max-height: 620px;
+    overflow: auto;
+    margin-top: .75rem;
+}
+
+.optimizer-title {
+    width: 100%;
+    border: 0;
+    border-bottom: 1px solid var(--mud-palette-lines-default);
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    padding: .75rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    cursor: pointer;
+}
+
+.optimizer-title:hover,
+.optimizer-title.selected {
+    background: var(--mud-palette-action-default-hover);
+}
+
+.optimizer-title.selected {
+    box-shadow: inset 3px 0 var(--mud-palette-primary);
+}
+
+.optimizer-title span:first-child,
+.optimizer-goal span,
+.optimizer-season span {
+    display: flex;
+    flex-direction: column;
+}
+
+.optimizer-title small,
+.optimizer-goal small,
+.optimizer-season small,
+.optimizer-future {
+    color: var(--mud-palette-text-secondary);
+}
+
+.optimizer-size {
+    white-space: nowrap;
+    font-size: .8rem;
+}
+
+.optimizer-section {
+    border-top: 1px solid var(--mud-palette-lines-default);
+    padding-top: 1rem;
+    margin-top: 1rem;
+}
+
+.optimizer-season-grid,
+.optimizer-goals,
+.optimizer-format-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: .75rem;
+}
+
+.optimizer-season,
+.optimizer-goal {
+    align-items: flex-start;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: .5rem;
+    padding: .6rem;
+}
+
+.optimizer-goal.field {
+    display: grid;
+    grid-template-columns: 1fr minmax(120px, 150px);
+    gap: .75rem;
+    align-items: center;
+}
+
+.optimizer-future {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    margin-top: 1rem;
+    font-size: .8rem;
+}
+
+.optimizer-actions {
+    justify-content: flex-end;
+    margin-top: 1rem;
+}
+
+@media (max-width: 900px) {
+    .optimizer-layout {
+        flex-direction: column;
+    }
+
+    .optimizer-browser {
+        width: 100%;
+        flex-basis: auto;
+    }
+
+    .optimizer-title-list {
+        max-height: 300px;
+    }
+
+    .optimizer-intro {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}
+
+@media (max-width: 600px) {
+    .optimizer-goal.field {
+        grid-template-columns: 1fr;
+    }
+
+    .optimizer-season-grid,
+    .optimizer-goals {
+        grid-template-columns: 1fr;
+    }
+}

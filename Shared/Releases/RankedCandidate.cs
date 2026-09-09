@@ -39,6 +39,16 @@ public enum RejectionReason
     Blocklisted,
     /// <summary>Scored below the profile's minimum custom-format score.</summary>
     CustomFormatScoreTooLow,
+    /// <summary>A custom format marked Require did not match the release.</summary>
+    RequiredCustomFormatMissing,
+    /// <summary>A custom format marked Block matched the release.</summary>
+    BlockedCustomFormat,
+    /// <summary>A scoped storage optimization requires another video codec.</summary>
+    VideoCodecMismatch,
+    /// <summary>A scoped storage optimization requires an exact resolution tier.</summary>
+    OptimizationQualityMismatch,
+    /// <summary>The replacement would not save the administrator's minimum amount of storage.</summary>
+    InsufficientStorageSavings,
     LanguageNotAllowed,
     TooOld,
     MissingAcquisition

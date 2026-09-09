@@ -795,8 +795,9 @@ public class LibraryOrganizer(
         CancellationToken ct)
     {
         var results = new Dictionary<string, MediaTrackSummaryDto>(StringComparer.OrdinalIgnoreCase);
+        var selected = selectedFiles.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
-        foreach (var file in selectedFiles.Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var file in selected)
         {
             MediaTrackSummaryDto tracks;
             try
@@ -814,11 +815,41 @@ public class LibraryOrganizer(
             if (!tracks.HasVideo)
                 throw new MediaPolicyViolationException(
                     $"'{Path.GetFileName(file)}' contains no readable video stream and appears corrupt or incomplete");
+            if (job.StorageOptimizationPolicy is { } optimization)
+            {
+                var video = tracks.Video.FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(optimization.RequiredVideoCodec)
+                    && !VideoCodecPolicy.Matches(video?.Codec, optimization.RequiredVideoCodec))
+                    throw new MediaPolicyViolationException(
+                        $"'{Path.GetFileName(file)}' contains {VideoCodecPolicy.Display(video?.Codec)}, not required " +
+                        VideoCodecPolicy.Display(optimization.RequiredVideoCodec));
+
+                var observedQuality = VideoResolutionPolicy.FromDimensions(video?.Width, video?.Height);
+                if (optimization.TargetQuality != Quality.Any
+                    && observedQuality != optimization.TargetQuality)
+                    throw new MediaPolicyViolationException(
+                        $"'{Path.GetFileName(file)}' is {observedQuality.Label()}, not the " +
+                        $"{optimization.TargetQuality.Label()} optimization target");
+                if (optimization.TargetQuality == Quality.Any && job.Quality != Quality.Any
+                    && observedQuality < job.Quality)
+                    throw new MediaPolicyViolationException(
+                        $"'{Path.GetFileName(file)}' would lower the selected media below {job.Quality.Label()}");
+            }
             var decision = MediaLanguagePolicy.Evaluate(job.MediaLanguagePolicy, tracks, job.IsAnime);
             if (!decision.Accepted)
                 throw new MediaPolicyViolationException(
                     $"'{Path.GetFileName(file)}' failed the '{job.QualityProfile?.Name ?? "selected"}' media policy: {decision.Reason}");
             results[file] = tracks;
+        }
+
+        if (job.StorageOptimizationPolicy is { MinimumSavingsPercent: > 0 } policy
+            && (job.MediaType == MediaType.Movie || policy.Targets.Count == 1 || selected.Count > 1))
+        {
+            var replacementBytes = selected.Sum(SafeLength);
+            if (replacementBytes <= 0 || replacementBytes > policy.MaximumReplacementBytes)
+                throw new MediaPolicyViolationException(
+                    $"Selected replacement payload is {replacementBytes / 1_000_000_000d:F2} GB; it does not prove " +
+                    $"the requested {policy.MinimumSavingsPercent}% saving from {policy.CurrentBytes / 1_000_000_000d:F2} GB");
         }
         return results;
     }

@@ -69,7 +69,8 @@ public static class TestData
 
     public static RankingContext Context(QualityProfileDto? profile = null, bool relax = false,
         DownloadPreferencesDto? prefs = null, List<QualityDefinitionDto>? defs = null,
-        IReadOnlySet<string>? blocklist = null)
+        IReadOnlySet<string>? blocklist = null, IReadOnlyList<CustomFormatDto>? formats = null,
+        IReadOnlyDictionary<int, int>? formatScores = null)
     {
         var definitions = defs ?? Definitions();
         return new RankingContext
@@ -77,6 +78,8 @@ public static class TestData
             Preferences = prefs ?? Preferences(),
             Profile = profile,
             Definitions = definitions,
+            CustomFormats = formats ?? Array.Empty<CustomFormatDto>(),
+            CustomFormatScores = formatScores ?? new Dictionary<int, int>(),
             RelaxQualityFloor = relax,
             BlocklistedHashes = blocklist ?? new HashSet<string>(),
             UtcNow = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)

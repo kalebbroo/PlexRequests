@@ -1,0 +1,274 @@
+@using PlexRequestsHosted.Shared
+@using PlexRequestsHosted.Shared.DTOs
+@using PlexRequestsHosted.Shared.Enums
+@inject PlexRequestsHosted.Services.Implementations.IStorageOptimizationService Optimizer
+@inject PlexRequestsHosted.Services.Implementations.ICustomFormatService Formats
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
+
+@if (_loading)
+{
+    <div class="d-flex justify-content-center py-6"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+}
+else
+{
+    <div class="optimizer-intro">
+        <div>
+            <MudText Typo="Typo.subtitle1"><b>Optimize storage safely</b></MudText>
+            <MudText Typo="Typo.body2" Class="text-muted">
+                Pick one title and combine only the goals you want. Plex Requests previews the exact files,
+                verifies the downloaded media, then atomically replaces the old copy.
+            </MudText>
+        </div>
+        <MudChip T="string" Icon="@Icons.Material.Filled.Security" Color="Color.Success" Variant="Variant.Outlined">Original stays until verified</MudChip>
+    </div>
+
+    <div class="optimizer-layout">
+        <MudPaper Outlined="true" Class="pa-3 optimizer-browser">
+            <MudTextField T="string" @bind-Value="_search" Label="Find a movie or series" Immediate="true"
+                          Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+            <div class="optimizer-title-list">
+                @foreach (var title in FilteredTitles)
+                {
+                    <button type="button" class="optimizer-title @(title.RequestId == _selected?.RequestId ? "selected" : "")"
+                            @onclick="() => SelectTitle(title)">
+                        <span><b>@title.Title</b><small>@TitleDetail(title)</small></span>
+                        @if (title.HasActiveJob)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning">Busy</MudChip>
+                        }
+                        else
+                        {
+                            <span class="optimizer-size">@FormatBytes(title.SizeBytes)</span>
+                        }
+                    </button>
+                }
+                @if (FilteredTitles.Count == 0)
+                {
+                    <div class="activity-empty compact"><MudIcon Icon="@Icons.Material.Filled.SearchOff" /><strong>No imported titles match</strong></div>
+                }
+            </div>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4 optimizer-builder">
+            @if (_selected is null)
+            {
+                <div class="activity-empty"><MudIcon Icon="@Icons.Material.Filled.Tune" /><strong>Choose a title</strong><span>Nothing is queued until you preview and confirm a specific scope.</span></div>
+            }
+            else
+            {
+                <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                    <div>
+                        <MudText Typo="Typo.h6">@_selected.Title</MudText>
+                        <MudText Typo="Typo.caption" Class="text-muted">@_selected.FileCount files · @FormatBytes(_selected.SizeBytes) · @_selected.HevcFileCount already HEVC</MudText>
+                    </div>
+                    @if (_selected.IsAnime) { <MudChip T="string" Size="Size.Small" Color="Color.Secondary">Anime</MudChip> }
+                </div>
+
+                @if (_selected.Seasons.Count > 0)
+                {
+                    <div class="optimizer-section">
+                        <MudText Typo="Typo.subtitle2">1. Choose seasons</MudText>
+                        <div class="optimizer-season-grid">
+                            @foreach (var season in _selected.Seasons)
+                            {
+                                <label class="optimizer-season">
+                                    <MudCheckBox T="bool" Value="@_seasons.Contains(season.Season)"
+                                                 ValueChanged="value => ToggleSeason(season.Season, value)" Color="Color.Primary" />
+                                    <span><b>@SeasonLabel(season.Season)</b><small>@season.FileCount files · @FormatBytes(season.SizeBytes)<br />@season.ResolutionSummary · @season.CodecSummary</small></span>
+                                </label>
+                            }
+                        </div>
+                    </div>
+                }
+
+                <div class="optimizer-section">
+                    <MudText Typo="Typo.subtitle2">@(_selected.Seasons.Count > 0 ? "2." : "1.") Combine goals</MudText>
+                    <MudText Typo="Typo.caption" Class="text-muted d-block mb-2">A replacement must satisfy every selected goal.</MudText>
+                    <div class="optimizer-goals">
+                        <label class="optimizer-goal">
+                            <MudSwitch T="bool" Value="_requireHevc" ValueChanged="SetHevcGoal" Color="Color.Primary" />
+                            <span><b>Use HEVC (H.265)</b><small>Backfill H.264 or unknown files with verified HEVC. Best current space-saving option.</small></span>
+                        </label>
+                        <div class="optimizer-goal field">
+                            <span><b>Resolution</b><small>Keep current avoids a downgrade; choose an exact tier for a targeted conversion.</small></span>
+                            <MudSelect T="Quality" Value="_quality" ValueChanged="SetQualityGoal"
+                                       Variant="Variant.Outlined" Margin="Margin.Dense">
+                                <MudSelectItem Value="Quality.Any">Keep current</MudSelectItem>
+                                <MudSelectItem Value="Quality.HD">720p</MudSelectItem>
+                                <MudSelectItem Value="Quality.FullHD">1080p</MudSelectItem>
+                                <MudSelectItem Value="Quality.UHD4K">4K</MudSelectItem>
+                            </MudSelect>
+                        </div>
+                        <div class="optimizer-goal field">
+                            <span><b>Minimum space saved</b><small>Reject releases that cannot prove this saving. Use 0% for a resolution upgrade.</small></span>
+                            <MudNumericField T="int" Value="_minimumSavings" ValueChanged="SetSavingsGoal"
+                                             Min="0" Max="95" Adornment="Adornment.End"
+                                             AdornmentText="%" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </div>
+                    </div>
+
+                    @if (_formats.Count > 0)
+                    {
+                        <details class="profile-option mt-3">
+                            <summary><span><b>Additional reusable formats</b><small>Optional HDR, release-group, edition, audio, or other rules.</small></span><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_formatIds.Count selected</MudChip></summary>
+                            <div class="profile-option-content optimizer-format-grid">
+                                @foreach (var format in _formats.Where(item => item.Enabled))
+                                {
+                                    <MudCheckBox T="bool" Label="@format.Name" Value="@_formatIds.Contains(format.Id)"
+                                                 ValueChanged="value => ToggleFormat(format.Id, value)" Color="Color.Primary" />
+                                }
+                            </div>
+                        </details>
+                    }
+
+                    <div class="optimizer-future">
+                        <MudChip T="string" Size="Size.Small" Disabled="true">AV1 · future</MudChip>
+                        <span>AV1 is intentionally not offered until your playback devices can be declared compatible.</span>
+                    </div>
+                </div>
+
+                <div class="optimizer-actions">
+                    <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Preview"
+                               Disabled="_previewing || _selected.HasActiveJob" OnClick="Preview">
+                        @(_previewing ? "Checking…" : "Preview changes")
+                    </MudButton>
+                </div>
+
+                @if (_preview is not null)
+                {
+                    <MudAlert Severity="@(_preview.CanQueue ? Severity.Info : Severity.Warning)" Variant="Variant.Outlined" Class="mt-3">
+                        <b>@(_preview.CanQueue ? $"{_preview.SelectedFileCount} file(s) selected" : "Nothing queued")</b><br />
+                        @_preview.Message
+                        @if (_preview.CanQueue)
+                        {
+                            <div class="mt-2">Goals: @string.Join(" + ", _preview.Goals) · Current @FormatBytes(_preview.CurrentBytes)@SavingsPreview(_preview)</div>
+                        }
+                    </MudAlert>
+                    @if (_preview.CanQueue)
+                    {
+                        <div class="d-flex justify-content-end mt-3">
+                            <MudButton Color="Color.Success" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.PlaylistAddCheck"
+                                       Disabled="_queueing" OnClick="Queue">@(_queueing ? "Queueing…" : "Queue these replacements")</MudButton>
+                        </div>
+                    }
+                }
+            }
+        </MudPaper>
+    </div>
+}
+
+@code {
+    private bool _loading = true;
+    private bool _previewing;
+    private bool _queueing;
+    private string _search = string.Empty;
+    private List<StorageOptimizationTitleDto> _titles = new();
+    private List<CustomFormatDto> _formats = new();
+    private StorageOptimizationTitleDto? _selected;
+    private HashSet<int> _seasons = new();
+    private HashSet<int> _formatIds = new();
+    private bool _requireHevc = true;
+    private Quality _quality = Quality.Any;
+    private int _minimumSavings = 10;
+    private StorageOptimizationPreviewDto? _preview;
+
+    private List<StorageOptimizationTitleDto> FilteredTitles => _titles
+        .Where(item => string.IsNullOrWhiteSpace(_search)
+                       || item.Title.Contains(_search, StringComparison.OrdinalIgnoreCase))
+        .Take(60).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _titles = await Optimizer.GetTitlesAsync();
+        _formats = await Formats.GetAllAsync();
+        _loading = false;
+    }
+
+    private void SelectTitle(StorageOptimizationTitleDto title)
+    {
+        _selected = title;
+        _seasons = title.Seasons.Select(season => season.Season).ToHashSet();
+        _formatIds.Clear();
+        _requireHevc = true;
+        _quality = Quality.Any;
+        _minimumSavings = 10;
+        _preview = null;
+    }
+
+    private void ToggleSeason(int season, bool selected)
+    {
+        if (selected) _seasons.Add(season); else _seasons.Remove(season);
+        _preview = null;
+    }
+
+    private void ToggleFormat(int id, bool selected)
+    {
+        if (selected) _formatIds.Add(id); else _formatIds.Remove(id);
+        _preview = null;
+    }
+
+    private void SetHevcGoal(bool value)
+    {
+        _requireHevc = value;
+        _preview = null;
+    }
+
+    private void SetQualityGoal(Quality value)
+    {
+        _quality = value;
+        _preview = null;
+    }
+
+    private void SetSavingsGoal(int value)
+    {
+        _minimumSavings = Math.Clamp(value, 0, 95);
+        _preview = null;
+    }
+
+    private StorageOptimizationRequestDto BuildRequest() => new()
+    {
+        RequestId = _selected?.RequestId ?? 0,
+        Seasons = _seasons.Order().ToList(),
+        TargetQuality = _quality,
+        RequireHevc = _requireHevc,
+        RequiredCustomFormatIds = _formatIds.Order().ToList(),
+        MinimumSavingsPercent = _minimumSavings
+    };
+
+    private async Task Preview()
+    {
+        _previewing = true;
+        try { _preview = await Optimizer.PreviewAsync(BuildRequest()); }
+        catch (Exception ex) { _preview = new StorageOptimizationPreviewDto { Message = ex.Message }; }
+        finally { _previewing = false; }
+    }
+
+    private async Task Queue()
+    {
+        _queueing = true;
+        try
+        {
+            var result = await Optimizer.QueueAsync(BuildRequest());
+            if (result.Success)
+            {
+                await Toasts.ShowSuccessAsync(result.Message);
+                _titles = await Optimizer.GetTitlesAsync();
+                _selected = _titles.FirstOrDefault(item => item.RequestId == _selected?.RequestId);
+                _preview = null;
+            }
+            else await Toasts.ShowErrorAsync(result.Message);
+        }
+        catch (Exception ex) { await Toasts.ShowErrorAsync(ex.Message); }
+        finally { _queueing = false; }
+    }
+
+    private static string TitleDetail(StorageOptimizationTitleDto title) =>
+        $"{(title.MediaType == MediaType.Movie ? "Movie" : title.IsAnime ? "Anime series" : "Series")}" +
+        (title.Year is int year ? $" · {year}" : string.Empty) + $" · {title.FileCount} files";
+    private static string SeasonLabel(int season) => season == 0 ? "Specials" : $"Season {season}";
+    private static string FormatBytes(long bytes) => bytes >= 1_000_000_000
+        ? $"{bytes / 1_000_000_000d:0.0} GB" : $"{bytes / 1_000_000d:0} MB";
+    private static string SavingsPreview(StorageOptimizationPreviewDto preview) =>
+        preview.MaximumReplacementBytes == long.MaxValue ? string.Empty
+            : $" · Replacement must be at most {FormatBytes(preview.MaximumReplacementBytes)}";
+}

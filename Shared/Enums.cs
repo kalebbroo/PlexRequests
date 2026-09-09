@@ -471,6 +471,18 @@ public enum ReleaseLanguagePreference
     Custom = 6
 }
 
+/// <summary>Human-readable custom-format behavior. Numeric scoring remains available as an advanced
+/// tie-breaker, while Require and Block are explicit acceptance rules rather than magic score values.</summary>
+public enum CustomFormatPreference
+{
+    Neutral = 0,
+    Prefer = 1,
+    Require = 2,
+    Avoid = 3,
+    Block = 4,
+    Advanced = 5
+}
+
 /// <summary>The numbering used by release names before translating to Plex's canonical season/episode order.</summary>
 public enum EpisodeOrderType
 {

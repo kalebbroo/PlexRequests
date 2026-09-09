@@ -227,7 +227,7 @@ public sealed class MediaLanguagePolicyTests
         const string json = """
             {"media":{"track":[
               {"@type":"General","Format":"Matroska"},
-              {"@type":"Video","Format":"AVC"},
+              {"@type":"Video","Format":"AVC","Width":"1920 pixels","Height":"1080 pixels"},
               {"@type":"Audio","Format":"AAC","Language":"jpn","Title":"Main","Default":"Yes","Forced":"No"},
               {"@type":"Text","Format":"ASS","Language":"eng","Default":"No","Forced":"Yes"}
             ]}}
@@ -238,6 +238,10 @@ public sealed class MediaLanguagePolicyTests
 
         var audio = Assert.Single(result.Audio);
         Assert.True(result.HasVideo);
+        Assert.Equal("AVC", Assert.Single(result.Video).Codec);
+        Assert.Equal(1920, result.Video[0].Width);
+        Assert.Equal(1080, result.Video[0].Height);
+        Assert.Equal(Quality.UHD4K, VideoResolutionPolicy.FromDimensions(3840, 1600));
         Assert.Equal("ja", audio.Language);
         Assert.True(audio.IsDefault);
         Assert.Contains(result.Subtitles, x => x.Language == "en" && x.IsForced && !x.IsExternal);

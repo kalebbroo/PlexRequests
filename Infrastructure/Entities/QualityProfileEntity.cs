@@ -56,6 +56,8 @@ public class QualityProfileEntity
     /// schema doesn't need another migration then.</summary>
     public int MinCustomFormatScore { get; set; }
     public int CutoffFormatScore { get; set; }
+    [MaxLength(2048)] public string? RequiredCustomFormatIdsCsv { get; set; }
+    [MaxLength(2048)] public string? BlockedCustomFormatIdsCsv { get; set; }
 
     /// <summary>Per-profile overrides of the global download preferences. Null = inherit.</summary>
     public double? MinSizeGb { get; set; }

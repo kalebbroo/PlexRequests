@@ -64,6 +64,9 @@ public interface IFulfillmentQueue
     Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor,
         IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId);
 
+    Task<int?> EnqueueOptimizationAsync(MediaRequestDto request, StorageOptimizationPolicyDto policy) =>
+        Task.FromResult<int?>(null);
+
     /// <summary>Recompute a request's <c>AchievedQuality</c>/<c>CutoffMet</c> from its imported files (min
     /// video resolution vs. the resolved target) and persist them. Called after a download or upgrade imports.</summary>
     Task<Quality> RecomputeAchievedQualityAsync(int mediaRequestId);

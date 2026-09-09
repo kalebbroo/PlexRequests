@@ -149,6 +149,8 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
         p.SetPreferredTracksAsDefault = dto.SetPreferredTracksAsDefault;
         p.MinCustomFormatScore = dto.MinCustomFormatScore;
         p.CutoffFormatScore = dto.CutoffFormatScore;
+        p.RequiredCustomFormatIdsCsv = JoinIds(dto.RequiredCustomFormatIds);
+        p.BlockedCustomFormatIdsCsv = JoinIds(dto.BlockedCustomFormatIds);
         if (dto.Items is { Count: > 0 }) p.ItemsJson = JsonSerializer.Serialize(dto.Items, Json);
 
         // The cutoff must be a tier the profile actually allows, or the request can never reach it and the
@@ -317,6 +319,8 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
         AppliesToMediaTypes = p.AppliesToMediaTypes, SortOrder = p.SortOrder,
         CutoffQualityDefinitionId = p.CutoffQualityDefinitionId, UpgradeAllowed = p.UpgradeAllowed,
         MinCustomFormatScore = p.MinCustomFormatScore, CutoffFormatScore = p.CutoffFormatScore,
+        RequiredCustomFormatIds = ParseIds(p.RequiredCustomFormatIdsCsv),
+        BlockedCustomFormatIds = ParseIds(p.BlockedCustomFormatIdsCsv),
         MinSizeGb = p.MinSizeGb, MaxSizeGb = p.MaxSizeGb, MaxSeasonPackSizeGb = p.MaxSeasonPackSizeGb,
         MinSeeders = p.MinSeeders, AllowedLanguagesCsv = p.AllowedLanguagesCsv,
         RequiredAudioLanguagesCsv = p.RequiredAudioLanguagesCsv,
@@ -339,9 +343,16 @@ public class QualityProfileService(AppDbContext db, ILogger<QualityProfileServic
             (i.Members?.Contains(definitionId) == true || i.K == $"q:{definitionId}"));
     }
 
-    private static List<int> ParseIds(string csv) =>
-        csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    private static List<int> ParseIds(string? csv) => string.IsNullOrWhiteSpace(csv)
+        ? new List<int>()
+        : csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(s => int.TryParse(s, out var n) ? n : 0).Where(n => n > 0).ToList();
+
+    private static string? JoinIds(IEnumerable<int> ids)
+    {
+        var value = string.Join(',', ids.Where(id => id > 0).Distinct().Order());
+        return value.Length == 0 ? null : value;
+    }
 
     private static MediaTypeFlags ToFlag(MediaType t) => t switch
     {
