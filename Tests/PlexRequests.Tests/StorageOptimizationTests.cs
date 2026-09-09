@@ -133,12 +133,15 @@ public sealed class StorageOptimizationTests
             LibraryDestinationName = "Movies"
         };
         db.AddRange(request, job);
+        var unknown = Video(24, job.Id, "/movies/unknown.mkv", null, "", 3_000_000_000);
+        unknown.MediaMetadataScanStatus = MediaMetadataScanStatus.Failed;
+        unknown.MediaMetadataScanDetail = "file unavailable";
         db.ImportedFiles.AddRange(
             Video(20, job.Id, "/movies/h264.mkv", null, "AVC", 6_000_000_000, 2160, 3840),
             Video(21, job.Id, "/movies/h264.mkv", null, "AVC", 4_000_000_000, 2160, 3840),
             Video(22, job.Id, "/movies/hevc.mkv", null, "HEVC", 2_000_000_000),
             Video(23, job.Id, "/movies/av1.mkv", null, "AV1", 1_000_000_000),
-            Video(24, job.Id, "/movies/unknown.mkv", null, "", 3_000_000_000));
+            unknown);
         await db.SaveChangesAsync();
         var capture = new CapturingQueue();
         var service = new StorageOptimizationService(db, capture, new EmptyFormats(), new ReleaseParser());
@@ -150,6 +153,8 @@ public sealed class StorageOptimizationTests
         Assert.Equal((2, 3_000_000_000), (report.ModernCodecFileCount, report.ModernCodecBytes));
         Assert.Equal((1, 4_000_000_000), (report.LegacyCodecFileCount, report.LegacyCodecBytes));
         Assert.Equal((1, 3_000_000_000), (report.UnknownCodecFileCount, report.UnknownCodecBytes));
+        Assert.Equal(1, report.MetadataScanFailedCount);
+        Assert.Equal("file unavailable", title.MetadataScanDetail);
         Assert.Equal(1, report.KnownCandidateTitleCount);
         Assert.Equal(7_000_000_000, title.ReviewBytes);
         Assert.Equal((1, 4_000_000_000), (title.UltraHdFileCount, title.UltraHdBytes));

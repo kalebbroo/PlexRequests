@@ -197,6 +197,8 @@ builder.Services.AddHostedService<StorageMaintenanceWorker>();
 // Backfills files imported before physical preferred-track ordering existed. It is deliberately serial and
 // storage-admitted because an atomic MKV remux temporarily needs one additional file's worth of NAS space.
 builder.Services.AddHostedService<LegacyPlaybackPreparationWorker>();
+// Explicitly queued read-only MediaInfo passes fill legacy codec gaps without touching the media file.
+builder.Services.AddHostedService<MediaMetadataScanWorker>();
 
 // Library organizer: archive extraction, season-pack splitting, Plex-convention naming/transfer.
 builder.Services.AddSingleton<IArchiveExtractor, ArchiveExtractor>();

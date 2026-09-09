@@ -45,6 +45,17 @@ public class ImportedFileEntity
     /// <summary>Serialized MediaTrackSummaryDto observed by MediaInfo before this file entered the library.</summary>
     public string? MediaTracksJson { get; set; }
 
+    /// <summary>Explicit, read-only metadata backfill requested from the library efficiency report. This is
+    /// separate from playback preparation because that older workflow may atomically rewrite MKV defaults;
+    /// a metadata scan is never allowed to mutate the library file.</summary>
+    public PlexRequestsHosted.Shared.Enums.MediaMetadataScanStatus MediaMetadataScanStatus { get; set; }
+    public DateTime? MediaMetadataScanRequestedAt { get; set; }
+    public DateTime? MediaMetadataScanClaimedAt { get; set; }
+    [MaxLength(128)] public string? MediaMetadataScanClaimedBy { get; set; }
+    public DateTime? MediaMetadataScanCompletedAt { get; set; }
+    public int MediaMetadataScanAttempts { get; set; }
+    [MaxLength(2000)] public string? MediaMetadataScanDetail { get; set; }
+
     /// <summary>Durable migration state for library files imported before preferred streams were physically
     /// ordered first. New imports are prepared before commit and set this immediately; legacy rows are claimed
     /// by the downloader and normalized atomically on the library filesystem.</summary>

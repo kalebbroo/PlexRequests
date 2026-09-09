@@ -111,6 +111,17 @@ public sealed class StorageOptimizationService(
                 LegacyCodecBytes = legacy.Sum(item => Math.Max(0, item.Row.File.SizeBytes)),
                 UnknownCodecFileCount = unknown.Count,
                 UnknownCodecBytes = unknown.Sum(item => Math.Max(0, item.Row.File.SizeBytes)),
+                MetadataScanQueuedCount = unknown.Count(item => item.Row.File.MediaMetadataScanStatus
+                    == MediaMetadataScanStatus.Queued),
+                MetadataScanInProgressCount = unknown.Count(item => item.Row.File.MediaMetadataScanStatus
+                    == MediaMetadataScanStatus.Claimed),
+                MetadataScanFailedCount = unknown.Count(item => item.Row.File.MediaMetadataScanStatus
+                    == MediaMetadataScanStatus.Failed),
+                MetadataScanDetail = unknown.Where(item => item.Row.File.MediaMetadataScanStatus
+                        == MediaMetadataScanStatus.Failed)
+                    .OrderByDescending(item => item.Row.File.MediaMetadataScanCompletedAt)
+                    .Select(item => item.Row.File.MediaMetadataScanDetail)
+                    .FirstOrDefault(detail => !string.IsNullOrWhiteSpace(detail)),
                 UltraHdFileCount = ultraHd.Count,
                 UltraHdBytes = ultraHd.Sum(item => Math.Max(0, item.Row.File.SizeBytes)),
                 CodecSummary = Summary(descriptors.Select(item => VideoCodecPolicy.Display(item.Codec))),

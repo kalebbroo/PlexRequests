@@ -540,6 +540,44 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         }
     }
 
+    public async Task<MediaMetadataScanTaskDto?> ClaimMediaMetadataScanAsync(string workerId,
+        CancellationToken ct)
+    {
+        try
+        {
+            var response = await _http.PostAsJsonAsync("/api/fulfillment/media-metadata/claim",
+                new MediaMetadataScanClaimRequest(workerId), ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.NoContent) return null;
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogDebug("Media metadata claim returned {Status}", (int)response.StatusCode);
+                return null;
+            }
+            return await response.Content.ReadFromJsonAsync<MediaMetadataScanTaskDto>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not claim a media metadata scan");
+            return null;
+        }
+    }
+
+    public async Task<bool> ReportMediaMetadataScanAsync(MediaMetadataScanReportDto report,
+        CancellationToken ct)
+    {
+        try
+        {
+            var response = await _http.PostAsJsonAsync("/api/fulfillment/media-metadata/report", report, ct);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not report media metadata scan for imported file {FileId}",
+                report.ImportedFileId);
+            return false;
+        }
+    }
+
     public async Task<bool> RefreshLibraryAsync(MediaType mediaType, CancellationToken ct)
     {
         var now = DateTime.UtcNow;

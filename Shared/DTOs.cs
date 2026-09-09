@@ -2242,6 +2242,9 @@ public sealed class LibraryEfficiencyReportDto
     public int UnknownCodecFileCount => Titles.Sum(title => title.UnknownCodecFileCount);
     public long UnknownCodecBytes => Titles.Sum(title => title.UnknownCodecBytes);
     public int KnownCandidateTitleCount => Titles.Count(title => title.LegacyCodecFileCount > 0);
+    public int MetadataScanQueuedCount => Titles.Sum(title => title.MetadataScanQueuedCount);
+    public int MetadataScanInProgressCount => Titles.Sum(title => title.MetadataScanInProgressCount);
+    public int MetadataScanFailedCount => Titles.Sum(title => title.MetadataScanFailedCount);
 }
 
 public sealed class LibraryEfficiencyTitleDto
@@ -2266,7 +2269,51 @@ public sealed class LibraryEfficiencyTitleDto
     public string CodecSummary { get; set; } = string.Empty;
     public string ResolutionSummary { get; set; } = string.Empty;
     public bool HasActiveJob { get; set; }
+    public int MetadataScanQueuedCount { get; set; }
+    public int MetadataScanInProgressCount { get; set; }
+    public int MetadataScanFailedCount { get; set; }
+    public string? MetadataScanDetail { get; set; }
     public long ReviewBytes => LegacyCodecBytes + UnknownCodecBytes;
+}
+
+/// <summary>Explicit admin scope for backfilling missing codec metadata. The server revalidates every id
+/// against the current import audit; clients cannot turn this into a download or replacement request.</summary>
+public sealed class MediaMetadataScanRequestDto
+{
+    public List<int> RequestIds { get; set; } = new();
+}
+
+public sealed class MediaMetadataScanQueueResultDto
+{
+    public bool Success { get; set; }
+    public int QueuedCount { get; set; }
+    public int AlreadyRunningCount { get; set; }
+    public int BusyCount { get; set; }
+    public string Message { get; set; } = string.Empty;
+}
+
+/// <summary>One audited library file claimed for a read-only MediaInfo inspection.</summary>
+public sealed class MediaMetadataScanTaskDto
+{
+    public int ImportedFileId { get; set; }
+    public string DestinationPath { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public MediaType MediaType { get; set; }
+    public Quality Quality { get; set; }
+    public List<string> Genres { get; set; } = new();
+    public bool IsAnime { get; set; }
+    public string? LibraryDestinationRootPath { get; set; }
+}
+
+public sealed record MediaMetadataScanClaimRequest(string WorkerId);
+
+public sealed class MediaMetadataScanReportDto
+{
+    public int ImportedFileId { get; set; }
+    public string WorkerId { get; set; } = string.Empty;
+    public bool Succeeded { get; set; }
+    public string? Detail { get; set; }
+    public MediaTrackSummaryDto? MediaTracks { get; set; }
 }
 
 public sealed class StorageOptimizationRequestDto

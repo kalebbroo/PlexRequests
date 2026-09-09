@@ -444,6 +444,16 @@ public enum Quality
     UHD8K = 4320
 }
 
+/// <summary>Durable state of an administrator-requested, read-only MediaInfo pass over an imported file.</summary>
+public enum MediaMetadataScanStatus
+{
+    None = 0,
+    Queued = 1,
+    Claimed = 2,
+    Succeeded = 3,
+    Failed = 4
+}
+
 /// <summary>How the downloader chooses between a full-season pack and individual episodes for a season-scoped job.</summary>
 public enum SeasonPackStrategy
 {

@@ -14,8 +14,6 @@ internal enum PlaybackPreparationPass
     Deferred
 }
 
-internal sealed class RetiredLibraryPathException(string message) : InvalidOperationException(message);
-
 /// <summary>Gradually brings Plex Requests-managed legacy MKV files under the same playback-order guarantee
 /// as new imports. Work is claimed durably, performed one file at a time, and committed by mkvmerge's
 /// same-directory atomic replacement; torrent payloads and files outside configured library roots are never
@@ -186,62 +184,7 @@ internal sealed class LegacyPlaybackPreparationWorker(
     }
 
     internal static (string Path, string Root) ResolveLibraryPath(PlaybackPreparationTaskDto task,
-        EffectiveLibraryOrganization preferences)
-    {
-        var destinationPath = task.DestinationPath;
-        if (string.IsNullOrWhiteSpace(destinationPath)
-            || !Path.GetExtension(destinationPath).Equals(".mkv", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Only audited MKV library files can be prepared");
-
-        var comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        var roots = preferences.Destinations
-            .Where(destination => destination.Enabled)
-            .Select(destination => destination.RootPath)
-            .Concat([preferences.MoviePath, preferences.TvPath, preferences.MusicPath])
-            .Where(root => !string.IsNullOrWhiteSpace(root))
-            .Select(Path.GetFullPath)
-            .Distinct(comparison == StringComparison.OrdinalIgnoreCase
-                ? StringComparer.OrdinalIgnoreCase
-                : StringComparer.Ordinal)
-            .OrderByDescending(root => root.Length);
-        var fullPath = Path.IsPathFullyQualified(destinationPath)
-            ? Path.GetFullPath(destinationPath)
-            : ResolveLegacyRelativePath(task, preferences, roots, comparison);
-        foreach (var root in roots)
-        {
-            if (IsWithin(fullPath, root, comparison)) return (fullPath, root);
-        }
-
-        throw new RetiredLibraryPathException(PlaybackPreparationReportDto.LegacyOutsideRootFailure);
-    }
-
-    private static string ResolveLegacyRelativePath(PlaybackPreparationTaskDto task,
-        EffectiveLibraryOrganization preferences, IEnumerable<string> configuredRoots,
-        StringComparison comparison)
-    {
-        var selectedRoot = task.LibraryDestinationRootPath;
-        if (string.IsNullOrWhiteSpace(selectedRoot))
-            selectedRoot = preferences.Resolve(task.MediaType, task.Quality, task.Genres,
-                task.IsAnime, isEpisode: true).Root;
-        if (string.IsNullOrWhiteSpace(selectedRoot))
-            throw new InvalidOperationException("The legacy relative audit path has no configured library destination");
-
-        selectedRoot = Path.GetFullPath(selectedRoot);
-        if (!configuredRoots.Any(root => string.Equals(Path.TrimEndingDirectorySeparator(root),
-                Path.TrimEndingDirectorySeparator(selectedRoot), comparison)))
-            throw new RetiredLibraryPathException("The legacy audit destination is no longer configured");
-
-        var fullPath = Path.GetFullPath(Path.Combine(selectedRoot, task.DestinationPath));
-        if (!IsWithin(fullPath, selectedRoot, comparison))
-            throw new InvalidOperationException("The legacy relative audit path escapes its library root");
-        return fullPath;
-    }
-
-    private static bool IsWithin(string path, string root, StringComparison comparison)
-    {
-        var normalized = Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar;
-        return path.StartsWith(normalized, comparison);
-    }
+        EffectiveLibraryOrganization preferences) => LibraryAuditPathResolver.Resolve(
+        new LibraryAuditPathContext(task.DestinationPath, task.LibraryDestinationRootPath,
+            task.MediaType, task.Quality, task.Genres, task.IsAnime), preferences, ".mkv");
 }

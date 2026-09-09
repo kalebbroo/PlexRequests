@@ -308,6 +308,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 x.PlaybackPreparationAttempts,
                 x.PlaybackPreparationClaimedAt
             });
+            b.HasIndex(x => new
+            {
+                x.MediaMetadataScanStatus,
+                x.MediaMetadataScanClaimedAt
+            });
 
             b.HasOne(x => x.FulfillmentJob)
                 .WithMany()

@@ -249,6 +249,7 @@ builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IFulfillm
 // One-time, durable repair queue for library files imported before preferred audio/subtitle streams were
 // physically ordered first. The downloader owns filesystem writes; the web app owns claims and audit state.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IPlaybackPreparationService, PlexRequestsHosted.Services.Implementations.PlaybackPreparationService>();
+builder.Services.AddScoped<PlexRequestsHosted.Services.Implementations.IMediaMetadataScanService, PlexRequestsHosted.Services.Implementations.MediaMetadataScanService>();
 // Re-derives tier + format score for already-imported files from their stored release names, so editing a
 // custom format reaches the library you already have and not only the next download.
 builder.Services.AddScoped<PlexRequestsHosted.Services.Jobs.IJobHandler, PlexRequestsHosted.Services.Jobs.RecomputeFormatScoresJob>();
@@ -879,6 +880,21 @@ app.MapPost("/api/fulfillment/playback-preparation/claim", async (PlaybackPrepar
 
 app.MapPost("/api/fulfillment/playback-preparation/report", async (PlaybackPreparationReportDto body,
     HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IPlaybackPreparationService svc) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return await svc.ReportAsync(body, ctx.RequestAborted) ? Results.Ok() : Results.NotFound();
+});
+
+app.MapPost("/api/fulfillment/media-metadata/claim", async (MediaMetadataScanClaimRequest body,
+    HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IMediaMetadataScanService svc) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    var task = await svc.ClaimAsync(body.WorkerId, ctx.RequestAborted);
+    return task is null ? Results.NoContent() : Results.Ok(task);
+});
+
+app.MapPost("/api/fulfillment/media-metadata/report", async (MediaMetadataScanReportDto body,
+    HttpContext ctx, IConfiguration cfg, PlexRequestsHosted.Services.Implementations.IMediaMetadataScanService svc) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     return await svc.ReportAsync(body, ctx.RequestAborted) ? Results.Ok() : Results.NotFound();
