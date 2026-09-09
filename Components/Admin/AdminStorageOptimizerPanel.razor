@@ -93,7 +93,7 @@ else
                         <span>MediaInfo reads each audited file in place. It does not download, rename, move, replace, or alter media.</span>
                         @if (ScopedMetadataScanQueuedCount + ScopedMetadataScanInProgressCount > 0)
                         {
-                            <small>@ScopedMetadataScanQueuedCount queued · @ScopedMetadataScanInProgressCount being inspected</small>
+                            <small>@ScanScopeStatus</small>
                         }
                         else if (ScopedMetadataScanFailedCount > 0)
                         {
@@ -518,6 +518,7 @@ else
     private int ScopedUnknownFiles => ScopedTitles.Sum(item => item.UnknownCodecFileCount);
     private int ScopedMetadataScanQueuedCount => ScopedTitles.Sum(item => item.MetadataScanQueuedCount);
     private int ScopedMetadataScanInProgressCount => ScopedTitles.Sum(item => item.MetadataScanInProgressCount);
+    private int ScopedMetadataScanRetryingCount => ScopedTitles.Sum(item => item.MetadataScanRetryingCount);
     private int ScopedMetadataScanFailedCount => ScopedTitles.Sum(item => item.MetadataScanFailedCount);
     private List<LibraryEfficiencyTitleDto> ScanScopeTitles => ScopedTitles
         .Where(item => item.UnknownCodecFileCount > 0 && !item.HasActiveJob
@@ -840,9 +841,28 @@ else
     private static string ScanStatus(LibraryEfficiencyTitleDto item)
     {
         var parts = new List<string>();
-        if (item.MetadataScanQueuedCount > 0) parts.Add($"{item.MetadataScanQueuedCount} queued");
+        var waiting = Math.Max(0, item.MetadataScanQueuedCount - item.MetadataScanRetryingCount);
+        if (waiting > 0) parts.Add($"{waiting} queued");
+        if (item.MetadataScanRetryingCount > 0)
+            parts.Add($"{item.MetadataScanRetryingCount} retrying"
+                      + (item.MetadataScanNextAttemptAt is DateTime retry ? $" {RelativeFuture(retry)}" : string.Empty));
         if (item.MetadataScanInProgressCount > 0) parts.Add($"{item.MetadataScanInProgressCount} inspecting");
         return string.Join(" · ", parts);
+    }
+
+    private string ScanScopeStatus
+    {
+        get
+        {
+            var parts = new List<string>();
+            var waiting = Math.Max(0, ScopedMetadataScanQueuedCount - ScopedMetadataScanRetryingCount);
+            if (waiting > 0) parts.Add($"{waiting} queued");
+            if (ScopedMetadataScanRetryingCount > 0)
+                parts.Add($"{ScopedMetadataScanRetryingCount} waiting for an automatic retry");
+            if (ScopedMetadataScanInProgressCount > 0)
+                parts.Add($"{ScopedMetadataScanInProgressCount} being inspected");
+            return string.Join(" · ", parts);
+        }
     }
 
     private static string RelativeTime(DateTime value)

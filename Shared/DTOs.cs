@@ -2244,6 +2244,7 @@ public sealed class LibraryEfficiencyReportDto
     public int KnownCandidateTitleCount => Titles.Count(title => title.LegacyCodecFileCount > 0);
     public int MetadataScanQueuedCount => Titles.Sum(title => title.MetadataScanQueuedCount);
     public int MetadataScanInProgressCount => Titles.Sum(title => title.MetadataScanInProgressCount);
+    public int MetadataScanRetryingCount => Titles.Sum(title => title.MetadataScanRetryingCount);
     public int MetadataScanFailedCount => Titles.Sum(title => title.MetadataScanFailedCount);
 }
 
@@ -2271,6 +2272,8 @@ public sealed class LibraryEfficiencyTitleDto
     public bool HasActiveJob { get; set; }
     public int MetadataScanQueuedCount { get; set; }
     public int MetadataScanInProgressCount { get; set; }
+    public int MetadataScanRetryingCount { get; set; }
+    public DateTime? MetadataScanNextAttemptAt { get; set; }
     public int MetadataScanFailedCount { get; set; }
     public string? MetadataScanDetail { get; set; }
     public long ReviewBytes => LegacyCodecBytes + UnknownCodecBytes;
@@ -2315,6 +2318,10 @@ public sealed class MediaMetadataScanReportDto
     public int ImportedFileId { get; set; }
     public string WorkerId { get; set; } = string.Empty;
     public bool Succeeded { get; set; }
+    /// <summary>True only when the file could not be inspected because infrastructure was temporarily
+    /// unavailable. The server applies a bounded delayed retry; missing or unreadable media remains a
+    /// terminal failure until an administrator explicitly retries it.</summary>
+    public bool Retryable { get; set; }
     public string? Detail { get; set; }
     public MediaTrackSummaryDto? MediaTracks { get; set; }
 }

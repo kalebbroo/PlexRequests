@@ -118,6 +118,11 @@ public sealed class StorageOptimizationService(
                     == MediaMetadataScanStatus.Queued),
                 MetadataScanInProgressCount = unknown.Count(item => item.Row.File.MediaMetadataScanStatus
                     == MediaMetadataScanStatus.Claimed),
+                MetadataScanRetryingCount = unknown.Count(item => item.Row.File.MediaMetadataScanStatus
+                    == MediaMetadataScanStatus.Queued && item.Row.File.MediaMetadataScanAttempts > 0),
+                MetadataScanNextAttemptAt = unknown.Where(item => item.Row.File.MediaMetadataScanStatus
+                        == MediaMetadataScanStatus.Queued && item.Row.File.MediaMetadataScanAttempts > 0)
+                    .Select(item => item.Row.File.MediaMetadataScanRequestedAt).Min(),
                 MetadataScanFailedCount = unknown.Count(item => item.Row.File.MediaMetadataScanStatus
                     == MediaMetadataScanStatus.Failed),
                 MetadataScanDetail = unknown.Where(item => item.Row.File.MediaMetadataScanStatus

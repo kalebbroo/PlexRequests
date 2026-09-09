@@ -237,6 +237,46 @@ public sealed class StorageOptimizationTests
     }
 
     [Fact]
+    public async Task EfficiencyReportDistinguishesDelayedAutomaticRetriesFromNewQueuedScans()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity
+        {
+            Id = 25, MediaId = 250, MediaType = MediaType.Movie, Title = "Retrying Movie",
+            Status = RequestStatus.Available
+        };
+        var job = new FulfillmentJobEntity
+        {
+            Id = 26, MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
+            Title = request.Title, Status = FulfillmentStatus.Completed
+        };
+        var firstQueued = Video(27, job.Id, "/movies/queued.mkv", null, "", 1_000_000_000);
+        firstQueued.MediaMetadataScanStatus = MediaMetadataScanStatus.Queued;
+        firstQueued.MediaMetadataScanRequestedAt = DateTime.UtcNow;
+        var retryAt = DateTime.UtcNow.AddMinutes(5);
+        var retrying = Video(28, job.Id, "/movies/retrying.mkv", null, "", 1_000_000_000);
+        retrying.MediaMetadataScanStatus = MediaMetadataScanStatus.Queued;
+        retrying.MediaMetadataScanAttempts = 1;
+        retrying.MediaMetadataScanRequestedAt = retryAt;
+        db.AddRange(request, job, firstQueued, retrying);
+        await db.SaveChangesAsync();
+        var service = new StorageOptimizationService(db, new CapturingQueue(),
+            new EmptyFormats(), new ReleaseParser());
+
+        var report = await service.GetEfficiencyReportAsync();
+        var title = Assert.Single(report.Titles);
+
+        Assert.Equal(2, report.MetadataScanQueuedCount);
+        Assert.Equal(1, report.MetadataScanRetryingCount);
+        Assert.Equal(1, title.MetadataScanRetryingCount);
+        Assert.Equal(retryAt, title.MetadataScanNextAttemptAt);
+    }
+
+    [Fact]
     public async Task ActivityExplainsFrozenScopeAndPersistsActualSavings()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

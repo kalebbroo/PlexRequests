@@ -123,8 +123,61 @@ public sealed class MediaMetadataScanTests
         });
         Assert.True(retried.Success);
         fixture.Db.ChangeTracker.Clear();
-        Assert.Equal(MediaMetadataScanStatus.Queued,
-            (await fixture.Db.ImportedFiles.SingleAsync(item => item.Id == file.Id)).MediaMetadataScanStatus);
+        var explicitlyRetried = await fixture.Db.ImportedFiles.SingleAsync(item => item.Id == file.Id);
+        Assert.Equal(MediaMetadataScanStatus.Queued, explicitlyRetried.MediaMetadataScanStatus);
+        Assert.Equal(0, explicitlyRetried.MediaMetadataScanAttempts);
+    }
+
+    [Fact]
+    public async Task TemporaryFailuresUseDelayedBoundedRetriesThenBecomeVisibleFailures()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var title = await fixture.AddTitleAsync(4, "Temporarily unavailable movie");
+        var file = Video(title.Job.Id, "/movies/temporary.mkv", null);
+        fixture.Db.ImportedFiles.Add(file);
+        await fixture.Db.SaveChangesAsync();
+        await fixture.Service.QueueAsync(new MediaMetadataScanRequestDto
+        {
+            ImportedFileIds = [file.Id]
+        });
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            var claim = Assert.IsType<MediaMetadataScanTaskDto>(
+                await fixture.Service.ClaimAsync("worker", CancellationToken.None));
+            // ClaimAsync uses an atomic ExecuteUpdate, matching the worker API's separate request scope.
+            fixture.Db.ChangeTracker.Clear();
+            Assert.True(await fixture.Service.ReportAsync(new MediaMetadataScanReportDto
+            {
+                ImportedFileId = claim.ImportedFileId,
+                WorkerId = "worker",
+                Succeeded = false,
+                Retryable = true,
+                Detail = "NAS temporarily unavailable"
+            }, CancellationToken.None));
+
+            fixture.Db.ChangeTracker.Clear();
+            var row = await fixture.Db.ImportedFiles.SingleAsync(item => item.Id == file.Id);
+            Assert.Equal(attempt, row.MediaMetadataScanAttempts);
+            if (attempt < 3)
+            {
+                Assert.Equal(MediaMetadataScanStatus.Queued, row.MediaMetadataScanStatus);
+                Assert.Null(row.MediaMetadataScanCompletedAt);
+                Assert.True(row.MediaMetadataScanRequestedAt > DateTime.UtcNow);
+                Assert.Contains($"attempt {attempt + 1} of 3", row.MediaMetadataScanDetail);
+                Assert.Null(await fixture.Service.ClaimAsync("too-early", CancellationToken.None));
+
+                row.MediaMetadataScanRequestedAt = DateTime.UtcNow.AddSeconds(-1);
+                await fixture.Db.SaveChangesAsync();
+                fixture.Db.ChangeTracker.Clear();
+            }
+            else
+            {
+                Assert.Equal(MediaMetadataScanStatus.Failed, row.MediaMetadataScanStatus);
+                Assert.NotNull(row.MediaMetadataScanCompletedAt);
+                Assert.Contains("NAS temporarily unavailable", row.MediaMetadataScanDetail);
+            }
+        }
     }
 
     [Fact]
