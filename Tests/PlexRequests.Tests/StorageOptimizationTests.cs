@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Abstractions;
@@ -110,6 +111,140 @@ public sealed class StorageOptimizationTests
         Assert.False(noTitle.CanQueue);
         Assert.False(compliant.CanQueue);
         Assert.Contains("already satisfies", compliant.Message);
+    }
+
+    [Fact]
+    public async Task ActivityExplainsFrozenScopeAndPersistsActualSavings()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity
+        {
+            Id = 31,
+            MediaId = 310,
+            MediaType = MediaType.TvShow,
+            Title = "Compact Show",
+            Status = RequestStatus.Available,
+            PosterUrl = "/poster.jpg"
+        };
+        var policy = new StorageOptimizationPolicyDto
+        {
+            RequiredVideoCodec = "hevc",
+            TargetQuality = Quality.FullHD,
+            MinimumSavingsPercent = 25,
+            Targets =
+            [
+                new StorageOptimizationTargetDto
+                {
+                    DestinationPath = "/tv/show/s01e01.mkv", CurrentSizeBytes = 2_000_000_000,
+                    EpisodeCoverage = [new EpisodeRef { Season = 1, Episode = 1 }]
+                }
+            ]
+        };
+        db.AddRange(request, new FulfillmentJobEntity
+        {
+            Id = 32,
+            MediaRequestId = request.Id,
+            MediaId = request.MediaId,
+            MediaType = request.MediaType,
+            Title = request.Title,
+            Year = 2025,
+            Status = FulfillmentStatus.Completed,
+            Progress = 100,
+            StorageOptimizationPolicyJson = JsonSerializer.Serialize(policy),
+            StorageOptimizationReplacementBytes = 1_200_000_000,
+            CreatedAt = DateTime.UtcNow.AddHours(-1),
+            CompletedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var service = new StorageOptimizationService(db, new CapturingQueue(), new EmptyFormats(), new ReleaseParser());
+
+        var activity = Assert.Single(await service.GetActivityAsync());
+
+        Assert.Equal("Optimization completed", activity.Stage);
+        Assert.Equal([1], activity.Seasons);
+        Assert.Equal(["HEVC (H.265)", "1080p", "Save at least 25%"], activity.Goals);
+        Assert.Equal(2_000_000_000, activity.OriginalBytes);
+        Assert.Equal(1_200_000_000, activity.ReplacementBytes);
+        Assert.Equal(800_000_000, activity.BytesSaved);
+        Assert.False(activity.CanCancel);
+        Assert.False(activity.CanRetry);
+    }
+
+    [Fact]
+    public async Task CancelAndRetryOnlyChangeOptimizerJobAndKeepRequestAvailable()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity
+        {
+            Id = 41,
+            MediaId = 410,
+            MediaType = MediaType.Movie,
+            Title = "Safe Movie",
+            Status = RequestStatus.Available,
+            AvailableAt = DateTime.UtcNow.AddDays(-1)
+        };
+        var job = new FulfillmentJobEntity
+        {
+            Id = 42,
+            MediaRequestId = request.Id,
+            MediaId = request.MediaId,
+            MediaType = request.MediaType,
+            Title = request.Title,
+            Status = FulfillmentStatus.Queued,
+            StorageOptimizationPolicyJson = JsonSerializer.Serialize(new StorageOptimizationPolicyDto
+            {
+                RequiredVideoCodec = "hevc",
+                Targets = [new StorageOptimizationTargetDto { DestinationPath = "/movies/safe.mkv", CurrentSizeBytes = 10 }]
+            })
+        };
+        db.AddRange(request, job);
+        await db.SaveChangesAsync();
+        var service = new StorageOptimizationService(db, new CapturingQueue(), new EmptyFormats(), new ReleaseParser());
+
+        var cancelled = await service.CancelAsync(job.Id);
+        await db.Entry(job).ReloadAsync();
+        await db.Entry(request).ReloadAsync();
+        Assert.True(cancelled.Success);
+        Assert.Equal(FulfillmentStatus.Cancelled, job.Status);
+        Assert.Equal(RequestStatus.Available, request.Status);
+
+        // Simulate a row touched by the pre-hardening generic failure endpoint. Retrying repairs only this
+        // optimizer's already-available request and preserves its immutable policy.
+        request.Status = RequestStatus.Failed;
+        request.DenialReason = "optimizer failed";
+        await db.SaveChangesAsync();
+        var retried = await service.RetryAsync(job.Id);
+        await db.Entry(job).ReloadAsync();
+        await db.Entry(request).ReloadAsync();
+        Assert.True(retried.Success);
+        Assert.Equal(FulfillmentStatus.Queued, job.Status);
+        Assert.Equal(RequestStatus.Available, request.Status);
+        Assert.Null(request.DenialReason);
+        Assert.NotNull(job.StorageOptimizationPolicyJson);
+
+        job.Status = FulfillmentStatus.Downloading;
+        await db.SaveChangesAsync();
+        var unsafeCancel = await service.CancelAsync(job.Id);
+        Assert.False(unsafeCancel.Success);
+        await db.Entry(job).ReloadAsync();
+        Assert.Equal(FulfillmentStatus.Downloading, job.Status);
+
+        var isolatedFailure = await service.RecordFailureAsync(request.Id, "replacement verification failed");
+        await db.Entry(job).ReloadAsync();
+        await db.Entry(request).ReloadAsync();
+        Assert.True(isolatedFailure);
+        Assert.Equal(FulfillmentStatus.Failed, job.Status);
+        Assert.Equal("replacement verification failed", job.LastError);
+        Assert.Equal(RequestStatus.Available, request.Status);
+        Assert.True(Assert.Single(await service.GetActivityAsync()).CanRetry);
     }
 
     private static ImportedFileEntity Video(int id, int jobId, string path, int? season,

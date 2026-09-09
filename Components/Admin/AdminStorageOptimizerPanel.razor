@@ -1,9 +1,11 @@
 @using PlexRequestsHosted.Shared
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
+@implements IDisposable
 @inject PlexRequestsHosted.Services.Implementations.IStorageOptimizationService Optimizer
 @inject PlexRequestsHosted.Services.Implementations.ICustomFormatService Formats
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
+@inject IDialogService Dialogs
 
 @if (_loading)
 {
@@ -155,6 +157,94 @@ else
             }
         </MudPaper>
     </div>
+
+    <MudPaper Outlined="true" Class="pa-4 optimizer-activity-panel">
+        <div class="optimizer-activity-heading">
+            <div>
+                <MudText Typo="Typo.subtitle1"><b>Optimization activity</b></MudText>
+                <MudText Typo="Typo.caption" Class="text-muted">Frozen goals, search diagnostics, safe controls, and verified storage results.</MudText>
+            </div>
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small" Disabled="_activityLoading"
+                           OnClick="LoadActivityAsync" aria-label="Refresh optimization activity" />
+        </div>
+
+        @if (_activityLoading && _activity.Count == 0)
+        {
+            <div class="d-flex justify-content-center py-5"><MudProgressCircular Indeterminate="true" Color="Color.Primary" /></div>
+        }
+        else if (_activity.Count == 0)
+        {
+            <div class="activity-empty compact"><MudIcon Icon="@Icons.Material.Filled.History" /><strong>No optimization history yet</strong><span>Preview and queue a title above when you are ready.</span></div>
+        }
+        else
+        {
+            <div class="optimizer-activity-list">
+                @foreach (var item in _activity)
+                {
+                    <article class="optimizer-activity-card" @key="item.JobId">
+                        <div class="optimizer-activity-main">
+                            <div class="optimizer-activity-title">
+                                <MudChip T="string" Size="Size.Small" Color="@ActivityColor(item.Status)" Variant="Variant.Outlined">@item.Stage</MudChip>
+                                <div>
+                                    <strong>@item.Title@(item.Year is int year ? $" ({year})" : string.Empty)</strong>
+                                    <small>@ActivityScope(item) · queued @RelativeTime(item.CreatedAt)</small>
+                                </div>
+                            </div>
+                            <span class="optimizer-activity-time">Updated @RelativeTime(item.UpdatedAt)</span>
+                        </div>
+
+                        <div class="optimizer-activity-goals">
+                            @foreach (var goal in item.Goals)
+                            {
+                                <span>@goal</span>
+                            }
+                        </div>
+
+                        @if (IsActive(item.Status))
+                        {
+                            <div class="optimizer-activity-progress" role="progressbar" aria-label="@item.Title optimization progress"
+                                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="@item.Progress">
+                                <span style="width:@($"{item.Progress}%")"></span>
+                            </div>
+                        }
+
+                        <div class="optimizer-activity-details">
+                            <span><small>Original size</small><strong>@FormatBytes(item.OriginalBytes)</strong></span>
+                            <span><small>Replacement</small><strong>@(item.ReplacementBytes is long replacement ? FormatBytes(replacement) : "Pending")</strong></span>
+                            <span><small>Result</small><strong>@SavingsResult(item)</strong></span>
+                            <span><small>Attempts</small><strong>@item.Attempts@(item.DeferCount > 0 ? $" · {item.DeferCount} waits" : string.Empty)</strong></span>
+                        </div>
+
+                        @if (!string.IsNullOrWhiteSpace(item.LastError))
+                        {
+                            <MudAlert Severity="@(item.Status == FulfillmentStatus.Failed ? Severity.Error : Severity.Warning)"
+                                      Dense="true" Variant="Variant.Outlined">
+                                <b>@(item.Status == FulfillmentStatus.Deferred ? "Last search: " : string.Empty)</b>@item.LastError
+                            </MudAlert>
+                        }
+
+                        <div class="optimizer-activity-footer">
+                            <span>@(item.NextRetryAt is DateTime retry ? $"Automatic retry {RelativeFuture(retry)}" : ActivityFootnote(item))</span>
+                            <div>
+                                @if (item.CanRetry)
+                                {
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                               StartIcon="@Icons.Material.Filled.Refresh" Disabled="@_acting.Contains(item.JobId)"
+                                               OnClick="() => RetryOptimization(item)">Search now</MudButton>
+                                }
+                                @if (item.CanCancel)
+                                {
+                                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                                               StartIcon="@Icons.Material.Filled.Cancel" Disabled="@_acting.Contains(item.JobId)"
+                                               OnClick="() => CancelOptimization(item)">Cancel plan</MudButton>
+                                }
+                            </div>
+                        </div>
+                    </article>
+                }
+            </div>
+        }
+    </MudPaper>
 }
 
 @code {
@@ -171,6 +261,11 @@ else
     private Quality _quality = Quality.Any;
     private int _minimumSavings = 10;
     private StorageOptimizationPreviewDto? _preview;
+    private List<StorageOptimizationActivityDto> _activity = new();
+    private HashSet<int> _acting = new();
+    private bool _activityLoading;
+    private PeriodicTimer? _activityTimer;
+    private CancellationTokenSource? _activityCts;
 
     private List<StorageOptimizationTitleDto> FilteredTitles => _titles
         .Where(item => string.IsNullOrWhiteSpace(_search)
@@ -181,7 +276,11 @@ else
     {
         _titles = await Optimizer.GetTitlesAsync();
         _formats = await Formats.GetAllAsync();
+        await LoadActivityAsync();
         _loading = false;
+        _activityCts = new CancellationTokenSource();
+        _activityTimer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+        _ = PollActivityAsync(_activityCts.Token);
     }
 
     private void SelectTitle(StorageOptimizationTitleDto title)
@@ -254,12 +353,84 @@ else
                 await Toasts.ShowSuccessAsync(result.Message);
                 _titles = await Optimizer.GetTitlesAsync();
                 _selected = _titles.FirstOrDefault(item => item.RequestId == _selected?.RequestId);
+                await LoadActivityAsync();
                 _preview = null;
             }
             else await Toasts.ShowErrorAsync(result.Message);
         }
         catch (Exception ex) { await Toasts.ShowErrorAsync(ex.Message); }
         finally { _queueing = false; }
+    }
+
+    private async Task PollActivityAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (await _activityTimer!.WaitForNextTickAsync(cancellationToken))
+                await InvokeAsync(LoadActivityAsync);
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task LoadActivityAsync()
+    {
+        if (_activityLoading) return;
+        _activityLoading = true;
+        try { _activity = await Optimizer.GetActivityAsync(); }
+        catch (Exception ex) { await Toasts.ShowErrorAsync($"Could not load optimization activity: {ex.Message}"); }
+        finally
+        {
+            _activityLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RetryOptimization(StorageOptimizationActivityDto item)
+    {
+        if (!_acting.Add(item.JobId)) return;
+        try
+        {
+            var result = await Optimizer.RetryAsync(item.JobId);
+            if (result.Success) await Toasts.ShowSuccessAsync(result.Message);
+            else await Toasts.ShowErrorAsync(result.Message);
+            await RefreshAfterActionAsync();
+        }
+        catch (Exception ex) { await Toasts.ShowErrorAsync(ex.Message); }
+        finally
+        {
+            _acting.Remove(item.JobId);
+            StateHasChanged();
+        }
+    }
+
+    private async Task CancelOptimization(StorageOptimizationActivityDto item)
+    {
+        var confirmed = await Dialogs.ShowMessageBox(
+            "Cancel optimization?",
+            $"Stop looking for an optimized copy of \"{item.Title}\"? Existing library files will remain available.",
+            yesText: "Cancel plan", cancelText: "Keep searching");
+        if (confirmed != true || !_acting.Add(item.JobId)) return;
+        try
+        {
+            var result = await Optimizer.CancelAsync(item.JobId);
+            if (result.Success) await Toasts.ShowSuccessAsync(result.Message);
+            else await Toasts.ShowErrorAsync(result.Message);
+            await RefreshAfterActionAsync();
+        }
+        catch (Exception ex) { await Toasts.ShowErrorAsync(ex.Message); }
+        finally
+        {
+            _acting.Remove(item.JobId);
+            StateHasChanged();
+        }
+    }
+
+    private async Task RefreshAfterActionAsync()
+    {
+        var selectedRequestId = _selected?.RequestId;
+        _titles = await Optimizer.GetTitlesAsync();
+        _selected = _titles.FirstOrDefault(item => item.RequestId == selectedRequestId);
+        await LoadActivityAsync();
     }
 
     private static string TitleDetail(StorageOptimizationTitleDto title) =>
@@ -271,4 +442,63 @@ else
     private static string SavingsPreview(StorageOptimizationPreviewDto preview) =>
         preview.MaximumReplacementBytes == long.MaxValue ? string.Empty
             : $" · Replacement must be at most {FormatBytes(preview.MaximumReplacementBytes)}";
+
+    private static string ActivityScope(StorageOptimizationActivityDto item)
+    {
+        var files = $"{item.TargetFileCount} file{(item.TargetFileCount == 1 ? string.Empty : "s")}";
+        if (item.Seasons.Count == 0) return files;
+        return $"{files} · {string.Join(", ", item.Seasons.Select(SeasonLabel))}";
+    }
+
+    private static string SavingsResult(StorageOptimizationActivityDto item)
+    {
+        if (item.BytesSaved is not long saved) return item.Status == FulfillmentStatus.Completed ? "Not recorded" : "Pending";
+        return saved >= 0 ? $"{FormatBytes(saved)} saved" : $"{FormatBytes(-saved)} larger";
+    }
+
+    private static bool IsActive(FulfillmentStatus status) => status is FulfillmentStatus.Queued
+        or FulfillmentStatus.Claimed or FulfillmentStatus.Downloading or FulfillmentStatus.Deferred;
+
+    private static Color ActivityColor(FulfillmentStatus status) => status switch
+    {
+        FulfillmentStatus.Completed => Color.Success,
+        FulfillmentStatus.Failed => Color.Error,
+        FulfillmentStatus.Deferred => Color.Warning,
+        FulfillmentStatus.Cancelled => Color.Default,
+        _ => Color.Info
+    };
+
+    private static string ActivityFootnote(StorageOptimizationActivityDto item) => item.Status switch
+    {
+        FulfillmentStatus.Completed => "Every selected goal was verified before replacement.",
+        FulfillmentStatus.Cancelled => "Original media remains available.",
+        FulfillmentStatus.Failed => "Review the error, then retry when ready.",
+        _ => "Original media remains available while this runs."
+    };
+
+    private static string RelativeTime(DateTime value)
+    {
+        var elapsed = DateTime.UtcNow - value.ToUniversalTime();
+        if (elapsed.TotalMinutes < 1) return "just now";
+        if (elapsed.TotalHours < 1) return $"{(int)elapsed.TotalMinutes}m ago";
+        if (elapsed.TotalDays < 1) return $"{(int)elapsed.TotalHours}h ago";
+        return $"{(int)elapsed.TotalDays}d ago";
+    }
+
+    private static string RelativeFuture(DateTime value)
+    {
+        var remaining = value.ToUniversalTime() - DateTime.UtcNow;
+        if (remaining <= TimeSpan.Zero) return "now";
+        if (remaining.TotalMinutes < 1) return "in less than a minute";
+        if (remaining.TotalHours < 1) return $"in {(int)Math.Ceiling(remaining.TotalMinutes)}m";
+        if (remaining.TotalDays < 1) return $"in {(int)Math.Ceiling(remaining.TotalHours)}h";
+        return $"in {(int)Math.Ceiling(remaining.TotalDays)}d";
+    }
+
+    public void Dispose()
+    {
+        _activityCts?.Cancel();
+        _activityTimer?.Dispose();
+        _activityCts?.Dispose();
+    }
 }

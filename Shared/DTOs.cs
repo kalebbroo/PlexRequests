@@ -811,6 +811,12 @@ public class DownloadJobView
     public bool IsActive { get; set; }
     /// <summary>Human lifecycle label for the whole job (e.g. "Approved — queued", "Downloading", "Available").</summary>
     public string Stage { get; set; } = string.Empty;
+    public bool IsStorageOptimization { get; set; }
+    public int OptimizationTargetFileCount { get; set; }
+    public List<int> OptimizationSeasons { get; set; } = new();
+    public List<string> OptimizationGoals { get; set; } = new();
+    public long? OptimizationOriginalBytes { get; set; }
+    public long? OptimizationReplacementBytes { get; set; }
     public List<DownloadTransferTelemetry> Transfers { get; set; } = new();
 }
 
@@ -2250,5 +2256,39 @@ public sealed class StorageOptimizationQueueResultDto
 {
     public bool Success { get; set; }
     public int? JobId { get; set; }
+    public string Message { get; set; } = string.Empty;
+}
+
+/// <summary>A durable optimization job rendered in the admin activity/history feed.</summary>
+public sealed class StorageOptimizationActivityDto
+{
+    public int JobId { get; set; }
+    public int RequestId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public int? Year { get; set; }
+    public MediaType MediaType { get; set; }
+    public string? PosterUrl { get; set; }
+    public FulfillmentStatus Status { get; set; }
+    public string Stage { get; set; } = string.Empty;
+    public int Progress { get; set; }
+    public int Attempts { get; set; }
+    public int DeferCount { get; set; }
+    public int TargetFileCount { get; set; }
+    public List<int> Seasons { get; set; } = new();
+    public List<string> Goals { get; set; } = new();
+    public long OriginalBytes { get; set; }
+    public long? ReplacementBytes { get; set; }
+    public long? BytesSaved => ReplacementBytes is long replacement ? OriginalBytes - replacement : null;
+    public string? LastError { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+    public DateTime? NextRetryAt { get; set; }
+    public bool CanCancel { get; set; }
+    public bool CanRetry { get; set; }
+}
+
+public sealed class StorageOptimizationActionResultDto
+{
+    public bool Success { get; set; }
     public string Message { get; set; } = string.Empty;
 }

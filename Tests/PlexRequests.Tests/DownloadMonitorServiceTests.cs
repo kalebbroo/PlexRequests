@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Implementations;
@@ -105,6 +106,38 @@ public sealed class DownloadMonitorServiceTests
         Assert.Equal(2, status.PendingCount);
         Assert.Equal(1, status.InProgressCount);
         Assert.Equal(1, status.FailedCount);
+    }
+
+    [Fact]
+    public async Task StorageOptimizationIsDistinctAndExplainsItsContract()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var job = await fixture.AddJobAsync("Smaller Show", FulfillmentStatus.Downloading,
+            createdMinutesAgo: 10, claimedMinutesAgo: 8, updatedMinutesAgo: 1);
+        job.StorageOptimizationPolicyJson = JsonSerializer.Serialize(new StorageOptimizationPolicyDto
+        {
+            RequiredVideoCodec = "hevc",
+            TargetQuality = Quality.UHD4K,
+            MinimumSavingsPercent = 20,
+            Targets =
+            [
+                new StorageOptimizationTargetDto
+                {
+                    DestinationPath = "/tv/show/s02e01.mkv", CurrentSizeBytes = 4_000_000_000,
+                    EpisodeCoverage = [new EpisodeRef { Season = 2, Episode = 1 }]
+                }
+            ]
+        });
+        await fixture.Db.SaveChangesAsync();
+
+        var view = Assert.Single(await fixture.Service.GetActiveAndRecentAsync());
+
+        Assert.True(view.IsStorageOptimization);
+        Assert.Equal("Downloading replacement", view.Stage);
+        Assert.Equal(1, view.OptimizationTargetFileCount);
+        Assert.Equal([2], view.OptimizationSeasons);
+        Assert.Equal(["HEVC (H.265)", "4K", "Save at least 20%"], view.OptimizationGoals);
+        Assert.Equal(4_000_000_000, view.OptimizationOriginalBytes);
     }
 
     private sealed class Fixture(SqliteConnection connection, AppDbContext db) : IAsyncDisposable

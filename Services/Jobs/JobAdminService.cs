@@ -99,7 +99,8 @@ public class JobAdminService(
 
     public async Task<List<WantedItemDto>> GetMissingAsync() =>
         await db.FulfillmentJobs
-            .Where(j => j.Status == FulfillmentStatus.Deferred && (!j.IsUpgrade || j.IsReplacement) && j.MediaRequest != null)
+            .Where(j => j.Status == FulfillmentStatus.Deferred && (!j.IsUpgrade || j.IsReplacement)
+                        && j.StorageOptimizationPolicyJson == null && j.MediaRequest != null)
             .OrderByDescending(j => j.Escalated).ThenBy(j => j.NextRetryAt)
             .Select(j => new WantedItemDto
             {
@@ -113,7 +114,8 @@ public class JobAdminService(
     public async Task<bool> SearchMissingNowAsync(int jobId)
     {
         var j = await db.FulfillmentJobs.FirstOrDefaultAsync(x => x.Id == jobId);
-        if (j is null || j.Status != FulfillmentStatus.Deferred) return false;
+        if (j is null || j.Status != FulfillmentStatus.Deferred
+            || !string.IsNullOrWhiteSpace(j.StorageOptimizationPolicyJson)) return false;
         // Flip straight to Queued so the downloader claims it now, rather than waiting for the scheduler.
         j.Status = FulfillmentStatus.Queued;
         j.NextRetryAt = null;
@@ -125,7 +127,8 @@ public class JobAdminService(
     public async Task<bool> CancelMissingAsync(int jobId)
     {
         var j = await db.FulfillmentJobs.FirstOrDefaultAsync(x => x.Id == jobId);
-        if (j is null) return false;
+        if (j is null || j.Status != FulfillmentStatus.Deferred
+            || !string.IsNullOrWhiteSpace(j.StorageOptimizationPolicyJson)) return false;
         j.Status = FulfillmentStatus.Failed;
         j.LastError = "Search cancelled by admin";
         j.CompletedAt = DateTime.UtcNow;

@@ -119,6 +119,122 @@
     margin-top: 1rem;
 }
 
+.optimizer-activity-panel {
+    margin-top: 1rem;
+}
+
+.optimizer-activity-heading,
+.optimizer-activity-main,
+.optimizer-activity-title,
+.optimizer-activity-footer,
+.optimizer-activity-footer > div {
+    display: flex;
+    align-items: center;
+}
+
+.optimizer-activity-heading,
+.optimizer-activity-main,
+.optimizer-activity-footer {
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.optimizer-activity-list {
+    display: grid;
+    gap: .75rem;
+    margin-top: 1rem;
+}
+
+.optimizer-activity-card {
+    display: grid;
+    gap: .7rem;
+    padding: .85rem;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: .65rem;
+    background: color-mix(in srgb, var(--mud-palette-secondary) 3%, transparent);
+}
+
+.optimizer-activity-title {
+    min-width: 0;
+    align-items: flex-start;
+    gap: .65rem;
+}
+
+.optimizer-activity-title > div {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.optimizer-activity-title small,
+.optimizer-activity-time,
+.optimizer-activity-footer > span,
+.optimizer-activity-details small {
+    color: var(--mud-palette-text-secondary);
+    font-size: .72rem;
+}
+
+.optimizer-activity-time {
+    flex: 0 0 auto;
+}
+
+.optimizer-activity-goals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem;
+}
+
+.optimizer-activity-goals span {
+    padding: .22rem .48rem;
+    border: 1px solid color-mix(in srgb, var(--mud-palette-secondary) 30%, transparent);
+    border-radius: 999px;
+    color: var(--mud-palette-secondary);
+    font-size: .68rem;
+    font-weight: 650;
+}
+
+.optimizer-activity-progress {
+    height: 6px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--mud-palette-text-primary) 8%, transparent);
+}
+
+.optimizer-activity-progress span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--mud-palette-primary);
+    transition: width .3s ease;
+}
+
+.optimizer-activity-details {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .5rem;
+}
+
+.optimizer-activity-details > span {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    padding: .5rem .6rem;
+    border-radius: .45rem;
+    background: color-mix(in srgb, var(--mud-palette-text-primary) 4%, transparent);
+}
+
+.optimizer-activity-details strong {
+    overflow: hidden;
+    font-size: .76rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.optimizer-activity-footer > div {
+    flex: 0 0 auto;
+    gap: .35rem;
+}
+
 @media (max-width: 900px) {
     .optimizer-layout {
         flex-direction: column;
@@ -137,6 +253,10 @@
         align-items: flex-start;
         flex-direction: column;
     }
+
+    .optimizer-activity-details {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 @media (max-width: 600px) {
@@ -147,5 +267,20 @@
     .optimizer-season-grid,
     .optimizer-goals {
         grid-template-columns: 1fr;
+    }
+
+    .optimizer-activity-main,
+    .optimizer-activity-footer {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .optimizer-activity-title {
+        flex-wrap: wrap;
+    }
+
+    .optimizer-activity-footer > div {
+        width: 100%;
+        justify-content: flex-end;
     }
 }
