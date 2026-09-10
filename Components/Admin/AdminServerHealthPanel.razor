@@ -197,7 +197,7 @@
 
     <section class="dashboard-section availability-section" aria-labelledby="availability-heading">
         <div class="section-heading">
-            <div><MudText Typo="Typo.h5" HtmlTag="h3" id="availability-heading">Availability index</MudText><MudText Typo="Typo.body2" Class="text-secondary">The local Plex map that prevents duplicate downloads and tracks episode completeness.</MudText></div>
+            <div><MudText Typo="Typo.h5" HtmlTag="h3" id="availability-heading">Availability index</MudText><MudText Typo="Typo.body2" Class="text-secondary">The local Plex map that prevents duplicate downloads, tracks episode completeness, and inventories exact media versions.</MudText></div>
         </div>
         @if (_availabilityLoading)
         {
@@ -211,7 +211,7 @@
                 <div class="availability-metrics">
                     <div><strong>@_availability.TitleYearCount.ToString("N0")</strong><span>matched titles</span></div>
                     <div><strong>@_availability.ExternalIdCount.ToString("N0")</strong><span>external IDs</span></div>
-                    <div><strong>@_availability.LastEpisodes.ToString("N0")</strong><span>episodes scanned</span></div>
+                    <div><strong>@_availability.LastFiles.ToString("N0")</strong><span>media parts indexed</span></div>
                 </div>
                 <MudButton Color="Color.Primary" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Sync" OnClick="RebuildIndexAsync" Disabled="@(_rebuilding || !_availability.Configured)">@(_rebuilding ? "Rebuilding…" : "Rebuild index")</MudButton>
             </div>
@@ -299,7 +299,7 @@
         {
             await PlexApi.RebuildAvailabilityIndexAsync();
             _availability = await PlexApi.GetAvailabilityStatusAsync();
-            await Toast.ShowSuccessAsync($"Availability index rebuilt with {_availability.LastEpisodes:N0} episodes.");
+            await Toast.ShowSuccessAsync($"Availability index rebuilt with {_availability.LastFiles:N0} exact media parts.");
         }
         catch (Exception ex) { await Toast.ShowErrorAsync($"Rebuild failed: {ex.Message}"); }
         finally { _rebuilding = false; StateHasChanged(); }

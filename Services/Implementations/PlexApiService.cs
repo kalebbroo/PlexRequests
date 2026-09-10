@@ -1,4 +1,6 @@
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
@@ -563,7 +565,8 @@ public class PlexApiService : IPlexApiService
     // Last-rebuild stats live in the (singleton) memory cache rather than an instance field, since
     // PlexApiService is resolved fresh per DI scope — the background refresh service and an admin
     // page load run in different scopes and would otherwise never see each other's state.
-    private record LastRebuildResult(int Maps, int Seasons, int Episodes, int PrunedMaps, int PrunedSeasons, DateTime At);
+    private record LastRebuildResult(int Maps, int Seasons, int Episodes, int Files,
+        int PrunedMaps, int PrunedSeasons, int PrunedFiles, DateTime At);
     private const string LastRebuildCacheKey = "plex_last_rebuild_result";
     // Fast read path: the in-memory match index is projected FROM THE DB (kept fresh by the
     // background AvailabilityRefreshService). This never hits Plex, so annotating a page is cheap.
@@ -621,7 +624,7 @@ public class PlexApiService : IPlexApiService
             return new { skipped = true, reason = "Plex not configured" };
 
         var scanStart = DateTime.UtcNow;
-        int maps = 0, episodes = 0, seasons = 0;
+        int maps = 0, episodes = 0, seasons = 0, files = 0;
         var libraries = await GetLibrariesAsync();
         _logger.LogInformation("Plex availability scan: {LibCount} libraries", libraries.Count);
 
@@ -630,6 +633,9 @@ public class PlexApiService : IPlexApiService
         var mapByKey = await _db.PlexMappings.ToDictionaryAsync(m => m.ExternalKey, ct);
         var seasonRows = await _db.PlexSeasonAvailability.ToListAsync(ct);
         var seasonByKey = seasonRows.ToDictionary(s => (s.ShowRatingKey, s.SeasonNumber));
+        var fileRows = await _db.PlexLibraryFiles.ToListAsync(ct);
+        var fileByKey = fileRows.ToDictionary(
+            file => (file.SectionKey, file.RatingKey, file.PlexPartKey));
 
         foreach (var lib in libraries)
         {
@@ -660,6 +666,13 @@ public class PlexApiService : IPlexApiService
                     existing.VersionCount = item.quality?.VersionCount ?? 1;
                     maps++;
                 }
+                foreach (var part in lib.Type == MediaType.Movie ? item.parts : [])
+                {
+                    UpsertLibraryFile(fileByKey, lib, item.ratingKey, showRatingKey: null,
+                        MediaType.Movie, item.title ?? "Untitled", item.year,
+                        season: null, episode: null, part, scanStart);
+                    files++;
+                }
             }
 
             // Episodes -> per-season presence (TV libraries only). One type=4 query returns every
@@ -678,6 +691,13 @@ public class PlexApiService : IPlexApiService
                     {
                         if (!perSeasonQuality.TryGetValue(k, out var qmap)) { qmap = new(); perSeasonQuality[k] = qmap; }
                         qmap[ep.episode] = ep.quality;
+                    }
+                    foreach (var part in ep.parts)
+                    {
+                        UpsertLibraryFile(fileByKey, lib, ep.ratingKey, ep.showRatingKey,
+                            MediaType.TvShow, ep.showTitle ?? ep.episodeTitle ?? "Untitled series", ep.year,
+                            ep.season, ep.episode > 0 ? ep.episode : null, part, scanStart);
+                        files++;
                     }
                     episodes++;
                 }
@@ -714,7 +734,14 @@ public class PlexApiService : IPlexApiService
                 ? $"item count fell from {prior.Maps} to {maps} (>{MaxItemDropFractionBeforeSkippingPrune:P0} drop)"
                 : null;
 
-        int prunedMaps = 0, prunedSeasons = 0, agedMaps = 0, agedSeasons = 0;
+        var inventorySuspicious = files == 0 ? "the scan returned no exact media parts"
+            : prior is not null && prior.Files > 0 && files < prior.Files * (1 - MaxItemDropFractionBeforeSkippingPrune)
+                ? $"media-part count fell from {prior.Files} to {files} (>{MaxItemDropFractionBeforeSkippingPrune:P0} drop)"
+                : null;
+        suspicious ??= inventorySuspicious;
+
+        int prunedMaps = 0, prunedSeasons = 0, prunedFiles = 0;
+        int agedMaps = 0, agedSeasons = 0, agedFiles = 0;
         if (suspicious is not null)
         {
             _logger.LogWarning("Plex availability scan looks partial ({Reason}); keeping every existing row rather than pruning", suspicious);
@@ -723,6 +750,7 @@ public class PlexApiService : IPlexApiService
         {
             var staleMaps = await _db.PlexMappings.Where(m => m.LastSeenAt < scanStart).ToListAsync(ct);
             var staleSeasons = await _db.PlexSeasonAvailability.Where(s => s.LastSeenAt < scanStart).ToListAsync(ct);
+            var staleFiles = await _db.PlexLibraryFiles.Where(file => file.LastSeenAt < scanStart).ToListAsync(ct);
 
             foreach (var m in staleMaps)
             {
@@ -734,16 +762,29 @@ public class PlexApiService : IPlexApiService
                 if (++s.MissedScans >= MissedScansBeforePrune) { _db.PlexSeasonAvailability.Remove(s); prunedSeasons++; }
                 else agedSeasons++;
             }
+            foreach (var file in staleFiles)
+            {
+                if (++file.MissedScans >= MissedScansBeforePrune)
+                {
+                    _db.PlexLibraryFiles.Remove(file);
+                    prunedFiles++;
+                }
+                else agedFiles++;
+            }
             await _db.SaveChangesAsync(ct);
-            if (agedMaps > 0 || agedSeasons > 0)
-                _logger.LogInformation("Availability prune: {AgedMaps} map(s) / {AgedSeasons} season(s) missing this pass but kept (need {Needed} consecutive misses)",
-                    agedMaps, agedSeasons, MissedScansBeforePrune);
+            if (agedMaps > 0 || agedSeasons > 0 || agedFiles > 0)
+                _logger.LogInformation("Availability prune: {AgedMaps} map(s) / {AgedSeasons} season(s) / "
+                                       + "{AgedFiles} media part(s) missing this pass but kept "
+                                       + "(need {Needed} consecutive misses)",
+                    agedMaps, agedSeasons, agedFiles, MissedScansBeforePrune);
         }
 
         _cache.Remove(AvailabilityCacheKey); // force the read projection to rebuild from fresh DB
-        _cache.Set(LastRebuildCacheKey, new LastRebuildResult(maps, seasons, episodes, prunedMaps, prunedSeasons, scanStart), TimeSpan.FromDays(30));
-        _logger.LogInformation("Plex availability rebuilt: {Maps} id-maps, {Seasons} seasons, {Eps} episodes; pruned {PMaps} maps / {PSeasons} seasons",
-            maps, seasons, episodes, prunedMaps, prunedSeasons);
+        _cache.Set(LastRebuildCacheKey, new LastRebuildResult(maps, seasons, episodes, files,
+            prunedMaps, prunedSeasons, prunedFiles, scanStart), TimeSpan.FromDays(30));
+        _logger.LogInformation("Plex availability rebuilt: {Maps} id-maps, {Seasons} seasons, {Eps} episodes, "
+                               + "{Files} media parts; pruned {PMaps} maps / {PSeasons} seasons / {PFiles} parts",
+            maps, seasons, episodes, files, prunedMaps, prunedSeasons, prunedFiles);
         try
         {
             var settingsJson = await _db.LibraryOrganizationPreferences.AsNoTracking()
@@ -760,7 +801,8 @@ public class PlexApiService : IPlexApiService
         {
             _logger.LogWarning(ex, "Saved custom Plex metadata could not be reapplied after availability scan");
         }
-        return new { maps, seasons, episodes, prunedMaps, prunedSeasons, prunePolicy = suspicious ?? "normal", at = scanStart };
+        return new { maps, seasons, episodes, files, prunedMaps, prunedSeasons, prunedFiles,
+            prunePolicy = suspicious ?? "normal", at = scanStart };
     }
 
     // A row must be absent from this many consecutive scans before it's deleted, and a scan that loses more
@@ -770,7 +812,9 @@ public class PlexApiService : IPlexApiService
     private const double MaxItemDropFractionBeforeSkippingPrune = 0.30;
 
     // Enumerate every episode in a TV library section via a single paged type=4 query.
-    private async IAsyncEnumerable<(string showRatingKey, int season, int episode, MediaQualityDto? quality)> EnumerateEpisodesAsync(string sectionKey)
+    private async IAsyncEnumerable<(string ratingKey, string showRatingKey, string? episodeTitle,
+        string? showTitle, int? year, int season, int episode, MediaQualityDto? quality,
+        List<PlexLibraryPartSnapshot> parts)> EnumerateEpisodesAsync(string sectionKey)
     {
         var baseUrl = NormalizeBaseUrl(_cfg.PrimaryServerUrl);
         if (baseUrl is null) yield break;
@@ -798,10 +842,15 @@ public class PlexApiService : IPlexApiService
                     {
                         returned++;
                         var show = JsonStringOrNumber(m, "grandparentRatingKey");
+                        var ratingKey = JsonStringOrNumber(m, "ratingKey");
                         var season = JsonInt(m, "parentIndex");
                         var episode = JsonInt(m, "index");
-                        if (!string.IsNullOrEmpty(show) && season is >= 0)
-                            yield return (show, season.Value, episode ?? -1, ExtractQuality(m));
+                        if (!string.IsNullOrEmpty(show) && !string.IsNullOrEmpty(ratingKey)
+                            && season is >= 0)
+                            yield return (ratingKey, show, JsonStr(m, "title"),
+                                JsonStr(m, "grandparentTitle"),
+                                JsonInt(m, "grandparentYear") ?? JsonInt(m, "year"), season.Value,
+                                episode ?? -1, ExtractQuality(m), ExtractLibraryParts(m));
                     }
                 }
             }
@@ -955,6 +1004,85 @@ public class PlexApiService : IPlexApiService
         return best;
     }
 
+    internal sealed record PlexLibraryPartSnapshot(string PartKey, string FilePath, long SizeBytes,
+        int ResolutionHeight, string? VideoCodec, string? AudioCodec);
+
+    /// <summary>Extract exact media parts rather than only the aggregate quality badge. Plex's Media values
+    /// come from its own stream inspection, making this read-only inventory suitable evidence; parts with no
+    /// absolute file path are deliberately ignored because they cannot be targeted safely later.</summary>
+    internal static List<PlexLibraryPartSnapshot> ExtractLibraryParts(JsonElement item)
+    {
+        var result = new List<PlexLibraryPartSnapshot>();
+        if (!item.TryGetProperty("Media", out var mediaArray)
+            || mediaArray.ValueKind != JsonValueKind.Array) return result;
+
+        foreach (var media in mediaArray.EnumerateArray())
+        {
+            if (media.ValueKind != JsonValueKind.Object) continue;
+            var width = JsonInt(media, "width");
+            var height = JsonInt(media, "height");
+            var quality = VideoResolutionPolicy.FromDimensions(width, height);
+            var resolutionHeight = quality == Quality.Any ? Math.Max(0, height ?? 0) : (int)quality;
+            var videoCodec = NormalizeVideoCodec(JsonStr(media, "videoCodec"));
+            var audioCodec = NormalizeAudioCodec(JsonStr(media, "audioCodec"));
+            if (!media.TryGetProperty("Part", out var partArray)
+                || partArray.ValueKind != JsonValueKind.Array) continue;
+            foreach (var part in partArray.EnumerateArray())
+            {
+                var path = JsonStr(part, "file")?.Trim();
+                if (string.IsNullOrWhiteSpace(path) || !IsAbsoluteLibraryPath(path)) continue;
+                var partKey = JsonStringOrNumber(part, "id");
+                if (string.IsNullOrWhiteSpace(partKey)) partKey = PathDigest(path);
+                result.Add(new PlexLibraryPartSnapshot(partKey, path,
+                    Math.Max(0, JsonLong(part, "size") ?? 0), resolutionHeight,
+                    videoCodec, audioCodec));
+            }
+        }
+        return result;
+    }
+
+    private static string PathDigest(string path) => "path-" + Convert.ToHexString(
+        SHA256.HashData(Encoding.UTF8.GetBytes(path))).ToLowerInvariant()[..32];
+
+    private static bool IsAbsoluteLibraryPath(string path) => Path.IsPathFullyQualified(path)
+        || (path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':'
+            && path[2] is '\\' or '/')
+        || path.StartsWith("\\\\", StringComparison.Ordinal);
+
+    private void UpsertLibraryFile(
+        IDictionary<(string SectionKey, string RatingKey, string PartKey), PlexLibraryFileEntity> files,
+        PlexLibrary library, string ratingKey, string? showRatingKey, MediaType mediaType,
+        string title, int? year, int? season, int? episode, PlexLibraryPartSnapshot part,
+        DateTime seenAt)
+    {
+        var key = (library.Key, ratingKey, part.PartKey);
+        if (!files.TryGetValue(key, out var row))
+        {
+            row = new PlexLibraryFileEntity
+            {
+                SectionKey = library.Key,
+                RatingKey = ratingKey,
+                PlexPartKey = part.PartKey
+            };
+            _db.PlexLibraryFiles.Add(row);
+            files[key] = row;
+        }
+        row.SectionTitle = library.Title;
+        row.ShowRatingKey = showRatingKey;
+        row.FilePath = part.FilePath;
+        row.MediaType = mediaType;
+        row.Title = title;
+        row.Year = year;
+        row.SeasonNumber = season;
+        row.EpisodeNumber = episode;
+        row.SizeBytes = part.SizeBytes;
+        row.ResolutionHeight = part.ResolutionHeight;
+        row.VideoCodec = part.VideoCodec;
+        row.AudioCodec = part.AudioCodec;
+        row.LastSeenAt = seenAt;
+        row.MissedScans = 0;
+    }
+
     // Combine several files (e.g. a season's episodes) into one representative summary:
     // best resolution/codec seen + total size. VersionCount stays 1 (these are distinct items,
     // not alternate versions of the same title).
@@ -1046,7 +1174,8 @@ public class PlexApiService : IPlexApiService
         return $"{baseUrl}/web/index.html#!/details?key={encodedKey}";
     }
 
-    private async IAsyncEnumerable<(string ratingKey, string? title, int? year, List<string> guids, MediaQualityDto? quality)> EnumerateLibraryItemsAsync(string sectionKey)
+    private async IAsyncEnumerable<(string ratingKey, string? title, int? year, List<string> guids,
+        MediaQualityDto? quality, List<PlexLibraryPartSnapshot> parts)> EnumerateLibraryItemsAsync(string sectionKey)
     {
         int start = 0;
         const int size = 200;
@@ -1107,7 +1236,8 @@ public class PlexApiService : IPlexApiService
                                 var s = guidStr.GetString();
                                 if (!string.IsNullOrWhiteSpace(s)) guids.Add(s!); // may be plex:// guid; still capture
                             }
-                            yield return (ratingKey, title, year, guids, ExtractQuality(m));
+                            yield return (ratingKey, title, year, guids, ExtractQuality(m),
+                                ExtractLibraryParts(m));
                         }
                     }
                 }
@@ -1127,7 +1257,7 @@ public class PlexApiService : IPlexApiService
                         var year = (int?)v.Attribute("year");
                         var guids = v.Elements("Guid").Select(g => (string?)g.Attribute("id") ?? string.Empty).Where(s => !string.IsNullOrEmpty(s)).ToList();
                         // XML fallback path: quality isn't parsed here (Plex serves JSON when we ask for it).
-                        yield return (rk, title, year, guids, null);
+                        yield return (rk, title, year, guids, null, []);
                     }
                 }
             }
@@ -1818,8 +1948,10 @@ public class PlexApiService : IPlexApiService
             LastMaps = last?.Maps ?? 0,
             LastSeasons = last?.Seasons ?? 0,
             LastEpisodes = last?.Episodes ?? 0,
+            LastFiles = last?.Files ?? await _db.PlexLibraryFiles.CountAsync(),
             LastPrunedMaps = last?.PrunedMaps ?? 0,
-            LastPrunedSeasons = last?.PrunedSeasons ?? 0
+            LastPrunedSeasons = last?.PrunedSeasons ?? 0,
+            LastPrunedFiles = last?.PrunedFiles ?? 0
         };
     }
 }

@@ -404,8 +404,10 @@ public record PlexAvailabilityStatus
     public int LastMaps { get; init; }
     public int LastSeasons { get; init; }
     public int LastEpisodes { get; init; }
+    public int LastFiles { get; init; }
     public int LastPrunedMaps { get; init; }
     public int LastPrunedSeasons { get; init; }
+    public int LastPrunedFiles { get; init; }
 }
 
 public class PlexAuthenticationFlow
