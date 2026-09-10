@@ -15,6 +15,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<UserAccessAuditEntity> UserAccessAudits => Set<UserAccessAuditEntity>();
     public DbSet<PlexMappingEntity> PlexMappings => Set<PlexMappingEntity>();
     public DbSet<PlexSeasonAvailabilityEntity> PlexSeasonAvailability => Set<PlexSeasonAvailabilityEntity>();
+    public DbSet<PlexLibraryFileEntity> PlexLibraryFiles => Set<PlexLibraryFileEntity>();
     public DbSet<MediaMetadataCacheEntity> MediaMetadataCache => Set<MediaMetadataCacheEntity>();
     public DbSet<MusicSettingsEntity> MusicSettings => Set<MusicSettingsEntity>();
     public DbSet<SeasonEpisodesCacheEntity> SeasonEpisodesCache => Set<SeasonEpisodesCacheEntity>();
@@ -154,6 +155,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasKey(x => x.Id);
             b.HasIndex(x => x.ShowRatingKey);
             b.HasIndex(x => new { x.ShowRatingKey, x.SeasonNumber }).IsUnique();
+        });
+
+        modelBuilder.Entity<PlexLibraryFileEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => new { x.SectionKey, x.RatingKey, x.PlexPartKey }).IsUnique();
+            b.HasIndex(x => x.FilePath);
+            b.HasIndex(x => x.ShowRatingKey);
+            b.HasIndex(x => x.LastSeenAt);
         });
 
         modelBuilder.Entity<MediaMetadataCacheEntity>(b =>

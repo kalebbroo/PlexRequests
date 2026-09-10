@@ -34,6 +34,7 @@ public class DatabaseAdminService(AppDbContext db, IPlexApiService plex, ILogger
             new("Notifications", await db.Notifications.CountAsync()),
             new("Plex mappings (availability)", await db.PlexMappings.CountAsync()),
             new("Plex season availability", await db.PlexSeasonAvailability.CountAsync()),
+            new("Plex library files", await db.PlexLibraryFiles.CountAsync()),
             new("Metadata cache", await db.MediaMetadataCache.CountAsync()),
             new("Episode-list cache", await db.SeasonEpisodesCache.CountAsync()),
             new("Quality rules", await db.QualityRules.CountAsync()),
@@ -75,7 +76,8 @@ public class DatabaseAdminService(AppDbContext db, IPlexApiService plex, ILogger
 
     public async Task<int> ClearAndRebuildAvailabilityIndexAsync()
     {
-        var n = await db.PlexSeasonAvailability.ExecuteDeleteAsync()
+        var n = await db.PlexLibraryFiles.ExecuteDeleteAsync()
+              + await db.PlexSeasonAvailability.ExecuteDeleteAsync()
               + await db.PlexMappings.ExecuteDeleteAsync();
         logger.LogInformation("Admin cleared the availability index ({Rows} rows); rebuilding from Plex", n);
         try { await plex.RebuildAvailabilityIndexAsync(); }
@@ -143,6 +145,7 @@ public class DatabaseAdminService(AppDbContext db, IPlexApiService plex, ILogger
         await db.MediaRequests.ExecuteDeleteAsync();
         await db.Watchlist.ExecuteDeleteAsync();
         await db.MediaIssues.ExecuteDeleteAsync();
+        await db.PlexLibraryFiles.ExecuteDeleteAsync();
         await db.PlexSeasonAvailability.ExecuteDeleteAsync();
         await db.PlexMappings.ExecuteDeleteAsync();
         await db.MediaMetadataCache.ExecuteDeleteAsync();
