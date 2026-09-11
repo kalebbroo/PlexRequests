@@ -46,7 +46,7 @@ else
         }
         else if (_report.Titles.Count == 0)
         {
-            <div class="activity-empty compact"><MudIcon Icon="@Icons.Material.Filled.Inventory2" /><strong>No imported video inventory yet</strong><span>The report appears after files are successfully imported.</span></div>
+            <div class="activity-empty compact"><MudIcon Icon="@Icons.Material.Filled.Inventory2" /><strong>No video inventory yet</strong><span>The report appears after a Plex inventory scan or a successful import.</span></div>
         }
         else
         {
@@ -820,7 +820,7 @@ else
 
     private static string OptimizationAvailability(LibraryEfficiencyTitleDto item) => item.CanOptimize
         ? $"Build a safe replacement plan for {item.OptimizableFileCount} managed file{(item.OptimizableFileCount == 1 ? string.Empty : "s")}."
-        : "This Plex file is included in the report, but it has no verified Plex Requests import path and cannot be replaced from here.";
+        : "This Plex file is report-only. Connect its Plex and Plex Requests folders under Libraries & importing before it can be replaced.";
 
     private static string Percent(long part, long total) => total <= 0 ? "0%"
         : $"{part * 100d / total:0.#}%";

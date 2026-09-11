@@ -26,6 +26,7 @@ public static class LibraryRouting
     {
         prefs.LibraryDestinations ??= new List<LibraryDestinationDto>();
         prefs.LibraryRootRules ??= new List<LibraryRootRuleDto>();
+        prefs.PlexPathMappings ??= new List<PlexPathMappingDto>();
 
         EnsureDefault(prefs, LibraryContentKind.Movie, DefaultMovieId, "Movies", prefs.MoviePath);
         EnsureDefault(prefs, LibraryContentKind.Series, DefaultSeriesId, "TV Shows", prefs.TvPath);
@@ -71,6 +72,20 @@ public static class LibraryRouting
     public static bool TryNormalizeAndValidate(LibraryOrganizationPreferencesDto prefs, out string? error)
     {
         EnsureDestinationModel(prefs);
+        for (var i = 0; i < prefs.PlexPathMappings.Count; i++)
+        {
+            if (!PlexLibraryPathMapping.TryNormalize(prefs.PlexPathMappings[i], out var normalized,
+                    out error)) return false;
+            prefs.PlexPathMappings[i] = normalized;
+        }
+        var duplicateMapping = prefs.PlexPathMappings
+            .GroupBy(mapping => $"{mapping.PlexSectionId}\n{mapping.PlexPathPrefix}",
+                StringComparer.OrdinalIgnoreCase).FirstOrDefault(group => group.Count() > 1);
+        if (duplicateMapping is not null)
+        {
+            error = "The same Plex library path is mapped more than once.";
+            return false;
+        }
         foreach (var destination in prefs.LibraryDestinations)
         {
             destination.Id = destination.Id?.Trim() ?? string.Empty;

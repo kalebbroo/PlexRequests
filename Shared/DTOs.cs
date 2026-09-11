@@ -1457,6 +1457,11 @@ public class LibraryOrganizationPreferencesDto
     /// consumers synthesize the three defaults from MoviePath/TvPath/MusicPath.</summary>
     public List<LibraryDestinationDto> LibraryDestinations { get; set; } = new();
 
+    /// <summary>Explicit translations from paths reported by a Plex section to the paths visible inside
+    /// Plex Requests' web/downloader containers. These mappings are the only way a Plex-discovered legacy
+    /// file may become an actionable replacement target.</summary>
+    public List<PlexPathMappingDto> PlexPathMappings { get; set; } = new();
+
     /// <summary>Per-series release-number translations. These are snapshotted into new jobs so edits never
     /// change the identity of files already downloading.</summary>
     public List<SeriesEpisodeOrderProfileDto> SeriesEpisodeOrderProfiles { get; set; } = new();
@@ -1613,6 +1618,15 @@ public class LibraryDestinationDto
     public bool IsDefault { get; set; }
     public bool AllowUserSelection { get; set; }
     public bool Enabled { get; set; } = true;
+}
+
+/// <summary>One administrator-approved Plex filesystem translation. Prefixes must be absolute, non-root
+/// directories. The Plex section id prevents an identical source prefix in another library from matching.</summary>
+public class PlexPathMappingDto
+{
+    public string PlexSectionId { get; set; } = string.Empty;
+    public string PlexPathPrefix { get; set; } = string.Empty;
+    public string ManagedPathPrefix { get; set; } = string.Empty;
 }
 
 /// <summary>Immutable routing result embedded into a fulfillment job. Imports use this snapshot instead of

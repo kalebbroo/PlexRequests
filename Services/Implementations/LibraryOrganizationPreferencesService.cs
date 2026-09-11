@@ -46,6 +46,9 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
         e.MusicTrackTemplate = string.IsNullOrWhiteSpace(prefs.MusicTrackTemplate) ? e.MusicTrackTemplate : prefs.MusicTrackTemplate.Trim();
         e.LibraryRootRulesJson = prefs.LibraryRootRules is { Count: > 0 } ? JsonSerializer.Serialize(prefs.LibraryRootRules) : null;
         e.LibraryDestinationsJson = JsonSerializer.Serialize(prefs.LibraryDestinations);
+        e.PlexPathMappingsJson = prefs.PlexPathMappings is { Count: > 0 }
+            ? JsonSerializer.Serialize(prefs.PlexPathMappings)
+            : null;
         e.SeriesEpisodeOrderProfilesJson = prefs.SeriesEpisodeOrderProfiles is { Count: > 0 }
             ? JsonSerializer.Serialize(prefs.SeriesEpisodeOrderProfiles)
             : null;
@@ -95,6 +98,10 @@ public class LibraryOrganizationPreferencesService(AppDbContext db) : ILibraryOr
         LibraryDestinations = string.IsNullOrWhiteSpace(e.LibraryDestinationsJson)
             ? new List<LibraryDestinationDto>()
             : (JsonSerializer.Deserialize<List<LibraryDestinationDto>>(e.LibraryDestinationsJson) ?? new List<LibraryDestinationDto>()),
+        PlexPathMappings = string.IsNullOrWhiteSpace(e.PlexPathMappingsJson)
+            ? new List<PlexPathMappingDto>()
+            : (JsonSerializer.Deserialize<List<PlexPathMappingDto>>(e.PlexPathMappingsJson)
+                ?? new List<PlexPathMappingDto>()),
         SeriesEpisodeOrderProfiles = string.IsNullOrWhiteSpace(e.SeriesEpisodeOrderProfilesJson)
             ? new List<SeriesEpisodeOrderProfileDto>()
             : (JsonSerializer.Deserialize<List<SeriesEpisodeOrderProfileDto>>(e.SeriesEpisodeOrderProfilesJson)

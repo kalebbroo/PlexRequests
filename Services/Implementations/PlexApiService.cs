@@ -276,6 +276,11 @@ public class PlexApiService : IPlexApiService
                     Title = JsonStr(directory, "title") ?? "Library",
                     Type = PlexMediaType(plexType),
                     ItemLabel = plexType switch { "movie" => "movies", "show" => "shows", "artist" => "artists", _ => "titles" },
+                    Locations = directory.TryGetProperty("Location", out var locations)
+                        && locations.ValueKind == JsonValueKind.Array
+                        ? locations.EnumerateArray().Select(location => JsonStr(location, "path"))
+                            .Where(path => !string.IsNullOrWhiteSpace(path)).Select(path => path!).Distinct().ToList()
+                        : [],
                     IsRefreshing = JsonBool(directory, "refreshing"),
                     LastScannedAt = UnixDate(JsonLong(directory, "scannedAt"))
                 });
@@ -297,6 +302,9 @@ public class PlexApiService : IPlexApiService
                 Title = (string?)directory.Attribute("title") ?? "Library",
                 Type = PlexMediaType(plexType),
                 ItemLabel = plexType switch { "movie" => "movies", "show" => "shows", "artist" => "artists", _ => "titles" },
+                Locations = directory.Elements("Location")
+                    .Select(location => (string?)location.Attribute("path"))
+                    .Where(path => !string.IsNullOrWhiteSpace(path)).Select(path => path!).Distinct().ToList(),
                 IsRefreshing = (bool?)directory.Attribute("refreshing") ?? false,
                 LastScannedAt = UnixDate((long?)directory.Attribute("scannedAt"))
             });
