@@ -24,15 +24,16 @@ public interface IStorageOptimizationService
 }
 
 /// <summary>
-/// Builds an administrator-selected replacement scope from the import audit. Nothing here scans the entire
-/// library or starts a download implicitly: preview and queue resolve the same deterministic target list,
-/// and that list is frozen into the fulfillment job for every later safety check.
+/// Builds an administrator-selected replacement scope from verified managed inventory: either the import
+/// audit or a Plex file admitted through an explicit path mapping. Nothing here starts a download implicitly:
+/// preview and queue resolve the same deterministic target list, which is frozen into the fulfillment job.
 /// </summary>
 public sealed class StorageOptimizationService(
     AppDbContext db,
     IFulfillmentQueue queue,
     ICustomFormatService customFormats,
-    IReleaseParser parser) : IStorageOptimizationService
+    IReleaseParser parser,
+    ILibraryOrganizationPreferencesService? libraryPreferences = null) : IStorageOptimizationService
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
     private static readonly FulfillmentStatus[] ActiveStatuses =
@@ -82,8 +83,8 @@ public sealed class StorageOptimizationService(
     {
         // Plex sees the whole library, including media imported before Plex Requests existed. Prefer that
         // exact read-only inventory for reporting once the first scan has completed. The replacement planner
-        // remains deliberately narrower: only a title with a current import audit gets an actionable button.
-        // This prevents a Plex path from another host/container namespace becoming a deletion target.
+        // accepts older Plex files only through an explicit section-scoped path mapping whose translated file
+        // exists at the exact size Plex reported.
         var plexReport = await BuildPlexEfficiencyReportAsync();
         if (plexReport is not null) return plexReport;
 
@@ -161,8 +162,7 @@ public sealed class StorageOptimizationService(
         if (plexFiles.Count == 0) return null;
 
         // Link a Plex title to a request only through an external provider id captured by Plex. Title/year
-        // matching is intentionally excluded: remakes and same-name series make that unsafe. A linked title
-        // is actionable only when the existing import audit also knows its managed destination paths.
+        // matching is intentionally excluded: remakes and same-name series make that unsafe.
         var managed = await LoadInventoryAsync();
         var managedByRequest = managed.GroupBy(item => item.Request.Id)
             .ToDictionary(group => group.Key, group => group.ToList());
@@ -481,7 +481,7 @@ public sealed class StorageOptimizationService(
 
         var rows = (await LoadInventoryAsync()).Where(item => item.Request.Id == input.RequestId).ToList();
         if (rows.Count == 0)
-            return new(preview.WithMessage("No current imported video files were found for this title."), null, null);
+            return new(preview.WithMessage("No verified, managed video files were found for this title."), null, null);
         var request = rows[0].Request;
         preview.Title = request.Title;
         if (rows.Any(item => item.HasActiveJob))
@@ -497,7 +497,7 @@ public sealed class StorageOptimizationService(
         }
         else selectedSeasons.Clear();
         if (rows.Count == 0)
-            return new(preview.WithMessage("The selected seasons have no imported video files."), null, null);
+            return new(preview.WithMessage("The selected seasons have no verified, managed video files."), null, null);
 
         var formats = await customFormats.GetAllAsync();
         var knownIds = formats.Where(format => format.Enabled).Select(format => format.Id).ToHashSet();
@@ -521,7 +521,7 @@ public sealed class StorageOptimizationService(
             if (input.RequireHevc && !descriptor.CodecObserved)
             {
                 unknown++;
-                if (row.File.MediaMetadataScanStatus is not (MediaMetadataScanStatus.Queued
+                if (!row.FromPlex && row.File.MediaMetadataScanStatus is not (MediaMetadataScanStatus.Queued
                     or MediaMetadataScanStatus.Claimed))
                     codecScanFileIds.Add(row.File.Id);
             }
@@ -558,7 +558,11 @@ public sealed class StorageOptimizationService(
         if (input.RequireHevc && unknown > 0)
         {
             preview.RequiresCodecScan = true;
-            return new(preview.WithMessage($"{unknown} selected file{(unknown == 1 ? " needs" : "s need")} a read-only codec scan before Plex Requests can decide whether an HEVC replacement is necessary."), null, null);
+            var plexUnknown = rows.Count(row => row.FromPlex && !Describe(row).CodecObserved);
+            var detail = plexUnknown > 0
+                ? " Refresh the Plex library inventory after Plex has analyzed the file."
+                : " Start the offered read-only codec scan first.";
+            return new(preview.WithMessage($"{unknown} selected file{(unknown == 1 ? " needs" : "s need")} verified codec metadata before Plex Requests can decide whether an HEVC replacement is necessary.{detail}"), null, null);
         }
         if (input.MinimumSavingsPercent > 0 && targets.Any(target => target.CurrentSizeBytes <= 0))
             return new(preview.WithMessage("Some current file sizes are unknown, so a minimum saving cannot be proven. Set minimum savings to 0 or choose another scope."), null, null);
@@ -598,13 +602,134 @@ public sealed class StorageOptimizationService(
             .Select(file => (file, job: jobs[file.FulfillmentJobId]))
             .Where(item => requests.ContainsKey(item.job.MediaRequestId))
             .Select(item => new InventoryRow(item.file, item.job, requests[item.job.MediaRequestId],
-                activeRequestIds.Contains(item.job.MediaRequestId))).ToList();
+                activeRequestIds.Contains(item.job.MediaRequestId), false)).ToList();
 
         // Legacy retries could record the same destination more than once. The newest audit row represents
         // the physical file; counting both would inflate savings and could queue duplicate path replacement.
-        return rows.GroupBy(row => row.File.DestinationPath, StringComparer.OrdinalIgnoreCase)
+        var audited = rows.GroupBy(row => row.File.DestinationPath, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.OrderByDescending(row => row.File.ImportedAt).ThenByDescending(row => row.File.Id).First())
             .ToList();
+        var mapped = await LoadMappedPlexInventoryAsync(activeRequestIds.ToHashSet());
+        if (mapped.Count == 0) return audited;
+
+        // Once Plex provides verified paths for a linked title, it is authoritative. Stale import-audit rows
+        // for files Plex no longer sees must never inflate the scope or become deletion targets.
+        var mappedRequestIds = mapped.Select(row => row.Request.Id).ToHashSet();
+        return audited.Where(row => !mappedRequestIds.Contains(row.Request.Id)).Concat(mapped).ToList();
+    }
+
+    private async Task<List<InventoryRow>> LoadMappedPlexInventoryAsync(HashSet<int> activeRequestIds)
+    {
+        if (libraryPreferences is null) return [];
+        var preferences = await libraryPreferences.GetAsync();
+        if (preferences.PlexPathMappings.Count == 0) return [];
+
+        var requests = await db.MediaRequests.AsNoTracking()
+            .Where(request => request.Status == RequestStatus.Available
+                              && request.MediaType != MediaType.Music)
+            .ToListAsync();
+        if (requests.Count == 0) return [];
+        var requestById = requests.ToDictionary(request => request.Id);
+        var requestIdsByExternalKey = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var request in requests)
+        foreach (var key in ExternalKeys(request))
+        {
+            if (!requestIdsByExternalKey.TryGetValue(key, out var ids))
+                requestIdsByExternalKey[key] = ids = [];
+            ids.Add(request.Id);
+        }
+
+        var requestIdsByRatingKey = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+        var plexMappings = await db.PlexMappings.AsNoTracking().Where(mapping => mapping.MissedScans == 0)
+            .Select(mapping => new { mapping.ExternalKey, mapping.RatingKey, mapping.MediaType }).ToListAsync();
+        foreach (var mapping in plexMappings)
+        {
+            if (!requestIdsByExternalKey.TryGetValue(mapping.ExternalKey, out var requestIds)) continue;
+            if (!requestIdsByRatingKey.TryGetValue(mapping.RatingKey, out var linked))
+                requestIdsByRatingKey[mapping.RatingKey] = linked = [];
+            linked.UnionWith(requestIds.Where(id => CompatibleMediaType(requestById[id].MediaType,
+                mapping.MediaType)));
+        }
+
+        var files = await db.PlexLibraryFiles.AsNoTracking().Where(file => file.MissedScans == 0).ToListAsync();
+        var candidates = new List<(PlexLibraryFileEntity File, string Path, int RequestId)>();
+        foreach (var file in files)
+        {
+            var ownerRatingKey = file.MediaType == MediaType.TvShow
+                ? file.ShowRatingKey ?? file.RatingKey
+                : file.RatingKey;
+            if (!requestIdsByRatingKey.TryGetValue(ownerRatingKey, out var linkedIds)) continue;
+            if (!PlexLibraryPathMapping.TryMap(file.SectionKey, file.FilePath,
+                    preferences.PlexPathMappings, out var managedPath)) continue;
+            try
+            {
+                var info = new FileInfo(managedPath);
+                if (!info.Exists || file.SizeBytes <= 0 || info.Length != file.SizeBytes) continue;
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException
+                                           or IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+            var requestId = linkedIds.Where(requestById.ContainsKey).Order().FirstOrDefault();
+            if (requestId > 0) candidates.Add((file, managedPath, requestId));
+        }
+        if (candidates.Count == 0) return [];
+
+        var candidateRequestIds = candidates.Select(item => item.RequestId).Distinct().ToList();
+        var jobs = await db.FulfillmentJobs.AsNoTracking()
+            .Where(job => candidateRequestIds.Contains(job.MediaRequestId))
+            .OrderByDescending(job => job.Id).ToListAsync();
+        var latestJobByRequest = jobs.GroupBy(job => job.MediaRequestId)
+            .ToDictionary(group => group.Key, group => group.First());
+
+        var result = new List<InventoryRow>();
+        foreach (var group in candidates.GroupBy(item => new { item.RequestId, item.Path }))
+        {
+            var parts = group.Select(item => item.File).ToList();
+            var first = parts.OrderByDescending(file => file.SizeBytes).First();
+            var coverage = parts.Where(file => file.SeasonNumber.HasValue && file.EpisodeNumber.HasValue)
+                .Select(file => new ImportedEpisodeCoverageEntity
+                {
+                    SeasonNumber = file.SeasonNumber!.Value,
+                    EpisodeNumber = file.EpisodeNumber!.Value
+                }).DistinctBy(item => new { item.SeasonNumber, item.EpisodeNumber }).ToList();
+            var tracks = VideoCodecPolicy.Normalize(first.VideoCodec) is null
+                ? null
+                : JsonSerializer.Serialize(new MediaTrackSummaryDto
+                {
+                    HasVideo = true,
+                    Video = [new MediaTrackDto
+                    {
+                        Type = "video", Codec = first.VideoCodec, Height = first.ResolutionHeight
+                    }]
+                });
+            var syntheticFile = new ImportedFileEntity
+            {
+                Id = -Math.Max(1, first.Id),
+                DestinationPath = group.Key.Path,
+                FileType = "video",
+                SeasonNumber = coverage.Count == 1 ? coverage[0].SeasonNumber : null,
+                EpisodeNumber = coverage.Count == 1 ? coverage[0].EpisodeNumber : null,
+                EpisodeCoverage = coverage,
+                SizeBytes = first.SizeBytes,
+                ResolutionHeight = first.ResolutionHeight,
+                ReleaseName = Path.GetFileNameWithoutExtension(group.Key.Path),
+                MediaTracksJson = tracks,
+                ImportedAt = first.LastSeenAt
+            };
+            var job = latestJobByRequest.GetValueOrDefault(group.Key.RequestId) ?? new FulfillmentJobEntity
+            {
+                MediaRequestId = group.Key.RequestId,
+                Title = requestById[group.Key.RequestId].Title,
+                Year = first.Year,
+                MediaType = requestById[group.Key.RequestId].MediaType,
+                LibraryDestinationName = first.SectionTitle
+            };
+            result.Add(new InventoryRow(syntheticFile, job, requestById[group.Key.RequestId],
+                activeRequestIds.Contains(group.Key.RequestId), true));
+        }
+        return result;
     }
 
     private FileDescriptor Describe(InventoryRow row)
@@ -712,7 +837,7 @@ public sealed class StorageOptimizationService(
     };
 
     private sealed record InventoryRow(ImportedFileEntity File, FulfillmentJobEntity Job,
-        MediaRequestEntity Request, bool HasActiveJob);
+        MediaRequestEntity Request, bool HasActiveJob, bool FromPlex);
     private sealed record FileDescriptor(InventoryRow Row, string? Codec, int Height, bool CodecObserved);
     private sealed record BuiltOptimization(StorageOptimizationPreviewDto Preview, MediaRequestDto? Request,
         StorageOptimizationPolicyDto? Policy);

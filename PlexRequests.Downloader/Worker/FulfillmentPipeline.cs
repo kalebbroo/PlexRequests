@@ -700,7 +700,7 @@ public class FulfillmentPipeline(
             if (importedCount > 0 && (!job.IsReplacement || ReplacementReadyToFinalize(
                     record.CoversAllTargets, importedCount, items.Count)))
             {
-                DeleteReplacedFiles(job, importedDestinations);
+                DeleteReplacedFiles(job, importedDestinations, libraryPrefs.Current);
                 await SafeMarkUpgraded(job.Id);
             }
             else if (job.IsReplacement)
@@ -780,11 +780,18 @@ public class FulfillmentPipeline(
     // Physically remove the old files an upgrade superseded, EXCEPT any the new import overwrote in place
     // (same destination path). Best-effort and confined to the recorded ReplacePaths — never deletes anything
     // the new import didn't produce. Only called on an upgrade that imported at least one file.
-    private void DeleteReplacedFiles(FulfillmentJobDto job, HashSet<string> importedDestinations)
+    private void DeleteReplacedFiles(FulfillmentJobDto job, HashSet<string> importedDestinations,
+        EffectiveLibraryOrganization preferences)
     {
         foreach (var path in job.ReplacePaths)
         {
             if (string.IsNullOrWhiteSpace(path) || importedDestinations.Contains(path)) continue;
+            if (!ReplacementPathSafety.CanDelete(path, job, preferences, out var reason))
+            {
+                logger.LogWarning("Upgrade {JobId}: retained superseded path {Path}: {Reason}",
+                    job.Id, path, reason);
+                continue;
+            }
             try
             {
                 if (File.Exists(path)) { File.Delete(path); logger.LogInformation("Upgrade {JobId}: removed superseded file {Path}", job.Id, path); }

@@ -330,6 +330,8 @@ public record PlexLibrary
     public int? CollectionCount { get; init; }
     public bool IsRefreshing { get; init; }
     public DateTime? LastScannedAt { get; init; }
+    /// <summary>Filesystem roots Plex reports for this section. These may differ from container paths.</summary>
+    public List<string> Locations { get; init; } = new();
     public List<PlexMediaPreview> RecentlyAdded { get; init; } = new();
 }
 

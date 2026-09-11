@@ -15,6 +15,85 @@ namespace PlexRequests.Tests;
 public sealed class StorageOptimizationTests
 {
     [Fact]
+    public async Task MappedPlexFileBecomesActionableOnlyWhilePathAndSizeAreVerified()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"plexrequests-mapped-inventory-{Guid.NewGuid():N}");
+        var managedRoot = Path.Combine(tempRoot, "Movies");
+        Directory.CreateDirectory(managedRoot);
+        var managedFile = Path.Combine(managedRoot, "Legacy Movie.mkv");
+        try
+        {
+            File.WriteAllBytes(managedFile, [1, 2, 3, 4]);
+            var request = new MediaRequestEntity
+            {
+                Id = 70, MediaId = 700, MediaType = MediaType.Movie, Title = "Legacy Movie",
+                Status = RequestStatus.Available
+            };
+            db.AddRange(request,
+                new FulfillmentJobEntity
+                {
+                    Id = 71, MediaRequestId = request.Id, MediaId = request.MediaId,
+                    MediaType = request.MediaType, Title = request.Title, Status = FulfillmentStatus.Completed
+                },
+                new PlexMappingEntity
+                {
+                    ExternalKey = "tmdb:700", RatingKey = "800", MediaType = MediaType.Movie
+                },
+                new PlexLibraryFileEntity
+                {
+                    SectionKey = "1", SectionTitle = "Movies", RatingKey = "800", PlexPartKey = "900",
+                    FilePath = "/plex/Movies/Legacy Movie.mkv", MediaType = MediaType.Movie,
+                    Title = request.Title, SizeBytes = 4, ResolutionHeight = 1080, VideoCodec = "h264"
+                });
+            await db.SaveChangesAsync();
+            var preferences = new FixedLibraryPreferences(new LibraryOrganizationPreferencesDto
+            {
+                PlexPathMappings =
+                [
+                    new PlexPathMappingDto
+                    {
+                        PlexSectionId = "1", PlexPathPrefix = "/plex/Movies", ManagedPathPrefix = managedRoot
+                    }
+                ]
+            });
+            var capture = new CapturingQueue();
+            var service = new StorageOptimizationService(db, capture, new EmptyFormats(),
+                new ReleaseParser(), preferences);
+
+            var title = Assert.Single(await service.GetTitlesAsync());
+            Assert.Equal((1, 4), (title.FileCount, title.SizeBytes));
+            var preview = await service.PreviewAsync(new StorageOptimizationRequestDto
+            {
+                RequestId = request.Id, RequireHevc = true
+            });
+            Assert.True(preview.CanQueue, preview.Message);
+            var queued = await service.QueueAsync(new StorageOptimizationRequestDto
+            {
+                RequestId = request.Id, RequireHevc = true
+            });
+            Assert.True(queued.Success);
+            Assert.Equal(managedFile, Assert.Single(capture.Policy!.Targets).DestinationPath);
+
+            File.WriteAllBytes(managedFile, [1, 2, 3, 4, 5]);
+            var changed = await service.PreviewAsync(new StorageOptimizationRequestDto
+            {
+                RequestId = request.Id, RequireHevc = true
+            });
+            Assert.False(changed.CanQueue);
+            Assert.Contains("No verified", changed.Message);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, true);
+        }
+    }
+
+    [Fact]
     public async Task PreviewScopesSeriesBySeasonAndSelectsOnlyFilesThatMissCombinedGoals()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -597,6 +676,13 @@ public sealed class StorageOptimizationTests
         public Task<bool> SetPreferenceAsync(int profileId, int formatId, CustomFormatPreference preference, int? advancedScore = null) => Task.FromResult(true);
         public Task<Dictionary<int, int>> ScoresForProfileAsync(int profileId) => Task.FromResult(new Dictionary<int, int>());
         public Task SeedAsync() => Task.CompletedTask;
+    }
+
+    private sealed class FixedLibraryPreferences(LibraryOrganizationPreferencesDto value)
+        : ILibraryOrganizationPreferencesService
+    {
+        public Task<LibraryOrganizationPreferencesDto> GetAsync() => Task.FromResult(value);
+        public Task<bool> UpdateAsync(LibraryOrganizationPreferencesDto prefs) => Task.FromResult(false);
     }
 
     private sealed class CapturingQueue : IFulfillmentQueue

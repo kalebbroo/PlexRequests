@@ -14,7 +14,7 @@
 <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-4">
     Choose the folders Plex Requests should use for completed media. The defaults below are enough for most
     installations; specialized routing, episode numbering, naming, and import controls are available when needed.
-    Changes apply to new imports only.
+    Folder and naming changes apply to new imports; existing-file mappings affect optimization previews immediately.
 </MudText>
 
 @if (_loading || _p is null)
@@ -131,6 +131,73 @@ else
     </div>
 
     <div class="library-task-list">
+    <details class="library-task" id="plex-path-mapping">
+        <summary>
+            <MudIcon Icon="@Icons.Material.Filled.SyncAlt" Size="Size.Small" />
+            <span><b>Connect existing Plex files</b><small>Safely translate Plex server folders into Plex Requests container folders.</small></span>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_p.PlexPathMappings.Count mapped</MudChip>
+        </summary>
+        <div class="library-task-content">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <MudText Typo="Typo.h6">Plex path mappings</MudText>
+                <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddPlexPathMapping">Add mapping</MudButton>
+            </div>
+            <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-3">
+                Use this only when Plex and Plex Requests see the same storage through different paths. A mapping
+                applies to one Plex library and one exact folder prefix. Existing files become eligible for a
+                preview only after the translated file exists and its byte size matches Plex.
+            </MudText>
+            @if (_p.PlexPathMappings.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Color="Color.Tertiary">
+                    No mappings configured. Older Plex files remain report-only; files imported by Plex Requests still work normally.
+                </MudText>
+            }
+            @for (var i = 0; i < _p.PlexPathMappings.Count; i++)
+            {
+                var idx = i;
+                var mapping = _p.PlexPathMappings[idx];
+                <MudPaper Class="pa-3 mb-3" Outlined="true">
+                    <div class="d-flex gap-2 flex-wrap align-items-center">
+                        <MudSelect T="string" Value="@mapping.PlexSectionId"
+                                   ValueChanged="@(value => SetPlexMappingSection(mapping, value))"
+                                   Label="Plex library" Variant="Variant.Outlined" dense="true" Style="min-width:220px;">
+                            @foreach (var library in VideoPlexLibraries)
+                            {
+                                <MudSelectItem T="string" Value="@library.Key">@library.Title (section @library.Key)</MudSelectItem>
+                            }
+                        </MudSelect>
+                        @if (PlexLocations(mapping.PlexSectionId).Count > 0)
+                        {
+                            <MudSelect T="string" @bind-Value="mapping.PlexPathPrefix" Label="Path reported by Plex"
+                                       Variant="Variant.Outlined" dense="true" Style="min-width:340px;">
+                                @foreach (var location in PlexLocations(mapping.PlexSectionId))
+                                {
+                                    <MudSelectItem T="string" Value="@location">@location</MudSelectItem>
+                                }
+                            </MudSelect>
+                        }
+                        else
+                        {
+                            <MudTextField @bind-Value="mapping.PlexPathPrefix" Label="Path reported by Plex"
+                                          Variant="Variant.Outlined" dense="true" Style="min-width:340px;" />
+                        }
+                        <MudTextField @bind-Value="mapping.ManagedPathPrefix" Label="Same folder in Plex Requests"
+                                      Variant="Variant.Outlined" dense="true" Style="min-width:340px;"
+                                      Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen"
+                                      OnAdornmentClick="@(() => BrowsePlexMapping(idx))" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                       OnClick="@(() => RemovePlexPathMapping(idx))" />
+                    </div>
+                </MudPaper>
+            }
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+                This is an allowlist, not a search-and-replace rule. Plex Requests rejects path-prefix lookalikes,
+                traversal outside the mapped folder, missing files, and files changed since preview.
+            </MudAlert>
+        </div>
+    </details>
+
     <details class="library-task" id="episode-order">
         <summary>
             <MudIcon Icon="@Icons.Material.Filled.FormatListNumbered" Size="Size.Small" />
@@ -541,6 +608,7 @@ else
 @code {
     private bool _loading = true;
     private LibraryOrganizationPreferencesDto? _p;
+    private List<PlexLibrary> _plexLibraries = new();
     private readonly Dictionary<SeriesEpisodeOrderProfileDto, List<TmdbEpisodeGroupSummaryDto>> _episodeGroups = new();
     private readonly Dictionary<SeriesEpisodeOrderProfileDto, string> _selectedEpisodeGroups = new();
     private readonly HashSet<SeriesEpisodeOrderProfileDto> _groupsLoading = new();
@@ -555,7 +623,12 @@ else
     private async Task Load()
     {
         _loading = true; StateHasChanged();
-        try { _p = await Prefs.GetAsync(); }
+        try
+        {
+            _p = await Prefs.GetAsync();
+            try { _plexLibraries = await Plex.GetLibrariesAsync(); }
+            catch { _plexLibraries = []; }
+        }
         finally { _loading = false; StateHasChanged(); }
     }
 
@@ -598,6 +671,47 @@ else
     {
         var destination = _p!.LibraryDestinations[index];
         if (await BrowseAsync(destination.RootPath) is { } chosen) destination.RootPath = chosen;
+    }
+
+    private async Task BrowsePlexMapping(int index)
+    {
+        var mapping = _p!.PlexPathMappings[index];
+        if (await BrowseAsync(mapping.ManagedPathPrefix) is { } chosen) mapping.ManagedPathPrefix = chosen;
+    }
+
+    private IEnumerable<PlexLibrary> VideoPlexLibraries => _plexLibraries
+        .Where(library => library.Type is MediaType.Movie or MediaType.TvShow or MediaType.Anime)
+        .OrderBy(library => library.Title, StringComparer.OrdinalIgnoreCase);
+
+    private List<string> PlexLocations(string? sectionId) => _plexLibraries
+        .FirstOrDefault(library => string.Equals(library.Key, sectionId, StringComparison.OrdinalIgnoreCase))
+        ?.Locations ?? [];
+
+    private void AddPlexPathMapping()
+    {
+        var library = VideoPlexLibraries.FirstOrDefault(item =>
+                          !_p!.PlexPathMappings.Any(mapping => string.Equals(mapping.PlexSectionId, item.Key,
+                              StringComparison.OrdinalIgnoreCase)))
+                      ?? VideoPlexLibraries.FirstOrDefault();
+        _p!.PlexPathMappings.Add(new PlexPathMappingDto
+        {
+            PlexSectionId = library?.Key ?? string.Empty,
+            PlexPathPrefix = library?.Locations.FirstOrDefault() ?? string.Empty
+        });
+        StateHasChanged();
+    }
+
+    private void SetPlexMappingSection(PlexPathMappingDto mapping, string sectionId)
+    {
+        mapping.PlexSectionId = sectionId;
+        var location = PlexLocations(sectionId).FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(location)) mapping.PlexPathPrefix = location;
+    }
+
+    private void RemovePlexPathMapping(int index)
+    {
+        _p!.PlexPathMappings.RemoveAt(index);
+        StateHasChanged();
     }
 
     private async Task<string?> BrowseAsync(string? startPath)

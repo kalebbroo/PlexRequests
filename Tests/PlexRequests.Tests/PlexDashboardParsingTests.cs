@@ -16,6 +16,7 @@ public sealed class PlexDashboardParsingTests
                   "key": "3",
                   "type": "movie",
                   "title": "Movies",
+                  "Location": [{ "id": 1, "path": "/srv/plex/Movies" }],
                   "refreshing": false,
                   "scannedAt": 1786737600
                 }]
@@ -28,7 +29,25 @@ public sealed class PlexDashboardParsingTests
         Assert.Null(library.ItemCount);
         Assert.Equal("movies", library.ItemLabel);
         Assert.Equal("3", library.Key);
+        Assert.Equal(["/srv/plex/Movies"], library.Locations);
         Assert.NotNull(library.LastScannedAt);
+    }
+
+    [Fact]
+    public void LibrarySections_ParsesXmlLocations()
+    {
+        const string sections = """
+            <MediaContainer size="1">
+              <Directory key="4" type="show" title="Anime">
+                <Location id="2" path="/srv/plex/Anime/TV Shows" />
+              </Directory>
+            </MediaContainer>
+            """;
+
+        var library = Assert.Single(PlexApiService.ParseLibrarySections("application/xml", sections));
+
+        Assert.Equal("4", library.Key);
+        Assert.Equal(["/srv/plex/Anime/TV Shows"], library.Locations);
     }
 
     [Fact]

@@ -24,6 +24,7 @@ public class EffectiveLibraryOrganization
     public string MusicTrackTemplate { get; init; } = "{Artist}/{Album} ({Year})/{Disc:00}-{Track:00} - {TrackTitle}{Ext}";
     public IReadOnlyList<LibraryRootRuleDto> RootRules { get; init; } = Array.Empty<LibraryRootRuleDto>();
     public IReadOnlyList<LibraryDestinationDto> Destinations { get; init; } = Array.Empty<LibraryDestinationDto>();
+    public IReadOnlyList<PlexPathMappingDto> PlexPathMappings { get; init; } = Array.Empty<PlexPathMappingDto>();
     public TransferMode TransferMode { get; init; } = TransferMode.Hardlink;
     public bool ExtractArchives { get; init; } = true;
     public bool SplitSeasonPacks { get; init; } = true;
@@ -52,7 +53,8 @@ public class EffectiveLibraryOrganization
             SeasonPackFolderTemplate = SeasonPackFolderTemplate,
             MusicTrackTemplate = MusicTrackTemplate,
             LibraryRootRules = RootRules.ToList(),
-            LibraryDestinations = Destinations.ToList()
+            LibraryDestinations = Destinations.ToList(),
+            PlexPathMappings = PlexPathMappings.ToList()
         };
         var resolved = LibraryRouting.Resolve(dto, mediaType, quality, genres, isAnime, isEpisode);
         return (resolved.RootPath, resolved.Template);
@@ -161,6 +163,7 @@ public class LibraryOrganizationPreferencesProvider : ILibraryOrganizationProvid
         MusicTrackTemplate = d.MusicTrackTemplate,
         RootRules = d.LibraryRootRules ?? new List<LibraryRootRuleDto>(),
         Destinations = d.LibraryDestinations ?? new List<LibraryDestinationDto>(),
+        PlexPathMappings = d.PlexPathMappings ?? new List<PlexPathMappingDto>(),
         TransferMode = d.TransferMode,
         ExtractArchives = d.ExtractArchives,
         SplitSeasonPacks = d.SplitSeasonPacks,
