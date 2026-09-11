@@ -187,6 +187,10 @@ else
                                 }
                                 @if (!item.CanOptimize)
                                 {
+                                    @if (item.HasManualIdentity)
+                                    {
+                                        <span class="scan-active"><MudIcon Icon="@Icons.Material.Filled.Verified" Size="Size.Small" /> Admin identity · @item.ManualIdentityLabel</span>
+                                    }
                                     @if (item.CanAdopt)
                                     {
                                         <span class="scan-active"><MudIcon Icon="@Icons.Material.Filled.Link" Size="Size.Small" /> Ready for admin setup</span>
@@ -198,12 +202,18 @@ else
                                 }
                             </div>
                             <div class="d-flex gap-2 align-center">
-                                @if (item.CanLinkIdentity)
+                                @if (item.CanLinkIdentity || item.HasManualIdentity)
                                 {
                                     <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary"
                                                StartIcon="@Icons.Material.Filled.ManageSearch"
                                                Disabled="@_identityLinking.Contains(item.InventoryKey)"
-                                               OnClick="@(() => BeginIdentityLink(item))">Find identity</MudButton>
+                                               OnClick="@(() => BeginIdentityLink(item))">@(item.HasManualIdentity ? "Change identity" : "Find identity")</MudButton>
+                                    @if (item.HasManualIdentity)
+                                    {
+                                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Default"
+                                                   Disabled="@_identityLinking.Contains(item.InventoryKey)"
+                                                   OnClick="@(() => RemoveIdentityLinkAsync(item))">Clear identity</MudButton>
+                                    }
                                 }
                                 <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
                                            StartIcon="@(item.CanOptimize ? Icons.Material.Filled.Tune : Icons.Material.Filled.Link)"
@@ -739,6 +749,30 @@ else
             await Toasts.ShowSuccessAsync(result.Message);
             CloseIdentityLink();
             _report = await Optimizer.GetEfficiencyReportAsync();
+        }
+        catch (Exception ex)
+        {
+            await Toasts.ShowErrorAsync(ex.Message);
+        }
+        finally
+        {
+            _identityLinking.Remove(item.InventoryKey);
+        }
+    }
+
+    private async Task RemoveIdentityLinkAsync(LibraryEfficiencyTitleDto item)
+    {
+        if (!_identityLinking.Add(item.InventoryKey)) return;
+        try
+        {
+            var confirmed = await Dialogs.ShowMessageBox("Remove manual identity?",
+                $"Remove the manual metadata identity from “{item.Title}”? This does not change Plex, requests, jobs, or files.",
+                yesText: "Remove identity", cancelText: "Keep identity");
+            if (confirmed != true) return;
+            var result = await Optimizer.RemovePlexTitleIdentityLinkAsync(item.InventoryKey);
+            if (result.Success) await Toasts.ShowSuccessAsync(result.Message);
+            else await Toasts.ShowErrorAsync(result.Message);
+            if (result.Success) _report = await Optimizer.GetEfficiencyReportAsync();
         }
         catch (Exception ex)
         {
