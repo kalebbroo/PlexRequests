@@ -320,6 +320,8 @@ public class MediaRequestDto : BaseDto
     public bool? IsAnime { get; set; }
     /// <summary>Named library selected/resolved when this request entered fulfillment.</summary>
     public string? LibraryDestinationId { get; set; }
+    /// <summary>Internal admin-created optimizer anchor for existing Plex media, never a user request.</summary>
+    public bool IsLibraryAdoption { get; set; }
 }
 
 public class MediaIssueDto
@@ -2291,10 +2293,14 @@ public sealed class LibraryEfficiencyTitleDto
     public string CodecSummary { get; set; } = string.Empty;
     public string ResolutionSummary { get; set; } = string.Empty;
     public bool HasActiveJob { get; set; }
-    /// <summary>Whether this title has an exact, managed import-audit scope that can enter the replacement
-    /// planner today. Plex-only rows remain useful report data but are never silently made actionable.</summary>
+    /// <summary>Whether this title has an exact managed scope, from the import audit or an explicitly mapped
+    /// and adopted Plex title, that can enter the replacement planner today.</summary>
     public bool CanOptimize { get; set; }
     public int OptimizableFileCount { get; set; }
+    /// <summary>A Plex-only title has provider identity plus complete path mappings and can be deliberately
+    /// adopted by an administrator. The adoption click revalidates every exact file size and never queues.</summary>
+    public bool CanAdopt { get; set; }
+    public string? AdoptionBlockReason { get; set; }
     public int MetadataScanQueuedCount { get; set; }
     public int MetadataScanInProgressCount { get; set; }
     public int MetadataScanRetryingCount { get; set; }
@@ -2302,6 +2308,13 @@ public sealed class LibraryEfficiencyTitleDto
     public int MetadataScanFailedCount { get; set; }
     public string? MetadataScanDetail { get; set; }
     public long ReviewBytes => LegacyCodecBytes + UnknownCodecBytes;
+}
+
+public sealed class StorageOptimizationAdoptionResultDto
+{
+    public bool Success { get; set; }
+    public int RequestId { get; set; }
+    public string Message { get; set; } = string.Empty;
 }
 
 /// <summary>Explicit admin scope for backfilling missing codec metadata. The server revalidates every id

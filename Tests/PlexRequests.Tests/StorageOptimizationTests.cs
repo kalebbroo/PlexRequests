@@ -15,6 +15,139 @@ namespace PlexRequests.Tests;
 public sealed class StorageOptimizationTests
 {
     [Fact]
+    public async Task AdminCanIdempotentlyAdoptVerifiedPlexOnlyTitleWithoutQueueingWork()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"plexrequests-adoption-{Guid.NewGuid():N}");
+        var managedRoot = Path.Combine(tempRoot, "Movies");
+        Directory.CreateDirectory(managedRoot);
+        var managedFile = Path.Combine(managedRoot, "Library Movie.mkv");
+        try
+        {
+            File.WriteAllBytes(managedFile, [1, 2, 3, 4]);
+            db.AddRange(
+                new PlexMappingEntity
+                {
+                    ExternalKey = "tmdb:701", RatingKey = "801", MediaType = MediaType.Movie
+                },
+                new PlexLibraryFileEntity
+                {
+                    SectionKey = "1", SectionTitle = "Movies", RatingKey = "801", PlexPartKey = "901",
+                    FilePath = "/plex/Movies/Library Movie.mkv", MediaType = MediaType.Movie,
+                    Title = "Library Movie", Year = 2024, SizeBytes = 4, ResolutionHeight = 1080,
+                    VideoCodec = "h264"
+                });
+            await db.SaveChangesAsync();
+            var preferences = new FixedLibraryPreferences(new LibraryOrganizationPreferencesDto
+            {
+                MoviePath = managedRoot,
+                TvPath = Path.Combine(tempRoot, "TV"),
+                MusicPath = Path.Combine(tempRoot, "Music"),
+                PlexPathMappings =
+                [
+                    new PlexPathMappingDto
+                    {
+                        PlexSectionId = "1", PlexPathPrefix = "/plex/Movies", ManagedPathPrefix = managedRoot
+                    }
+                ]
+            });
+            var capture = new CapturingQueue();
+            var service = new StorageOptimizationService(db, capture, new EmptyFormats(),
+                new ReleaseParser(), preferences);
+
+            var before = Assert.Single((await service.GetEfficiencyReportAsync()).Titles);
+            Assert.False(before.CanOptimize);
+            Assert.True(before.CanAdopt, before.AdoptionBlockReason);
+
+            var adopted = await service.AdoptPlexTitleAsync(before.InventoryKey);
+            var repeated = await service.AdoptPlexTitleAsync(before.InventoryKey);
+
+            Assert.True(adopted.Success, adopted.Message);
+            Assert.True(repeated.Success, repeated.Message);
+            Assert.Equal(adopted.RequestId, repeated.RequestId);
+            var request = Assert.Single(await db.MediaRequests.AsNoTracking().ToListAsync());
+            Assert.Equal("plex:1:801", request.LibraryInventoryKey);
+            Assert.Equal("Plex library (admin adopted)", request.RequestedBy);
+            Assert.Equal(RequestStatus.Available, request.Status);
+            Assert.False(request.SearchForCutoffUpgrades);
+            Assert.False(request.Monitored);
+            Assert.Null(capture.Policy);
+
+            var title = Assert.Single(await service.GetTitlesAsync());
+            Assert.Equal(request.Id, title.RequestId);
+            var after = Assert.Single((await service.GetEfficiencyReportAsync()).Titles);
+            Assert.True(after.CanOptimize);
+            Assert.False(after.CanAdopt);
+            var preview = await service.PreviewAsync(new StorageOptimizationRequestDto
+            {
+                RequestId = request.Id, RequireHevc = true
+            });
+            Assert.True(preview.CanQueue, preview.Message);
+            Assert.Null(capture.Policy);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, true);
+        }
+    }
+
+    [Fact]
+    public async Task PlexAdoptionFailsClosedWhenMappedFileChanged()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"plexrequests-adoption-changed-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var managedFile = Path.Combine(tempRoot, "Changed.mkv");
+        try
+        {
+            File.WriteAllBytes(managedFile, [1, 2, 3, 4, 5]);
+            db.AddRange(
+                new PlexMappingEntity
+                { ExternalKey = "tmdb:702", RatingKey = "802", MediaType = MediaType.Movie },
+                new PlexLibraryFileEntity
+                {
+                    SectionKey = "1", SectionTitle = "Movies", RatingKey = "802", PlexPartKey = "902",
+                    FilePath = "/plex/Movies/Changed.mkv", MediaType = MediaType.Movie, Title = "Changed",
+                    SizeBytes = 4, ResolutionHeight = 1080, VideoCodec = "h264"
+                });
+            await db.SaveChangesAsync();
+            var service = new StorageOptimizationService(db, new CapturingQueue(), new EmptyFormats(),
+                new ReleaseParser(), new FixedLibraryPreferences(new LibraryOrganizationPreferencesDto
+                {
+                    MoviePath = tempRoot,
+                    TvPath = Path.Combine(tempRoot, "TV"),
+                    MusicPath = Path.Combine(tempRoot, "Music"),
+                    PlexPathMappings =
+                    [
+                        new PlexPathMappingDto
+                        {
+                            PlexSectionId = "1", PlexPathPrefix = "/plex/Movies",
+                            ManagedPathPrefix = tempRoot
+                        }
+                    ]
+                }));
+
+            var result = await service.AdoptPlexTitleAsync("plex:1:802");
+
+            Assert.False(result.Success);
+            Assert.Contains("changed", result.Message);
+            Assert.Empty(await db.MediaRequests.ToListAsync());
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, true);
+        }
+    }
+
+    [Fact]
     public async Task MappedPlexFileBecomesActionableOnlyWhilePathAndSizeAreVerified()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

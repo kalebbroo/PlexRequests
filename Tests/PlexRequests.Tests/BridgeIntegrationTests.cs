@@ -20,6 +20,40 @@ namespace PlexRequests.Tests;
 public sealed class BridgeIntegrationTests
 {
     [Fact]
+    public async Task AdminAdoptedLibraryAnchorNeverBecomesABridgeRequestEvent()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity
+        {
+            MediaId = 123,
+            MediaType = MediaType.Movie,
+            Title = "Existing Library Movie",
+            Status = RequestStatus.Available,
+            RequestedAt = DateTime.UtcNow,
+            AvailableAt = DateTime.UtcNow,
+            LibraryInventoryKey = "plex:1:99",
+            RequestedBy = "Plex library (admin adopted)"
+        };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var service = CreateOutbox(db, new RecordingMetadataProvider());
+
+        await service.EnqueueAsync(new MediaRequestDto
+        {
+            Id = request.Id,
+            IsLibraryAdoption = true
+        }, BridgeEventType.Upgraded);
+        var batch = await service.ReadBatchAsync(0, 25);
+
+        Assert.Empty(batch.Events);
+        Assert.Empty(await db.BridgeOutbox.ToListAsync());
+    }
+
+    [Fact]
     public async Task Outbox_repairs_missing_music_event_and_delivers_canonical_identity_once()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

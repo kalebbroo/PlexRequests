@@ -1158,6 +1158,7 @@ public class MediaRequestService(
         RequestScopeKind = r.RequestScopeKind,
         IsAnime = r.IsAnime,
         LibraryDestinationId = r.LibraryDestinationId,
+        IsLibraryAdoption = !string.IsNullOrWhiteSpace(r.LibraryInventoryKey),
         RequestedByUserId = r.RequestedByUserId ?? 0,
         RequestedByUsername = r.RequestedBy ?? string.Empty,
         RequestedSeasons = string.IsNullOrWhiteSpace(r.RequestedSeasonsCsv)

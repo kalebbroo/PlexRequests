@@ -62,6 +62,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasIndex(x => x.RequestedByUserId); // Index for querying by user ID
             b.HasIndex(x => x.Status); // Index for filtering by status
             b.HasIndex(x => x.RequestedAt); // Index for sorting by date
+            b.HasIndex(x => x.LibraryInventoryKey).IsUnique()
+                .HasFilter("\"LibraryInventoryKey\" IS NOT NULL");
 
             b.HasOne(x => x.RequestedByUser)
                 .WithMany()
