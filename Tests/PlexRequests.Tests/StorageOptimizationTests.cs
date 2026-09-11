@@ -123,13 +123,20 @@ public sealed class StorageOptimizationTests
         await db.Database.EnsureCreatedAsync();
         var request = new MediaRequestEntity
         {
-            Id = 11, MediaId = 110, MediaType = MediaType.Movie, Title = "Inferred Movie",
+            Id = 11,
+            MediaId = 110,
+            MediaType = MediaType.Movie,
+            Title = "Inferred Movie",
             Status = RequestStatus.Available
         };
         var job = new FulfillmentJobEntity
         {
-            Id = 12, MediaRequestId = request.Id, MediaId = request.MediaId,
-            MediaType = request.MediaType, Title = request.Title, Status = FulfillmentStatus.Completed
+            Id = 12,
+            MediaRequestId = request.Id,
+            MediaId = request.MediaId,
+            MediaType = request.MediaType,
+            Title = request.Title,
+            Status = FulfillmentStatus.Completed
         };
         var file = Video(13, job.Id, "/movies/inferred.mkv", null, "", 2_000_000_000);
         file.MediaTracksJson = null;
@@ -196,13 +203,21 @@ public sealed class StorageOptimizationTests
         await db.Database.EnsureCreatedAsync();
         var request = new MediaRequestEntity
         {
-            Id = 21, MediaId = 210, MediaType = MediaType.Movie, Title = "Measured Movie",
+            Id = 21,
+            MediaId = 210,
+            MediaType = MediaType.Movie,
+            Title = "Measured Movie",
             Status = RequestStatus.Available
         };
         var job = new FulfillmentJobEntity
         {
-            Id = 22, MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
-            Title = request.Title, Year = 2024, Status = FulfillmentStatus.Completed,
+            Id = 22,
+            MediaRequestId = request.Id,
+            MediaId = request.MediaId,
+            MediaType = request.MediaType,
+            Title = request.Title,
+            Year = 2024,
+            Status = FulfillmentStatus.Completed,
             LibraryDestinationName = "Movies"
         };
         db.AddRange(request, job);
@@ -237,6 +252,143 @@ public sealed class StorageOptimizationTests
     }
 
     [Fact]
+    public async Task EfficiencyReportPrefersWholePlexInventoryAndCountsSharedPartsOnce()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var seenAt = DateTime.UtcNow.AddMinutes(-2);
+        var request = new MediaRequestEntity
+        {
+            Id = 61,
+            MediaId = 610,
+            MediaType = MediaType.Movie,
+            Title = "Managed Movie",
+            Status = RequestStatus.Available,
+            PosterUrl = "/managed.jpg"
+        };
+        var job = new FulfillmentJobEntity
+        {
+            Id = 62,
+            MediaRequestId = request.Id,
+            MediaId = request.MediaId,
+            MediaType = request.MediaType,
+            Title = request.Title,
+            Status = FulfillmentStatus.Completed
+        };
+        // TMDb movie and series ids occupy separate namespaces and can share the same number. This lower-id
+        // TV request must not steal the movie mapping merely because both ids are 610.
+        var collidingTvRequest = new MediaRequestEntity
+        {
+            Id = 59,
+            MediaId = 610,
+            MediaType = MediaType.TvShow,
+            Title = "Different Series",
+            Status = RequestStatus.Available
+        };
+        var collidingTvJob = new FulfillmentJobEntity
+        {
+            Id = 60,
+            MediaRequestId = collidingTvRequest.Id,
+            MediaId = collidingTvRequest.MediaId,
+            MediaType = collidingTvRequest.MediaType,
+            Title = collidingTvRequest.Title,
+            Status = FulfillmentStatus.Completed
+        };
+        db.AddRange(request, job, collidingTvRequest, collidingTvJob,
+            new PlexMappingEntity
+            {
+                ExternalKey = "tmdb:610",
+                RatingKey = "500",
+                MediaType = MediaType.Movie,
+                LastSeenAt = seenAt
+            });
+        // This narrow audit row makes the linked title actionable, but must not be counted alongside the
+        // authoritative Plex inventory or the report would double-count storage.
+        db.ImportedFiles.Add(Video(63, job.Id, "/managed/movie.mkv", null, "AVC", 1_000_000_000));
+        db.ImportedFiles.Add(Video(64, collidingTvJob.Id, "/managed/collision.mkv", 1, "AVC", 1_000_000_000));
+        db.PlexLibraryFiles.AddRange(
+            new PlexLibraryFileEntity
+            {
+                SectionKey = "1",
+                SectionTitle = "Movies",
+                RatingKey = "500",
+                PlexPartKey = "part-500",
+                FilePath = "/plex/Managed Movie.mkv",
+                MediaType = MediaType.Movie,
+                Title = "Managed Movie",
+                Year = 2024,
+                SizeBytes = 6_000_000_000,
+                ResolutionHeight = 2160,
+                VideoCodec = "h264",
+                LastSeenAt = seenAt
+            },
+            // Plex exposes this one physical multi-episode file under both episode rating keys. It should
+            // contribute one file and one copy of its bytes to the title report.
+            new PlexLibraryFileEntity
+            {
+                SectionKey = "2",
+                SectionTitle = "TV Shows",
+                RatingKey = "601",
+                ShowRatingKey = "600",
+                PlexPartKey = "part-601",
+                FilePath = "/plex/Library Show S01E01-E02.mkv",
+                MediaType = MediaType.TvShow,
+                Title = "Library Show",
+                Year = 2020,
+                SeasonNumber = 1,
+                EpisodeNumber = 1,
+                SizeBytes = 2_000_000_000,
+                ResolutionHeight = 1080,
+                VideoCodec = "hevc",
+                LastSeenAt = seenAt
+            },
+            new PlexLibraryFileEntity
+            {
+                SectionKey = "2",
+                SectionTitle = "TV Shows",
+                RatingKey = "602",
+                ShowRatingKey = "600",
+                PlexPartKey = "part-602",
+                FilePath = "/plex/Library Show S01E01-E02.mkv",
+                MediaType = MediaType.TvShow,
+                Title = "Library Show",
+                Year = 2020,
+                SeasonNumber = 1,
+                EpisodeNumber = 2,
+                SizeBytes = 2_000_000_000,
+                ResolutionHeight = 1080,
+                VideoCodec = "hevc",
+                LastSeenAt = seenAt
+            });
+        await db.SaveChangesAsync();
+        var service = new StorageOptimizationService(db, new CapturingQueue(),
+            new EmptyFormats(), new ReleaseParser());
+
+        var report = await service.GetEfficiencyReportAsync();
+
+        Assert.True(report.UsesPlexInventory);
+        Assert.Equal(seenAt, report.InventoryUpdatedAt);
+        Assert.Equal((2, 2, 8_000_000_000), (report.TitleCount, report.FileCount, report.TotalBytes));
+        Assert.Equal((1, 6_000_000_000), (report.LegacyCodecFileCount, report.LegacyCodecBytes));
+        Assert.Equal((1, 2_000_000_000), (report.ModernCodecFileCount, report.ModernCodecBytes));
+
+        var managed = Assert.Single(report.Titles, title => title.Title == "Managed Movie");
+        Assert.True(managed.CanOptimize);
+        Assert.Equal(request.Id, managed.RequestId);
+        Assert.Equal(1, managed.OptimizableFileCount);
+        Assert.Equal(["Movies"], managed.Libraries);
+
+        var plexOnly = Assert.Single(report.Titles, title => title.Title == "Library Show");
+        Assert.False(plexOnly.CanOptimize);
+        Assert.Equal(0, plexOnly.RequestId);
+        Assert.Equal(1, plexOnly.FileCount);
+        Assert.Equal("plex:2:600", plexOnly.InventoryKey);
+    }
+
+    [Fact]
     public async Task EfficiencyReportDistinguishesDelayedAutomaticRetriesFromNewQueuedScans()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -246,13 +398,20 @@ public sealed class StorageOptimizationTests
         await db.Database.EnsureCreatedAsync();
         var request = new MediaRequestEntity
         {
-            Id = 25, MediaId = 250, MediaType = MediaType.Movie, Title = "Retrying Movie",
+            Id = 25,
+            MediaId = 250,
+            MediaType = MediaType.Movie,
+            Title = "Retrying Movie",
             Status = RequestStatus.Available
         };
         var job = new FulfillmentJobEntity
         {
-            Id = 26, MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
-            Title = request.Title, Status = FulfillmentStatus.Completed
+            Id = 26,
+            MediaRequestId = request.Id,
+            MediaId = request.MediaId,
+            MediaType = request.MediaType,
+            Title = request.Title,
+            Status = FulfillmentStatus.Completed
         };
         var firstQueued = Video(27, job.Id, "/movies/queued.mkv", null, "", 1_000_000_000);
         firstQueued.MediaMetadataScanStatus = MediaMetadataScanStatus.Queued;

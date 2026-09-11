@@ -80,6 +80,13 @@ public sealed class StorageOptimizationService(
 
     public async Task<LibraryEfficiencyReportDto> GetEfficiencyReportAsync()
     {
+        // Plex sees the whole library, including media imported before Plex Requests existed. Prefer that
+        // exact read-only inventory for reporting once the first scan has completed. The replacement planner
+        // remains deliberately narrower: only a title with a current import audit gets an actionable button.
+        // This prevents a Plex path from another host/container namespace becoming a deletion target.
+        var plexReport = await BuildPlexEfficiencyReportAsync();
+        if (plexReport is not null) return plexReport;
+
         var inventory = await LoadInventoryAsync();
         var titles = inventory.GroupBy(row => row.Request.Id).Select(group =>
         {
@@ -99,6 +106,7 @@ public sealed class StorageOptimizationService(
 
             return new LibraryEfficiencyTitleDto
             {
+                InventoryKey = $"request:{request.Id}",
                 RequestId = request.Id,
                 Title = request.Title,
                 Year = group.Select(item => item.Job.Year).FirstOrDefault(year => year.HasValue),
@@ -135,13 +143,160 @@ public sealed class StorageOptimizationService(
                 CodecSummary = Summary(descriptors.Select(CodecLabel)),
                 ResolutionSummary = Summary(descriptors.Select(item => item.Height > 0
                     ? QualityHelper.FromHeight(item.Height).Label() : "Unknown")),
-                HasActiveJob = group.Any(item => item.HasActiveJob)
+                HasActiveJob = group.Any(item => item.HasActiveJob),
+                CanOptimize = true,
+                OptimizableFileCount = descriptors.Count
             };
         }).OrderByDescending(item => item.ReviewBytes).ThenBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         return new LibraryEfficiencyReportDto { GeneratedAt = DateTime.UtcNow, Titles = titles };
     }
+
+    private async Task<LibraryEfficiencyReportDto?> BuildPlexEfficiencyReportAsync()
+    {
+        var plexFiles = await db.PlexLibraryFiles.AsNoTracking()
+            .Where(file => file.MissedScans == 0)
+            .ToListAsync();
+        if (plexFiles.Count == 0) return null;
+
+        // Link a Plex title to a request only through an external provider id captured by Plex. Title/year
+        // matching is intentionally excluded: remakes and same-name series make that unsafe. A linked title
+        // is actionable only when the existing import audit also knows its managed destination paths.
+        var managed = await LoadInventoryAsync();
+        var managedByRequest = managed.GroupBy(item => item.Request.Id)
+            .ToDictionary(group => group.Key, group => group.ToList());
+        var requests = await db.MediaRequests.AsNoTracking()
+            .Where(request => request.Status == RequestStatus.Available
+                              && request.MediaType != MediaType.Music)
+            .ToListAsync();
+        var requestIdsByExternalKey = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var request in requests)
+        {
+            foreach (var key in ExternalKeys(request))
+            {
+                if (!requestIdsByExternalKey.TryGetValue(key, out var ids))
+                    requestIdsByExternalKey[key] = ids = [];
+                ids.Add(request.Id);
+            }
+        }
+
+        var requestById = requests.ToDictionary(request => request.Id);
+        var requestIdsByRatingKey = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+        var mappings = await db.PlexMappings.AsNoTracking()
+            .Where(mapping => mapping.MissedScans == 0)
+            .Select(mapping => new { mapping.ExternalKey, mapping.RatingKey, mapping.MediaType })
+            .ToListAsync();
+        foreach (var mapping in mappings)
+        {
+            if (!requestIdsByExternalKey.TryGetValue(mapping.ExternalKey, out var requestIds)) continue;
+            if (!requestIdsByRatingKey.TryGetValue(mapping.RatingKey, out var linked))
+                requestIdsByRatingKey[mapping.RatingKey] = linked = [];
+            linked.UnionWith(requestIds.Where(id => CompatibleMediaType(requestById[id].MediaType,
+                mapping.MediaType)));
+        }
+
+        var activeRequestIds = await db.FulfillmentJobs.AsNoTracking()
+            .Where(job => ActiveStatuses.Contains(job.Status))
+            .Select(job => job.MediaRequestId).Distinct().ToListAsync();
+        var active = activeRequestIds.ToHashSet();
+
+        // Deduplicate globally before grouping into titles. This also handles one multi-episode file exposed
+        // under several Plex episode rows and a physical path accidentally registered in two sections.
+        var physicalFiles = plexFiles.GroupBy(file => file.FilePath, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(file => file.SizeBytes)
+                .ThenBy(file => file.SectionKey, StringComparer.Ordinal).First())
+            .ToList();
+        var titles = physicalFiles
+            .GroupBy(file => new
+            {
+                file.SectionKey,
+                OwnerRatingKey = file.MediaType == MediaType.TvShow
+                    ? file.ShowRatingKey ?? file.RatingKey
+                    : file.RatingKey
+            })
+            .Select(group =>
+            {
+                var files = group.ToList();
+                requestIdsByRatingKey.TryGetValue(group.Key.OwnerRatingKey, out var linkedIds);
+                var linkedRequests = linkedIds is null
+                    ? []
+                    : linkedIds.Where(requestById.ContainsKey).Select(id => requestById[id]).ToList();
+                var managedRequest = linkedRequests
+                    .Where(request => managedByRequest.ContainsKey(request.Id))
+                    .OrderBy(request => request.Id).FirstOrDefault();
+                var displayRequest = managedRequest ?? linkedRequests.OrderBy(request => request.Id).FirstOrDefault();
+                var first = files[0];
+                var modern = files.Where(file => VideoCodecPolicy.Normalize(file.VideoCodec)
+                    is "hevc" or "av1").ToList();
+                var knownLegacy = files.Where(file => VideoCodecPolicy.Normalize(file.VideoCodec) is { } codec
+                                                      && codec is not ("hevc" or "av1")).ToList();
+                var unknown = files.Where(file => VideoCodecPolicy.Normalize(file.VideoCodec) is null).ToList();
+                var ultraHd = files.Where(file => QualityHelper.FromHeight(file.ResolutionHeight)
+                                                  >= Quality.UHD4K).ToList();
+                var optimizableCount = managedRequest is null
+                    ? 0
+                    : managedByRequest[managedRequest.Id].Select(item => item.File.DestinationPath)
+                        .Distinct(StringComparer.OrdinalIgnoreCase).Count();
+                var isAnime = displayRequest?.IsAnime == true
+                              || displayRequest?.MediaType == MediaType.Anime
+                              || first.SectionTitle.Contains("anime", StringComparison.OrdinalIgnoreCase);
+
+                return new LibraryEfficiencyTitleDto
+                {
+                    InventoryKey = $"plex:{group.Key.SectionKey}:{group.Key.OwnerRatingKey}",
+                    RequestId = managedRequest?.Id ?? 0,
+                    Title = first.Title,
+                    Year = first.Year,
+                    MediaType = first.MediaType,
+                    IsAnime = isAnime,
+                    PosterUrl = displayRequest?.PosterUrl,
+                    Libraries = [first.SectionTitle],
+                    FileCount = files.Count,
+                    SizeBytes = files.Sum(file => Math.Max(0, file.SizeBytes)),
+                    ModernCodecFileCount = modern.Count,
+                    ModernCodecBytes = modern.Sum(file => Math.Max(0, file.SizeBytes)),
+                    LegacyCodecFileCount = knownLegacy.Count,
+                    LegacyCodecBytes = knownLegacy.Sum(file => Math.Max(0, file.SizeBytes)),
+                    UnknownCodecFileCount = unknown.Count,
+                    UnknownCodecBytes = unknown.Sum(file => Math.Max(0, file.SizeBytes)),
+                    UltraHdFileCount = ultraHd.Count,
+                    UltraHdBytes = ultraHd.Sum(file => Math.Max(0, file.SizeBytes)),
+                    CodecSummary = Summary(files.Select(file => VideoCodecPolicy.Normalize(file.VideoCodec) is null
+                        ? "Unknown" : VideoCodecPolicy.Display(file.VideoCodec))),
+                    ResolutionSummary = Summary(files.Select(file => file.ResolutionHeight > 0
+                        ? QualityHelper.FromHeight(file.ResolutionHeight).Label() : "Unknown")),
+                    HasActiveJob = linkedIds?.Any(active.Contains) == true,
+                    CanOptimize = managedRequest is not null,
+                    OptimizableFileCount = optimizableCount
+                };
+            })
+            .OrderByDescending(item => item.ReviewBytes)
+            .ThenBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new LibraryEfficiencyReportDto
+        {
+            GeneratedAt = DateTime.UtcNow,
+            UsesPlexInventory = true,
+            InventoryUpdatedAt = plexFiles.Max(file => file.LastSeenAt),
+            Titles = titles
+        };
+    }
+
+    private static IEnumerable<string> ExternalKeys(MediaRequestEntity request)
+    {
+        if (request.MediaId > 0) yield return $"tmdb:{request.MediaId}";
+        if (!string.IsNullOrWhiteSpace(request.ExternalId))
+            yield return $"{(string.IsNullOrWhiteSpace(request.ExternalSource) ? "external" : request.ExternalSource.Trim().ToLowerInvariant())}:{request.ExternalId.Trim()}";
+    }
+
+    private static bool CompatibleMediaType(MediaType requestType, MediaType? plexType) => plexType switch
+    {
+        MediaType.Movie => requestType == MediaType.Movie,
+        MediaType.TvShow => requestType is MediaType.TvShow or MediaType.Anime,
+        _ => true
+    };
 
     public async Task<StorageOptimizationPreviewDto> PreviewAsync(StorageOptimizationRequestDto request) =>
         (await BuildAsync(request)).Preview;
