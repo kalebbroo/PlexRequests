@@ -15,6 +15,7 @@ public interface IStorageOptimizationService
 {
     Task<List<StorageOptimizationTitleDto>> GetTitlesAsync();
     Task<LibraryEfficiencyReportDto> GetEfficiencyReportAsync();
+    Task<StorageOptimizationActionResultDto> LinkPlexTitleIdentityAsync(PlexLibraryIdentityLinkRequestDto request);
     Task<StorageOptimizationAdoptionResultDto> AdoptPlexTitleAsync(string inventoryKey);
     Task<StorageOptimizationPreviewDto> PreviewAsync(StorageOptimizationRequestDto request);
     Task<StorageOptimizationQueueResultDto> QueueAsync(StorageOptimizationRequestDto request);
@@ -183,7 +184,10 @@ public sealed class StorageOptimizationService(
         }
 
         var requestById = requests.ToDictionary(request => request.Id);
+        var identityOverrides = await db.PlexLibraryIdentityOverrides.AsNoTracking()
+            .ToDictionaryAsync(item => item.InventoryKey, StringComparer.Ordinal);
         var requestIdsByRatingKey = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+        var requestIdsByInventoryKey = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
         var mappings = await db.PlexMappings.AsNoTracking()
             .Where(mapping => mapping.MissedScans == 0)
             .Select(mapping => new { mapping.ExternalKey, mapping.RatingKey, mapping.MediaType })
@@ -195,6 +199,12 @@ public sealed class StorageOptimizationService(
                 requestIdsByRatingKey[mapping.RatingKey] = linked = [];
             linked.UnionWith(requestIds.Where(id => CompatibleMediaType(requestById[id].MediaType,
                 mapping.MediaType)));
+        }
+        foreach (var item in identityOverrides.Values)
+        {
+            if (!requestIdsByExternalKey.TryGetValue(item.ExternalKey, out var requestIds)) continue;
+            requestIdsByInventoryKey[item.InventoryKey] = requestIds.Where(id =>
+                CompatibleMediaType(requestById[id].MediaType, item.MediaType)).ToHashSet();
         }
 
         var activeRequestIds = await db.FulfillmentJobs.AsNoTracking()
@@ -225,7 +235,13 @@ public sealed class StorageOptimizationService(
             .Select(group =>
             {
                 var files = group.ToList();
+                var inventoryKey = $"plex:{group.Key.SectionKey}:{group.Key.OwnerRatingKey}";
                 requestIdsByRatingKey.TryGetValue(group.Key.OwnerRatingKey, out var linkedIds);
+                if (requestIdsByInventoryKey.TryGetValue(inventoryKey, out var overrideLinkedIds))
+                {
+                    linkedIds ??= [];
+                    linkedIds.UnionWith(overrideLinkedIds);
+                }
                 var linkedRequests = linkedIds is null
                     ? []
                     : linkedIds.Where(requestById.ContainsKey).Select(id => requestById[id]).ToList();
@@ -254,8 +270,12 @@ public sealed class StorageOptimizationService(
                 var hasProviderIdentity = mappings.Any(mapping =>
                     string.Equals(mapping.RatingKey, group.Key.OwnerRatingKey, StringComparison.Ordinal)
                     && CompatibleMediaType(first.MediaType, mapping.MediaType)
-                    && TryParseExternalKey(mapping.ExternalKey, out _, out _, out _));
+                    && TryParseExternalKey(mapping.ExternalKey, out _, out _, out _))
+                    || identityOverrides.TryGetValue(inventoryKey, out var overrideIdentity)
+                    && CompatibleMediaType(first.MediaType, overrideIdentity.MediaType)
+                    && TryParseExternalKey(overrideIdentity.ExternalKey, out _, out _, out _);
                 var canAdopt = managedRequest is null && hasCompleteMapping && hasProviderIdentity;
+                var canLinkIdentity = managedRequest is null && !hasProviderIdentity;
                 var adoptionBlockReason = canAdopt || managedRequest is not null
                     ? null
                     : !hasCompleteMapping
@@ -266,7 +286,7 @@ public sealed class StorageOptimizationService(
 
                 return new LibraryEfficiencyTitleDto
                 {
-                    InventoryKey = $"plex:{group.Key.SectionKey}:{group.Key.OwnerRatingKey}",
+                    InventoryKey = inventoryKey,
                     RequestId = managedRequest?.Id ?? 0,
                     Title = first.Title,
                     Year = first.Year,
@@ -292,6 +312,7 @@ public sealed class StorageOptimizationService(
                     CanOptimize = managedRequest is not null,
                     OptimizableFileCount = optimizableCount,
                     CanAdopt = canAdopt,
+                    CanLinkIdentity = canLinkIdentity,
                     AdoptionBlockReason = adoptionBlockReason
                 };
             })
@@ -322,6 +343,72 @@ public sealed class StorageOptimizationService(
         _ => true
     };
 
+    /// <summary>
+    /// Records a deliberate administrator choice for a Plex title that has no usable provider guid. It is
+    /// intentionally metadata-only: adoption, preview, and queueing remain separate explicit actions.
+    /// </summary>
+    public async Task<StorageOptimizationActionResultDto> LinkPlexTitleIdentityAsync(
+        PlexLibraryIdentityLinkRequestDto request)
+    {
+        if (!TryParsePlexInventoryKey(request.InventoryKey, out var sectionKey, out var ownerRatingKey))
+            return IdentityLinkFailure("This Plex inventory identity is invalid.");
+        if (request.MediaRef is not { IsValid: true } mediaRef)
+            return IdentityLinkFailure("Choose a valid movie or series from the metadata results.");
+        if (!TryExternalKey(mediaRef, out var externalKey))
+            return IdentityLinkFailure("Only TMDb, IMDb, and TVDB identities can be linked to Plex video.");
+
+        var files = await db.PlexLibraryFiles.AsNoTracking()
+            .Where(file => file.MissedScans == 0 && file.SectionKey == sectionKey
+                           && (file.MediaType == MediaType.TvShow
+                               ? (file.ShowRatingKey ?? file.RatingKey) == ownerRatingKey
+                               : file.RatingKey == ownerRatingKey))
+            .ToListAsync();
+        if (files.Count == 0) return IdentityLinkFailure("Plex no longer reports this title. Refresh inventory and try again.");
+        var first = files[0];
+        if (!CompatibleMediaType(mediaRef.MediaType, first.MediaType))
+            return IdentityLinkFailure("Choose a metadata result with the same media type as this Plex title.");
+
+        var inventoryKey = $"plex:{sectionKey}:{ownerRatingKey}";
+        var existing = await db.PlexLibraryIdentityOverrides
+            .SingleOrDefaultAsync(item => item.InventoryKey == inventoryKey);
+        if (existing is null)
+        {
+            existing = new PlexLibraryIdentityOverrideEntity { InventoryKey = inventoryKey };
+            db.PlexLibraryIdentityOverrides.Add(existing);
+        }
+        existing.ExternalKey = externalKey;
+        existing.MediaType = mediaRef.MediaType;
+        existing.Title = string.IsNullOrWhiteSpace(request.Title) ? first.Title : request.Title.Trim();
+        existing.Year = request.Year;
+        existing.ConfirmedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        return new StorageOptimizationActionResultDto
+        {
+            Success = true,
+            Message = "Metadata identity linked. This did not create a request or queue a download."
+        };
+    }
+
+    private static bool TryExternalKey(MediaRef mediaRef, out string externalKey)
+    {
+        externalKey = string.Empty;
+        var provider = MediaRef.NormalizeProvider(mediaRef.Provider);
+        var id = MediaRef.NormalizeId(provider, mediaRef.Id);
+        if (provider == "tmdb" && int.TryParse(id, out var tmdbId) && tmdbId > 0)
+        {
+            externalKey = $"tmdb:{tmdbId}";
+            return true;
+        }
+        if (provider is "imdb" or "tvdb" && id.Length > 0)
+        {
+            externalKey = $"{provider}:{id}";
+            return true;
+        }
+        return false;
+    }
+
+    private static StorageOptimizationActionResultDto IdentityLinkFailure(string message) => new() { Message = message };
+
     public async Task<StorageOptimizationAdoptionResultDto> AdoptPlexTitleAsync(string inventoryKey)
     {
         if (!TryParsePlexInventoryKey(inventoryKey, out var sectionKey, out var ownerRatingKey))
@@ -346,10 +433,19 @@ public sealed class StorageOptimizationService(
             return AdoptionFailure(verifyError!);
 
         var first = files[0];
+        var overrideIdentity = await db.PlexLibraryIdentityOverrides.AsNoTracking()
+            .Where(item => item.InventoryKey == canonicalInventoryKey)
+            .Select(item => new { item.ExternalKey, item.MediaType })
+            .SingleOrDefaultAsync();
         var identities = await db.PlexMappings.AsNoTracking()
             .Where(mapping => mapping.MissedScans == 0 && mapping.RatingKey == ownerRatingKey)
             .ToListAsync();
-        var identity = identities.Where(mapping => CompatibleMediaType(first.MediaType, mapping.MediaType))
+        var identity = overrideIdentity is not null
+                       && CompatibleMediaType(first.MediaType, overrideIdentity.MediaType)
+                       && TryParseExternalKey(overrideIdentity.ExternalKey, out var overrideProvider,
+                           out var overrideExternalId, out var overrideTmdbId)
+            ? new AdoptionIdentity(overrideProvider, overrideExternalId, overrideTmdbId)
+            : identities.Where(mapping => CompatibleMediaType(first.MediaType, mapping.MediaType))
             .Select(mapping => TryParseExternalKey(mapping.ExternalKey, out var provider, out var externalId,
                     out var tmdbId)
                 ? new AdoptionIdentity(provider, externalId, tmdbId)

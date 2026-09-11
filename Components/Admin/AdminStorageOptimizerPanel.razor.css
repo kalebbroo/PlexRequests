@@ -173,6 +173,19 @@
     border-radius: .55rem;
 }
 
+.identity-linker {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: .35rem;
+    padding: .55rem .65rem;
+    border-radius: .4rem;
+    background: color-mix(in srgb, var(--mud-palette-secondary) 8%, transparent);
+}
+
+.identity-linker ::deep .mud-input-control {
+    min-width: min(100%, 290px);
+}
+
 .efficiency-title strong,
 .efficiency-title span,
 .efficiency-title small {

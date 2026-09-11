@@ -7,6 +7,7 @@ using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.Implementations;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
+using PlexRequestsHosted.Shared.Media;
 using PlexRequestsHosted.Shared.Releases;
 using Xunit;
 
@@ -14,6 +15,76 @@ namespace PlexRequests.Tests;
 
 public sealed class StorageOptimizationTests
 {
+    [Fact]
+    public async Task AdminCanRecoverMissingPlexIdentityBeforeExplicitlyAdoptingTitle()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"plexrequests-identity-link-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var managedFile = Path.Combine(tempRoot, "Unidentified Movie.mkv");
+        try
+        {
+            File.WriteAllBytes(managedFile, [1, 2, 3, 4]);
+            db.PlexLibraryFiles.Add(new PlexLibraryFileEntity
+            {
+                SectionKey = "1", SectionTitle = "Movies", RatingKey = "990", PlexPartKey = "991",
+                FilePath = "/plex/Movies/Unidentified Movie.mkv", MediaType = MediaType.Movie,
+                Title = "Unidentified Movie", Year = 2024, SizeBytes = 4, ResolutionHeight = 1080,
+                VideoCodec = "h264"
+            });
+            await db.SaveChangesAsync();
+            var capture = new CapturingQueue();
+            var service = new StorageOptimizationService(db, capture, new EmptyFormats(), new ReleaseParser(),
+                new FixedLibraryPreferences(new LibraryOrganizationPreferencesDto
+                {
+                    MoviePath = tempRoot,
+                    TvPath = Path.Combine(tempRoot, "TV"),
+                    MusicPath = Path.Combine(tempRoot, "Music"),
+                    PlexPathMappings =
+                    [
+                        new PlexPathMappingDto
+                        {
+                            PlexSectionId = "1", PlexPathPrefix = "/plex/Movies", ManagedPathPrefix = tempRoot
+                        }
+                    ]
+                }));
+
+            var before = Assert.Single((await service.GetEfficiencyReportAsync()).Titles);
+            Assert.False(before.CanAdopt);
+            Assert.True(before.CanLinkIdentity);
+
+            var linked = await service.LinkPlexTitleIdentityAsync(new PlexLibraryIdentityLinkRequestDto
+            {
+                InventoryKey = before.InventoryKey,
+                MediaRef = MediaRef.FromTmdb(9900, MediaType.Movie),
+                Title = "Verified Movie",
+                Year = 2024
+            });
+
+            Assert.True(linked.Success, linked.Message);
+            Assert.Empty(await db.MediaRequests.AsNoTracking().ToListAsync());
+            Assert.Single(await db.PlexLibraryIdentityOverrides.AsNoTracking().ToListAsync());
+            Assert.Null(capture.Policy);
+            var afterLink = Assert.Single((await service.GetEfficiencyReportAsync()).Titles);
+            Assert.True(afterLink.CanAdopt, afterLink.AdoptionBlockReason);
+            Assert.False(afterLink.CanLinkIdentity);
+
+            var adopted = await service.AdoptPlexTitleAsync(afterLink.InventoryKey);
+            Assert.True(adopted.Success, adopted.Message);
+            var request = Assert.Single(await db.MediaRequests.AsNoTracking().ToListAsync());
+            Assert.Equal(9900, request.MediaId);
+            Assert.Null(capture.Policy);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, true);
+        }
+    }
+
     [Fact]
     public async Task AdminCanIdempotentlyAdoptVerifiedPlexOnlyTitleWithoutQueueingWork()
     {
