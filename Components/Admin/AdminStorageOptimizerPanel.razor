@@ -34,7 +34,7 @@ else
         <div class="efficiency-heading">
             <div>
                 <MudText Typo="Typo.subtitle1"><b>Library efficiency report</b></MudText>
-                <MudText Typo="Typo.caption" Class="text-muted">Measured import data only. Candidate storage is not an estimate of space saved.</MudText>
+                <MudText Typo="Typo.caption" Class="text-muted">@ReportSourceText Candidate storage is not an estimate of space saved.</MudText>
             </div>
             <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small" Disabled="_reportLoading"
                            OnClick="LoadEfficiencyReportAsync" aria-label="Refresh library efficiency report" />
@@ -84,7 +84,17 @@ else
                 <div><MudIcon Icon="@Icons.Material.Filled.Help" /><span><small>Needs codec scan</small><strong>@ScopedUnknownFiles files</strong><em>@FormatBytes(ScopedUnknownBytes) cannot be classified yet</em></span></div>
             </div>
 
-            @if (ScopedUnknownFiles > 0)
+            @if (ScopedUnknownFiles > 0 && _report.UsesPlexInventory)
+            {
+                <div class="metadata-scan-callout">
+                    <MudIcon Icon="@Icons.Material.Filled.Sync" />
+                    <div>
+                        <strong>Plex did not classify every file</strong>
+                        <span>The report keeps those files visible as unknown. Refresh Plex availability from Server health after Plex finishes analyzing them.</span>
+                    </div>
+                </div>
+            }
+            else if (ScopedUnknownFiles > 0)
             {
                 <div class="metadata-scan-callout">
                     <MudIcon Icon="@Icons.Material.Filled.FindInPage" />
@@ -120,7 +130,7 @@ else
             }
 
             <div class="efficiency-results-heading">
-                <span>Showing @ReportRows.Count of @ScopedTitles.Count titles · updated @RelativeTime(_report.GeneratedAt)</span>
+                <span>Showing @ReportRows.Count of @ScopedTitles.Count titles · updated @RelativeTime(_report.InventoryUpdatedAt ?? _report.GeneratedAt)</span>
                 <MudSelect T="string" @bind-Value="_reportSort" Label="Sort" Variant="Variant.Outlined" Margin="Margin.Dense">
                     <MudSelectItem Value="@ReviewSort">Most storage to review</MudSelectItem>
                     <MudSelectItem Value="@LargestSort">Largest title</MudSelectItem>
@@ -138,7 +148,7 @@ else
                 <div class="efficiency-list">
                     @foreach (var item in ReportRows)
                     {
-                        <article class="efficiency-row" @key="item.RequestId">
+                        <article class="efficiency-row" @key="item.InventoryKey">
                             <div class="efficiency-title">
                                 <strong>@item.Title@(item.Year is int year ? $" ({year})" : string.Empty)</strong>
                                 <span>@MediaLabel(item) · @string.Join(", ", item.Libraries) · @item.FileCount files</span>
@@ -173,10 +183,15 @@ else
                                 {
                                     <span class="efficient"><MudIcon Icon="@Icons.Material.Filled.Check" Size="Size.Small" /> Efficient codec throughout</span>
                                 }
+                                @if (!item.CanOptimize)
+                                {
+                                    <span class="audit"><MudIcon Icon="@Icons.Material.Filled.Visibility" Size="Size.Small" /> Report only · no managed replacement path</span>
+                                }
                             </div>
                             <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                                       StartIcon="@Icons.Material.Filled.Tune" Disabled="@item.HasActiveJob"
-                                       OnClick="() => SelectFromReport(item.RequestId)">@(item.HasActiveJob ? "Work in progress" : "Build a plan")</MudButton>
+                                       StartIcon="@Icons.Material.Filled.Tune" Disabled="@(!item.CanOptimize || item.HasActiveJob)"
+                                       title="@OptimizationAvailability(item)"
+                                       OnClick="() => SelectFromReport(item.RequestId)">@(item.HasActiveJob ? "Work in progress" : item.CanOptimize ? "Build a plan" : "Report only")</MudButton>
                         </article>
                     }
                 </div>
@@ -521,7 +536,7 @@ else
     private int ScopedMetadataScanRetryingCount => ScopedTitles.Sum(item => item.MetadataScanRetryingCount);
     private int ScopedMetadataScanFailedCount => ScopedTitles.Sum(item => item.MetadataScanFailedCount);
     private List<LibraryEfficiencyTitleDto> ScanScopeTitles => ScopedTitles
-        .Where(item => item.UnknownCodecFileCount > 0 && !item.HasActiveJob
+        .Where(item => !_report.UsesPlexInventory && item.UnknownCodecFileCount > 0 && !item.HasActiveJob
                        && (string.IsNullOrWhiteSpace(_reportSearch)
                            || item.Title.Contains(_reportSearch, StringComparison.OrdinalIgnoreCase)))
         .Take(200).ToList();
@@ -798,6 +813,14 @@ else
 
     private static string MediaLabel(LibraryEfficiencyTitleDto item) => item.IsAnime ? "Anime"
         : item.MediaType == MediaType.Movie ? "Movie" : "TV series";
+
+    private string ReportSourceText => _report.UsesPlexInventory
+        ? "Exact physical files reported by Plex across every video library."
+        : "Measured Plex Requests import data.";
+
+    private static string OptimizationAvailability(LibraryEfficiencyTitleDto item) => item.CanOptimize
+        ? $"Build a safe replacement plan for {item.OptimizableFileCount} managed file{(item.OptimizableFileCount == 1 ? string.Empty : "s")}."
+        : "This Plex file is included in the report, but it has no verified Plex Requests import path and cannot be replaced from here.";
 
     private static string Percent(long part, long total) => total <= 0 ? "0%"
         : $"{part * 100d / total:0.#}%";

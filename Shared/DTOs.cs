@@ -2231,6 +2231,11 @@ public sealed class StorageOptimizationTitleDto
 public sealed class LibraryEfficiencyReportDto
 {
     public DateTime GeneratedAt { get; set; }
+    /// <summary>True when the report is built from Plex's exact media-part inventory rather than the
+    /// narrower Plex Requests import audit.</summary>
+    public bool UsesPlexInventory { get; set; }
+    /// <summary>Newest trustworthy Plex sighting represented by this report.</summary>
+    public DateTime? InventoryUpdatedAt { get; set; }
     public List<LibraryEfficiencyTitleDto> Titles { get; set; } = new();
     public int TitleCount => Titles.Count;
     public int FileCount => Titles.Sum(title => title.FileCount);
@@ -2250,6 +2255,8 @@ public sealed class LibraryEfficiencyReportDto
 
 public sealed class LibraryEfficiencyTitleDto
 {
+    /// <summary>Stable render identity. Plex-only titles do not have a request id.</summary>
+    public string InventoryKey { get; set; } = string.Empty;
     public int RequestId { get; set; }
     public string Title { get; set; } = string.Empty;
     public int? Year { get; set; }
@@ -2270,6 +2277,10 @@ public sealed class LibraryEfficiencyTitleDto
     public string CodecSummary { get; set; } = string.Empty;
     public string ResolutionSummary { get; set; } = string.Empty;
     public bool HasActiveJob { get; set; }
+    /// <summary>Whether this title has an exact, managed import-audit scope that can enter the replacement
+    /// planner today. Plex-only rows remain useful report data but are never silently made actionable.</summary>
+    public bool CanOptimize { get; set; }
+    public int OptimizableFileCount { get; set; }
     public int MetadataScanQueuedCount { get; set; }
     public int MetadataScanInProgressCount { get; set; }
     public int MetadataScanRetryingCount { get; set; }
