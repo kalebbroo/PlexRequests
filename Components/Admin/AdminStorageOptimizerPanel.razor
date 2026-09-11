@@ -1,10 +1,12 @@
 @using PlexRequestsHosted.Shared
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
+@using PlexRequestsHosted.Shared.Media
 @implements IDisposable
 @inject PlexRequestsHosted.Services.Implementations.IStorageOptimizationService Optimizer
 @inject PlexRequestsHosted.Services.Implementations.IMediaMetadataScanService MetadataScans
 @inject PlexRequestsHosted.Services.Implementations.ICustomFormatService Formats
+@inject PlexRequestsHosted.Services.Abstractions.IPlexApiService Plex
 @inject PlexRequestsHosted.Services.Abstractions.IToastService Toasts
 @inject IDialogService Dialogs
 
@@ -195,11 +197,46 @@ else
                                     }
                                 }
                             </div>
-                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                                       StartIcon="@(item.CanOptimize ? Icons.Material.Filled.Tune : Icons.Material.Filled.Link)"
-                                       Disabled="@((!item.CanOptimize && !item.CanAdopt) || item.HasActiveJob || _adopting.Contains(item.InventoryKey))"
-                                       title="@OptimizationAvailability(item)"
-                                       OnClick="@(() => OpenFromReportAsync(item))">@ReportActionLabel(item)</MudButton>
+                            <div class="d-flex gap-2 align-center">
+                                @if (item.CanLinkIdentity)
+                                {
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary"
+                                               StartIcon="@Icons.Material.Filled.ManageSearch"
+                                               Disabled="@_identityLinking.Contains(item.InventoryKey)"
+                                               OnClick="@(() => BeginIdentityLink(item))">Find identity</MudButton>
+                                }
+                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                           StartIcon="@(item.CanOptimize ? Icons.Material.Filled.Tune : Icons.Material.Filled.Link)"
+                                           Disabled="@((!item.CanOptimize && !item.CanAdopt) || item.HasActiveJob || _adopting.Contains(item.InventoryKey))"
+                                           title="@OptimizationAvailability(item)"
+                                           OnClick="@(() => OpenFromReportAsync(item))">@ReportActionLabel(item)</MudButton>
+                            </div>
+                            @if (_identityInventoryKey == item.InventoryKey)
+                            {
+                                <div class="identity-linker">
+                                    <MudText Typo="Typo.caption">Choose the matching metadata result. This only links metadata; it does not download or change files.</MudText>
+                                    <div class="d-flex gap-2 align-center">
+                                        <MudTextField T="string" @bind-Value="_identitySearch" Label="Search metadata"
+                                                      Immediate="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Secondary"
+                                                   Disabled="@(_identitySearching || string.IsNullOrWhiteSpace(_identitySearch))"
+                                                   OnClick="@(() => SearchIdentityAsync(item))">@(_identitySearching ? "Searching…" : "Search")</MudButton>
+                                        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="CloseIdentityLink" aria-label="Close identity search" />
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(_identitySearchMessage))
+                                    {
+                                        <MudText Typo="Typo.caption" Color="Color.Warning">@_identitySearchMessage</MudText>
+                                    }
+                                    @foreach (var candidate in _identityResults)
+                                    {
+                                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+                                                   Disabled="@_identityLinking.Contains(item.InventoryKey)"
+                                                   OnClick="@(() => ConfirmIdentityLinkAsync(item, candidate))">
+                                            Use @candidate.Title@(candidate.Year is int candidateYear ? $" ({candidateYear})" : string.Empty)
+                                        </MudButton>
+                                    }
+                                </div>
+                            }
                         </article>
                     }
                 </div>
@@ -455,6 +492,7 @@ else
     private bool _reportLoading;
     private bool _metadataQueueing;
     private readonly HashSet<string> _adopting = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _identityLinking = new(StringComparer.Ordinal);
     private int _workspaceTab;
     private string _search = string.Empty;
     private string _reportSearch = string.Empty;
@@ -462,6 +500,11 @@ else
     private string _reportMedia = AllMedia;
     private string _reportView = OpportunityView;
     private string _reportSort = ReviewSort;
+    private string? _identityInventoryKey;
+    private string _identitySearch = string.Empty;
+    private string? _identitySearchMessage;
+    private bool _identitySearching;
+    private List<MediaCardDto> _identityResults = new();
     private List<StorageOptimizationTitleDto> _titles = new();
     private LibraryEfficiencyReportDto _report = new();
     private List<CustomFormatDto> _formats = new();
@@ -628,6 +671,91 @@ else
             _adopting.Remove(item.InventoryKey);
         }
     }
+
+    private void BeginIdentityLink(LibraryEfficiencyTitleDto item)
+    {
+        _identityInventoryKey = item.InventoryKey;
+        _identitySearch = item.Title;
+        _identitySearchMessage = null;
+        _identityResults = new();
+    }
+
+    private void CloseIdentityLink()
+    {
+        _identityInventoryKey = null;
+        _identitySearchMessage = null;
+        _identityResults = new();
+    }
+
+    private async Task SearchIdentityAsync(LibraryEfficiencyTitleDto item)
+    {
+        if (string.IsNullOrWhiteSpace(_identitySearch)) return;
+        _identitySearching = true;
+        _identitySearchMessage = null;
+        _identityResults = new();
+        try
+        {
+            var searchType = item.MediaType == MediaType.Anime ? MediaType.TvShow : item.MediaType;
+            _identityResults = (await Plex.SearchMediaAsync(_identitySearch.Trim(), searchType))
+                .Where(candidate => candidate.ResolveMediaRef().IsValid
+                                    && CompatibleIdentityType(candidate.MediaType, item.MediaType))
+                .Take(8).ToList();
+            if (_identityResults.Count == 0)
+                _identitySearchMessage = "No compatible metadata results were found. Try a more specific title.";
+        }
+        catch (Exception ex)
+        {
+            _identitySearchMessage = ex.Message;
+        }
+        finally
+        {
+            _identitySearching = false;
+        }
+    }
+
+    private async Task ConfirmIdentityLinkAsync(LibraryEfficiencyTitleDto item, MediaCardDto candidate)
+    {
+        if (!_identityLinking.Add(item.InventoryKey)) return;
+        try
+        {
+            var label = candidate.Title + (candidate.Year is int year ? $" ({year})" : string.Empty);
+            var confirmed = await Dialogs.ShowMessageBox("Link Plex title identity",
+                $"Link Plex “{item.Title}” to “{label}”? This stores only the metadata identity. "
+                + "It does not create a request, queue a download, move, replace, or delete files.",
+                yesText: "Link identity", cancelText: "Cancel");
+            if (confirmed != true) return;
+            var result = await Optimizer.LinkPlexTitleIdentityAsync(new PlexLibraryIdentityLinkRequestDto
+            {
+                InventoryKey = item.InventoryKey,
+                MediaRef = candidate.ResolveMediaRef(),
+                Title = candidate.Title,
+                Year = candidate.Year
+            });
+            if (!result.Success)
+            {
+                await Toasts.ShowErrorAsync(result.Message);
+                return;
+            }
+            await Toasts.ShowSuccessAsync(result.Message);
+            CloseIdentityLink();
+            _report = await Optimizer.GetEfficiencyReportAsync();
+        }
+        catch (Exception ex)
+        {
+            await Toasts.ShowErrorAsync(ex.Message);
+        }
+        finally
+        {
+            _identityLinking.Remove(item.InventoryKey);
+        }
+    }
+
+    private static bool CompatibleIdentityType(MediaType candidateType, MediaType plexType) => plexType switch
+    {
+        MediaType.Movie => candidateType == MediaType.Movie,
+        MediaType.TvShow or MediaType.Anime => candidateType is MediaType.TvShow or MediaType.Anime,
+        _ => false
+    };
 
     private async Task WorkspaceTabChanged(int value)
     {

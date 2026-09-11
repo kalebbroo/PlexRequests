@@ -2300,6 +2300,9 @@ public sealed class LibraryEfficiencyTitleDto
     /// <summary>A Plex-only title has provider identity plus complete path mappings and can be deliberately
     /// adopted by an administrator. The adoption click revalidates every exact file size and never queues.</summary>
     public bool CanAdopt { get; set; }
+    /// <summary>True when Plex did not provide an identity and an administrator can explicitly choose one.
+    /// Linking an identity is metadata-only; it does not create a request or queue work.</summary>
+    public bool CanLinkIdentity { get; set; }
     public string? AdoptionBlockReason { get; set; }
     public int MetadataScanQueuedCount { get; set; }
     public int MetadataScanInProgressCount { get; set; }
@@ -2315,6 +2318,17 @@ public sealed class StorageOptimizationAdoptionResultDto
     public bool Success { get; set; }
     public int RequestId { get; set; }
     public string Message { get; set; } = string.Empty;
+}
+
+/// <summary>Admin-selected metadata identity for a Plex-only inventory title.</summary>
+public sealed class PlexLibraryIdentityLinkRequestDto
+{
+    public string InventoryKey { get; set; } = string.Empty;
+    public PlexRequestsHosted.Shared.Media.MediaRef? MediaRef { get; set; }
+    /// <summary>Human-readable metadata result retained for the review/report UI; the server trusts only
+    /// the validated provider identity for linkage.</summary>
+    public string? Title { get; set; }
+    public int? Year { get; set; }
 }
 
 /// <summary>Explicit admin scope for backfilling missing codec metadata. The server revalidates every id
