@@ -15,6 +15,7 @@ public interface IStorageOptimizationService
 {
     Task<List<StorageOptimizationTitleDto>> GetTitlesAsync();
     Task<LibraryEfficiencyReportDto> GetEfficiencyReportAsync();
+    Task<StorageOptimizationAdoptionResultDto> AdoptPlexTitleAsync(string inventoryKey);
     Task<StorageOptimizationPreviewDto> PreviewAsync(StorageOptimizationRequestDto request);
     Task<StorageOptimizationQueueResultDto> QueueAsync(StorageOptimizationRequestDto request);
     Task<List<StorageOptimizationActivityDto>> GetActivityAsync(int take = 50);
@@ -200,6 +201,12 @@ public sealed class StorageOptimizationService(
             .Where(job => ActiveStatuses.Contains(job.Status))
             .Select(job => job.MediaRequestId).Distinct().ToListAsync();
         var active = activeRequestIds.ToHashSet();
+        LibraryOrganizationPreferencesDto? preferences = null;
+        if (libraryPreferences is not null)
+        {
+            try { preferences = await libraryPreferences.GetAsync(); }
+            catch { /* Reporting remains available; adoption fails closed until settings can be read. */ }
+        }
 
         // Deduplicate globally before grouping into titles. This also handles one multi-episode file exposed
         // under several Plex episode rows and a physical path accidentally registered in two sections.
@@ -241,6 +248,21 @@ public sealed class StorageOptimizationService(
                 var isAnime = displayRequest?.IsAnime == true
                               || displayRequest?.MediaType == MediaType.Anime
                               || first.SectionTitle.Contains("anime", StringComparison.OrdinalIgnoreCase);
+                var hasCompleteMapping = preferences is not null && files.All(file =>
+                    PlexLibraryPathMapping.TryMap(file.SectionKey, file.FilePath,
+                        preferences.PlexPathMappings, out _));
+                var hasProviderIdentity = mappings.Any(mapping =>
+                    string.Equals(mapping.RatingKey, group.Key.OwnerRatingKey, StringComparison.Ordinal)
+                    && CompatibleMediaType(first.MediaType, mapping.MediaType)
+                    && TryParseExternalKey(mapping.ExternalKey, out _, out _, out _));
+                var canAdopt = managedRequest is null && hasCompleteMapping && hasProviderIdentity;
+                var adoptionBlockReason = canAdopt || managedRequest is not null
+                    ? null
+                    : !hasCompleteMapping
+                        ? "Connect every Plex path for this title under Libraries & importing first."
+                        : !hasProviderIdentity
+                            ? "Plex has not reported a supported TMDb, IMDb, or TVDB identity for this title."
+                            : "This title cannot be adopted right now.";
 
                 return new LibraryEfficiencyTitleDto
                 {
@@ -268,7 +290,9 @@ public sealed class StorageOptimizationService(
                         ? QualityHelper.FromHeight(file.ResolutionHeight).Label() : "Unknown")),
                     HasActiveJob = linkedIds?.Any(active.Contains) == true,
                     CanOptimize = managedRequest is not null,
-                    OptimizableFileCount = optimizableCount
+                    OptimizableFileCount = optimizableCount,
+                    CanAdopt = canAdopt,
+                    AdoptionBlockReason = adoptionBlockReason
                 };
             })
             .OrderByDescending(item => item.ReviewBytes)
@@ -296,6 +320,208 @@ public sealed class StorageOptimizationService(
         MediaType.Movie => requestType == MediaType.Movie,
         MediaType.TvShow => requestType is MediaType.TvShow or MediaType.Anime,
         _ => true
+    };
+
+    public async Task<StorageOptimizationAdoptionResultDto> AdoptPlexTitleAsync(string inventoryKey)
+    {
+        if (!TryParsePlexInventoryKey(inventoryKey, out var sectionKey, out var ownerRatingKey))
+            return AdoptionFailure("This Plex inventory identity is invalid.");
+        var canonicalInventoryKey = $"plex:{sectionKey}:{ownerRatingKey}";
+        if (libraryPreferences is null)
+            return AdoptionFailure("Library settings are unavailable.");
+
+        var preferences = await libraryPreferences.GetAsync();
+        if (!LibraryRouting.TryNormalizeAndValidate(preferences, out var settingsError))
+            return AdoptionFailure(settingsError ?? "Library settings are invalid.");
+        var files = await db.PlexLibraryFiles.AsNoTracking()
+            .Where(file => file.MissedScans == 0 && file.SectionKey == sectionKey
+                           && (file.MediaType == MediaType.TvShow
+                               ? (file.ShowRatingKey ?? file.RatingKey) == ownerRatingKey
+                               : file.RatingKey == ownerRatingKey))
+            .ToListAsync();
+        files = files.GroupBy(file => file.FilePath, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(file => file.SizeBytes).First()).ToList();
+        if (files.Count == 0) return AdoptionFailure("Plex no longer reports this title.");
+        if (!TryVerifyManagedFiles(files, preferences.PlexPathMappings, out var verifyError))
+            return AdoptionFailure(verifyError!);
+
+        var first = files[0];
+        var identities = await db.PlexMappings.AsNoTracking()
+            .Where(mapping => mapping.MissedScans == 0 && mapping.RatingKey == ownerRatingKey)
+            .ToListAsync();
+        var identity = identities.Where(mapping => CompatibleMediaType(first.MediaType, mapping.MediaType))
+            .Select(mapping => TryParseExternalKey(mapping.ExternalKey, out var provider, out var externalId,
+                    out var tmdbId)
+                ? new AdoptionIdentity(provider, externalId, tmdbId)
+                : null)
+            .Where(item => item is not null)
+            .OrderBy(item => IdentityPriority(item!.Provider)).FirstOrDefault();
+        if (identity is null)
+            return AdoptionFailure("Plex has not reported a supported TMDb, IMDb, or TVDB identity for this title.");
+
+        var availableRequests = await db.MediaRequests.AsNoTracking()
+            .Where(request => request.Status == RequestStatus.Available
+                              && request.MediaType != MediaType.Music)
+            .ToListAsync();
+        var existing = availableRequests.FirstOrDefault(request =>
+            CompatibleMediaType(request.MediaType, first.MediaType)
+            && ExternalKeys(request).Any(key => string.Equals(key,
+                identity.Provider == "tmdb" ? $"tmdb:{identity.TmdbId}" : $"{identity.Provider}:{identity.ExternalId}",
+                StringComparison.OrdinalIgnoreCase)));
+        if (existing is not null)
+            return new StorageOptimizationAdoptionResultDto
+            {
+                Success = true,
+                RequestId = existing.Id,
+                Message = "This title already has a managed library record. No download was queued."
+            };
+
+        var existingAnchor = await db.MediaRequests.AsNoTracking()
+            .FirstOrDefaultAsync(request => request.LibraryInventoryKey == canonicalInventoryKey);
+        if (existingAnchor is not null)
+            return new StorageOptimizationAdoptionResultDto
+            {
+                Success = existingAnchor.Status == RequestStatus.Available,
+                RequestId = existingAnchor.Id,
+                Message = existingAnchor.Status == RequestStatus.Available
+                    ? "This Plex title was already adopted. No download was queued."
+                    : "This title's existing library record is not currently available."
+            };
+
+        var isAnime = first.SectionTitle.Contains("anime", StringComparison.OrdinalIgnoreCase);
+        var destination = LibraryRouting.Resolve(preferences, first.MediaType, Quality.Any, null, isAnime,
+            isEpisode: first.MediaType is MediaType.TvShow or MediaType.Anime);
+        var now = DateTime.UtcNow;
+        var request = new MediaRequestEntity
+        {
+            MediaId = identity.TmdbId ?? 0,
+            MediaType = first.MediaType,
+            RequestScopeKind = first.MediaType == MediaType.Movie
+                ? RequestScopeKind.Title
+                : RequestScopeKind.Series,
+            ExternalSource = identity.Provider == "tmdb" ? null : identity.Provider,
+            ExternalId = identity.Provider == "tmdb" ? null : identity.ExternalId,
+            Title = first.Title,
+            Status = RequestStatus.Available,
+            RequestedAt = now,
+            ApprovedAt = now,
+            AvailableAt = now,
+            RequestedBy = "Plex library (admin adopted)",
+            RequestNote = "Internal library anchor created from a verified Plex inventory entry; no download was queued.",
+            LibraryInventoryKey = canonicalInventoryKey,
+            LibraryDestinationId = destination.Id,
+            IsAnime = isAnime,
+            RequestAllSeasons = first.MediaType is MediaType.TvShow or MediaType.Anime,
+            MonitorMode = MonitorMode.None,
+            Monitored = false,
+            AutoMonitorNewSeasons = false,
+            SearchForCutoffUpgrades = false,
+            CutoffState = CutoffState.Met,
+            CutoffMet = true
+        };
+        db.MediaRequests.Add(request);
+        try
+        {
+            await db.SaveChangesAsync();
+            return new StorageOptimizationAdoptionResultDto
+            {
+                Success = true,
+                RequestId = request.Id,
+                Message = "Plex title connected to the optimizer. No download was queued."
+            };
+        }
+        catch (DbUpdateException)
+        {
+            db.ChangeTracker.Clear();
+            var winner = await db.MediaRequests.AsNoTracking()
+                .FirstOrDefaultAsync(item => item.LibraryInventoryKey == canonicalInventoryKey);
+            if (winner is not null)
+                return new StorageOptimizationAdoptionResultDto
+                {
+                    Success = winner.Status == RequestStatus.Available,
+                    RequestId = winner.Id,
+                    Message = "This Plex title was already adopted. No download was queued."
+                };
+            throw;
+        }
+    }
+
+    private static bool TryVerifyManagedFiles(IReadOnlyList<PlexLibraryFileEntity> files,
+        IReadOnlyList<PlexPathMappingDto> mappings, out string? error)
+    {
+        foreach (var file in files)
+        {
+            if (!PlexLibraryPathMapping.TryMap(file.SectionKey, file.FilePath, mappings, out var managedPath))
+            {
+                error = $"Connect the Plex path for {file.SectionTitle} under Libraries & importing first.";
+                return false;
+            }
+            try
+            {
+                var info = new FileInfo(managedPath);
+                if (!info.Exists)
+                {
+                    error = "A mapped library file is no longer present. Refresh Plex inventory and try again.";
+                    return false;
+                }
+                if (file.SizeBytes <= 0 || info.Length != file.SizeBytes)
+                {
+                    error = "A mapped library file changed after Plex inventoried it. Refresh Plex inventory and try again.";
+                    return false;
+                }
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException
+                                           or IOException or UnauthorizedAccessException)
+            {
+                error = "A mapped library file could not be verified. Check the storage mount and try again.";
+                return false;
+            }
+        }
+        error = null;
+        return true;
+    }
+
+    private static bool TryParsePlexInventoryKey(string? value, out string sectionKey, out string ownerRatingKey)
+    {
+        sectionKey = string.Empty;
+        ownerRatingKey = string.Empty;
+        var parts = value?.Split(':', 3, StringSplitOptions.TrimEntries);
+        if (parts is not { Length: 3 } || !string.Equals(parts[0], "plex", StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(parts[1]) || string.IsNullOrWhiteSpace(parts[2])) return false;
+        sectionKey = parts[1];
+        ownerRatingKey = parts[2];
+        return true;
+    }
+
+    private static bool TryParseExternalKey(string? value, out string provider, out string externalId,
+        out int? tmdbId)
+    {
+        provider = string.Empty;
+        externalId = string.Empty;
+        tmdbId = null;
+        var separator = value?.IndexOf(':') ?? -1;
+        if (separator <= 0 || separator >= value!.Length - 1) return false;
+        provider = value[..separator].Trim().ToLowerInvariant();
+        externalId = value[(separator + 1)..].Trim();
+        if (provider == "tmdb")
+        {
+            if (!int.TryParse(externalId, out var id) || id <= 0) return false;
+            tmdbId = id;
+            return true;
+        }
+        return provider is "imdb" or "tvdb" && externalId.Length > 0;
+    }
+
+    private static int IdentityPriority(string provider) => provider switch
+    {
+        "tmdb" => 0,
+        "imdb" => 1,
+        _ => 2
+    };
+
+    private static StorageOptimizationAdoptionResultDto AdoptionFailure(string message) => new()
+    {
+        Message = message
     };
 
     public async Task<StorageOptimizationPreviewDto> PreviewAsync(StorageOptimizationRequestDto request) =>
@@ -833,12 +1059,14 @@ public sealed class StorageOptimizationService(
         Status = request.Status,
         QualityProfileId = request.QualityProfileId,
         LibraryDestinationId = request.LibraryDestinationId,
-        IsAnime = request.IsAnime
+        IsAnime = request.IsAnime,
+        IsLibraryAdoption = !string.IsNullOrWhiteSpace(request.LibraryInventoryKey)
     };
 
     private sealed record InventoryRow(ImportedFileEntity File, FulfillmentJobEntity Job,
         MediaRequestEntity Request, bool HasActiveJob, bool FromPlex);
     private sealed record FileDescriptor(InventoryRow Row, string? Codec, int Height, bool CodecObserved);
+    private sealed record AdoptionIdentity(string Provider, string ExternalId, int? TmdbId);
     private sealed record BuiltOptimization(StorageOptimizationPreviewDto Preview, MediaRequestDto? Request,
         StorageOptimizationPolicyDto? Policy);
 }

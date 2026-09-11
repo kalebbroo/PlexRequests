@@ -34,6 +34,8 @@ public sealed class BridgeOutboxService(
 
         var canonical = await _db.MediaRequests.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == request.Id, cancellationToken);
+        if (request.IsLibraryAdoption || !string.IsNullOrWhiteSpace(canonical?.LibraryInventoryKey))
+            return;
         var row = canonical is null
             ? CreateRow(request, type, detail)
             : CreateRow(canonical, type, detail);
@@ -172,7 +174,8 @@ public sealed class BridgeOutboxService(
     {
         var cutoff = DateTime.UtcNow.AddDays(-RetentionDays);
         var requests = await _db.MediaRequests.AsNoTracking()
-            .Where(x => x.RequestedAt >= cutoff || x.AvailableAt >= cutoff)
+            .Where(x => x.LibraryInventoryKey == null
+                        && (x.RequestedAt >= cutoff || x.AvailableAt >= cutoff))
             .ToListAsync(cancellationToken);
         if (requests.Count == 0) return;
 

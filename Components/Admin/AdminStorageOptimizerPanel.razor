@@ -185,13 +185,21 @@ else
                                 }
                                 @if (!item.CanOptimize)
                                 {
-                                    <span class="audit"><MudIcon Icon="@Icons.Material.Filled.Visibility" Size="Size.Small" /> Report only · no managed replacement path</span>
+                                    @if (item.CanAdopt)
+                                    {
+                                        <span class="scan-active"><MudIcon Icon="@Icons.Material.Filled.Link" Size="Size.Small" /> Ready for admin setup</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="audit"><MudIcon Icon="@Icons.Material.Filled.Visibility" Size="Size.Small" /> Report only · @item.AdoptionBlockReason</span>
+                                    }
                                 }
                             </div>
                             <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                                       StartIcon="@Icons.Material.Filled.Tune" Disabled="@(!item.CanOptimize || item.HasActiveJob)"
+                                       StartIcon="@(item.CanOptimize ? Icons.Material.Filled.Tune : Icons.Material.Filled.Link)"
+                                       Disabled="@((!item.CanOptimize && !item.CanAdopt) || item.HasActiveJob || _adopting.Contains(item.InventoryKey))"
                                        title="@OptimizationAvailability(item)"
-                                       OnClick="() => SelectFromReport(item.RequestId)">@(item.HasActiveJob ? "Work in progress" : item.CanOptimize ? "Build a plan" : "Report only")</MudButton>
+                                       OnClick="@(() => OpenFromReportAsync(item))">@ReportActionLabel(item)</MudButton>
                         </article>
                     }
                 </div>
@@ -446,6 +454,7 @@ else
     private bool _queueing;
     private bool _reportLoading;
     private bool _metadataQueueing;
+    private readonly HashSet<string> _adopting = new(StringComparer.Ordinal);
     private int _workspaceTab;
     private string _search = string.Empty;
     private string _reportSearch = string.Empty;
@@ -582,6 +591,42 @@ else
         if (title is null) return;
         SelectTitle(title);
         _workspaceTab = 1;
+    }
+
+    private async Task OpenFromReportAsync(LibraryEfficiencyTitleDto item)
+    {
+        if (item.CanOptimize)
+        {
+            SelectFromReport(item.RequestId);
+            return;
+        }
+        if (!item.CanAdopt || !_adopting.Add(item.InventoryKey)) return;
+        try
+        {
+            var confirmed = await Dialogs.ShowMessageBox("Connect Plex library title",
+                $"Connect “{item.Title}” to the optimizer? This creates an internal library record only. "
+                + "Nothing is downloaded, replaced, moved, or deleted until you separately preview and confirm a plan.",
+                yesText: "Connect title", cancelText: "Cancel");
+            if (confirmed != true) return;
+            var result = await Optimizer.AdoptPlexTitleAsync(item.InventoryKey);
+            if (!result.Success)
+            {
+                await Toasts.ShowErrorAsync(result.Message);
+                return;
+            }
+            await Toasts.ShowSuccessAsync(result.Message);
+            _titles = await Optimizer.GetTitlesAsync();
+            _report = await Optimizer.GetEfficiencyReportAsync();
+            SelectFromReport(result.RequestId);
+        }
+        catch (Exception ex)
+        {
+            await Toasts.ShowErrorAsync(ex.Message);
+        }
+        finally
+        {
+            _adopting.Remove(item.InventoryKey);
+        }
     }
 
     private async Task WorkspaceTabChanged(int value)
@@ -820,7 +865,17 @@ else
 
     private static string OptimizationAvailability(LibraryEfficiencyTitleDto item) => item.CanOptimize
         ? $"Build a safe replacement plan for {item.OptimizableFileCount} managed file{(item.OptimizableFileCount == 1 ? string.Empty : "s")}."
-        : "This Plex file is report-only. Connect its Plex and Plex Requests folders under Libraries & importing before it can be replaced.";
+        : item.CanAdopt
+            ? "Connect this verified Plex title to the optimizer. This does not queue a download."
+            : item.AdoptionBlockReason ?? "This Plex title is report-only.";
+
+    private string ReportActionLabel(LibraryEfficiencyTitleDto item) => item.HasActiveJob
+        ? "Work in progress"
+        : _adopting.Contains(item.InventoryKey)
+            ? "Connecting…"
+            : item.CanOptimize
+                ? "Build a plan"
+                : item.CanAdopt ? "Connect title" : "Report only";
 
     private static string Percent(long part, long total) => total <= 0 ? "0%"
         : $"{part * 100d / total:0.#}%";

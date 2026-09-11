@@ -48,6 +48,11 @@ public class MediaRequestEntity
     [MaxLength(2000)]
     public string? RequestNote { get; set; }
 
+    /// <summary>Stable Plex inventory identity for an admin-adopted library title. Null for real user
+    /// requests. The unique index makes an adoption idempotent without attributing it to a user.</summary>
+    [MaxLength(256)]
+    public string? LibraryInventoryKey { get; set; }
+
     // TV specific selection
     public bool RequestAllSeasons { get; set; }
 

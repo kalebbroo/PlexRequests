@@ -803,6 +803,7 @@ static PlexRequestsHosted.Shared.DTOs.MediaRequestDto ToRequestDto(PlexRequestsH
     DenialReason = r.DenialReason,
     ExternalId = r.ExternalId,
     ExternalSource = r.ExternalSource,
+    IsLibraryAdoption = !string.IsNullOrWhiteSpace(r.LibraryInventoryKey),
     RequestScopeKind = r.RequestScopeKind,
     MediaRef = !string.IsNullOrWhiteSpace(r.ExternalId)
         ? MediaRef.FromExternal(r.ExternalSource ?? "external", r.ExternalId, r.MediaType,
