@@ -16,6 +16,7 @@ public interface IStorageOptimizationService
     Task<List<StorageOptimizationTitleDto>> GetTitlesAsync();
     Task<LibraryEfficiencyReportDto> GetEfficiencyReportAsync();
     Task<StorageOptimizationActionResultDto> LinkPlexTitleIdentityAsync(PlexLibraryIdentityLinkRequestDto request);
+    Task<StorageOptimizationActionResultDto> RemovePlexTitleIdentityLinkAsync(string inventoryKey);
     Task<StorageOptimizationAdoptionResultDto> AdoptPlexTitleAsync(string inventoryKey);
     Task<StorageOptimizationPreviewDto> PreviewAsync(StorageOptimizationRequestDto request);
     Task<StorageOptimizationQueueResultDto> QueueAsync(StorageOptimizationRequestDto request);
@@ -236,6 +237,7 @@ public sealed class StorageOptimizationService(
             {
                 var files = group.ToList();
                 var inventoryKey = $"plex:{group.Key.SectionKey}:{group.Key.OwnerRatingKey}";
+                identityOverrides.TryGetValue(inventoryKey, out var manualIdentity);
                 requestIdsByRatingKey.TryGetValue(group.Key.OwnerRatingKey, out var linkedIds);
                 if (requestIdsByInventoryKey.TryGetValue(inventoryKey, out var overrideLinkedIds))
                 {
@@ -271,9 +273,9 @@ public sealed class StorageOptimizationService(
                     string.Equals(mapping.RatingKey, group.Key.OwnerRatingKey, StringComparison.Ordinal)
                     && CompatibleMediaType(first.MediaType, mapping.MediaType)
                     && TryParseExternalKey(mapping.ExternalKey, out _, out _, out _))
-                    || identityOverrides.TryGetValue(inventoryKey, out var overrideIdentity)
-                    && CompatibleMediaType(first.MediaType, overrideIdentity.MediaType)
-                    && TryParseExternalKey(overrideIdentity.ExternalKey, out _, out _, out _);
+                    || manualIdentity is not null
+                    && CompatibleMediaType(first.MediaType, manualIdentity.MediaType)
+                    && TryParseExternalKey(manualIdentity.ExternalKey, out _, out _, out _);
                 var canAdopt = managedRequest is null && hasCompleteMapping && hasProviderIdentity;
                 var canLinkIdentity = managedRequest is null && !hasProviderIdentity;
                 var adoptionBlockReason = canAdopt || managedRequest is not null
@@ -313,6 +315,10 @@ public sealed class StorageOptimizationService(
                     OptimizableFileCount = optimizableCount,
                     CanAdopt = canAdopt,
                     CanLinkIdentity = canLinkIdentity,
+                    HasManualIdentity = manualIdentity is not null,
+                    ManualIdentityLabel = manualIdentity is null ? null
+                        : $"{manualIdentity.Title}" + (manualIdentity.Year is int identityYear
+                            ? $" ({identityYear})" : string.Empty),
                     AdoptionBlockReason = adoptionBlockReason
                 };
             })
@@ -408,6 +414,29 @@ public sealed class StorageOptimizationService(
     }
 
     private static StorageOptimizationActionResultDto IdentityLinkFailure(string message) => new() { Message = message };
+
+    /// <summary>Removes a manual correction before adoption. Existing Plex-provided identities are never
+    /// changed, and an adopted library anchor is intentionally immutable through this small safety action.</summary>
+    public async Task<StorageOptimizationActionResultDto> RemovePlexTitleIdentityLinkAsync(string inventoryKey)
+    {
+        if (!TryParsePlexInventoryKey(inventoryKey, out var sectionKey, out var ownerRatingKey))
+            return IdentityLinkFailure("This Plex inventory identity is invalid.");
+        var canonicalInventoryKey = $"plex:{sectionKey}:{ownerRatingKey}";
+        if (await db.MediaRequests.AsNoTracking().AnyAsync(request =>
+                request.LibraryInventoryKey == canonicalInventoryKey))
+            return IdentityLinkFailure("This title is already connected to the optimizer, so its identity cannot be changed here.");
+        var existing = await db.PlexLibraryIdentityOverrides
+            .SingleOrDefaultAsync(item => item.InventoryKey == canonicalInventoryKey);
+        if (existing is null)
+            return IdentityLinkFailure("This title does not have a manual metadata identity to remove.");
+        db.PlexLibraryIdentityOverrides.Remove(existing);
+        await db.SaveChangesAsync();
+        return new StorageOptimizationActionResultDto
+        {
+            Success = true,
+            Message = "Manual metadata identity removed. No request, job, or library file changed."
+        };
+    }
 
     public async Task<StorageOptimizationAdoptionResultDto> AdoptPlexTitleAsync(string inventoryKey)
     {

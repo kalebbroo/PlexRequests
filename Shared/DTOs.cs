@@ -2303,6 +2303,10 @@ public sealed class LibraryEfficiencyTitleDto
     /// <summary>True when Plex did not provide an identity and an administrator can explicitly choose one.
     /// Linking an identity is metadata-only; it does not create a request or queue work.</summary>
     public bool CanLinkIdentity { get; set; }
+    /// <summary>Whether this Plex-only title is currently using an explicit admin identity correction.
+    /// It may be changed or removed until the title is connected to the optimizer.</summary>
+    public bool HasManualIdentity { get; set; }
+    public string? ManualIdentityLabel { get; set; }
     public string? AdoptionBlockReason { get; set; }
     public int MetadataScanQueuedCount { get; set; }
     public int MetadataScanInProgressCount { get; set; }

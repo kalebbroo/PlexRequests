@@ -72,8 +72,25 @@ public sealed class StorageOptimizationTests
             var afterLink = Assert.Single((await service.GetEfficiencyReportAsync()).Titles);
             Assert.True(afterLink.CanAdopt, afterLink.AdoptionBlockReason);
             Assert.False(afterLink.CanLinkIdentity);
+            Assert.True(afterLink.HasManualIdentity);
 
-            var adopted = await service.AdoptPlexTitleAsync(afterLink.InventoryKey);
+            var removed = await service.RemovePlexTitleIdentityLinkAsync(afterLink.InventoryKey);
+            Assert.True(removed.Success, removed.Message);
+            Assert.Empty(await db.PlexLibraryIdentityOverrides.AsNoTracking().ToListAsync());
+            var afterRemoval = Assert.Single((await service.GetEfficiencyReportAsync()).Titles);
+            Assert.True(afterRemoval.CanLinkIdentity);
+            Assert.False(afterRemoval.CanAdopt);
+
+            var relinked = await service.LinkPlexTitleIdentityAsync(new PlexLibraryIdentityLinkRequestDto
+            {
+                InventoryKey = afterRemoval.InventoryKey,
+                MediaRef = MediaRef.FromTmdb(9900, MediaType.Movie),
+                Title = "Verified Movie",
+                Year = 2024
+            });
+            Assert.True(relinked.Success, relinked.Message);
+
+            var adopted = await service.AdoptPlexTitleAsync(afterRemoval.InventoryKey);
             Assert.True(adopted.Success, adopted.Message);
             var request = Assert.Single(await db.MediaRequests.AsNoTracking().ToListAsync());
             Assert.Equal(9900, request.MediaId);
