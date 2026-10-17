@@ -866,6 +866,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             if (entity.MediaType == MediaType.Music && musicDirectEnabled)
                 dto.AllowedAcquisitionProtocols.Add(AcquisitionProtocol.DirectAudio);
             if (directVideoEnabled && entity.MediaType == MediaType.TvShow && !entity.IsAnime
+                && !EpisodeOrderMapping.IsActive(dto.EpisodeOrderProfile)
                 && dto.DirectVideo is { Episodes.Count: > 0 })
                 dto.AllowedAcquisitionProtocols.Add(AcquisitionProtocol.DirectVideo);
             dto.QualityDefinitions = definitions;

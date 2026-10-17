@@ -113,6 +113,16 @@ public sealed class YouTubeEpisodeMatcherTests
     }
 
     [Fact]
+    public void Refuses_a_paired_upload_that_names_another_episode_title()
+    {
+        var outcome = YouTubeEpisodeMatcher.Match(Show, 3, 1, "The Friendly Neighborhood", Allowed,
+            [Video("abcdefghijk", "Marvel's Spidey and His Amazing Friends | The Friendly Neighborhood | Ghost-Spider Hunts | Full Episode")],
+            otherEpisodeTitles: ["Ghost-Spider Hunts"]);
+
+        Assert.Null(outcome.Selected);
+    }
+
+    [Fact]
     public void Live_streams_are_never_matched()
     {
         var outcome = YouTubeEpisodeMatcher.Match(Show, 3, 1, null, Allowed,

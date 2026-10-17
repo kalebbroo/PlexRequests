@@ -27,13 +27,17 @@ public static partial class YouTubeEpisodeMatcher
         "music video", "trailer", "teaser", "preview", "all episodes", "full series", "shorts"
     ];
 
+    /// <param name="otherEpisodeTitles">Titles of the other known episodes of the season. An upload naming any of them
+    /// is a shared two-episode upload, so it cannot stand for this episode even when its token says otherwise.</param>
     public static DirectVideoMatchOutcome Match(string showTitle, int season, int episode, string? episodeTitle,
-        IReadOnlyCollection<string> allowedChannelIds, IEnumerable<YouTubeCatalogVideo> catalog)
+        IReadOnlyCollection<string> allowedChannelIds, IEnumerable<YouTubeCatalogVideo> catalog,
+        IReadOnlyCollection<string>? otherEpisodeTitles = null)
     {
         var allowed = allowedChannelIds.ToHashSet(StringComparer.Ordinal);
+        var others = (otherEpisodeTitles ?? []).Select(Normalize).Where(t => t.Length >= MinimumEpisodeTitleLength).ToList();
         var evaluations = catalog
             .DistinctBy(video => video.VideoId, StringComparer.Ordinal)
-            .Select(video => Evaluate(video, showTitle, season, episode, episodeTitle, allowed))
+            .Select(video => Evaluate(video, showTitle, season, episode, episodeTitle, allowed, others))
             .ToList();
 
         var accepted = evaluations.Where(x => x.Accepted).ToList();
@@ -49,7 +53,7 @@ public static partial class YouTubeEpisodeMatcher
     }
 
     private static DirectVideoMatch Evaluate(YouTubeCatalogVideo video, string showTitle, int season, int episode,
-        string? episodeTitle, IReadOnlySet<string> allowed)
+        string? episodeTitle, IReadOnlySet<string> allowed, IReadOnlyList<string> otherTitles)
     {
         var reasons = new List<string>();
         var raw = (video.Title ?? string.Empty).ToLowerInvariant();
@@ -74,6 +78,8 @@ public static partial class YouTubeEpisodeMatcher
         var titled = IsEpisodeTitleMatch(padded, episodeTitle);
         if (!namedTarget && !titled)
             reasons.Add($"no S{season:D2}E{episode:D2} token and no exact episode title");
+        if (otherTitles.Any(other => padded.Contains($" {other} ", StringComparison.Ordinal)))
+            reasons.Add("title also names another episode of the season");
 
         return new DirectVideoMatch(video, reasons.Count == 0, reasons);
     }

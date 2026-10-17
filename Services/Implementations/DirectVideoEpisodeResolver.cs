@@ -1,4 +1,5 @@
 using PlexRequestsHosted.Services.Abstractions;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 
@@ -17,6 +18,9 @@ public sealed class DirectVideoEpisodeResolver(IDirectVideoSettingsService setti
         var config = await settings.GetAsync(cancellationToken);
         if (!config.Enabled || !config.ApiKeyConfigured || config.ChannelIds.Count == 0) return null;
         if (job.MediaType != MediaType.TvShow || job.IsAnime || job.TmdbId is not > 0) return null;
+        // A remapped order makes the canonical S/E in a filename mean something else on import. Offer no identities.
+        if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
+            return new DirectVideoAcquisitionContextDto { ResolvedAt = DateTime.UtcNow };
 
         var resolved = new DirectVideoAcquisitionContextDto { ResolvedAt = DateTime.UtcNow };
         var targets = OutstandingTargets(job);
@@ -40,8 +44,9 @@ public sealed class DirectVideoEpisodeResolver(IDirectVideoSettingsService setti
         foreach (var (season, episode) in targets)
         {
             names.TryGetValue((season, episode), out var episodeTitle);
+            var otherTitles = names.Where(x => x.Key != (season, episode)).Select(x => x.Value).ToList();
             var outcome = YouTubeEpisodeMatcher.Match(job.Title, season, episode, episodeTitle,
-                config.ChannelIds, uploads);
+                config.ChannelIds, uploads, otherTitles);
             if (outcome.Selected is not { } video)
             {
                 logger.LogInformation("No confident YouTube match for {Show} S{Season:D2}E{Episode:D2} ({Count} upload(s) considered)",
