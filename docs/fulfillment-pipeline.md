@@ -142,6 +142,15 @@ Release candidates come from a pluggable set of `IIndexerProvider`s, merged by `
   title, artist, album, duration, and tracklist checks. The VPN worker consumes the frozen manifest without
   making catalog calls; a missing or ambiguous match leaves the ordinary indexer fallbacks untouched.
 
+- **YouTube episodes (TV)** — an optional direct source for single episodes that have no acceptable torrent. The
+  web app reads uploads from admin-allowlisted official channels through the YouTube Data API (`YouTubeData__ApiKey`,
+  read-only, cached per channel) and matches each outstanding episode strictly: the show name must appear, the
+  episode must be named by an exact `SxxEyy` token or its exact title, conflicting tokens reject, and exactly one
+  upload must survive. The frozen result travels with the job; the VPN worker runs yt-dlp on that video id and
+  never searches. Its candidates rank below every torrent, so this is a fallback. Import proves each file by the
+  frozen video id, never by file size. Downloading YouTube videos is restricted by YouTube's Terms of Service; enable
+  this source only with that risk accepted (the music source already carries the same risk).
+
   ⚠️ **Cloudflare:** a challenged scraper is opened as a circuit and retried later; the downloader does not
   launch Chrome or attempt to automate a human challenge. A manually supplied reusable cookie/User-Agent is
   an optional advanced override for stable-egress deployments. EZTV/YTS/Nyaa use APIs/RSS and are not

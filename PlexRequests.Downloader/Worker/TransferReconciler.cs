@@ -288,7 +288,7 @@ public class TransferReconciler(
                 Detail = reason,
                 Season = t.Season,
                 Episode = t.Episode,
-                ExpiresAt = t.Protocol == AcquisitionProtocol.DirectAudio
+                ExpiresAt = t.Protocol.IsRemoteDirect()
                     ? DateTime.UtcNow.AddHours(6) : null
             }, ct);
         }

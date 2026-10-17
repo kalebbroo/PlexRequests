@@ -64,7 +64,9 @@ public class LibraryOrganizer(
                     // The admin's general torrent-size floor must not discard a legitimate short intro.
                     .Where(f => transfer.Protocol == AcquisitionProtocol.DirectAudio || PassesMinAudioSize(f, prefs))
                     .ToList()
-                : files.Where(IsVideo(prefs)).Where(f => PassesMinVideoSize(f, prefs)).ToList();
+                : files.Where(IsVideo(prefs))
+                    .Where(f => transfer.Protocol == AcquisitionProtocol.DirectVideo || PassesMinVideoSize(f, prefs))
+                    .ToList();
 
             var contentRoot = stagingRoot ?? sourcePath;
             var records = job.MediaType switch
@@ -266,7 +268,9 @@ public class LibraryOrganizer(
         {
             // Single-episode item — pick the largest video file (packs sometimes bundle a sample/extra
             // alongside the real episode even when it's not nominally a "pack").
-            var best = videoFiles.OrderByDescending(f => SafeLength(f)).FirstOrDefault();
+            var best = transfer.Protocol == AcquisitionProtocol.DirectVideo
+                ? FrozenDirectVideoFile(job, transfer, videoFiles)
+                : videoFiles.OrderByDescending(f => SafeLength(f)).FirstOrDefault();
             if (best is null || transfer.Season is not int s || transfer.Episode is not int e) return records;
 
             if (EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
@@ -293,7 +297,7 @@ public class LibraryOrganizer(
                         $"Standalone file '{Path.GetFileName(best)}' does not prove named-season translation S{sourceSeason:D2}E{e:D2} -> S{s:D2}E{e:D2}; no files were imported.");
             }
 
-            var inspected = await InspectSelectionAsync(job, [best], allFiles, prefs, ct);
+            var inspected = await InspectSelectionAsync(job, [best], allFiles, prefs, ct, transfer.Protocol);
             var title = await GetEpisodeTitleAsync(job, s, e, ct);
             var dest = naming.BuildEpisodePath(prefs, job, s, e, title, Path.GetExtension(best));
             var coverage = Coverage(s, [e]);
@@ -792,7 +796,7 @@ public class LibraryOrganizer(
 
     private async Task<Dictionary<string, MediaTrackSummaryDto>> InspectSelectionAsync(FulfillmentJobDto job,
         IEnumerable<string> selectedFiles, IReadOnlyList<string> allFiles, EffectiveLibraryOrganization prefs,
-        CancellationToken ct)
+        CancellationToken ct, AcquisitionProtocol protocol = AcquisitionProtocol.Torrent)
     {
         var results = new Dictionary<string, MediaTrackSummaryDto>(StringComparer.OrdinalIgnoreCase);
         var selected = selectedFiles.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -815,6 +819,14 @@ public class LibraryOrganizer(
             if (!tracks.HasVideo)
                 throw new MediaPolicyViolationException(
                     $"'{Path.GetFileName(file)}' contains no readable video stream and appears corrupt or incomplete");
+            if (protocol == AcquisitionProtocol.DirectVideo && job.Quality != Quality.Any)
+            {
+                var video = tracks.Video.FirstOrDefault();
+                var observed = VideoResolutionPolicy.FromDimensions(video?.Width, video?.Height);
+                if (observed < job.Quality)
+                    throw new MediaPolicyViolationException(
+                        $"'{Path.GetFileName(file)}' is {observed.Label()}, below the requested {job.Quality.Label()}");
+            }
             if (job.StorageOptimizationPolicy is { } optimization)
             {
                 var video = tracks.Video.FirstOrDefault();
@@ -835,7 +847,30 @@ public class LibraryOrganizer(
                     throw new MediaPolicyViolationException(
                         $"'{Path.GetFileName(file)}' would lower the selected media below {job.Quality.Label()}");
             }
-            var decision = MediaLanguagePolicy.Evaluate(job.MediaLanguagePolicy, tracks, job.IsAnime);
+            // A YouTube upload carries no audio language tags, so the audio requirement cannot be proven from the file.
+            // Assume the profile's preferred language for those untagged tracks only, and say so in the log. Subtitle
+            // requirements are still judged against the real inventory, and any tagged audio is judged as tagged.
+            var evaluated = tracks;
+            if (protocol == AcquisitionProtocol.DirectVideo && tracks.Audio.Count > 0
+                && tracks.Audio.All(t => string.IsNullOrWhiteSpace(t.Language)))
+            {
+                var assumed = MediaLanguagePolicy.Normalize(job.MediaLanguagePolicy?.PreferredAudioLanguage) ?? "en";
+                logger.LogInformation("Direct-video file '{File}' has untagged audio; assuming {Language} for the audio check only",
+                    Path.GetFileName(file), assumed);
+                evaluated = new MediaTrackSummaryDto
+                {
+                    HasVideo = tracks.HasVideo,
+                    Video = tracks.Video,
+                    Audio = tracks.Audio.Select(t => new MediaTrackDto
+                    {
+                        Index = t.Index, Type = t.Type, Codec = t.Codec, Language = assumed, Title = t.Title,
+                        IsDefault = t.IsDefault, IsForced = t.IsForced, IsExternal = t.IsExternal,
+                        Width = t.Width, Height = t.Height
+                    }).ToList(),
+                    Subtitles = tracks.Subtitles
+                };
+            }
+            var decision = MediaLanguagePolicy.Evaluate(job.MediaLanguagePolicy, evaluated, job.IsAnime);
             if (!decision.Accepted)
                 throw new MediaPolicyViolationException(
                     $"'{Path.GetFileName(file)}' failed the '{job.QualityProfile?.Name ?? "selected"}' media policy: {decision.Reason}");
@@ -852,6 +887,19 @@ public class LibraryOrganizer(
                     $"the requested {policy.MinimumSavingsPercent}% saving from {policy.CurrentBytes / 1_000_000_000d:F2} GB");
         }
         return results;
+    }
+
+    /// <summary>A direct YouTube transfer carries one file per episode. Its identity is the frozen video id in the
+    /// filename, so a mismatched upload cannot import as the requested episode.</summary>
+    private static string? FrozenDirectVideoFile(FulfillmentJobDto job, TransferItem transfer, List<string> videoFiles)
+    {
+        if (transfer.Season is not int s || transfer.Episode is not int e) return null;
+        var frozen = job.DirectVideo?.Episodes.FirstOrDefault(x => x.Season == s && x.Episode == e)
+            ?? throw new EpisodeMappingException(
+                $"No frozen YouTube identity exists for S{s:D2}E{e:D2}; the direct download was not imported.");
+        var file = videoFiles.FirstOrDefault(f => Path.GetFileName(f).Contains($"[{frozen.VideoId}]", StringComparison.Ordinal));
+        return file ?? throw new EpisodeMappingException(
+            $"The downloaded file does not carry frozen video {frozen.VideoId} for S{s:D2}E{e:D2}; no files were imported.");
     }
 
     private static List<string> CompanionSubtitles(string video, IReadOnlyList<string> allFiles,

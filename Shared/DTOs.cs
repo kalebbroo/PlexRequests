@@ -226,6 +226,37 @@ public sealed class DirectAudioAcquisitionContextDto
     public List<MusicTrackMetadataDto> Tracks { get; set; } = new();
 }
 
+/// <summary>Immutable YouTube identities for one TV job, frozen by the web app before the job crosses the VPN
+/// boundary. Only proven matches are present: an episode without a confident match is simply absent and the
+/// ordinary torrent search continues to cover it.</summary>
+public sealed class DirectVideoAcquisitionContextDto
+{
+    public string Provider { get; set; } = "youtube";
+    public DateTime ResolvedAt { get; set; }
+    public List<DirectVideoEpisodeDto> Episodes { get; set; } = new();
+}
+
+public sealed class DirectVideoEpisodeDto
+{
+    public int Season { get; set; }
+    public int Episode { get; set; }
+    public string VideoId { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string ChannelId { get; set; } = string.Empty;
+    public int DurationSeconds { get; set; }
+}
+
+/// <summary>Admin view of the YouTube episode source. The API key is never part of this DTO: it is configuration,
+/// so the UI can show whether it is set without ever reading its value.</summary>
+public sealed class DirectVideoSettingsDto
+{
+    public bool Enabled { get; set; }
+    /// <summary>Official YouTube channel ids. Only these channels can supply an episode.</summary>
+    public List<string> ChannelIds { get; set; } = new();
+    public bool ApiKeyConfigured { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
 public sealed class MusicTrackMetadataDto
 {
     public string RecordingId { get; set; } = string.Empty;
@@ -892,6 +923,8 @@ public class FulfillmentJobDto
     public MediaRef? Media { get; set; }
     public RequestScopeKind RequestScope { get; set; }
     public MusicAcquisitionContextDto? Music { get; set; }
+    /// <summary>Frozen YouTube episode identities for a TV job; null when the video source is off or unresolved.</summary>
+    public DirectVideoAcquisitionContextDto? DirectVideo { get; set; }
     /// <summary>Protocols the admin currently permits for this job. Torrent is always present for backward
     /// compatibility; optional modules add their own protocol when configured and ready.</summary>
     public List<AcquisitionProtocol> AllowedAcquisitionProtocols { get; set; } = [AcquisitionProtocol.Torrent];

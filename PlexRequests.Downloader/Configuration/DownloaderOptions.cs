@@ -142,6 +142,22 @@ public sealed class DirectAudioOptions
     public int TrackTimeoutMinutes { get; set; } = 20;
 }
 
+/// <summary>Optional single-video YouTube runtime for TV episodes. Like direct audio, admin policy travels with each
+/// job; these settings describe only the local executable, durable workspace and bounded retry behavior.</summary>
+public sealed class DirectVideoOptions
+{
+    public const string Section = "DirectVideo";
+    public bool Enabled { get; set; } = true;
+    public string ExecutablePath { get; set; } = "yt-dlp";
+    public string StatePath { get; set; } = "state/direct-video";
+    public int MaxConcurrent { get; set; } = 1;
+    public int MaxAttempts { get; set; } = 3;
+    public int TimeoutMinutes { get; set; } = 30;
+    /// <summary>yt-dlp format selector. The downloader image has no ffmpeg, so the default never asks yt-dlp to merge
+    /// separate streams; it takes the first pre-muxed single-file stream in preference order.</summary>
+    public string Format { get; set; } = "22/18/best[vcodec!=none][acodec!=none]";
+}
+
 /// <summary>Where completed files are placed for Plex to index.</summary>
 public class LibraryOptions
 {

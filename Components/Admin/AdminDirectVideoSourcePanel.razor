@@ -1,0 +1,104 @@
+@using PlexRequestsHosted.Shared.DTOs
+@inject PlexRequestsHosted.Services.Abstractions.IDirectVideoSettingsService Settings
+@inject PlexRequestsHosted.Services.Abstractions.IToastService Toast
+
+<section class="direct-source-section">
+    <MudText Typo="Typo.h6">YouTube episodes</MudText>
+    <MudText Typo="Typo.body2" Class="text-muted mb-2">
+        Single TV episodes from official channels. Used only when no torrent is acceptable.
+    </MudText>
+
+    @if (_loading || _settings is null)
+    {
+        <MudPaper Class="pa-4 text-center" Outlined="true">
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Small" />
+        </MudPaper>
+    }
+    else
+    {
+        <MudPaper Class="direct-source-card" Outlined="true">
+            <div class="direct-source-identity">
+                <span class="direct-source-icon"><MudIcon Icon="@Icons.Material.Filled.VideoLibrary" /></span>
+                <div>
+                    <MudText Typo="Typo.subtitle1"><b>YouTube (TV)</b></MudText>
+                    <MudText Typo="Typo.body2" Class="text-muted">
+                        Each episode must match its official upload exactly. Ambiguous matches are skipped.
+                    </MudText>
+                </div>
+            </div>
+            <div class="direct-source-actions">
+                <MudChip T="string" Size="Size.Small"
+                         Color="@(_settings.Enabled && _settings.ApiKeyConfigured ? Color.Success : Color.Default)"
+                         Icon="@(_settings.Enabled ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.PauseCircle)">
+                    @(_settings.Enabled ? "Ready" : "Off")
+                </MudChip>
+                <MudSwitch T="bool" Color="Color.Primary" Value="@_settings.Enabled"
+                           ValueChanged="SetEnabled" Disabled="_saving || !_settings.ApiKeyConfigured"
+                           Label="Use source" aria-label="Enable YouTube episode acquisition" />
+            </div>
+
+            @if (!_settings.ApiKeyConfigured)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">
+                    Set YouTubeData:ApiKey in the web configuration to enable this source.
+                </MudAlert>
+            }
+
+            <MudTextField T="string" Label="Official channel IDs" Lines="3" Variant="Variant.Outlined"
+                          Class="mt-3" @bind-Value="_channelText" Disabled="_saving"
+                          HelperText="One per line. Channel IDs start with UC and are 24 characters." />
+            <div class="direct-source-actions mt-2">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_saving"
+                           OnClick="SaveChannels">Save channels</MudButton>
+            </div>
+        </MudPaper>
+    }
+</section>
+
+@code {
+    private DirectVideoSettingsDto? _settings;
+    private string _channelText = string.Empty;
+    private bool _loading = true;
+    private bool _saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _settings = await Settings.GetAsync();
+            _channelText = string.Join('\n', _settings.ChannelIds);
+        }
+        finally { _loading = false; }
+    }
+
+    private Task SetEnabled(bool enabled) => Save(enabled, ChannelsFromText(), enabled
+        ? "YouTube episode acquisition enabled." : "YouTube episode acquisition disabled.");
+
+    private Task SaveChannels() => Save(_settings?.Enabled ?? false, ChannelsFromText(), "Official channels saved.");
+
+    private List<string> ChannelsFromText() => _channelText
+        .Split(['\n', '\r', ',', ' ', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .ToList();
+
+    private async Task Save(bool enabled, List<string> channels, string successMessage)
+    {
+        if (_settings is null) return;
+        _saving = true;
+        try
+        {
+            await Settings.UpdateAsync(new DirectVideoSettingsDto { Enabled = enabled, ChannelIds = channels });
+            _settings = await Settings.GetAsync();
+            _channelText = string.Join('\n', _settings.ChannelIds);
+            await Toast.ShowSuccessAsync(successMessage);
+        }
+        catch (InvalidOperationException ex)
+        {
+            await Toast.ShowErrorAsync(ex.Message);
+        }
+        catch
+        {
+            await Toast.ShowErrorAsync("YouTube episode settings could not be saved.");
+        }
+        finally { _saving = false; }
+    }
+}

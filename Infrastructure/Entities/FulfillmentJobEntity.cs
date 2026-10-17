@@ -24,6 +24,10 @@ public class FulfillmentJobEntity
     /// <summary>Serialized <c>MusicAcquisitionContextDto</c>; null for non-music jobs.</summary>
     public string? AcquisitionContextJson { get; set; }
 
+    /// <summary>Serialized <c>DirectVideoAcquisitionContextDto</c>: frozen YouTube episode identities for a TV job.
+    /// Null until resolved; an empty episode list means the source was consulted and held no confident match.</summary>
+    public string? DirectVideoContextJson { get; set; }
+
     [MaxLength(512)]
     public string Title { get; set; } = string.Empty;
 
