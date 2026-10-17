@@ -1,14 +1,14 @@
 <nav class="workspace-nav" aria-label="@AriaLabel">
-    @foreach (var section in Sections)
+    @foreach (var item in Sections)
     {
         <button type="button"
-                class="@ButtonClass(section)"
-                aria-current="@(section.Key == ActiveKey ? "page" : null)"
-                @onclick="() => Selected.InvokeAsync(section)">
-            <MudIcon Icon="@section.Icon" Size="Size.Small" />
+                class="@ButtonClass(item)"
+                aria-current="@(item.Key == ActiveKey ? "page" : null)"
+                @onclick="() => Selected.InvokeAsync(item)">
+            <MudIcon Icon="@item.Icon" Size="Size.Small" />
             <span class="workspace-nav-copy">
-                <span class="workspace-nav-label">@section.Label</span>
-                <span class="workspace-nav-description">@section.Description</span>
+                <span class="workspace-nav-label">@item.Label</span>
+                <span class="workspace-nav-description">@item.Description</span>
             </span>
         </button>
     }
@@ -27,6 +27,6 @@
     [Parameter]
     public EventCallback<AdminWorkspaceSection> Selected { get; set; }
 
-    private string ButtonClass(AdminWorkspaceSection section) =>
-        section.Key == ActiveKey ? "workspace-nav-item active" : "workspace-nav-item";
+    private string ButtonClass(AdminWorkspaceSection item) =>
+        item.Key == ActiveKey ? "workspace-nav-item active" : "workspace-nav-item";
 }
