@@ -201,3 +201,70 @@ test("generic missing magnets and EXT text remain retryable rather than terminal
     document,
     "https://1337x.to/torrent/7654321/example/").pageType, "unsupported");
 });
+
+test("reads EXT.to episode tables and skips their comment links", () => {
+  // Shape of an ext.to episode page: the name link and the comment link share a detail path, and the
+  // comment link is marked with dwn-btn. Cell and row text mirror the rendered table, minus its buttons.
+  const episodeRow = ({ id, name, seeds, leech, size }) => {
+    const row = {
+      textContent: `1. ${name} 9 file_upload Size${size} Files 250 Age 2 years ago Seed ${seeds} Leech ${leech}`,
+      querySelector: () => null,
+      querySelectorAll: () => []
+    };
+    const cell = {
+      cloneNode: () => ({ textContent: `1. ${name}`, querySelectorAll: () => [{ remove() {} }] })
+    };
+    const href = `/spidey-and-his-amazing-friends-s03e01-${id}/`;
+    const closest = selector => (selector === "td" ? cell : selector === "tr" ? row : null);
+    return [
+      {
+        textContent: name,
+        getAttribute: name => (name === "href" ? href : null),
+        classList: { contains: () => false },
+        closest
+      },
+      {
+        textContent: "9",
+        getAttribute: name => (name === "href" ? `${href}#comments` : null),
+        classList: { contains: className => className === "dwn-btn" },
+        closest
+      }
+    ];
+  };
+  const links = [
+    ...episodeRow({ id: 10000002, name: "Spidey And His Amazing Friends S03E01 1080p HEVC x265-MeGusta", seeds: 12, leech: 3, size: "555.95 MB" }),
+    ...episodeRow({ id: 10000003, name: "Spidey And His Amazing Friends S03E02 1080p HEVC x265-MeGusta", seeds: 4, leech: 0, size: "512.00 MB" })
+  ];
+  const document = {
+    title: "Marvel's Spidey and His Amazing Friends Season 3 Episode 1 - EXT Torrents",
+    body: { textContent: "Marvel's Spidey and His Amazing Friends Season 3 Episode 1" },
+    querySelector: () => null,
+    querySelectorAll: selector => selector === "table tbody tr td.text-left a[href]" ? links : []
+  };
+
+  const parsed = parser.parsePage(document, "https://ext.to/marvel-s-spidey-and-his-amazing-friends-s27011/?s=3&e=1");
+
+  assert.equal(parsed.sourceKey, "ext.to");
+  assert.equal(parsed.pageType, "listing");
+  assert.deepEqual(parsed.items.map(item => item.externalId), ["extto:torrent:10000002", "extto:torrent:10000003"]);
+  assert.equal(parsed.items[0].releaseName, "Spidey And His Amazing Friends S03E01 1080p HEVC x265-MeGusta");
+  assert.equal(parsed.items[0].seeders, 12);
+  assert.equal(parsed.items[0].leechers, 3);
+  assert.equal(parsed.items[0].sizeBytes, parser.parseSize("555.95 MB"));
+  assert.equal(parsed.items[0].needsHydration, true);
+  assert.equal(parsed.items[0].sourceUrl, "https://ext.to/spidey-and-his-amazing-friends-s03e01-10000002/");
+});
+
+test("a season index page with no torrent rows stays unsupported", () => {
+  const document = {
+    title: "Marvel's Spidey and His Amazing Friends Season 3 - EXT Torrents",
+    body: { textContent: "Season 3 60 episodes" },
+    querySelector: () => null,
+    querySelectorAll: () => []
+  };
+
+  const parsed = parser.parsePage(document, "https://ext.to/marvel-s-spidey-and-his-amazing-friends-s27011/?s=3");
+
+  assert.equal(parsed.pageType, "unsupported");
+  assert.deepEqual(parsed.items, []);
+});

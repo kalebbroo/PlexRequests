@@ -54,12 +54,9 @@ public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptio
         if (inline.Count > 0) return inline;
 
         // Strategy 2: follow the top detail pages and pull magnet + labelled seeders/size from each.
-        var detailPaths = doc.DocumentNode.SelectNodes("//a[contains(@href,'/torrent/')]")?
-            .Select(a => a.GetAttributeValue("href", null))
-            .Where(h => !string.IsNullOrWhiteSpace(h))
-            .Distinct()
+        var detailPaths = DetailPaths(doc)
             .Take(Math.Clamp(indexer.MaxDetailFetches, 1, 100))
-            .ToList() ?? new();
+            .ToList();
 
         if (detailPaths.Count == 0) return Array.Empty<ReleaseCandidate>();
 
@@ -102,7 +99,9 @@ public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptio
     {
         try
         {
-            var html = await _http.GetStringAsync(path, ct);
+            // Through the same seam as search, so a Cloudflare block on a detail page is reported as a block
+            // instead of silently becoming "no magnet".
+            var html = await _fetch.GetStringAsync(_http, indexer, path, ct);
             var doc = new HtmlDocument();
             doc.LoadHtml(html);
 
@@ -128,7 +127,7 @@ public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptio
                 SizeKnown = IndexerParsing.ParseSize(SizeNear(text)) > 0
             };
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException and not IndexerBlockedException)
         {
             _logger.LogDebug(ex, "ext.to detail fetch failed for {Path}", path);
             return null;
@@ -168,6 +167,21 @@ public partial class ExtToIndexerProvider(HttpClient http, IOptions<IndexerOptio
         html.Contains("Just a moment", StringComparison.OrdinalIgnoreCase) ||
         html.Contains("cf-browser-verification", StringComparison.OrdinalIgnoreCase) ||
         html.Contains("Checking your browser", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Torrent detail links on ext.to are "/&lt;slug&gt;-&lt;id&gt;/", for example "/some-release-19052611/".
+    /// The comment link shares that path with a "#comments" fragment, so it is skipped by class.
+    /// </summary>
+    internal static List<string> DetailPaths(HtmlDocument doc) =>
+        doc.DocumentNode.SelectNodes("//a[@href]")?
+            .Where(a => !(a.GetAttributeValue("class", null) ?? string.Empty).Contains("dwn-btn", StringComparison.OrdinalIgnoreCase))
+            .Select(a => HttpUtility.HtmlDecode(a.GetAttributeValue("href", string.Empty)).Split('#')[0].Split('?')[0])
+            .Where(path => DetailPathRegex().IsMatch(path))
+            .Distinct()
+            .ToList() ?? new List<string>();
+
+    [GeneratedRegex(@"^/(?!browse(?:/|$)|search(?:/|$)|ajax(?:/|$)|cdn-cgi(?:/|$))[^/]+-\d+/?$", RegexOptions.IgnoreCase)]
+    private static partial Regex DetailPathRegex();
 
     [GeneratedRegex(@"urn:btih:([A-Za-z0-9]+)")]
     private static partial Regex InfoHashRegex();

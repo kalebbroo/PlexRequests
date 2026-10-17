@@ -255,6 +255,93 @@ public sealed class ReleaseCatalogTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Catalog_search_matches_titles_that_differ_only_in_punctuation()
+    {
+        var jedi = Item("jedi", Hex('4'));
+        jedi.ReleaseName = "Star.Wars.Young.Jedi.Adventures.S03E01.1080p.WEB-DL.x265-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(21, "jedi-batch", "one", jedi), CancellationToken.None);
+        var unrelated = Item("unrelated", Hex('5'));
+        unrelated.ReleaseName = "Other.Show.S01E01.1080p.WEB-DL.x265-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(22, "other-batch", "two", unrelated), CancellationToken.None);
+
+        var results = await _catalog.SearchAsync(new CatalogQueryDto
+        {
+            Title = "Star Wars: Young Jedi Adventures",
+            MediaType = MediaType.TvShow
+        }, CancellationToken.None);
+
+        var candidate = Assert.Single(results);
+        Assert.Equal("Star.Wars.Young.Jedi.Adventures.S03E01.1080p.WEB-DL.x265-GROUP", candidate.ReleaseName);
+    }
+
+    [Fact]
+    public async Task Catalog_search_finds_a_release_by_imdb_id_when_the_titles_disagree()
+    {
+        var spidey = Item("spidey", Hex('6'));
+        spidey.ReleaseName = "Spidey.And.His.Amazing.Friends.S03E01.1080p.HEVC.x265-MeGusta";
+        spidey.ImdbId = "tt10862280";
+        await _catalog.UpsertBatchAsync(Batch(23, "spidey-batch", "one", spidey), CancellationToken.None);
+
+        var results = await _catalog.SearchAsync(new CatalogQueryDto
+        {
+            Title = "Marvel's Spidey and His Amazing Friends",
+            ImdbId = "tt10862280",
+            MediaType = MediaType.TvShow
+        }, CancellationToken.None);
+
+        var candidate = Assert.Single(results);
+        Assert.Equal("Spidey.And.His.Amazing.Friends.S03E01.1080p.HEVC.x265-MeGusta", candidate.ReleaseName);
+    }
+
+    [Fact]
+    public async Task Catalog_search_keeps_exact_matching_for_titles_without_a_two_letter_word()
+    {
+        var film = Item("x-film", Hex('7'));
+        film.ReleaseName = "X.2000.1080p.BluRay.x264-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(24, "x-batch", "one", film), CancellationToken.None);
+
+        var results = await _catalog.SearchAsync(new CatalogQueryDto
+        {
+            Title = "X",
+            MediaType = MediaType.Movie
+        }, CancellationToken.None);
+
+        var candidate = Assert.Single(results);
+        Assert.Equal("X.2000.1080p.BluRay.x264-GROUP", candidate.ReleaseName);
+    }
+
+    [Fact]
+    public async Task Catalog_search_keeps_word_order_and_one_letter_words()
+    {
+        var dogMan = Item("dog-man", Hex('8'));
+        dogMan.ReleaseName = "Dog.Man.2025.1080p.WEB-DL.x265-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(25, "dogman-batch", "one", dogMan), CancellationToken.None);
+        var manDog = Item("man-dog", Hex('9'));
+        manDog.ReleaseName = "Man.Dog.2020.1080p.WEB-DL.x265-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(26, "mandog-batch", "two", manDog), CancellationToken.None);
+        var wall = Item("wall", Hex('A'));
+        wall.ReleaseName = "Wall.2010.1080p.WEB-DL.x265-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(27, "wall-batch", "three", wall), CancellationToken.None);
+        var wallE = Item("wall-e", Hex('B'));
+        wallE.ReleaseName = "WALL-E.2008.1080p.WEB-DL.x265-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(28, "walle-batch", "four", wallE), CancellationToken.None);
+
+        var dogResults = await _catalog.SearchAsync(new CatalogQueryDto
+        {
+            Title = "Dog Man",
+            MediaType = MediaType.Movie
+        }, CancellationToken.None);
+        Assert.Equal("Dog.Man.2025.1080p.WEB-DL.x265-GROUP", Assert.Single(dogResults).ReleaseName);
+
+        var wallResults = await _catalog.SearchAsync(new CatalogQueryDto
+        {
+            Title = "WALL-E",
+            MediaType = MediaType.Movie
+        }, CancellationToken.None);
+        Assert.Equal("WALL-E.2008.1080p.WEB-DL.x265-GROUP", Assert.Single(wallResults).ReleaseName);
+    }
+
+    [Fact]
     public async Task CatalogSearchFindsAndReparsesLegacyGroupPrefixedAnimeRows()
     {
         var item = Item("monogatari", Hex('A'));

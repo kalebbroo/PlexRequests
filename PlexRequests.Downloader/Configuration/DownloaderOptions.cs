@@ -84,7 +84,7 @@ public class IndexerOptions
     // ext.to — general (HTML scrape). {query} is URL-substituted.
     public string ExtToBaseUrl { get; set; } = "https://ext.to";
     public bool ExtToEnabled { get; set; } = true;
-    public string ExtToSearchPath { get; set; } = "/search/?q={query}&order=seeders&sort=desc";
+    public string ExtToSearchPath { get; set; } = "/browse/?q={query}&sort=seeders&order=desc";
     public int ExtToMaxDetail { get; set; } = 8;
 
     // The Pirate Bay via its JSON API (apibay) — general movies + TV, no scraping/Cloudflare.
