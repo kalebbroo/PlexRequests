@@ -39,13 +39,13 @@ public sealed class DirectVideoAcquisitionTests
         var job = TvJob(requested: [(3, 1)]);
         var candidate = Candidate(3, 1);
 
-        var accepted = DirectVideoReleaseEvaluator.Evaluate(candidate, job, new ParsedRelease());
+        var accepted = DirectVideoReleaseEvaluator.Evaluate(candidate, job, Context, new ParsedRelease());
         Assert.True(accepted.Accepted);
         Assert.Equal(DirectVideoReleaseEvaluator.FallbackScore, accepted.Score);
         Assert.Equal(3, accepted.Season);
         Assert.Equal(1, accepted.Episode);
 
-        var notWanted = DirectVideoReleaseEvaluator.Evaluate(Candidate(3, 2), job, new ParsedRelease());
+        var notWanted = DirectVideoReleaseEvaluator.Evaluate(Candidate(3, 2), job, Context, new ParsedRelease());
         Assert.False(notWanted.Accepted);
         Assert.Contains(notWanted.Rejections, x => x.Reason == RejectionReason.WrongEpisode);
     }
@@ -85,7 +85,7 @@ public sealed class DirectVideoAcquisitionTests
         var job = TvJob(requested: [(3, 1)]);
         job.MediaType = MediaType.Movie;
 
-        Assert.False(DirectVideoReleaseEvaluator.Evaluate(Candidate(3, 1), job, new ParsedRelease()).Accepted);
+        Assert.False(DirectVideoReleaseEvaluator.Evaluate(Candidate(3, 1), job, Context, new ParsedRelease()).Accepted);
     }
 
     [Fact]
@@ -206,6 +206,26 @@ public sealed class DirectVideoAcquisitionTests
         });
         return new YouTubeDataVideoCatalog(http, options, new MemoryCache(new MemoryCacheOptions()),
             NullLogger<YouTubeDataVideoCatalog>.Instance);
+    }
+
+    private static RankingContext Context => new() { Preferences = new DownloadPreferencesDto() };
+
+    [Fact]
+    public void Evaluator_refuses_blocklisted_videos_and_jobs_above_the_fallback_quality()
+    {
+        var job = TvJob(requested: [(3, 1)]);
+        var blocked = new RankingContext
+        {
+            Preferences = new DownloadPreferencesDto(),
+            BlocklistedHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                AcquisitionResource.BlocklistKey(AcquisitionProtocol.DirectVideo, $"youtube:video:{VideoId}")
+            }
+        };
+        Assert.False(DirectVideoReleaseEvaluator.Evaluate(Candidate(3, 1), job, blocked, new ParsedRelease()).Accepted);
+
+        job.Quality = Quality.FullHD;
+        Assert.False(DirectVideoReleaseEvaluator.Evaluate(Candidate(3, 1), job, Context, new ParsedRelease()).Accepted);
     }
 
     private static FulfillmentJobDto TvJob(IReadOnlyList<(int Season, int Episode)> requested) => new()

@@ -51,8 +51,17 @@ public sealed class DirectVideoSettingsService(AppDbContext db, IOptions<YouTube
         if (row is not null) return row;
         row = new DirectVideoSettingsEntity();
         db.DirectVideoSettings.Add(row);
-        await db.SaveChangesAsync(cancellationToken);
-        return row;
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            return row;
+        }
+        catch (DbUpdateException)
+        {
+            // Another request created the singleton first. Drop our insert and track the row that won.
+            db.Entry(row).State = EntityState.Detached;
+            return await db.DirectVideoSettings.FirstAsync(x => x.IsSingleton, cancellationToken);
+        }
     }
 
     private static List<string> Parse(string? text) => (text ?? string.Empty)

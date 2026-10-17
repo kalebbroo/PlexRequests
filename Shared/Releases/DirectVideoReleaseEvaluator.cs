@@ -11,11 +11,23 @@ public static class DirectVideoReleaseEvaluator
     /// <summary>Far below any torrent score, so the planner selects a direct copy only when nothing else is acceptable.</summary>
     public const double FallbackScore = -10_000;
 
-    public static RankedCandidate Evaluate(ReleaseCandidate candidate, FulfillmentJobDto job, ParsedRelease parsed)
+    /// <summary>The default yt-dlp format chain (22/18) never delivers more than 720p, because the image has no ffmpeg
+    /// to merge separate streams. A job that requires more is refused here rather than downloaded and rejected later.</summary>
+    public const int MaximumFallbackHeight = 720;
+
+    public static RankedCandidate Evaluate(ReleaseCandidate candidate, FulfillmentJobDto job, RankingContext context,
+        ParsedRelease parsed)
     {
         var rejections = new List<Rejection>();
         if (job.MediaType != MediaType.TvShow)
             rejections.Add(new(RejectionReason.MediaTypeMismatch, "YouTube episodes are only accepted for TV shows"));
+        if (job.Quality != Quality.Any && (int)job.Quality > MaximumFallbackHeight)
+            rejections.Add(new(RejectionReason.BelowQualityFloor,
+                $"a YouTube fallback delivers at most {MaximumFallbackHeight}p; this job requires {(int)job.Quality}p"));
+        var sourceId = candidate.Acquisition.SourceId;
+        if (sourceId is not null && (context.BlocklistedHashes.Contains(sourceId)
+            || context.BlocklistedHashes.Contains(AcquisitionResource.BlocklistKey(AcquisitionProtocol.DirectVideo, sourceId))))
+            rejections.Add(new(RejectionReason.Blocklisted, "this YouTube video already failed for this request"));
 
         var identified = DirectVideoLocator.TryDecode(candidate.Acquisition.Locator, out var locator);
         if (!identified)

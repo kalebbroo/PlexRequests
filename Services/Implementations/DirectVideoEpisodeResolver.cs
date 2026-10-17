@@ -36,6 +36,7 @@ public sealed class DirectVideoEpisodeResolver(IDirectVideoSettingsService setti
         if (readable == 0) return null;
 
         var names = await SeasonEpisodeNamesAsync(job.TmdbId!.Value, targets, cancellationToken);
+        var matches = new List<(int Season, int Episode, YouTubeCatalogVideo Video)>();
         foreach (var (season, episode) in targets)
         {
             names.TryGetValue((season, episode), out var episodeTitle);
@@ -47,14 +48,29 @@ public sealed class DirectVideoEpisodeResolver(IDirectVideoSettingsService setti
                     job.Title, season, episode, outcome.Candidates.Count);
                 continue;
             }
+            matches.Add((season, episode, video));
+        }
+
+        // One upload can name two episodes by title alone (a paired-segment upload). Freezing it for both would make the
+        // downloader fetch one payload for two episodes, so an upload used by more than one target is dropped for all.
+        var shared = matches.GroupBy(m => m.Video.VideoId, StringComparer.Ordinal)
+            .Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.Ordinal);
+        foreach (var match in matches)
+        {
+            if (shared.Contains(match.Video.VideoId))
+            {
+                logger.LogInformation("YouTube upload {VideoId} matches several episodes of {Show}; skipping S{Season:D2}E{Episode:D2}",
+                    match.Video.VideoId, job.Title, match.Season, match.Episode);
+                continue;
+            }
             resolved.Episodes.Add(new DirectVideoEpisodeDto
             {
-                Season = season,
-                Episode = episode,
-                VideoId = video.VideoId,
-                Title = Truncate(video.Title, MaximumTitleLength),
-                ChannelId = video.ChannelId,
-                DurationSeconds = video.DurationSeconds
+                Season = match.Season,
+                Episode = match.Episode,
+                VideoId = match.Video.VideoId,
+                Title = Truncate(match.Video.Title, MaximumTitleLength),
+                ChannelId = match.Video.ChannelId,
+                DurationSeconds = match.Video.DurationSeconds
             });
         }
         return resolved;

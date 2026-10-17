@@ -819,6 +819,14 @@ public class LibraryOrganizer(
             if (!tracks.HasVideo)
                 throw new MediaPolicyViolationException(
                     $"'{Path.GetFileName(file)}' contains no readable video stream and appears corrupt or incomplete");
+            if (protocol == AcquisitionProtocol.DirectVideo && job.Quality != Quality.Any)
+            {
+                var video = tracks.Video.FirstOrDefault();
+                var observed = VideoResolutionPolicy.FromDimensions(video?.Width, video?.Height);
+                if (observed < job.Quality)
+                    throw new MediaPolicyViolationException(
+                        $"'{Path.GetFileName(file)}' is {observed.Label()}, below the requested {job.Quality.Label()}");
+            }
             if (job.StorageOptimizationPolicy is { } optimization)
             {
                 var video = tracks.Video.FirstOrDefault();
