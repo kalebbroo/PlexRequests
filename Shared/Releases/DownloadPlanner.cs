@@ -81,7 +81,7 @@ public class DownloadPlanner : IDownloadPlanner
             foreach (var inc in incomplete)
                 notes.Add($"Skipped \"{inc.Candidate.ReleaseName}\": covers E{inc.EpisodeStart}-E{inc.EpisodeEnd}, need {DescribeEpisodes(missing)}");
 
-            var episodePicks = BuildEpisodePicks(acceptable, target, missing);
+            var episodePicks = BuildEpisodePicks(acceptable, target, missing, direct: false);
             bool wantPack = ShouldPreferPack(p.SeasonPackStrategy, bestPack, episodePicks, missing, notes);
 
             if (wantPack && bestPack is not null)
@@ -127,6 +127,14 @@ public class DownloadPlanner : IDownloadPlanner
                 continue;
             }
 
+            // No torrent pack covers the gaps: fill what remains with direct YouTube copies. They never displace a pack.
+            if (gaps.Count > 0)
+            {
+                var directPicks = BuildEpisodePicks(acceptable, target, gaps, direct: true);
+                episodePicks = episodePicks.Concat(directPicks).ToList();
+                gaps = gaps.Where(e => directPicks.All(x => x.Episode != e)).ToList();
+            }
+
             if (episodePicks.Count > 0)
             {
                 anyEpisodes = true;
@@ -149,13 +157,16 @@ public class DownloadPlanner : IDownloadPlanner
             coversAllTargets), notes);
     }
 
-    private static List<DownloadPlanItem> BuildEpisodePicks(List<RankedCandidate> acceptable, SeasonTarget target, IReadOnlyList<int> missing)
+    private static bool IsDirect(RankedCandidate a) => a.Candidate.Acquisition.Protocol == AcquisitionProtocol.DirectVideo;
+
+    private static List<DownloadPlanItem> BuildEpisodePicks(List<RankedCandidate> acceptable, SeasonTarget target,
+        IReadOnlyList<int> missing, bool direct)
     {
         var picks = new List<DownloadPlanItem>();
         foreach (var ep in missing)
         {
             var best = acceptable
-                .Where(a => !a.IsPack && CoversCanonicalEpisode(a, target.Season, ep))
+                .Where(a => !a.IsPack && IsDirect(a) == direct && CoversCanonicalEpisode(a, target.Season, ep))
                 .OrderByDescending(a => a.Candidate.Acquisition.Protocol != AcquisitionProtocol.DirectVideo).ThenByDescending(a => a.Score).FirstOrDefault();
             if (best is not null) picks.Add(ToItem(best) with { Season = target.Season, Episode = ep });
         }
@@ -220,7 +231,7 @@ public class DownloadPlanner : IDownloadPlanner
             var gaps = new List<int>();
             foreach (var ep in episodes)
             {
-                var best = acceptable.Where(a => !a.IsPack && CoversCanonicalEpisode(a, season, ep))
+                var best = acceptable.Where(a => !a.IsPack && !IsDirect(a) && CoversCanonicalEpisode(a, season, ep))
                     .OrderByDescending(a => a.Candidate.Acquisition.Protocol != AcquisitionProtocol.DirectVideo).ThenByDescending(a => a.Score).FirstOrDefault();
                 if (best is not null) items.Add(ToItem(best) with { Season = season, Episode = ep });
                 else gaps.Add(ep);
@@ -234,8 +245,19 @@ public class DownloadPlanner : IDownloadPlanner
             }
             else
             {
-                coversAllTargets = false;
-                notes.Add($"Season {season}: no standalone release and no usable pack for episode(s) {string.Join(",", gaps)}");
+                var unfilled = new List<int>();
+                foreach (var ep in gaps)
+                {
+                    var direct = acceptable.Where(a => !a.IsPack && IsDirect(a) && CoversCanonicalEpisode(a, season, ep))
+                        .OrderByDescending(a => a.Score).FirstOrDefault();
+                    if (direct is not null) items.Add(ToItem(direct) with { Season = season, Episode = ep });
+                    else unfilled.Add(ep);
+                }
+                if (unfilled.Count > 0)
+                {
+                    coversAllTargets = false;
+                    notes.Add($"Season {season}: no standalone release and no usable pack for episode(s) {string.Join(",", unfilled)}");
+                }
             }
         }
 

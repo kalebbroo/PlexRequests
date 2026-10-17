@@ -417,7 +417,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         var due = jobs.Where(j => j.MediaType == MediaType.TvShow && !j.IsAnime
             && (j.DirectVideoContextJson is null || DirectVideoStale(j))).ToList();
         if (due.Count == 0) return;
-        if (!(await _directVideoSettings.GetAsync()).Enabled) return;
+        if (!IsDirectVideoReady(await _directVideoSettings.GetAsync())) return;
 
         foreach (var job in due)
         {
@@ -432,6 +432,10 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             }
         }
     }
+
+    /// <summary>The source needs both the admin switch and a configured key. A key removed after freezing must stop
+    /// the protocol from being offered, not merely stop new resolutions.</summary>
+    private static bool IsDirectVideoReady(DirectVideoSettingsDto settings) => settings.Enabled && settings.ApiKeyConfigured;
 
     private static bool DirectVideoStale(FulfillmentJobEntity job) =>
         ParseDirectVideo(job.DirectVideoContextJson) is { } context
@@ -855,7 +859,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             .ToListAsync();
 
         var directVideoEnabled = _directVideoSettings is not null
-            && (await _directVideoSettings.GetAsync()).Enabled;
+            && IsDirectVideoReady(await _directVideoSettings.GetAsync());
 
         foreach (var (dto, entity) in dtos.Zip(entities))
         {

@@ -80,6 +80,34 @@ public sealed class DirectVideoAcquisitionTests
     }
 
     [Fact]
+    public void Planner_prefers_an_acceptable_torrent_pack_over_direct_copies_for_the_same_episodes()
+    {
+        var job = TvJob(requested: [(3, 1), (3, 2)]);
+        var pack = new RankedCandidate
+        {
+            Candidate = new ReleaseCandidate
+            {
+                ReleaseName = "Marvels Spidey Season 3 Complete",
+                Acquisition = AcquisitionResource.Torrent("magnet:?xt=urn:btih:abcdef0123456789abcdef0123456789abcdef01")
+            },
+            Parsed = new ParsedRelease(), Accepted = true, IsPack = true, Season = 3,
+            CanonicalEpisodeCoverage = [new EpisodeRef { Season = 3, Episode = 1 }, new EpisodeRef { Season = 3, Episode = 2 }],
+            Score = -50_000
+        };
+        var directs = new[] { 1, 2 }.Select(ep => new RankedCandidate
+        {
+            Candidate = Candidate(3, ep), Parsed = new ParsedRelease(), Accepted = true, Season = 3, Episode = ep,
+            CanonicalEpisodeCoverage = [new EpisodeRef { Season = 3, Episode = ep }],
+            Score = DirectVideoReleaseEvaluator.FallbackScore
+        });
+
+        var result = new DownloadPlanner().Plan([.. directs, pack], job, Context);
+
+        var item = Assert.Single(result.Plan.Items);
+        Assert.Equal(pack.Candidate.ReleaseName, item.Candidate.ReleaseName);
+    }
+
+    [Fact]
     public void Evaluator_rejects_non_tv_jobs()
     {
         var job = TvJob(requested: [(3, 1)]);
