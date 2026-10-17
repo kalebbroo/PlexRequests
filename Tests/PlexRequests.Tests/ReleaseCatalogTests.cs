@@ -255,6 +255,45 @@ public sealed class ReleaseCatalogTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Catalog_search_matches_titles_that_differ_only_in_punctuation()
+    {
+        var jedi = Item("jedi", Hex('4'));
+        jedi.ReleaseName = "Star.Wars.Young.Jedi.Adventures.S03E01.1080p.WEB-DL.x265-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(21, "jedi-batch", "one", jedi), CancellationToken.None);
+        var unrelated = Item("unrelated", Hex('5'));
+        unrelated.ReleaseName = "Other.Show.S01E01.1080p.WEB-DL.x265-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(22, "other-batch", "two", unrelated), CancellationToken.None);
+
+        var results = await _catalog.SearchAsync(new CatalogQueryDto
+        {
+            Title = "Star Wars: Young Jedi Adventures",
+            MediaType = MediaType.TvShow
+        }, CancellationToken.None);
+
+        var candidate = Assert.Single(results);
+        Assert.Equal("Star.Wars.Young.Jedi.Adventures.S03E01.1080p.WEB-DL.x265-GROUP", candidate.ReleaseName);
+    }
+
+    [Fact]
+    public async Task Catalog_search_finds_a_release_by_imdb_id_when_the_titles_disagree()
+    {
+        var spidey = Item("spidey", Hex('6'));
+        spidey.ReleaseName = "Spidey.And.His.Amazing.Friends.S03E01.1080p.HEVC.x265-MeGusta";
+        spidey.ImdbId = "tt10862280";
+        await _catalog.UpsertBatchAsync(Batch(23, "spidey-batch", "one", spidey), CancellationToken.None);
+
+        var results = await _catalog.SearchAsync(new CatalogQueryDto
+        {
+            Title = "Marvel's Spidey and His Amazing Friends",
+            ImdbId = "tt10862280",
+            MediaType = MediaType.TvShow
+        }, CancellationToken.None);
+
+        var candidate = Assert.Single(results);
+        Assert.Equal("Spidey.And.His.Amazing.Friends.S03E01.1080p.HEVC.x265-MeGusta", candidate.ReleaseName);
+    }
+
+    [Fact]
     public async Task CatalogSearchFindsAndReparsesLegacyGroupPrefixedAnimeRows()
     {
         var item = Item("monogatari", Hex('A'));

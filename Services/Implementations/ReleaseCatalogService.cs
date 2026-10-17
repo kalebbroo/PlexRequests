@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using PlexRequestsHosted.Infrastructure.Catalog;
@@ -379,24 +380,40 @@ public sealed class ReleaseCatalogService(
 
         var parsedTitle = parser.Parse(query.Title).Title;
         var normalized = parsedTitle.ToUpperInvariant();
+        var words = TitleWords(normalized);
         var imdb = Clean(query.ImdbId, 32);
         var limit = Math.Clamp(query.Limit, 1, 1000);
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var releases = await db.Releases.AsNoTracking()
-            .Include(x => x.Sightings)
+        IQueryable<CatalogReleaseEntity> scoped = db.Releases.AsNoTracking()
             .Where(x => (x.MediaType == null || x.MediaType == query.MediaType)
-                && (query.Year == null || x.Year == null || x.Year == query.Year)
-                && ((imdb != null && x.ImdbId == imdb)
-                    || x.NormalizedTitle == normalized
-                    || x.NormalizedTitle.StartsWith(normalized + " ")
-                    // Anime indexes conventionally prefix release-group tags ("[MTBB] TITLE"). They are
-                    // deliberately retained in the parser because bracketed text can be a real non-anime
-                    // title; the anime-aware evaluator removes provenance and still rejects coincidental
-                    // mid-title matches.
-                    || x.NormalizedTitle.Contains(normalized)))
+                && (query.Year == null || x.Year == null || x.Year == query.Year));
+
+        // Two independent matches, merged by infohash and ranked by recency:
+        // - the IMDb id, which is authoritative whenever a capture carried one;
+        // - every significant word of the title, so "Star Wars: Young Jedi" still finds "Star Wars Young Jedi".
+        // Ranking still judges how closely the titles agree. Anime indexes conventionally prefix release-group
+        // tags ("[MTBB] TITLE"). They are deliberately retained in the parser because bracketed text can be a
+        // real non-anime title; the anime-aware evaluator removes provenance and still rejects coincidental
+        // mid-title matches.
+        var byImdb = imdb is null
+            ? new List<CatalogReleaseEntity>()
+            : await scoped.Where(x => x.ImdbId == imdb)
+                .Include(x => x.Sightings)
+                .OrderByDescending(x => x.LastSeenAt)
+                .Take(limit)
+                .ToListAsync(cancellationToken);
+        var byWords = words.Count == 0
+            ? new List<CatalogReleaseEntity>()
+            : await words.Aggregate(scoped, (current, word) => current.Where(x => x.NormalizedTitle.Contains(word)))
+                .Include(x => x.Sightings)
+                .OrderByDescending(x => x.LastSeenAt)
+                .Take(limit)
+                .ToListAsync(cancellationToken);
+        var releases = byImdb.Concat(byWords)
+            .DistinctBy(x => x.InfoHash)
             .OrderByDescending(x => x.LastSeenAt)
             .Take(limit)
-            .ToListAsync(cancellationToken);
+            .ToList();
 
         return releases.Select(release =>
         {
@@ -424,6 +441,13 @@ public sealed class ReleaseCatalogService(
             };
         }).ToList();
     }
+
+    /// <summary>Significant words of a normalized title. Punctuation separates words, and one-letter fragments are dropped.</summary>
+    private static List<string> TitleWords(string normalized) =>
+        Regex.Split(normalized, @"[^\p{L}\p{N}]+")
+            .Where(word => word.Length >= 2)
+            .Distinct()
+            .ToList();
 
     public async Task<CatalogBrowsePageDto> BrowseAsync(
         CatalogBrowseQueryDto query,
