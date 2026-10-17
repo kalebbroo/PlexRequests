@@ -380,7 +380,7 @@ public sealed class ReleaseCatalogService(
 
         var parsedTitle = parser.Parse(query.Title).Title;
         var normalized = parsedTitle.ToUpperInvariant();
-        var words = TitleWords(normalized);
+        var tokens = TitleTokens(normalized);
         var imdb = Clean(query.ImdbId, 32);
         var limit = Math.Clamp(query.Limit, 1, 1000);
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -402,15 +402,11 @@ public sealed class ReleaseCatalogService(
                 .OrderByDescending(x => x.LastSeenAt)
                 .Take(limit)
                 .ToListAsync(cancellationToken);
-        // A title with no word of two or more letters (such as "X") keeps the exact or substring match.
-        // An empty title matches nothing.
-        IQueryable<CatalogReleaseEntity>? byTitle = words.Count > 0
-            ? words.Aggregate(scoped, (current, word) => current.Where(x => x.NormalizedTitle.Contains(word)))
-            : normalized.Length > 0
-                ? scoped.Where(x => x.NormalizedTitle == normalized
-                    || x.NormalizedTitle.StartsWith(normalized + " ")
-                    || x.NormalizedTitle.Contains(normalized))
-                : null;
+        // Title words must appear in order, with any punctuation between them: "Dog Man" finds "Dog-Man" but not
+        // "Man Dog". One-letter words are kept, so "WALL-E" does not match "Wall". An empty title matches nothing.
+        IQueryable<CatalogReleaseEntity>? byTitle = tokens.Count > 0
+            ? scoped.Where(x => EF.Functions.Like(x.NormalizedTitle, "%" + string.Join("%", tokens) + "%"))
+            : null;
         var byWords = byTitle is null
             ? new List<CatalogReleaseEntity>()
             : await byTitle.Include(x => x.Sightings)
@@ -450,11 +446,10 @@ public sealed class ReleaseCatalogService(
         }).ToList();
     }
 
-    /// <summary>Significant words of a normalized title. Punctuation separates words, and one-letter fragments are dropped.</summary>
-    private static List<string> TitleWords(string normalized) =>
+    /// <summary>Words of a normalized title, in order. Punctuation separates words; one-letter words are kept.</summary>
+    private static List<string> TitleTokens(string normalized) =>
         Regex.Split(normalized, @"[^\p{L}\p{N}]+")
-            .Where(word => word.Length >= 2)
-            .Distinct()
+            .Where(word => word.Length > 0)
             .ToList();
 
     public async Task<CatalogBrowsePageDto> BrowseAsync(

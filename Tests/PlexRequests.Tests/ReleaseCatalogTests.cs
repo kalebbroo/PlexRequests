@@ -311,6 +311,37 @@ public sealed class ReleaseCatalogTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Catalog_search_keeps_word_order_and_one_letter_words()
+    {
+        var dogMan = Item("dog-man", Hex('8'));
+        dogMan.ReleaseName = "Dog.Man.2025.1080p.WEB-DL.x265-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(25, "dogman-batch", "one", dogMan), CancellationToken.None);
+        var manDog = Item("man-dog", Hex('9'));
+        manDog.ReleaseName = "Man.Dog.2020.1080p.WEB-DL.x265-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(26, "mandog-batch", "two", manDog), CancellationToken.None);
+        var wall = Item("wall", Hex('A'));
+        wall.ReleaseName = "Wall.2010.1080p.WEB-DL.x265-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(27, "wall-batch", "three", wall), CancellationToken.None);
+        var wallE = Item("wall-e", Hex('B'));
+        wallE.ReleaseName = "WALL-E.2008.1080p.WEB-DL.x265-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(28, "walle-batch", "four", wallE), CancellationToken.None);
+
+        var dogResults = await _catalog.SearchAsync(new CatalogQueryDto
+        {
+            Title = "Dog Man",
+            MediaType = MediaType.Movie
+        }, CancellationToken.None);
+        Assert.Equal("Dog.Man.2025.1080p.WEB-DL.x265-GROUP", Assert.Single(dogResults).ReleaseName);
+
+        var wallResults = await _catalog.SearchAsync(new CatalogQueryDto
+        {
+            Title = "WALL-E",
+            MediaType = MediaType.Movie
+        }, CancellationToken.None);
+        Assert.Equal("WALL-E.2008.1080p.WEB-DL.x265-GROUP", Assert.Single(wallResults).ReleaseName);
+    }
+
+    [Fact]
     public async Task CatalogSearchFindsAndReparsesLegacyGroupPrefixedAnimeRows()
     {
         var item = Item("monogatari", Hex('A'));
