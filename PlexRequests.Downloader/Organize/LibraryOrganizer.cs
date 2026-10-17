@@ -839,17 +839,30 @@ public class LibraryOrganizer(
                     throw new MediaPolicyViolationException(
                         $"'{Path.GetFileName(file)}' would lower the selected media below {job.Quality.Label()}");
             }
-            // A YouTube upload carries no language tags, so a language requirement can never be proven for it.
-            // Accept exactly that case explicitly and log it; any file with a tagged audio track is still judged.
+            // A YouTube upload carries no audio language tags, so the audio requirement cannot be proven from the file.
+            // Assume the profile's preferred language for those untagged tracks only, and say so in the log. Subtitle
+            // requirements are still judged against the real inventory, and any tagged audio is judged as tagged.
+            var evaluated = tracks;
             if (protocol == AcquisitionProtocol.DirectVideo && tracks.Audio.Count > 0
                 && tracks.Audio.All(t => string.IsNullOrWhiteSpace(t.Language)))
             {
-                logger.LogInformation("Direct-video file '{File}' has untagged audio; language policy not enforced",
-                    Path.GetFileName(file));
-                results[file] = tracks;
-                continue;
+                var assumed = MediaLanguagePolicy.Normalize(job.MediaLanguagePolicy?.PreferredAudioLanguage) ?? "en";
+                logger.LogInformation("Direct-video file '{File}' has untagged audio; assuming {Language} for the audio check only",
+                    Path.GetFileName(file), assumed);
+                evaluated = new MediaTrackSummaryDto
+                {
+                    HasVideo = tracks.HasVideo,
+                    Video = tracks.Video,
+                    Audio = tracks.Audio.Select(t => new MediaTrackDto
+                    {
+                        Index = t.Index, Type = t.Type, Codec = t.Codec, Language = assumed, Title = t.Title,
+                        IsDefault = t.IsDefault, IsForced = t.IsForced, IsExternal = t.IsExternal,
+                        Width = t.Width, Height = t.Height
+                    }).ToList(),
+                    Subtitles = tracks.Subtitles
+                };
             }
-            var decision = MediaLanguagePolicy.Evaluate(job.MediaLanguagePolicy, tracks, job.IsAnime);
+            var decision = MediaLanguagePolicy.Evaluate(job.MediaLanguagePolicy, evaluated, job.IsAnime);
             if (!decision.Accepted)
                 throw new MediaPolicyViolationException(
                     $"'{Path.GetFileName(file)}' failed the '{job.QualityProfile?.Name ?? "selected"}' media policy: {decision.Reason}");

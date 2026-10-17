@@ -52,7 +52,7 @@ public class DownloadPlanner : IDownloadPlanner
         if (seasonTargets.Count > 0)
             return PlanSeasons(acceptable, seasonTargets, job, context, notes);
 
-        var best = acceptable.OrderByDescending(a => a.Score).First();
+        var best = acceptable.OrderByDescending(a => !a.Candidate.Acquisition.Protocol.IsRemoteDirect()).ThenByDescending(a => a.Score).First();
         notes.Add($"Selected \"{best.Candidate.ReleaseName}\" ({best.Resolution}p, {best.Candidate.Seeders} seeders, score {best.Score:F0})");
         return new DownloadPlanResult(new DownloadPlan(DownloadPlanKind.Single, new[] { ToItem(best) }), notes);
     }
@@ -72,7 +72,7 @@ public class DownloadPlanner : IDownloadPlanner
             var missing = target.MissingEpisodes;
             var packs = acceptable
                 .Where(a => a.IsPack && MatchesSeason(a, target.Season) && CoversEpisodes(a, missing, target.Season))
-                .OrderByDescending(a => a.Score).ToList();
+                .OrderByDescending(a => !a.Candidate.Acquisition.Protocol.IsRemoteDirect()).ThenByDescending(a => a.Score).ToList();
             var bestPack = packs.FirstOrDefault();
 
             // Report packs that matched the season but demonstrably don't cover what's missing, rather than
@@ -156,7 +156,7 @@ public class DownloadPlanner : IDownloadPlanner
         {
             var best = acceptable
                 .Where(a => !a.IsPack && CoversCanonicalEpisode(a, target.Season, ep))
-                .OrderByDescending(a => a.Score).FirstOrDefault();
+                .OrderByDescending(a => !a.Candidate.Acquisition.Protocol.IsRemoteDirect()).ThenByDescending(a => a.Score).FirstOrDefault();
             if (best is not null) picks.Add(ToItem(best) with { Season = target.Season, Episode = ep });
         }
         return picks;
@@ -208,7 +208,7 @@ public class DownloadPlanner : IDownloadPlanner
             var episodes = group.Select(w => w.Episode).Distinct().OrderBy(e => e).ToList();
             var bestPack = acceptable
                 .Where(a => a.IsPack && MatchesSeason(a, season) && CoversEpisodes(a, episodes, season))
-                .OrderByDescending(a => a.Score).FirstOrDefault();
+                .OrderByDescending(a => !a.Candidate.Acquisition.Protocol.IsRemoteDirect()).ThenByDescending(a => a.Score).FirstOrDefault();
 
             if (episodes.Count > p.MaxEpisodesForFanout && bestPack is not null)
             {
@@ -221,7 +221,7 @@ public class DownloadPlanner : IDownloadPlanner
             foreach (var ep in episodes)
             {
                 var best = acceptable.Where(a => !a.IsPack && CoversCanonicalEpisode(a, season, ep))
-                    .OrderByDescending(a => a.Score).FirstOrDefault();
+                    .OrderByDescending(a => !a.Candidate.Acquisition.Protocol.IsRemoteDirect()).ThenByDescending(a => a.Score).FirstOrDefault();
                 if (best is not null) items.Add(ToItem(best) with { Season = season, Episode = ep });
                 else gaps.Add(ep);
             }

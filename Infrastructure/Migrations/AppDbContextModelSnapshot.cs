@@ -250,6 +250,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("IsSingleton")
+                        .IsUnique();
+
                     b.ToTable("DirectVideoSettings");
                 });
 

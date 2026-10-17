@@ -51,6 +51,35 @@ public sealed class DirectVideoAcquisitionTests
     }
 
     [Fact]
+    public void Planner_takes_an_acceptable_torrent_over_a_direct_copy_even_when_the_torrent_score_is_very_negative()
+    {
+        var job = TvJob(requested: [(3, 1)]);
+        var direct = new RankedCandidate
+        {
+            Candidate = Candidate(3, 1), Parsed = new ParsedRelease(), Accepted = true,
+            Season = 3, Episode = 1, CanonicalEpisodeCoverage = [new EpisodeRef { Season = 3, Episode = 1 }],
+            Score = DirectVideoReleaseEvaluator.FallbackScore
+        };
+        var torrent = new RankedCandidate
+        {
+            Candidate = new ReleaseCandidate
+            {
+                ReleaseName = "Marvels Spidey S03E01 1080p WEB",
+                Acquisition = AcquisitionResource.Torrent("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567")
+            },
+            Parsed = new ParsedRelease(), Accepted = true, Season = 3, Episode = 1,
+            CanonicalEpisodeCoverage = [new EpisodeRef { Season = 3, Episode = 1 }],
+            Score = -50_000
+        };
+
+        var result = new DownloadPlanner().Plan([direct, torrent], job,
+            new RankingContext { Preferences = new DownloadPreferencesDto() });
+
+        var item = Assert.Single(result.Plan.Items);
+        Assert.Equal(torrent.Candidate.ReleaseName, item.Candidate.ReleaseName);
+    }
+
+    [Fact]
     public void Evaluator_rejects_non_tv_jobs()
     {
         var job = TvJob(requested: [(3, 1)]);
@@ -100,7 +129,8 @@ public sealed class DirectVideoAcquisitionTests
         Assert.Equal(660, video.DurationSeconds);
         Assert.Equal(first, second);
         Assert.Equal(3, handler.Calls);
-        Assert.All(handler.Urls, url => Assert.Contains("key=test-key", url));
+        Assert.All(handler.Urls, url => Assert.DoesNotContain("test-key", url));
+        Assert.All(handler.ApiKeys, key => Assert.Equal("test-key", key));
     }
 
     [Fact]
@@ -204,11 +234,13 @@ public sealed class DirectVideoAcquisitionTests
     {
         public int Calls { get; private set; }
         public List<string> Urls { get; } = new();
+        public List<string> ApiKeys { get; } = new();
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Calls++;
             Urls.Add(request.RequestUri!.ToString());
+            ApiKeys.Add(request.Headers.TryGetValues("X-Goog-Api-Key", out var keys) ? keys.Single() : string.Empty);
             var body = respond(request.RequestUri!);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {

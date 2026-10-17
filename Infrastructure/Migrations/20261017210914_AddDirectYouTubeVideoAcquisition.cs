@@ -32,6 +32,12 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                 {
                     table.PrimaryKey("PK_DirectVideoSettings", x => x.Id);
                 });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_DirectVideoSettings_IsSingleton",
+                table: "DirectVideoSettings",
+                column: "IsSingleton",
+                unique: true);
         }
 
         /// <inheritdoc />

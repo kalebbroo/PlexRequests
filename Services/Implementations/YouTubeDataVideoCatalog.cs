@@ -121,10 +121,12 @@ public sealed partial class YouTubeDataVideoCatalog(HttpClient http, IOptions<Yo
         CancellationToken ct)
     {
         var settings = options.Value;
-        var parameters = query.Append(new KeyValuePair<string, string>("key", settings.ApiKey))
-            .Select(p => $"{Uri.EscapeDataString(p.Key)}={Uri.EscapeDataString(p.Value)}");
+        var parameters = query.Select(p => $"{Uri.EscapeDataString(p.Key)}={Uri.EscapeDataString(p.Value)}");
         var url = $"{settings.BaseUrl.TrimEnd('/')}/{resource}?{string.Join('&', parameters)}";
-        using var response = await http.GetAsync(url, ct);
+        // The key travels in a header, not the URI: HttpClient logs request URIs at Information level.
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Add("X-Goog-Api-Key", settings.ApiKey);
+        using var response = await http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException($"YouTube Data API {resource} returned HTTP {(int)response.StatusCode}");
         await using var stream = await response.Content.ReadAsStreamAsync(ct);

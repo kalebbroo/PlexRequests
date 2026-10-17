@@ -259,6 +259,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<DirectVideoSettingsEntity>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.IsSingleton).IsUnique(); // enforce the single settings row
+        });
+
         modelBuilder.Entity<DownloadPreferencesEntity>(b =>
         {
             b.HasKey(x => x.Id);

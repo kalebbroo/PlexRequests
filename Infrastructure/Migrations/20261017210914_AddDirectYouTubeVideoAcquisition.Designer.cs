@@ -11,7 +11,7 @@ using PlexRequestsHosted.Infrastructure.Data;
 namespace PlexRequestsHosted.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261017205910_AddDirectYouTubeVideoAcquisition")]
+    [Migration("20261017210914_AddDirectYouTubeVideoAcquisition")]
     partial class AddDirectYouTubeVideoAcquisition
     {
         /// <inheritdoc />
@@ -252,6 +252,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("IsSingleton")
+                        .IsUnique();
 
                     b.ToTable("DirectVideoSettings");
                 });
