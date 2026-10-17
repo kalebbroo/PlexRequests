@@ -38,6 +38,8 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
     {
         var p = context.Preferences;
         var parsed = _parser.Parse(c.ReleaseName);
+        if (c.Acquisition.Protocol == AcquisitionProtocol.DirectVideo)
+            return DirectVideoReleaseEvaluator.Evaluate(c, job, parsed);
         if (job.MediaType == MediaType.Music)
             return MusicReleaseEvaluator.Evaluate(c, job, context, parsed);
         var isAnime = job.IsAnime || job.MediaType == MediaType.Anime;

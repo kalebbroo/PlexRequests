@@ -27,6 +27,13 @@ public sealed record AcquisitionResource
         SourceId = sourceId
     };
 
+    public static AcquisitionResource DirectVideo(string locator, string sourceId) => new()
+    {
+        Protocol = AcquisitionProtocol.DirectVideo,
+        Locator = locator,
+        SourceId = sourceId
+    };
+
     /// <summary>Protocol-qualified identity used by the shared blocklist. The qualification prevents a
     /// provider id from colliding with an info hash or a future Usenet article id.</summary>
     public static string BlocklistKey(AcquisitionProtocol protocol, string sourceId) =>

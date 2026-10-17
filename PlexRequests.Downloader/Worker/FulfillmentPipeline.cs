@@ -486,7 +486,7 @@ public class FulfillmentPipeline(
                 Episode = it.Episode,
                 // A removed video should fall back to torrents, but a transient extractor/network failure
                 // must heal without admin intervention. Retry the authoritative source after a cooldown.
-                ExpiresAt = it.Protocol == AcquisitionProtocol.DirectAudio
+                ExpiresAt = it.Protocol.IsRemoteDirect()
                     ? DateTime.UtcNow.AddHours(6) : null
             });
             if (acquisitionBackends.TryGet(it.Protocol, out var backend))

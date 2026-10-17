@@ -228,6 +228,31 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.ToTable("CustomFormatScores");
                 });
 
+            modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.DirectVideoSettingsEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ChannelAllowlist")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsSingleton")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("DirectVideoSettings");
+                });
+
             modelBuilder.Entity("PlexRequestsHosted.Infrastructure.Entities.DownloadPreferencesEntity", b =>
                 {
                     b.Property<int>("Id")
@@ -451,6 +476,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.Property<int>("DeferCount")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("DirectVideoContextJson")
+                        .HasColumnType("TEXT");
 
                     b.Property<int>("EmptySearchCount")
                         .HasColumnType("INTEGER");

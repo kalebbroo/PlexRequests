@@ -22,7 +22,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
     ICustomFormatService formats, ISeasonAvailabilityEvaluator seasonEvaluator,
     ILibraryOrganizationPreferencesService libraryPreferences,
     ILogger<FulfillmentQueue> logger,
-    ITmdbEpisodeGroupImportService? episodeGroups = null) : IFulfillmentQueue
+    ITmdbEpisodeGroupImportService? episodeGroups = null,
+    IDirectVideoEpisodeResolver? directVideo = null,
+    IDirectVideoSettingsService? directVideoSettings = null) : IFulfillmentQueue
 {
     private readonly AppDbContext _db = db;
     private readonly IMediaMetadataProvider _metadata = metadata;
@@ -33,6 +35,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
     private readonly ILibraryOrganizationPreferencesService _libraryPreferences = libraryPreferences;
     private readonly ILogger<FulfillmentQueue> _logger = logger;
     private readonly ITmdbEpisodeGroupImportService? _episodeGroups = episodeGroups;
+    private readonly IDirectVideoEpisodeResolver? _directVideo = directVideo;
+    private readonly IDirectVideoSettingsService? _directVideoSettings = directVideoSettings;
 
     public async Task<bool> EnqueueAsync(MediaRequestDto request, bool force = false)
     {
@@ -385,6 +389,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         await SnapshotMissingMediaLanguagePoliciesAsync(jobs);
         await SnapshotMissingEpisodeOrderProfilesAsync(jobs);
         await SnapshotMissingSeasonTargetNamesAsync(jobs);
+        await ResolveDirectVideoAsync(jobs);
         var now = DateTime.UtcNow;
         foreach (var j in jobs)
         {
@@ -402,6 +407,41 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         await AttachRankingContextAsync(dtos, jobs);
         await AttachEpisodeOrderCandidatesAsync(dtos);
         return dtos;
+    }
+
+    /// <summary>Freezes YouTube episode identities onto TV jobs that have none, or whose identities are over a day old.
+    /// Best-effort, like the other claim snapshots: a YouTube outage leaves the job on torrents and never fails a claim.</summary>
+    private async Task ResolveDirectVideoAsync(IReadOnlyList<FulfillmentJobEntity> jobs)
+    {
+        if (_directVideo is null || _directVideoSettings is null) return;
+        var due = jobs.Where(j => j.MediaType == MediaType.TvShow && !j.IsAnime
+            && (j.DirectVideoContextJson is null || DirectVideoStale(j))).ToList();
+        if (due.Count == 0) return;
+        if (!(await _directVideoSettings.GetAsync()).Enabled) return;
+
+        foreach (var job in due)
+        {
+            try
+            {
+                var resolved = await _directVideo.ResolveAsync(Map(job));
+                if (resolved is not null) job.DirectVideoContextJson = JsonSerializer.Serialize(resolved);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "YouTube episode resolution deferred for fulfillment job {JobId}", job.Id);
+            }
+        }
+    }
+
+    private static bool DirectVideoStale(FulfillmentJobEntity job) =>
+        ParseDirectVideo(job.DirectVideoContextJson) is { } context
+        && context.ResolvedAt < DateTime.UtcNow.AddHours(-24);
+
+    private static DirectVideoAcquisitionContextDto? ParseDirectVideo(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<DirectVideoAcquisitionContextDto>(json); }
+        catch (JsonException) { return null; }
     }
 
     /// <summary>Offer official episode-group snapshots to the downloader only for anime jobs that have an
@@ -814,10 +854,16 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
                 b.Protocol, b.SourceId, b.InfoHash })
             .ToListAsync();
 
+        var directVideoEnabled = _directVideoSettings is not null
+            && (await _directVideoSettings.GetAsync()).Enabled;
+
         foreach (var (dto, entity) in dtos.Zip(entities))
         {
             if (entity.MediaType == MediaType.Music && musicDirectEnabled)
                 dto.AllowedAcquisitionProtocols.Add(AcquisitionProtocol.DirectAudio);
+            if (directVideoEnabled && entity.MediaType == MediaType.TvShow && !entity.IsAnime
+                && dto.DirectVideo is { Episodes.Count: > 0 })
+                dto.AllowedAcquisitionProtocols.Add(AcquisitionProtocol.DirectVideo);
             dto.QualityDefinitions = definitions;
             if (entity.QualityProfileId is int pid && profiles.TryGetValue(pid, out var profile))
             {
@@ -1527,6 +1573,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
     private static FulfillmentJobDto Map(FulfillmentJobEntity j) => new()
     {
         Id = j.Id,
+        DirectVideo = ParseDirectVideo(j.DirectVideoContextJson),
         MediaRequestId = j.MediaRequestId,
         MediaId = j.MediaId,
         MediaType = j.MediaType,

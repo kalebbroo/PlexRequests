@@ -19,6 +19,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<PlexLibraryIdentityOverrideEntity> PlexLibraryIdentityOverrides => Set<PlexLibraryIdentityOverrideEntity>();
     public DbSet<MediaMetadataCacheEntity> MediaMetadataCache => Set<MediaMetadataCacheEntity>();
     public DbSet<MusicSettingsEntity> MusicSettings => Set<MusicSettingsEntity>();
+    public DbSet<DirectVideoSettingsEntity> DirectVideoSettings => Set<DirectVideoSettingsEntity>();
     public DbSet<SeasonEpisodesCacheEntity> SeasonEpisodesCache => Set<SeasonEpisodesCacheEntity>();
     public DbSet<MediaIssueEntity> MediaIssues => Set<MediaIssueEntity>();
     public DbSet<QualityRuleEntity> QualityRules => Set<QualityRuleEntity>();

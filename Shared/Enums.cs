@@ -290,7 +290,9 @@ public enum AcquisitionProtocol
 {
     Torrent = 0,
     DirectAudio = 1,
-    Usenet = 2
+    Usenet = 2,
+    /// <summary>A single video fetched from a remote video host (YouTube) for one TV episode.</summary>
+    DirectVideo = 3
 }
 
 /// <summary>Where an episode stands in the monitor's pipeline.</summary>

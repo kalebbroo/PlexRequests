@@ -18,6 +18,7 @@ builder.Services.Configure<IndexerOptions>(builder.Configuration.GetSection(Inde
 builder.Services.Configure<CatalogWorkerOptions>(builder.Configuration.GetSection(CatalogWorkerOptions.Section));
 builder.Services.Configure<DelugeOptions>(builder.Configuration.GetSection(DelugeOptions.Section));
 builder.Services.Configure<DirectAudioOptions>(builder.Configuration.GetSection(DirectAudioOptions.Section));
+builder.Services.Configure<DirectVideoOptions>(builder.Configuration.GetSection(DirectVideoOptions.Section));
 builder.Services.Configure<LibraryOptions>(builder.Configuration.GetSection(LibraryOptions.Section));
 builder.Services.Configure<QualityOptions>(builder.Configuration.GetSection(QualityOptions.Section));
 builder.Services.Configure<VpnOptions>(builder.Configuration.GetSection(VpnOptions.Section));
@@ -122,6 +123,7 @@ builder.Services.AddTransient<IReleaseFeedSource>(sp => sp.GetRequiredService<Yt
 builder.Services.AddTransient<IReleaseFeedSource>(sp => sp.GetRequiredService<TorznabIndexerProvider>());
 builder.Services.AddTransient<IIndexerClient, IndexerClient>();
 builder.Services.AddSingleton<IAcquisitionCandidateSource, YouTubeMusicDirectSource>();
+builder.Services.AddSingleton<IAcquisitionCandidateSource, YouTubeVideoDirectSource>();
 // Per-(indexer, query) result cache and the per-indexer request throttle the client sits on top of.
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IIndexerRateLimiter, IndexerRateLimiter>();
@@ -188,6 +190,7 @@ builder.Services.AddHttpClient(nameof(DirectAudioMediaEnricher), http =>
 builder.Services.AddSingleton<IDirectAudioMediaEnricher, DirectAudioMediaEnricher>();
 builder.Services.AddSingleton<IAcquisitionBackend, TorrentAcquisitionBackend>();
 builder.Services.AddSingleton<IAcquisitionBackend, YouTubeMusicAcquisitionBackend>();
+builder.Services.AddSingleton<IAcquisitionBackend, YouTubeVideoAcquisitionBackend>();
 builder.Services.AddSingleton<IAcquisitionBackendRegistry, AcquisitionBackendRegistry>();
 builder.Services.AddSingleton<IPostImportCleanup, PostImportCleanup>();
 builder.Services.AddSingleton<IStorageVolumeProbe, PhysicalStorageVolumeProbe>();

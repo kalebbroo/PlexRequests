@@ -40,6 +40,8 @@ services:
       Bridge__ApiKey: ${BRIDGE_API_KEY:-}
       Bridge__EventRetentionDays: ${BRIDGE_EVENT_RETENTION_DAYS:-30}
       ApiKeys__TMDb__ApiKey: ${TMDB_API_KEY}
+      # Optional: YouTube Data API v3 key for the TV episode source. Empty keeps that source disabled.
+      YouTubeData__ApiKey: ${YOUTUBE_API_KEY:-}
       Admin__Usernames: ${ADMIN_USERNAMES}
       Plex__PrimaryServerUrl: ${PLEX_URL}
       Plex__ServerToken: ${PLEX_TOKEN}
