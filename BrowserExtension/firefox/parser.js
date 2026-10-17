@@ -8,7 +8,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createParser(sources) {
   "use strict";
 
-  const PARSER_VERSION = 4;
+  const PARSER_VERSION = 5;
 
   function cleanText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
@@ -178,6 +178,53 @@
     };
   }
 
+  // ext.to's season and episode pages render torrents as table rows. The name link sits in the first cell,
+  // beside comment and magnet buttons, and its URL has the same "/<slug>-<id>/" shape as a detail page.
+  // Comment links share that path, so they are skipped by class.
+  function isExtDetailLink(link, pageUrl) {
+    try {
+      return !link.classList?.contains("dwn-btn")
+        && sources.isDetailUrl(new URL(link.getAttribute("href"), pageUrl).href, "ext.to");
+    } catch {
+      return false;
+    }
+  }
+
+  function extTableLinks(document, pageUrl) {
+    return Array.from(document.querySelectorAll("table tbody tr td.text-left a[href]"))
+      .filter(link => isExtDetailLink(link, pageUrl));
+  }
+
+  // The cell also holds the comment count, the magnet button and mobile-only size/seed text, so those are
+  // removed before reading the name.
+  function extTableName(link) {
+    const cell = link.closest?.("td") || link.parentElement;
+    const clone = cell.cloneNode(true);
+    clone.querySelectorAll(".btn-blocks, .mobile-info-block, .dwn-btn").forEach(node => node.remove());
+    return cleanText(clone.textContent).replace(/^\d+\.\s*/, "") || null;
+  }
+
+  function parseExtTableLink(link, pageUrl, category) {
+    const href = link.getAttribute("href");
+    const id = externalId(href, pageUrl);
+    const releaseName = extTableName(link);
+    if (!id || !releaseName) return null;
+    const row = link.closest?.("tr") || nearestListingContainer(link);
+    const rowText = cleanText(row && row.textContent);
+    return {
+      externalId: id,
+      releaseName,
+      sourceUrl: absoluteUrl(href, pageUrl),
+      category: extCategory(row, category),
+      uploader: null,
+      seeders: labelledCount(rowText, "seed"),
+      leechers: labelledCount(rowText, "leech"),
+      sizeBytes: parseSize(rowText.match(/size\s*([\d,.]+\s*[KMGT]?i?B)\b/i)?.[1] || ""),
+      publishedAt: null,
+      needsHydration: true
+    };
+  }
+
   function detailNodes(document) {
     return document.querySelectorAll(".list li, .torrent-detail-page li, .box-info li, dl, .torrent-info, [class*='detail']");
   }
@@ -273,8 +320,11 @@
     const category = inferCategory(pageUrl, document);
     const items = source.key === "1337x"
       ? Array.from(document.querySelectorAll("table.table-list tbody tr")).map(row => parseListingRow(row, pageUrl, category))
-      : Array.from(document.querySelectorAll("table.search-table tbody a.torrent-title-link, a.torrent-title-link"))
-        .map(link => parseExtListingLink(link, pageUrl, category));
+      : [
+        ...Array.from(document.querySelectorAll("table.search-table tbody a.torrent-title-link, a.torrent-title-link"))
+          .map(link => parseExtListingLink(link, pageUrl, category)),
+        ...extTableLinks(document, pageUrl).map(link => parseExtTableLink(link, pageUrl, category))
+      ];
     const unique = deduplicate(items);
     return { sourceKey: source.key, pageType: unique.length ? "listing" : "unsupported", items: unique };
   }
