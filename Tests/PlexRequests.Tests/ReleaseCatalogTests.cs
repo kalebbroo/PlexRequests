@@ -294,6 +294,23 @@ public sealed class ReleaseCatalogTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Catalog_search_keeps_exact_matching_for_titles_without_a_two_letter_word()
+    {
+        var film = Item("x-film", Hex('7'));
+        film.ReleaseName = "X.2000.1080p.BluRay.x264-GROUP";
+        await _catalog.UpsertBatchAsync(Batch(24, "x-batch", "one", film), CancellationToken.None);
+
+        var results = await _catalog.SearchAsync(new CatalogQueryDto
+        {
+            Title = "X",
+            MediaType = MediaType.Movie
+        }, CancellationToken.None);
+
+        var candidate = Assert.Single(results);
+        Assert.Equal("X.2000.1080p.BluRay.x264-GROUP", candidate.ReleaseName);
+    }
+
+    [Fact]
     public async Task CatalogSearchFindsAndReparsesLegacyGroupPrefixedAnimeRows()
     {
         var item = Item("monogatari", Hex('A'));

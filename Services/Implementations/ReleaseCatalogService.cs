@@ -402,10 +402,18 @@ public sealed class ReleaseCatalogService(
                 .OrderByDescending(x => x.LastSeenAt)
                 .Take(limit)
                 .ToListAsync(cancellationToken);
-        var byWords = words.Count == 0
+        // A title with no word of two or more letters (such as "X") keeps the exact or substring match.
+        // An empty title matches nothing.
+        IQueryable<CatalogReleaseEntity>? byTitle = words.Count > 0
+            ? words.Aggregate(scoped, (current, word) => current.Where(x => x.NormalizedTitle.Contains(word)))
+            : normalized.Length > 0
+                ? scoped.Where(x => x.NormalizedTitle == normalized
+                    || x.NormalizedTitle.StartsWith(normalized + " ")
+                    || x.NormalizedTitle.Contains(normalized))
+                : null;
+        var byWords = byTitle is null
             ? new List<CatalogReleaseEntity>()
-            : await words.Aggregate(scoped, (current, word) => current.Where(x => x.NormalizedTitle.Contains(word)))
-                .Include(x => x.Sightings)
+            : await byTitle.Include(x => x.Sightings)
                 .OrderByDescending(x => x.LastSeenAt)
                 .Take(limit)
                 .ToListAsync(cancellationToken);
