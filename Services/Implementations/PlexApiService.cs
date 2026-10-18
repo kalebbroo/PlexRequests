@@ -548,8 +548,10 @@ public class PlexApiService : IPlexApiService
 
         try
         {
-            var idx = await EnsureAvailabilityIndexAsync();
-            return idx.ByExternal.ContainsKey($"tmdb:{tmdbId}");
+            // TMDB movie and TV ids share a number space in the mapping, so the media type must match too.
+            var key = $"tmdb:{tmdbId}";
+            return await _db.PlexMappings.AsNoTracking()
+                .AnyAsync(m => m.ExternalKey == key && m.MediaType == MediaType.Movie);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

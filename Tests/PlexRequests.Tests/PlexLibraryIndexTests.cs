@@ -51,6 +51,15 @@ public sealed class PlexLibraryIndexTests : IAsyncLifetime
         Assert.False(await Service().IsMovieInLibraryAsync(1226578));
     }
 
+    [Fact]
+    public async Task A_tv_show_with_the_same_tmdb_number_does_not_count_as_the_movie()
+    {
+        _db.PlexMappings.Add(Mapping("tmdb:1226578", "rk-3", "Some Show", 2026, MediaType.TvShow));
+        await _db.SaveChangesAsync();
+
+        Assert.False(await Service().IsMovieInLibraryAsync(1226578));
+    }
+
     private PlexApiService Service() => new(
         null!,
         new HttpClient(),
@@ -60,12 +69,13 @@ public sealed class PlexLibraryIndexTests : IAsyncLifetime
         _db,
         null!);
 
-    private static PlexMappingEntity Mapping(string externalKey, string ratingKey, string title, int year) => new()
+    private static PlexMappingEntity Mapping(string externalKey, string ratingKey, string title, int year,
+        MediaType mediaType = MediaType.Movie) => new()
     {
         ExternalKey = externalKey,
         RatingKey = ratingKey,
         Title = title,
         Year = year,
-        MediaType = MediaType.Movie
+        MediaType = mediaType
     };
 }
