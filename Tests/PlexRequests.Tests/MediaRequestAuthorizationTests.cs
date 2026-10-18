@@ -142,7 +142,7 @@ public sealed class MediaRequestAuthorizationTests
             var auth = new FixedAuth(userId, username);
             var access = new UserAccessService(Db, auth, _configuration);
             return new MediaRequestService(Db, auth, null!, null!, null!, _configuration, null!, null!, null!,
-                identities, null!, null!, null!, access, new UserQuotaService(Db));
+                identities, null!, null!, null!, access, new UserQuotaService(Db), null!);
         }
 
         public async ValueTask DisposeAsync()

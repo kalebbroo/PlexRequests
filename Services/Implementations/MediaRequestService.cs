@@ -26,7 +26,8 @@ public class MediaRequestService(
     IMusicSettingsService musicSettings,
     IPlexMusicService plexMusic,
     IUserAccessService userAccess,
-    IUserQuotaService userQuotas) : IMediaRequestService
+    IUserQuotaService userQuotas,
+    IPlexApiService plex) : IMediaRequestService
 {
     private readonly AppDbContext _db = db;
     private readonly AuthenticationStateProvider _auth = authStateProvider;
@@ -41,6 +42,7 @@ public class MediaRequestService(
     private readonly IMediaModuleRegistry _mediaModules = mediaModules;
     private readonly IMusicSettingsService _musicSettings = musicSettings;
     private readonly IPlexMusicService _plexMusic = plexMusic;
+    private readonly IPlexApiService _plex = plex;
     private readonly IUserAccessService _userAccess = userAccess;
     private readonly IUserQuotaService _userQuotas = userQuotas;
 
@@ -996,7 +998,7 @@ public class MediaRequestService(
     /// fully covered by the same user's other active requests, or is already fully available on Plex
     /// right now (not a sticky terminal status that can never un-stick).
     /// </summary>
-    private async Task<(bool blocked, string? message)> CheckScopeConflictAsync(
+    internal async Task<(bool blocked, string? message)> CheckScopeConflictAsync(
         int userId, int mediaId, MediaType mediaType, bool allSeasons, List<int>? seasons, List<(int season, int episode)>? episodes)
     {
         if (mediaType is not (MediaType.TvShow or MediaType.Anime))
@@ -1006,9 +1008,10 @@ public class MediaRequestService(
                 (r.Status == RequestStatus.Pending || r.Status == RequestStatus.Approved || r.Status == RequestStatus.Processing));
             if (alreadyMine) return (true, "You've already requested this title.");
 
-            var alreadyAvailable = await _db.MediaRequests.AnyAsync(r =>
-                r.MediaId == mediaId && r.MediaType == mediaType && r.Status == RequestStatus.Available);
-            if (alreadyAvailable) return (true, "This title is already available.");
+            // A stored Available row only records that a request was once marked done. Nothing demotes it when
+            // the file is missing, so it can block every new request for a film Plex doesn't have. The library
+            // decides whether the film is there now.
+            if (await IsMovieInPlexAsync(mediaId)) return (true, "This title is already available.");
 
             return (false, null);
         }
@@ -1067,6 +1070,26 @@ public class MediaRequestService(
             return (true, "This season is already fully available.");
 
         return (false, null);
+    }
+
+    // A movie is already available only when Plex's library index holds it now. The same matcher the
+    // availability reconciliation uses decides, so the two paths agree.
+    private async Task<bool> IsMovieInPlexAsync(int mediaId)
+    {
+        var details = await _metadata.GetDetailsAsync(mediaId, MediaType.Movie);
+        if (details is null) return false;
+
+        var card = new MediaCardDto
+        {
+            Id = mediaId,
+            TmdbId = mediaId,
+            MediaType = MediaType.Movie,
+            Title = details.Title,
+            Year = details.Year,
+            ImdbId = details.ImdbId
+        };
+        await _plex.AnnotateAvailabilityAsync(new List<MediaCardDto> { card });
+        return card.IsAvailable;
     }
 
     // The set of season numbers a new request would target: explicit episodes/seasons, or (whole series)
