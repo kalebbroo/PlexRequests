@@ -993,7 +993,7 @@ public class MediaRequestService(
     }
 
     /// <summary>
-    /// Whether a new request would be entirely redundant: for movies, the classic status-based checks;
+    /// Whether a new request would be entirely redundant: for movies, whether Plex's library index holds the film;
     /// for TV, a season-scope-aware check that only blocks when the new request's exact scope is already
     /// fully covered by the same user's other active requests, or is already fully available on Plex
     /// right now (not a sticky terminal status that can never un-stick).
@@ -1008,10 +1008,17 @@ public class MediaRequestService(
                 (r.Status == RequestStatus.Pending || r.Status == RequestStatus.Approved || r.Status == RequestStatus.Processing));
             if (alreadyMine) return (true, "You've already requested this title.");
 
-            // A stored Available row only records that a request was once marked done. Nothing demotes it when
-            // the file is missing, so it can block every new request for a film Plex doesn't have. The library
-            // decides whether the film is there now.
-            if (await IsMovieInPlexAsync(mediaId)) return (true, "This title is already available.");
+            if (mediaType == MediaType.Movie)
+            {
+                // Plex decides whether a film is already here. A stored Available row only records a past request,
+                // and nothing demotes it when the file is gone, so it no longer blocks a new request.
+                if (await _plex.IsMovieInLibraryAsync(mediaId)) return (true, "This title is already available.");
+                return (false, null);
+            }
+
+            var alreadyAvailable = await _db.MediaRequests.AnyAsync(r =>
+                r.MediaId == mediaId && r.MediaType == mediaType && r.Status == RequestStatus.Available);
+            if (alreadyAvailable) return (true, "This title is already available.");
 
             return (false, null);
         }
@@ -1070,26 +1077,6 @@ public class MediaRequestService(
             return (true, "This season is already fully available.");
 
         return (false, null);
-    }
-
-    // A movie is already available only when Plex's library index holds it now. The same matcher the
-    // availability reconciliation uses decides, so the two paths agree.
-    private async Task<bool> IsMovieInPlexAsync(int mediaId)
-    {
-        var details = await _metadata.GetDetailsAsync(mediaId, MediaType.Movie);
-        if (details is null) return false;
-
-        var card = new MediaCardDto
-        {
-            Id = mediaId,
-            TmdbId = mediaId,
-            MediaType = MediaType.Movie,
-            Title = details.Title,
-            Year = details.Year,
-            ImdbId = details.ImdbId
-        };
-        await _plex.AnnotateAvailabilityAsync(new List<MediaCardDto> { card });
-        return card.IsAvailable;
     }
 
     // The set of season numbers a new request would target: explicit episodes/seasons, or (whole series)

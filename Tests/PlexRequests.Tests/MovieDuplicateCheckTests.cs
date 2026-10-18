@@ -8,7 +8,6 @@ using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.Implementations;
-using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using Xunit;
 
@@ -28,7 +27,7 @@ public sealed class MovieDuplicateCheckTests
         await db.Database.EnsureCreatedAsync();
         db.MediaRequests.Add(StoredRequest(RequestStatus.Available));
         await db.SaveChangesAsync();
-        var service = Service(db, DispatchProxy.Create<IMediaMetadataProvider, MetadataFake>(), inLibrary: false);
+        var service = Service(db, inLibrary: false);
 
         var (blocked, message) = await service.CheckScopeConflictAsync(
             userId: 2, mediaId: BrandNewDayTmdbId, MediaType.Movie, allSeasons: true, seasons: null, episodes: null);
@@ -44,7 +43,7 @@ public sealed class MovieDuplicateCheckTests
         var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
         await using var db = new AppDbContext(options);
         await db.Database.EnsureCreatedAsync();
-        var service = Service(db, DispatchProxy.Create<IMediaMetadataProvider, MetadataFake>(), inLibrary: true);
+        var service = Service(db, inLibrary: true);
 
         var (blocked, message) = await service.CheckScopeConflictAsync(
             userId: 2, mediaId: BrandNewDayTmdbId, MediaType.Movie, allSeasons: true, seasons: null, episodes: null);
@@ -53,15 +52,14 @@ public sealed class MovieDuplicateCheckTests
         Assert.Equal("This title is already available.", message);
     }
 
-    private static MediaRequestService Service(AppDbContext db, IMediaMetadataProvider metadata, bool inLibrary)
+    private static MediaRequestService Service(AppDbContext db, bool inLibrary)
     {
-        var plex = DispatchProxy.Create<IPlexApiService, PlexAvailabilityFake>();
-        ((PlexAvailabilityFake)(object)plex).InLibrary = inLibrary;
+        var plex = DispatchProxy.Create<IPlexApiService, PlexLibraryFake>();
+        ((PlexLibraryFake)(object)plex).InLibrary = inLibrary;
         return new MediaRequestService(
             db,
             new FixedAuthenticationStateProvider("listener"),
-            metadata,
-            null!, null!, new ConfigurationBuilder().Build(), null!, null!, null!, null!, null!, null!, null!, null!,
+            null!, null!, null!, new ConfigurationBuilder().Build(), null!, null!, null!, null!, null!, null!, null!, null!,
             new UserQuotaService(db),
             plex);
     }
@@ -78,38 +76,16 @@ public sealed class MovieDuplicateCheckTests
         Status = status
     };
 
-    // Plex is the only dependency the movie check uses. The proxy answers the one call it needs; any other
+    // Plex is the only dependency the movie check uses. The proxy answers the one call it needs. Any other
     // member fails loudly, so a new dependency shows up as a test failure rather than a silent pass.
-    public class PlexAvailabilityFake : DispatchProxy
+    public class PlexLibraryFake : DispatchProxy
     {
         public bool InLibrary { get; set; }
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
-            if (targetMethod?.Name == nameof(IPlexApiService.AnnotateAvailabilityAsync))
-            {
-                foreach (var card in (List<MediaCardDto>)args![0]!) card.IsAvailable = InLibrary;
-                return Task.CompletedTask;
-            }
-            throw new NotSupportedException(targetMethod?.Name);
-        }
-    }
-
-    public class MetadataFake : DispatchProxy
-    {
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            if (targetMethod?.Name == nameof(IMediaMetadataProvider.GetDetailsAsync) && args?.Length == 2)
-            {
-                return Task.FromResult<MediaDetailDto?>(new MediaDetailDto
-                {
-                    Id = BrandNewDayTmdbId,
-                    TmdbId = BrandNewDayTmdbId,
-                    MediaType = MediaType.Movie,
-                    Title = "Spider-Man: Brand New Day",
-                    Year = 2026
-                });
-            }
+            if (targetMethod?.Name == nameof(IPlexApiService.IsMovieInLibraryAsync))
+                return Task.FromResult(InLibrary);
             throw new NotSupportedException(targetMethod?.Name);
         }
     }

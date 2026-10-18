@@ -537,6 +537,27 @@ public class PlexApiService : IPlexApiService
         }
     }
 
+    public async Task<bool> IsMovieInLibraryAsync(int tmdbId)
+    {
+        if (string.IsNullOrWhiteSpace(_cfg.PrimaryServerUrl) || string.IsNullOrWhiteSpace(_cfg.ServerToken))
+        {
+            // Without Plex the library cannot be checked, so a duplicate check cannot block on it. Say so.
+            _logger.LogWarning("Plex is not configured; movie duplicate checks cannot confirm library availability");
+            return false;
+        }
+
+        try
+        {
+            var idx = await EnsureAvailabilityIndexAsync();
+            return idx.ByExternal.ContainsKey($"tmdb:{tmdbId}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not read the Plex availability index for TMDB {TmdbId}", tmdbId);
+            return false;
+        }
+    }
+
     private void EnsureDefaultHeaders(HttpRequestHeaders headers)
     {
         if (!headers.Contains("X-Plex-Product"))
