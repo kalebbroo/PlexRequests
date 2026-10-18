@@ -134,6 +134,8 @@ public interface IPlexApiService
     /// </summary>
     Task<PlexServerDashboard> GetServerDashboardAsync();
     Task AnnotateAvailabilityAsync(List<MediaCardDto> items);
+    /// <summary>Whether the Plex library index holds this movie, matched only by its TMDB id (no title fallback).</summary>
+    Task<bool> IsMovieInLibraryAsync(int tmdbId);
     // Diagnostics
     Task<object> GetIndexStatsAsync();
     Task<object> TestMatchAsync(string? title, int? year, int? tmdbId, string? imdbId, int? tvdbId, MediaType mediaType);

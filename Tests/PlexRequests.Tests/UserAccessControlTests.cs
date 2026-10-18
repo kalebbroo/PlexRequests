@@ -495,7 +495,7 @@ public sealed class UserAccessControlTests
 
     private static MediaRequestService RequestService(AppDbContext db, AuthenticationStateProvider auth, IUserAccessService access) =>
         new(db, auth, null!, null!, null!, new ConfigurationBuilder().Build(), null!, null!, null!,
-            null!, null!, null!, null!, access, new UserQuotaService(db));
+            null!, null!, null!, null!, access, new UserQuotaService(db), null!);
 
     private static MediaRequestEntity Request(int userId, RequestStatus status, DateTime requestedAt,
         MediaType mediaType = MediaType.Movie, string title = "Quota test") => new()

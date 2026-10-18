@@ -26,7 +26,8 @@ public class MediaRequestService(
     IMusicSettingsService musicSettings,
     IPlexMusicService plexMusic,
     IUserAccessService userAccess,
-    IUserQuotaService userQuotas) : IMediaRequestService
+    IUserQuotaService userQuotas,
+    IPlexApiService plex) : IMediaRequestService
 {
     private readonly AppDbContext _db = db;
     private readonly AuthenticationStateProvider _auth = authStateProvider;
@@ -41,6 +42,7 @@ public class MediaRequestService(
     private readonly IMediaModuleRegistry _mediaModules = mediaModules;
     private readonly IMusicSettingsService _musicSettings = musicSettings;
     private readonly IPlexMusicService _plexMusic = plexMusic;
+    private readonly IPlexApiService _plex = plex;
     private readonly IUserAccessService _userAccess = userAccess;
     private readonly IUserQuotaService _userQuotas = userQuotas;
 
@@ -991,12 +993,12 @@ public class MediaRequestService(
     }
 
     /// <summary>
-    /// Whether a new request would be entirely redundant: for movies, the classic status-based checks;
+    /// Whether a new request would be entirely redundant: for movies, whether Plex's library index holds the film;
     /// for TV, a season-scope-aware check that only blocks when the new request's exact scope is already
     /// fully covered by the same user's other active requests, or is already fully available on Plex
     /// right now (not a sticky terminal status that can never un-stick).
     /// </summary>
-    private async Task<(bool blocked, string? message)> CheckScopeConflictAsync(
+    internal async Task<(bool blocked, string? message)> CheckScopeConflictAsync(
         int userId, int mediaId, MediaType mediaType, bool allSeasons, List<int>? seasons, List<(int season, int episode)>? episodes)
     {
         if (mediaType is not (MediaType.TvShow or MediaType.Anime))
@@ -1005,6 +1007,14 @@ public class MediaRequestService(
                 r.MediaId == mediaId && r.MediaType == mediaType && r.RequestedByUserId == userId &&
                 (r.Status == RequestStatus.Pending || r.Status == RequestStatus.Approved || r.Status == RequestStatus.Processing));
             if (alreadyMine) return (true, "You've already requested this title.");
+
+            if (mediaType == MediaType.Movie)
+            {
+                // Plex decides whether a film is already here. A stored Available row only records a past request,
+                // and nothing demotes it when the file is gone, so it no longer blocks a new request.
+                if (await _plex.IsMovieInLibraryAsync(mediaId)) return (true, "This title is already available.");
+                return (false, null);
+            }
 
             var alreadyAvailable = await _db.MediaRequests.AnyAsync(r =>
                 r.MediaId == mediaId && r.MediaType == mediaType && r.Status == RequestStatus.Available);

@@ -48,7 +48,7 @@ public sealed class ProviderNeutralRequestStatusTests
             db,
             new FixedAuthenticationStateProvider("listener"),
             null!, null!, null!, new ConfigurationBuilder().Build(), null!, null!, null!,
-            identities, null!, null!, null!, null!, new UserQuotaService(db));
+            identities, null!, null!, null!, null!, new UserQuotaService(db), null!);
 
         var statuses = await service.GetMyRequestStatusesAsync([
             albumRef,
