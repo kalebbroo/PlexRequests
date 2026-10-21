@@ -15,12 +15,17 @@
         <div class="media-row-body">
             <button class="media-row-arrow left" aria-label="Scroll left" @onclick="ScrollLeft"><MudIcon Icon="@Icons.Material.Filled.ChevronLeft" /></button>
             <div class="media-row-track" @ref="_track">
-                @foreach (var item in Items)
+                @foreach (var item in Items.Take(_visible))
                 {
                     <div class="media-row-item">
                         <MediaCard Media="item" OnRequest="OnRequest" OnPlay="OnPlay"
                                    ReturnUrl="@ReturnUrl" ReturnLabel="@ReturnLabel" />
                     </div>
+                }
+                @if (_visible < Items.Count)
+                {
+                    <RevealSentinel RootSelector=".media-row-track" RootMargin="0px 240px 0px 0px"
+                                    Revealed="_visible" OnVisible="RevealMore" />
                 }
             </div>
             <button class="media-row-arrow right" aria-label="Scroll right" @onclick="ScrollRight"><MudIcon Icon="@Icons.Material.Filled.ChevronRight" /></button>
@@ -36,8 +41,29 @@
     [Parameter] public EventCallback<MediaCardDto> OnPlay { get; set; }
     [Parameter] public string? ReturnUrl { get; set; }
     [Parameter] public string? ReturnLabel { get; set; }
+    // Cards rendered first, then added each time the reader nears the end. Every card starts a poster request, so a
+    // bounded window keeps first paint and the image fetches small. Browsers' lazy-load threshold already pulls in
+    // about a dozen posters beyond the viewport, so the window stays close to that.
+    [Parameter] public int InitialCount { get; set; } = 12;
+    [Parameter] public int BatchSize { get; set; } = 12;
 
     private ElementReference _track;
+    private int _visible;
+    private IReadOnlyList<MediaCardDto>? _windowedItems;
+
+    protected override void OnParametersSet()
+    {
+        // A new list is a new result set, so the window starts from the top again. The same list keeps its place.
+        if (ReferenceEquals(Items, _windowedItems)) return;
+        _windowedItems = Items;
+        _visible = Math.Min(InitialCount, Items?.Count ?? 0);
+    }
+
+    private void RevealMore()
+    {
+        var total = Items?.Count ?? 0;
+        if (_visible < total) _visible = Math.Min(_visible + BatchSize, total);
+    }
 
     private async Task ScrollLeft() => await Scroll(-1);
     private async Task ScrollRight() => await Scroll(1);

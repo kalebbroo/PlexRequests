@@ -3,6 +3,7 @@
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
 @using PlexRequestsHosted.Components.Shared
+@using PlexRequestsHosted.Services.Discovery
 @inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
@@ -154,8 +155,8 @@
     private bool _loadingMore = false;
     private bool _hasMore = true;
     private const int PageSize = 40;
-    // Number of titles fetched per discovery row (trending/popular/top/genre carousels).
-    private const int RowSize = 100;
+    // Number of titles fetched per discovery row (trending/popular/top/genre carousels). Shared with the cache warm-up.
+    private const int RowSize = DiscoveryRows.RowSize;
 
     private bool GridMode => !string.IsNullOrEmpty(_genre);
 
@@ -164,10 +165,6 @@
     private static readonly string[] _movieGenres = { "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "History", "Horror", "Mystery", "Romance", "Science Fiction", "Thriller", "War", "Western" };
     private static readonly string[] _tvGenres = { "Action & Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Kids", "Mystery", "Reality", "Sci-Fi & Fantasy", "War & Politics", "Western" };
     private string[] _genres => _type == MediaType.TvShow ? _tvGenres : _movieGenres;
-
-    // Curated genre rows shown on the default discovery view (kept short to bound TMDB calls).
-    private static readonly string[] _movieRowGenres = { "Action", "Comedy", "Drama", "Science Fiction", "Horror", "Animation", "Thriller" };
-    private static readonly string[] _tvRowGenres = { "Action & Adventure", "Comedy", "Drama", "Sci-Fi & Fantasy", "Animation", "Crime" };
 
     private bool _rendered = false;
     private MediaType? _loadedType;
@@ -217,7 +214,7 @@
             var trendingTask = PlexApiService.GetTrendingAsync(_type, 1, RowSize);
             var popularTask = PlexApiService.GetPopularAsync(_type, 1, RowSize);
             var topTask = PlexApiService.GetTopRatedAsync(_type, 1, RowSize);
-            var rowGenres = _type == MediaType.TvShow ? _tvRowGenres : _movieRowGenres;
+            var rowGenres = DiscoveryRows.RowGenres(_type);
             var genreTasks = rowGenres.Select(g => PlexApiService.GetByGenreAsync(_type, g, 1, RowSize)).ToList();
 
             await Task.WhenAll(new[] { trendingTask, popularTask, topTask }.Concat(genreTasks));

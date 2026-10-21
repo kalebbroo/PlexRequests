@@ -1,3 +1,4 @@
+@inject IConfiguration Configuration
 <!DOCTYPE html>
 <html lang="en">
 
@@ -31,9 +32,14 @@
 </html>
 
 @code {
-    // Prerendering disabled: with it on, every page paints twice (static SSR pass, then the
-    // interactive circuit re-renders it), which replays entrance animations and causes the
-    // visible "double load" jitter — worst on the login page. This app sits behind auth with
-    // no SEO needs, so the static first paint buys nothing.
-    private static readonly Microsoft.AspNetCore.Components.Web.InteractiveServerRenderMode PageRenderMode = new(prerender: false);
+    // Prerendering stays off unless Ui:Prerender is set. With it on, every page paints twice (a static SSR pass,
+    // then the interactive circuit re-renders it), which replays entrance animations and causes the visible
+    // "double load" jitter, worst on the login page (see 17d3326). Turn it on only after measuring that jitter
+    // on the live site.
+    private Microsoft.AspNetCore.Components.Web.InteractiveServerRenderMode PageRenderMode = null!;
+
+    protected override void OnInitialized()
+    {
+        PageRenderMode = new(prerender: Configuration.GetValue("Ui:Prerender", false));
+    }
 }

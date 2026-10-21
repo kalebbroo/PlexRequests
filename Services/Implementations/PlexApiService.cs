@@ -593,21 +593,32 @@ public class PlexApiService : IPlexApiService
     // Availability index and helpers
     private record AvailabilityIndex(HashSet<string> ByTitleYear, Dictionary<string, string> ByTitleYearKey, Dictionary<string, string> ByExternal, Dictionary<string, MediaQualityDto> ByRatingKeyQuality, DateTime BuiltAt);
     private const string AvailabilityCacheKey = "plex_availability_index";
+    // Longer than the warm-up interval (CacheWarmupService), so one missed tick never sends a page to a cold rebuild.
+    private static readonly TimeSpan AvailabilityIndexTtl = TimeSpan.FromMinutes(10);
     // Last-rebuild stats live in the (singleton) memory cache rather than an instance field, since
     // PlexApiService is resolved fresh per DI scope — the background refresh service and an admin
     // page load run in different scopes and would otherwise never see each other's state.
     private record LastRebuildResult(int Maps, int Seasons, int Episodes, int Files,
         int PrunedMaps, int PrunedSeasons, int PrunedFiles, DateTime At);
     private const string LastRebuildCacheKey = "plex_last_rebuild_result";
-    // Fast read path: the in-memory match index is projected FROM THE DB (kept fresh by the
-    // background AvailabilityRefreshService). This never hits Plex, so annotating a page is cheap.
+    // Fast read path: the in-memory match index is projected FROM THE DB. This never hits Plex, so annotating a
+    // page is cheap. CacheWarmupService rebuilds it on a short timer, so a page normally finds it warm; the rebuild
+    // below only runs when the cache is empty or the warm-up has stopped.
     private async Task<AvailabilityIndex> EnsureAvailabilityIndexAsync()
     {
         if (_cache.TryGetValue<AvailabilityIndex>(AvailabilityCacheKey, out var cached) &&
             cached is not null &&
-            (DateTime.UtcNow - cached.BuiltAt) < TimeSpan.FromMinutes(5))
+            (DateTime.UtcNow - cached.BuiltAt) < AvailabilityIndexTtl)
             return cached;
+        return await BuildAvailabilityIndexAsync();
+    }
 
+    // Projects the index from the DB and caches it. The refresh pass calls this as soon as a scan lands, and the
+    // warm-up timer calls it on a schedule.
+    public Task WarmAvailabilityIndexAsync() => BuildAvailabilityIndexAsync();
+
+    private async Task<AvailabilityIndex> BuildAvailabilityIndexAsync()
+    {
         var byTitleYear = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var byTitleYearKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var byExternal = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -642,7 +653,7 @@ public class PlexApiService : IPlexApiService
         }
 
         var index = new AvailabilityIndex(byTitleYear, byTitleYearKey, byExternal, byRatingKeyQuality, DateTime.UtcNow);
-        _cache.Set(AvailabilityCacheKey, index, TimeSpan.FromMinutes(5));
+        _cache.Set(AvailabilityCacheKey, index, AvailabilityIndexTtl);
         return index;
     }
 
@@ -810,7 +821,7 @@ public class PlexApiService : IPlexApiService
                     agedMaps, agedSeasons, agedFiles, MissedScansBeforePrune);
         }
 
-        _cache.Remove(AvailabilityCacheKey); // force the read projection to rebuild from fresh DB
+        await BuildAvailabilityIndexAsync(); // rebuild now so badges reflect this scan as soon as it lands
         _cache.Set(LastRebuildCacheKey, new LastRebuildResult(maps, seasons, episodes, files,
             prunedMaps, prunedSeasons, prunedFiles, scanStart), TimeSpan.FromDays(30));
         _logger.LogInformation("Plex availability rebuilt: {Maps} id-maps, {Seasons} seasons, {Eps} episodes, "

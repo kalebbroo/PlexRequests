@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Implementations;
+using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using Xunit;
 
@@ -58,6 +59,28 @@ public sealed class PlexLibraryIndexTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         Assert.False(await Service().IsMovieInLibraryAsync(1226578));
+    }
+
+    [Fact]
+    public async Task A_warmed_index_keeps_answering_after_its_source_row_is_gone()
+    {
+        var row = Mapping("tmdb:1226578", "rk-4", "Spider-Man: Brand New Day", 2026);
+        _db.PlexMappings.Add(row);
+        await _db.SaveChangesAsync();
+        var service = Service();
+
+        // The warm-up timer builds the index before any page asks for it. Removing the row afterwards proves the
+        // annotation reads the warmed snapshot rather than rebuilding from the DB on demand.
+        await service.WarmAvailabilityIndexAsync();
+        _db.PlexMappings.Remove(row);
+        await _db.SaveChangesAsync();
+        var items = new List<MediaCardDto>
+        {
+            new() { Id = 1226578, TmdbId = 1226578, Title = "Spider-Man: Brand New Day", Year = 2026, MediaType = MediaType.Movie }
+        };
+        await service.AnnotateAvailabilityAsync(items);
+
+        Assert.True(items[0].IsAvailable);
     }
 
     private PlexApiService Service() => new(

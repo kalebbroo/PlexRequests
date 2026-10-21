@@ -3,6 +3,7 @@
 @using PlexRequestsHosted.Shared.DTOs
 @using PlexRequestsHosted.Shared.Enums
 @using PlexRequestsHosted.Components.Shared
+@using PlexRequestsHosted.Services.Discovery
 @inject PlexRequestsHosted.Services.Abstractions.IPlexApiService PlexApiService
 @inject PlexRequestsHosted.Services.Abstractions.IMediaRequestService MediaRequestService
 @inject PlexRequestsHosted.Services.Abstractions.IToastService ToastService
@@ -84,11 +85,15 @@
                         <h2 class="home-grid-title">Top Rated</h2>
                     </div>
                     <div class="home-grid">
-                        @foreach (var item in _topPicks)
+                        @foreach (var item in _topPicks.Take(_topVisible))
                         {
                             <MediaCard Media="item" OnRequest="Request" OnPlay="Play" />
                         }
                     </div>
+                    @if (_topVisible < _topPicks.Count)
+                    {
+                        <RevealSentinel RootMargin="0px 0px 900px 0px" Revealed="_topVisible" OnVisible="RevealTopPicks" />
+                    }
                 </section>
             }
         }
@@ -106,11 +111,14 @@
     private List<MediaCardDto> _newMusic = new();
     private List<MediaCardDto> _actionMovies = new();
     private List<MediaCardDto> _topPicks = new();
+    // The Top Rated grid renders a window of its items and reveals the rest as the reader scrolls down.
+    private const int TopPicksBatch = 24;
+    private int _topVisible;
     private bool _loading = true;
     private bool _loadFailed = false;
     private bool _loaded = false;
-    // Number of titles fetched per home-page row/carousel.
-    private const int RowSize = 100;
+    // Number of titles fetched per home-page row/carousel. Shared with the cache warm-up.
+    private const int RowSize = DiscoveryRows.RowSize;
 
     // Load after first render (interactive circuit) rather than during prerender, so the page shell
     // paints instantly and a slow TMDB/Plex call never blocks the initial response.
@@ -150,6 +158,7 @@
             _newMusic = musicTask.Result;
             _actionMovies = actionTask.Result;
             _topPicks = Interleave(topMoviesTask.Result, topTvTask.Result);
+            _topVisible = Math.Min(TopPicksBatch, _topPicks.Count);
 
             // Overlay availability + this user's request status across everything we just loaded.
             var all = new List<MediaCardDto>();
@@ -204,6 +213,11 @@
             }
         }
         catch { /* availability is best-effort */ }
+    }
+
+    private void RevealTopPicks()
+    {
+        if (_topVisible < _topPicks.Count) _topVisible = Math.Min(_topVisible + TopPicksBatch, _topPicks.Count);
     }
 
     private static List<MediaCardDto> Interleave(List<MediaCardDto> a, List<MediaCardDto> b)

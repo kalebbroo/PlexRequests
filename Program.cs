@@ -308,6 +308,7 @@ builder.Services.AddSingleton<PlexRequestsHosted.Services.Abstractions.IReleaseC
 builder.Services.AddScoped<PlexRequestsHosted.Services.Abstractions.IDatabaseAdminService, PlexRequestsHosted.Services.Implementations.DatabaseAdminService>();
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.JobSchedulerService>();
 builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.CatalogMaintenanceWorker>();
+builder.Services.AddHostedService<PlexRequestsHosted.Services.Background.CacheWarmupService>();
 
 // AuthN/AuthZ
 builder.Services
