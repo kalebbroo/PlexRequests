@@ -146,6 +146,8 @@ public interface IPlexApiService
     Task<List<object>> ResolveByTitleAsync(string title, int? year, MediaType mediaType, int maxResults = 5);
     Task<object> RebuildAvailabilityIndexAsync();
     Task<object> RebuildAvailabilityFromPlexAsync(CancellationToken ct = default);
+    // Rebuilds the in-memory availability index from the DB, so page loads find it already built.
+    Task WarmAvailabilityIndexAsync();
     // Admin server health extras
     Task<List<PlexSessionInfo>> GetActiveSessionsAsync();
     Task RefreshLibraryAsync(string sectionKey);

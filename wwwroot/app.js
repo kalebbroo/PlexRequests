@@ -18,6 +18,32 @@ window.plexui = {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
     },
 
+    // Reveal markers: each marker arms one IntersectionObserver that fires once when the reader nears it. Blazor
+    // re-arms it after the next batch renders. rootSelector scopes the watch to a scroll container (a row track);
+    // with no selector the viewport is the root. Without IntersectionObserver, batches reveal straight away, so
+    // every item still renders.
+    armReveal: function (marker, rootSelector, rootMargin, ref) {
+        if (!marker) return;
+        window.plexui.disarmReveal(marker);
+        const reveal = () => { ref.invokeMethodAsync("OnRevealAsync").catch(() => {}); };
+        if (!("IntersectionObserver" in window)) { reveal(); return; }
+        const root = rootSelector ? marker.closest(rootSelector) : null;
+        const observer = new IntersectionObserver(entries => {
+            if (!entries.some(entry => entry.isIntersecting)) return;
+            observer.disconnect();
+            reveal();
+        }, { root, rootMargin: rootMargin || "0px" });
+        marker.__plexReveal = observer;
+        observer.observe(marker);
+    },
+
+    disarmReveal: function (marker) {
+        if (marker && marker.__plexReveal) {
+            marker.__plexReveal.disconnect();
+            marker.__plexReveal = null;
+        }
+    },
+
     _setHeaderOffset: function (selector) {
         const header = selector ? document.querySelector(selector) : null;
         const fallbackHeight = 68;
