@@ -42,6 +42,10 @@ public class MediaRequestEntity
     public DateTime? ApprovedAt { get; set; }
     public DateTime? AvailableAt { get; set; }
 
+    /// <summary>Consecutive reconciliation passes that found this Available request's title missing from the Plex
+    /// library. A pass that finds the title resets it to zero, so one incomplete scan cannot reopen a request.</summary>
+    public int LibraryMissCount { get; set; }
+
     [MaxLength(1000)]
     public string? DenialReason { get; set; }
 

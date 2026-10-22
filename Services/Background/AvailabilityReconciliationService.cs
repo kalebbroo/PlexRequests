@@ -3,6 +3,7 @@ using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.Jobs;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 using PlexRequestsHosted.Shared.Media;
@@ -36,6 +37,14 @@ public class AvailabilityReconciliationService(
         RequestStatus.Searching, RequestStatus.PartiallyAvailable
     };
 
+    // Passes in a row a title must be missing before its Available request is reopened. Passes run every 30
+    // minutes, so a fresh Plex scan gets about 90 minutes to show the title before anything changes.
+    private const int MissesBeforeReopen = 3;
+
+    // Plex can take a while to show a file that just imported, and /fulfilled marks the request Available before
+    // Plex has scanned it. Requests that recent are not counted, so a slow scan cannot reopen a file already on disk.
+    private static readonly TimeSpan ReopenGrace = TimeSpan.FromHours(6);
+
     public JobType Type => JobType.AvailabilityReconcile;
 
     public async Task<JobResult> ExecuteAsync(JobContext context, CancellationToken ct)
@@ -46,9 +55,57 @@ public class AvailabilityReconciliationService(
         if (!plexConfigured) return JobResult.Skipped("Plex is not configured");
 
         var marked = await RunOnceAsync(ct);
-        return marked > 0
-            ? JobResult.Ok(marked, $"Marked {marked} request(s) Available")
+        var reopened = await ReopenMissingAsync(ct);
+        return marked + reopened > 0
+            ? JobResult.Ok(marked + reopened, $"Marked {marked} request(s) Available, reopened {reopened} missing from Plex")
             : JobResult.Skipped("No open request was satisfied by the Plex library");
+    }
+
+    /// <summary>
+    /// Reopens Available requests whose title has left the Plex library. A request is reopened only after its title
+    /// has been missing for <see cref="MissesBeforeReopen"/> passes in a row. Requests with a download already in
+    /// flight are left alone. Returns how many requests were reopened.
+    /// </summary>
+    public async Task<int> ReopenMissingAsync(CancellationToken ct)
+    {
+        // No mapping rows means no Plex scan has landed yet. Every title would look missing, so do nothing.
+        if (!await db.PlexMappings.AnyAsync(ct)) return 0;
+
+        var settledBefore = DateTime.UtcNow - ReopenGrace;
+        var available = await db.MediaRequests
+            .Where(r => r.Status == RequestStatus.Available && r.MediaType != MediaType.Music && r.MediaId > 0
+                        && (r.AvailableAt == null || r.AvailableAt < settledBefore))
+            .Where(r => !db.FulfillmentJobs.Any(j => j.MediaRequestId == r.Id && FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status)))
+            .ToListAsync(ct);
+        if (available.Count == 0) return 0;
+
+        var titleAvailable = await TitleAvailabilityAsync(available);
+
+        int reopened = 0;
+        foreach (var req in available)
+        {
+            if (ct.IsCancellationRequested) break;
+            // Title-level for movies and series alike: the title is still in the library. One missing episode does
+            // not count, so an ongoing show is not reopened as new episodes air.
+            var present = titleAvailable.TryGetValue((req.MediaType, req.MediaId), out var inLibrary) && inLibrary;
+            if (present)
+            {
+                req.LibraryMissCount = 0;
+                continue;
+            }
+            if (++req.LibraryMissCount < MissesBeforeReopen) continue;
+
+            // Pending has no download job, so nothing is fetched until an admin approves the request again. A monitored
+            // series stops getting calendar searches until then, because the calendar job only watches Approved and later.
+            req.Status = RequestStatus.Pending;
+            req.LibraryMissCount = 0;
+            reopened++;
+            logger.LogInformation("Reopened request #{Id} \"{Title}\" -> Pending (missing from Plex for {Passes} passes)",
+                req.Id, req.Title, MissesBeforeReopen);
+        }
+
+        await db.SaveChangesAsync(ct);
+        return reopened;
     }
 
     /// <summary>One reconciliation pass. Returns how many requests were newly marked Available.</summary>
@@ -64,11 +121,7 @@ public class AvailabilityReconciliationService(
         // monitored episode, plus separate season/whole-series requests — and availability doesn't depend on
         // which of those rows asked, so building one card per request crashed the dictionary below the moment
         // any title had more than one open request.
-        var cards = open.Where(r => r.MediaType != MediaType.Music)
-            .Select(r => new MediaCardDto { Id = r.MediaId, TmdbId = r.MediaId, MediaType = r.MediaType, Title = r.Title })
-            .DistinctBy(c => (c.MediaType, c.Id)).ToList();
-        await plex.AnnotateAvailabilityAsync(cards);
-        var titleAvailable = cards.ToDictionary(c => (c.MediaType, c.Id), c => c.IsAvailable);
+        var titleAvailable = await TitleAvailabilityAsync(open);
 
         int marked = 0;
         foreach (var req in open)
@@ -95,12 +148,12 @@ public class AvailabilityReconciliationService(
 
             req.Status = RequestStatus.Available;
             req.AvailableAt = DateTime.UtcNow;
+            req.LibraryMissCount = 0;
 
             // If a fulfillment job was still open for it, close it — the content arrived another way.
             var job = await db.FulfillmentJobs
                 .FirstOrDefaultAsync(j => j.MediaRequestId == req.Id
-                    && (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed
-                        || j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred), ct);
+                    && FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status), ct);
             if (job is not null) { job.Status = FulfillmentStatus.Completed; job.CompletedAt = DateTime.UtcNow; }
 
             await db.SaveChangesAsync(ct);
@@ -111,6 +164,16 @@ public class AvailabilityReconciliationService(
 
         if (marked > 0) logger.LogInformation("Availability reconciliation marked {Count} request(s) Available", marked);
         return marked;
+    }
+
+    /// <summary>Title-level availability for movies and series, keyed by (MediaType, MediaId). Music is excluded.</summary>
+    private async Task<Dictionary<(MediaType, int), bool>> TitleAvailabilityAsync(IEnumerable<MediaRequestEntity> requests)
+    {
+        var cards = requests.Where(r => r.MediaType != MediaType.Music)
+            .Select(r => new MediaCardDto { Id = r.MediaId, TmdbId = r.MediaId, MediaType = r.MediaType, Title = r.Title })
+            .DistinctBy(c => (c.MediaType, c.Id)).ToList();
+        await plex.AnnotateAvailabilityAsync(cards);
+        return cards.ToDictionary(c => (c.MediaType, c.Id), c => c.IsAvailable);
     }
 
     private async Task<bool> IsMusicSatisfiedAsync(MediaRequestEntity req, CancellationToken ct)
