@@ -39,9 +39,6 @@ public sealed class StorageOptimizationService(
     ILibraryOrganizationPreferencesService? libraryPreferences = null) : IStorageOptimizationService
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
-    private static readonly FulfillmentStatus[] ActiveStatuses =
-        [FulfillmentStatus.Queued, FulfillmentStatus.Claimed, FulfillmentStatus.Downloading, FulfillmentStatus.Deferred];
-
     public async Task<List<StorageOptimizationTitleDto>> GetTitlesAsync()
     {
         var inventory = await LoadInventoryAsync();
@@ -209,7 +206,7 @@ public sealed class StorageOptimizationService(
         }
 
         var activeRequestIds = await db.FulfillmentJobs.AsNoTracking()
-            .Where(job => ActiveStatuses.Contains(job.Status))
+            .Where(job => FulfillmentJobPolicy.ActiveStatuses.Contains(job.Status))
             .Select(job => job.MediaRequestId).Distinct().ToListAsync();
         var active = activeRequestIds.ToHashSet();
         LibraryOrganizationPreferencesDto? preferences = null;
@@ -748,7 +745,7 @@ public sealed class StorageOptimizationService(
             return new StorageOptimizationActionResultDto { Message = "This optimization is not retryable." };
 
         var anotherActive = await db.FulfillmentJobs.AnyAsync(item => item.Id != job.Id
-            && item.MediaRequestId == job.MediaRequestId && ActiveStatuses.Contains(item.Status));
+            && item.MediaRequestId == job.MediaRequestId && FulfillmentJobPolicy.ActiveStatuses.Contains(item.Status));
         if (anotherActive)
             return new StorageOptimizationActionResultDto
             {
@@ -796,7 +793,7 @@ public sealed class StorageOptimizationService(
     {
         var job = await db.FulfillmentJobs.Include(item => item.MediaRequest)
             .Where(item => item.MediaRequestId == requestId && item.StorageOptimizationPolicyJson != null
-                           && ActiveStatuses.Contains(item.Status))
+                           && FulfillmentJobPolicy.ActiveStatuses.Contains(item.Status))
             .OrderByDescending(item => item.Id)
             .FirstOrDefaultAsync();
         if (job is null) return false;
@@ -937,7 +934,7 @@ public sealed class StorageOptimizationService(
     private async Task<List<InventoryRow>> LoadInventoryAsync()
     {
         var activeRequestIds = await db.FulfillmentJobs.AsNoTracking()
-            .Where(job => ActiveStatuses.Contains(job.Status)).Select(job => job.MediaRequestId).Distinct().ToListAsync();
+            .Where(job => FulfillmentJobPolicy.ActiveStatuses.Contains(job.Status)).Select(job => job.MediaRequestId).Distinct().ToListAsync();
         var files = await db.ImportedFiles.AsNoTracking().Include(item => item.EpisodeCoverage)
             .Where(file => file.FileType == "video").ToListAsync();
         var jobIds = files.Select(file => file.FulfillmentJobId).Distinct().ToList();

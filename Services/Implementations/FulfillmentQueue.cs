@@ -49,18 +49,14 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
                 : MediaRef.FromTmdb(request.MediaId, request.MediaType);
 
         var active = await _db.FulfillmentJobs.AnyAsync(j =>
-            j.MediaRequestId == request.Id &&
-            (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
-             j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred));
+            j.MediaRequestId == request.Id && FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status));
         if (active) return false;
 
         // Other active jobs for the SAME title from a DIFFERENT request (two users, or one user
         // requesting different seasons at different times) — never let two jobs re-download the same
         // content concurrently. Subtracted from what this job would target, below.
         var otherActiveQuery = _db.FulfillmentJobs.Where(j =>
-            j.MediaRequestId != request.Id &&
-            (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
-             j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred));
+            j.MediaRequestId != request.Id && FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status));
         otherActiveQuery = reqEntity?.MediaIdentityId is int identityId
             ? otherActiveQuery.Where(j => j.MediaIdentityId == identityId)
             : otherActiveQuery.Where(j => j.MediaIdentityId == null && j.MediaId == request.MediaId

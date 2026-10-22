@@ -1570,6 +1570,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("LibraryMissCount")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("MediaId")
                         .HasColumnType("INTEGER");
 
