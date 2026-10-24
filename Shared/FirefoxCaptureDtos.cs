@@ -111,6 +111,10 @@ public sealed class FirefoxCaptureAdminStatusDto
 {
     public bool Enabled { get; set; }
     public bool CatalogEnabled { get; set; }
+    /// <summary>Whether fulfillment searches read captured releases from the catalog.</summary>
+    public bool CatalogSearchEnabled { get; set; }
+    /// <summary>Set when captures are stored but no search will use them, so the admin can see the gap.</summary>
+    public string? SearchWarning { get; set; }
     public int IndexerId { get; set; }
     public string IndexerName { get; set; } = string.Empty;
     public string CurrentExtensionVersion { get; set; } = string.Empty;

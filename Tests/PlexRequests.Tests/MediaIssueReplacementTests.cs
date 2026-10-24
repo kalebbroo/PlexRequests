@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.Data.Sqlite;
@@ -515,6 +516,121 @@ public sealed class MediaIssueReplacementTests
         var listed = Assert.Single(await service.GetIssuesAsync());
         Assert.True(listed.CanApproveReplacement);
         Assert.Null(listed.ReplacementBlockedReason);
+    }
+
+    [Fact]
+    public async Task Plex_only_title_is_adopted_and_replaced_from_its_verified_library_file()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        // The Halloweentown shape: a library movie with no request row and no import audit rows.
+        db.MediaIssues.Add(new MediaIssueEntity
+        {
+            MediaId = 77, MediaType = MediaType.Movie, Title = "Halloweentown", Reason = "Bad quality",
+            ReplacementRequested = true, Status = IssueStatus.Open
+        });
+        await db.SaveChangesAsync();
+        const string managedPath = "/library/Halloweentown (1998)/Halloweentown (1998) 1080p WEB-DL.mkv";
+        var optimizer = (OptimizerFake)(object)DispatchProxy.Create<IStorageOptimizationService, OptimizerFake>();
+        optimizer.Resolve = () => new PlexReplacementSource("plex:1:555", [managedPath],
+            ["Halloweentown (1998) 1080p WEB-DL"], 1080, [], null);
+        optimizer.Adopt = key =>
+        {
+            // Adoption creates the anchor request. The job row stands in for the one EnqueueReplacementAsync creates.
+            var anchor = new MediaRequestEntity
+            {
+                MediaId = 77, MediaType = MediaType.Movie, Title = "Halloweentown", Status = RequestStatus.Available,
+                LibraryInventoryKey = key
+            };
+            db.MediaRequests.Add(anchor);
+            db.SaveChanges();
+            db.FulfillmentJobs.Add(new FulfillmentJobEntity
+            {
+                Id = 42, MediaRequestId = anchor.Id, MediaId = 77, MediaType = MediaType.Movie,
+                Title = "Halloweentown", Status = FulfillmentStatus.Queued
+            });
+            db.SaveChanges();
+            return new StorageOptimizationAdoptionResultDto { Success = true, RequestId = anchor.Id, Message = "connected" };
+        };
+        var queue = new CapturingQueue { ReplacementJobId = 42 };
+        var service = new MediaIssueService(db, new TestAuthProvider(userId: 1, admin: true), queue,
+            new FixedQualityProfiles(), new ReleaseBlocklistService(db, NullLogger<ReleaseBlocklistService>.Instance),
+            storageOptimization: (IStorageOptimizationService)(object)optimizer);
+
+        var listed = Assert.Single(await service.GetIssuesAsync());
+        Assert.True(listed.CanApproveReplacement);
+        Assert.Null(listed.ReplacementBlockedReason);
+
+        var approved = await service.RequestRedownloadAsync(listed.Id);
+
+        Assert.True(approved.Success);
+        Assert.True(approved.ReplacementQueued);
+        Assert.Equal(new[] { managedPath }, queue.ReplacePaths);
+        var anchor = await db.MediaRequests.AsNoTracking().SingleAsync();
+        Assert.Equal("plex:1:555", anchor.LibraryInventoryKey);
+        Assert.Equal(42, (await db.MediaIssues.SingleAsync()).ReplacementJobId);
+        // The file has no source identity, so its release name keeps the next search off the same copy.
+        var blocked = await db.ReleaseBlocklist.SingleAsync();
+        Assert.Equal("Halloweentown (1998) 1080p WEB-DL", blocked.ReleaseName);
+        Assert.Equal(anchor.Id, blocked.MediaRequestId);
+    }
+
+    [Fact]
+    public async Task Plex_only_title_with_no_usable_library_file_is_refused_before_anything_is_adopted()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.MediaIssues.Add(new MediaIssueEntity
+        {
+            MediaId = 78, MediaType = MediaType.Movie, Title = "D.N.Angel", Reason = "Wrong episode",
+            ReplacementRequested = true, Status = IssueStatus.Open
+        });
+        await db.SaveChangesAsync();
+        var optimizer = (OptimizerFake)(object)DispatchProxy.Create<IStorageOptimizationService, OptimizerFake>();
+        optimizer.Resolve = () => new PlexReplacementSource(null, [], [], 0, [],
+            "Plex has no library file for this title, so there is nothing to replace.");
+        optimizer.Adopt = _ => throw new InvalidOperationException("A refused approval must not adopt the title.");
+        var queue = new CapturingQueue { ReplacementJobId = 42 };
+        var service = new MediaIssueService(db, new TestAuthProvider(userId: 1, admin: true), queue,
+            new FixedQualityProfiles(), new ReleaseBlocklistService(db, NullLogger<ReleaseBlocklistService>.Instance),
+            storageOptimization: (IStorageOptimizationService)(object)optimizer);
+
+        var listed = Assert.Single(await service.GetIssuesAsync());
+        Assert.False(listed.CanApproveReplacement);
+        Assert.NotNull(listed.ReplacementBlockedReason);
+        Assert.Contains("nothing to replace", listed.ReplacementBlockedReason);
+
+        var approved = await service.RequestRedownloadAsync(listed.Id);
+        Assert.False(approved.Success);
+        Assert.Equal(listed.ReplacementBlockedReason, approved.ErrorMessage);
+        Assert.Null(queue.MediaIssueId);
+        Assert.Empty(await db.MediaRequests.ToListAsync());
+    }
+
+    // Only the two optimizer calls the replacement path makes. Any other member fails loudly.
+    public class OptimizerFake : DispatchProxy
+    {
+        public Func<PlexReplacementSource>? Resolve { get; set; }
+        public Func<string, StorageOptimizationAdoptionResultDto>? Adopt { get; set; }
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            switch (targetMethod?.Name)
+            {
+                case nameof(IStorageOptimizationService.ResolvePlexReplacementSourceAsync):
+                    return Task.FromResult(Resolve!());
+                case nameof(IStorageOptimizationService.AdoptPlexTitleAsync):
+                    return Task.FromResult(Adopt!((string)args![0]!));
+                default:
+                    throw new NotSupportedException(targetMethod?.Name);
+            }
+        }
     }
 
     private sealed class TestAuthProvider(int userId, bool admin) : AuthenticationStateProvider

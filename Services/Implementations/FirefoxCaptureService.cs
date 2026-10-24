@@ -7,6 +7,7 @@ using PlexRequestsHosted.Infrastructure.Capture;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Infrastructure.Entities;
 using PlexRequestsHosted.Services.Abstractions;
+using PlexRequestsHosted.Services.Jobs;
 using PlexRequestsHosted.Shared.DTOs;
 
 namespace PlexRequestsHosted.Services.Implementations;
@@ -201,6 +202,10 @@ public sealed class FirefoxCaptureService(
             Items = items
         }, cancellationToken);
 
+        // New releases can satisfy an issue replacement that is waiting out its backoff, so wake those now.
+        if (result.ReleasesInserted > 0)
+            await ReplacementWake.WakeDeferredAsync(db, now, cancellationToken);
+
         device.LastSeenAt = now;
         device.LastCaptureAt = now;
         device.LastParserVersion = batch.ParserVersion;
@@ -277,10 +282,20 @@ public sealed class FirefoxCaptureService(
             .Where(x => x.IndexerId == indexerId)
             .OrderByDescending(x => x.CreatedAt)
             .ToListAsync(cancellationToken);
+        // Captures are stored in the catalog, but fulfillment searches read it only when catalog search is on.
+        // Without this warning a device can capture steadily while every search ignores what it finds.
+        var catalogSearch = catalogOptions.Value.Enabled && (catalogOptions.Value.UseForSearch
+            || await db.DownloadPreferences.AsNoTracking().Select(p => p.UseCatalogForSearch)
+                .FirstOrDefaultAsync(cancellationToken));
+        var capturing = devices.Any(x => x.ItemsReceived > 0);
         return new FirefoxCaptureAdminStatusDto
         {
             Enabled = captureOptions.Value.Enabled,
             CatalogEnabled = catalogOptions.Value.Enabled,
+            CatalogSearchEnabled = catalogSearch,
+            SearchWarning = capturing && !catalogSearch
+                ? "Captured releases are being stored, but fulfillment searches will not use them until catalog search is turned on."
+                : null,
             IndexerId = indexer.Id,
             IndexerName = indexer.Name,
             CurrentExtensionVersion = extensionInfo.CurrentVersion,

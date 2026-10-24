@@ -36,7 +36,8 @@ public class MediaIssueService(
     IReleaseBlocklistService blocklist,
     IUserAccessService? userAccess = null,
     INotificationService? notifications = null,
-    ILogger<MediaIssueService>? logger = null) : IMediaIssueService
+    ILogger<MediaIssueService>? logger = null,
+    IStorageOptimizationService? storageOptimization = null) : IMediaIssueService
 {
     private static readonly HashSet<string> Reasons = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -215,11 +216,15 @@ public class MediaIssueService(
         return await QueueReplacementCoreAsync(issue, user.Identity?.Name ?? "Admin");
     }
 
-    /// <summary>The verified inputs for one replacement approval, or the reason approval cannot run.</summary>
-    private sealed record ReplacementPlan(MediaRequestEntity? Request, List<ImportedFileEntity> OldFiles,
-        List<string> ReplacePaths, string? BlockedReason)
+    /// <summary>
+    /// The verified inputs for one replacement approval, or the reason approval cannot run. A title with no request yet
+    /// carries <see cref="InventoryKey"/> instead, and approval adopts it into the library first.
+    /// </summary>
+    private sealed record ReplacementPlan(MediaRequestEntity? Request, string? InventoryKey,
+        List<ImportedFileEntity> OldFiles, List<string> ReplacePaths, List<string> PlexReleaseNames,
+        int CurrentHeight, List<(int Season, int Episode)> Episodes, string? BlockedReason)
     {
-        public static ReplacementPlan Blocked(string reason) => new(null, [], [], reason);
+        public static ReplacementPlan Blocked(string reason) => new(null, null, [], [], [], 0, [], reason);
     }
 
     /// <summary>
@@ -245,14 +250,10 @@ public class MediaIssueService(
         var current = issue.ImportedFileId is int importedFileId
             ? candidates.FirstOrDefault(x => x.File.Id == importedFileId) ?? candidates.FirstOrDefault()
             : candidates.FirstOrDefault();
-        if (current is null)
-            return ReplacementPlan.Blocked(isTv
-                ? "The existing episode has no import audit record, so Plex Requests cannot safely identify and replace its file."
-                : "The existing title has no import audit record, so Plex Requests cannot safely identify and replace its file.");
+        if (current is null) return await PlexLibraryPlanAsync(issue, isTv);
 
-        var active = await db.FulfillmentJobs.AsNoTracking().AnyAsync(j => j.MediaRequestId == current.Request.Id &&
-            FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status));
-        if (active) return ReplacementPlan.Blocked("Another download or replacement for this request is already active.");
+        var busy = await BlockingJobReasonAsync(current.Request.Id);
+        if (busy is not null) return ReplacementPlan.Blocked(busy);
 
         var requestJobIds = await db.FulfillmentJobs.AsNoTracking()
             .Where(j => j.MediaRequestId == current.Request.Id).Select(j => j.Id).ToListAsync();
@@ -278,14 +279,85 @@ public class MediaIssueService(
                 string.IsNullOrWhiteSpace(f.InfoHash ?? f.TransferId) && string.IsNullOrWhiteSpace(f.ReleaseName)))
             return ReplacementPlan.Blocked("The bad release has no source identity, so it cannot be safely excluded from the replacement search.");
 
-        return new ReplacementPlan(current.Request, oldFiles, replacePaths, null);
+        var currentHeight = oldFiles.Where(f => f.FileType == "video").Select(f => f.ResolutionHeight).DefaultIfEmpty(0).Max();
+        var episodes = new List<(int Season, int Episode)>();
+        if (isTv)
+        {
+            episodes.AddRange(oldFiles.Where(f => f.FileType == "video")
+                .SelectMany(f => f.EpisodeCoverage.Count > 0
+                    ? f.EpisodeCoverage.Select(c => (c.SeasonNumber, c.EpisodeNumber))
+                    : f.SeasonNumber is int season && f.EpisodeNumber is int episode
+                        ? [(season, episode)]
+                        : Array.Empty<(int, int)>())
+                .Distinct().OrderBy(x => x.Item1).ThenBy(x => x.Item2));
+            if (episodes.Count == 0)
+                episodes.Add((issue.SeasonNumber!.Value, issue.EpisodeNumber!.Value));
+        }
+        return new ReplacementPlan(current.Request, null, oldFiles, replacePaths, [], currentHeight, episodes, null);
+    }
+
+    /// <summary>The active job that would block a new replacement for this request, described for the administrator.</summary>
+    private async Task<string?> BlockingJobReasonAsync(int mediaRequestId)
+    {
+        var blocker = await db.FulfillmentJobs.AsNoTracking()
+            .Where(j => j.MediaRequestId == mediaRequestId && FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status))
+            .Select(j => new { j.Id, j.Status, j.NextRetryAt })
+            .FirstOrDefaultAsync();
+        if (blocker is null) return null;
+        var next = blocker.NextRetryAt is DateTime retry ? $", next search {retry.ToLocalTime():g}" : string.Empty;
+        return $"Another download or replacement for this request is already active (job #{blocker.Id}, {blocker.Status}{next}).";
+    }
+
+    /// <summary>
+    /// The fallback when there is no import audit row: the title's verified file in the Plex library. Titles that this
+    /// app never downloaded, or imported before the audit table existed, have only that file to go on.
+    /// </summary>
+    private async Task<ReplacementPlan> PlexLibraryPlanAsync(MediaIssueEntity issue, bool isTv)
+    {
+        var noAudit = isTv
+            ? "The existing episode has no import audit record, so Plex Requests cannot safely identify and replace its file."
+            : "The existing title has no import audit record, so Plex Requests cannot safely identify and replace its file.";
+        if (storageOptimization is null) return ReplacementPlan.Blocked(noAudit);
+
+        var source = await storageOptimization.ResolvePlexReplacementSourceAsync(
+            issue.MediaId, issue.MediaType, issue.SeasonNumber, issue.EpisodeNumber);
+        if (source.BlockedReason is not null)
+            return ReplacementPlan.Blocked($"No import record, and the Plex library has no usable file for it: {source.BlockedReason}");
+
+        // A title that already has a request keeps it. Otherwise the request is adopted from the library at approval.
+        var request = await db.MediaRequests.AsNoTracking()
+            .Where(r => r.MediaId == issue.MediaId && r.MediaType == issue.MediaType)
+            .OrderByDescending(r => r.Id).FirstOrDefaultAsync();
+        if (request is not null)
+        {
+            var busy = await BlockingJobReasonAsync(request.Id);
+            if (busy is not null) return ReplacementPlan.Blocked(busy);
+        }
+
+        var episodes = source.Episodes.ToList();
+        if (isTv && episodes.Count == 0)
+            episodes.Add((issue.SeasonNumber!.Value, issue.EpisodeNumber!.Value));
+        return new ReplacementPlan(request, request is null ? source.InventoryKey : null, [],
+            source.ManagedPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList(), source.ReleaseNames.ToList(),
+            source.ResolutionHeight, episodes, null);
     }
 
     private async Task<MediaIssueResultDto> QueueReplacementCoreAsync(MediaIssueEntity issue, string approvedBy)
     {
         var plan = await PreflightReplacementAsync(issue);
-        if (plan.Request is null) return Failed(plan.BlockedReason ?? "The replacement could not be prepared.");
-        var isTv = issue.MediaType is MediaType.TvShow or MediaType.Anime;
+        if (plan.BlockedReason is not null) return Failed(plan.BlockedReason);
+
+        // A Plex-only title has no request yet. Adopt it with the same anchor the storage optimizer creates, so the
+        // replacement job has a request to attach to.
+        var target = plan.Request;
+        if (target is null)
+        {
+            var adoption = await storageOptimization!.AdoptPlexTitleAsync(plan.InventoryKey!);
+            if (!adoption.Success || adoption.RequestId <= 0)
+                return Failed(adoption.Message ?? "Plex Requests could not connect this title to the library.");
+            target = await db.MediaRequests.AsNoTracking().FirstOrDefaultAsync(r => r.Id == adoption.RequestId);
+            if (target is null) return Failed("The library record for this title could not be loaded.");
+        }
         var oldFiles = plan.OldFiles;
         var replacePaths = plan.ReplacePaths;
 
@@ -307,32 +379,31 @@ public class MediaIssueService(
             });
         }
 
-        var profileId = plan.Request.QualityProfileId ?? await qualityProfiles.ResolveProfileIdAsync(
+        var profileId = target.QualityProfileId ?? await qualityProfiles.ResolveProfileIdAsync(
             issue.MediaType, issue.MediaId, genres: null, requesterChoiceId: null,
-            userId: plan.Request.RequestedByUserId);
+            userId: target.RequestedByUserId);
         var preferred = await qualityProfiles.GetCutoffQualityAsync(profileId);
-        var currentHeight = oldFiles.Where(f => f.FileType == "video").Select(f => f.ResolutionHeight).DefaultIfEmpty(0).Max();
+        var currentHeight = plan.CurrentHeight;
         var existing = QualityHelper.FromHeight(currentHeight);
         var floor = (Quality)Math.Max((int)preferred, (int)existing);
         if (floor == Quality.Any) floor = Quality.HD;
 
-        var request = ToRequestDto(plan.Request);
+        var request = ToRequestDto(target);
         request.QualityProfileId = profileId;
-        var episodes = new List<(int season, int episode)>();
-        if (isTv)
-        {
-            episodes.AddRange(oldFiles.Where(f => f.FileType == "video")
-                .SelectMany(f => f.EpisodeCoverage.Count > 0
-                    ? f.EpisodeCoverage.Select(c => (c.SeasonNumber, c.EpisodeNumber))
-                    : f.SeasonNumber is int season && f.EpisodeNumber is int episode
-                        ? [(season, episode)]
-                        : Array.Empty<(int, int)>())
-                .Distinct().OrderBy(x => x.Item1).ThenBy(x => x.Item2));
-            if (episodes.Count == 0)
-                episodes.Add((issue.SeasonNumber!.Value, issue.EpisodeNumber!.Value));
-        }
-        var jobId = await fulfillment.EnqueueReplacementAsync(request, floor, replacePaths, episodes, issue.Id);
+        var jobId = await fulfillment.EnqueueReplacementAsync(request, floor, replacePaths, plan.Episodes, issue.Id);
         if (jobId is null) return Failed("Another download or replacement started before this one could be queued.");
+
+        // A Plex-only file has no source identity. Its release name is the only handle the next search has for not
+        // grabbing the same copy again, so block it on the new job. A name the blocklist cannot use is ignored.
+        foreach (var releaseName in plan.PlexReleaseNames)
+            await blocklist.BlockAsync(jobId.Value, new BlocklistRequestDto
+            {
+                ReleaseName = releaseName,
+                Reason = BlocklistReason.WrongContent,
+                Detail = $"Excluded by media issue #{issue.Id}: {issue.Reason}",
+                Season = issue.SeasonNumber,
+                Episode = issue.EpisodeNumber
+            });
 
         issue.ReplacementRequested = true;
         issue.ReplacementJobId = jobId;

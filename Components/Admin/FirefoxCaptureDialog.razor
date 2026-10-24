@@ -29,6 +29,10 @@
             }
             else
             {
+                @if (_status.SearchWarning is not null)
+                {
+                    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-3">@_status.SearchWarning</MudAlert>
+                }
                 <MudText Typo="Typo.body2" Color="Color.Tertiary" Class="mb-3">
                     Browse @_status.IndexerName listing pages normally. Firefox queues visible releases and resolves
                     their magnets through the browser session at a controlled rate; your cookies and challenge session
