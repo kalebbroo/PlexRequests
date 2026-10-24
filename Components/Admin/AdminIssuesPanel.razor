@@ -97,16 +97,22 @@ else
 
                 @if (issue.Status == IssueStatus.Open)
                 {
+                    var busy = _busy.Contains(issue.Id);
                     <div class="issue-actions">
                         <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
-                                   StartIcon="@Icons.Material.Filled.FindReplace" OnClick="() => Redownload(issue)">
+                                   StartIcon="@Icons.Material.Filled.FindReplace" Disabled="@(busy || !issue.CanApproveReplacement)"
+                                   OnClick="() => Redownload(issue)">
                             @(issue.ReplacementRequested ? "Approve replacement" : "Replace file")
                         </MudButton>
                         <MudButton Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined"
-                                   StartIcon="@Icons.Material.Filled.Check" OnClick="() => Resolve(issue)">Mark resolved</MudButton>
+                                   StartIcon="@Icons.Material.Filled.Check" Disabled="@busy" OnClick="() => Resolve(issue)">Mark resolved</MudButton>
                         <MudButton Size="Size.Small" Color="Color.Default" Variant="Variant.Text"
-                                   OnClick="() => Dismiss(issue)">Dismiss report</MudButton>
+                                   Disabled="@busy" OnClick="() => Dismiss(issue)">Dismiss report</MudButton>
                     </div>
+                    @if (!issue.CanApproveReplacement && !string.IsNullOrWhiteSpace(issue.ReplacementBlockedReason))
+                    {
+                        <MudText Typo="Typo.body2" Class="text-secondary">@issue.ReplacementBlockedReason</MudText>
+                    }
                 }
             </article>
         }
@@ -117,6 +123,7 @@ else
     private bool _loading = true;
     private bool _openOnly = true;
     private List<MediaIssueDto> _issues = new();
+    private readonly HashSet<int> _busy = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -133,25 +140,35 @@ else
 
     private async Task OnOpenOnlyChanged(bool v) { _openOnly = v; await Load(); }
 
-    private async Task Redownload(MediaIssueDto i)
+    private Task Redownload(MediaIssueDto i) => RunAsync(i.Id, async () =>
     {
         var result = await IssueService.RequestRedownloadAsync(i.Id);
         if (result.Success && result.ReplacementQueued)
-        {
             await Toast.ShowSuccessAsync($"Safe replacement queued for {i.Title}.");
-            await Load();
-        }
-        else await Toast.ShowErrorAsync(result.ErrorMessage ?? "Failed to queue replacement.");
-    }
+        else
+            await Toast.ShowErrorAsync(result.ErrorMessage ?? "Failed to queue replacement.");
+    });
 
-    private async Task Resolve(MediaIssueDto i)
+    private Task Resolve(MediaIssueDto i) => RunAsync(i.Id, async () =>
     {
-        if (await IssueService.ResolveIssueAsync(i.Id)) { await Toast.ShowInfoAsync("Marked resolved."); await Load(); }
-    }
+        if (await IssueService.ResolveIssueAsync(i.Id)) await Toast.ShowInfoAsync("Marked resolved.");
+    });
 
-    private async Task Dismiss(MediaIssueDto i)
+    private Task Dismiss(MediaIssueDto i) => RunAsync(i.Id, async () =>
     {
-        if (await IssueService.DismissIssueAsync(i.Id)) { await Toast.ShowInfoAsync("Dismissed."); await Load(); }
+        if (await IssueService.DismissIssueAsync(i.Id)) await Toast.ShowInfoAsync("Dismissed.");
+    });
+
+    // Disables the card while in flight so a double click cannot queue the same replacement twice. The list
+    // reloads after every outcome, including a refused approval, so the card shows the server's current state
+    // instead of the button it was rendered with.
+    private async Task RunAsync(int issueId, Func<Task> action)
+    {
+        if (!_busy.Add(issueId)) return;
+        StateHasChanged();
+        try { await action(); }
+        finally { _busy.Remove(issueId); }
+        await Load();
     }
 
     private static string StatusText(MediaIssueDto issue) => issue.Status == IssueStatus.ReplacementQueued

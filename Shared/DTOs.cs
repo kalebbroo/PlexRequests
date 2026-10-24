@@ -380,6 +380,11 @@ public class MediaIssueDto
     public int ReplacementAttempts { get; set; }
     public DateTime? ReplacementNextRetryAt { get; set; }
     public string? ReplacementLastError { get; set; }
+    /// <summary>Administrator lists only: whether approval would succeed right now. Computed by the same
+    /// preflight the approval runs, so the button is never offered when it would fail.</summary>
+    public bool CanApproveReplacement { get; set; }
+    /// <summary>Administrator lists only: why approval is unavailable, shown in place of a button that always fails.</summary>
+    public string? ReplacementBlockedReason { get; set; }
     public IssueStatus Status { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ResolvedAt { get; set; }

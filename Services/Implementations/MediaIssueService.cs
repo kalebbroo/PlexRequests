@@ -139,9 +139,19 @@ public class MediaIssueService(
             .Distinct().ToList();
         var files = await db.ImportedFiles.AsNoTracking().Where(f => fileIds.Contains(f.Id))
             .ToDictionaryAsync(f => f.Id);
-        return issues.Select(i => ToDto(i,
+        var dtos = issues.Select(i => ToDto(i,
             i.ReplacementJobId is int id && jobs.TryGetValue(id, out var job) ? job : null,
             i.ImportedFileId is int fileId && files.TryGetValue(fileId, out var file) ? file : null)).ToList();
+
+        // Open reports are few, so each one runs the same preflight its approval runs rather than a batched copy.
+        for (var index = 0; index < issues.Count; index++)
+        {
+            if (issues[index].Status != IssueStatus.Open) continue;
+            var blockedReason = (await PreflightReplacementAsync(issues[index])).BlockedReason;
+            dtos[index].CanApproveReplacement = blockedReason is null;
+            dtos[index].ReplacementBlockedReason = blockedReason;
+        }
+        return dtos;
     }
 
     public async Task<List<MediaIssueDto>> GetMyIssuesAsync(int take = 100)
@@ -205,11 +215,22 @@ public class MediaIssueService(
         return await QueueReplacementCoreAsync(issue, user.Identity?.Name ?? "Admin");
     }
 
-    private async Task<MediaIssueResultDto> QueueReplacementCoreAsync(MediaIssueEntity issue, string approvedBy)
+    /// <summary>The verified inputs for one replacement approval, or the reason approval cannot run.</summary>
+    private sealed record ReplacementPlan(MediaRequestEntity? Request, List<ImportedFileEntity> OldFiles,
+        List<string> ReplacePaths, string? BlockedReason)
+    {
+        public static ReplacementPlan Blocked(string reason) => new(null, [], [], reason);
+    }
+
+    /// <summary>
+    /// Every check an approval must pass, with no writes. The admin listing and <see cref="QueueReplacementCoreAsync"/>
+    /// both run it, so a card never offers an approval that the service would refuse.
+    /// </summary>
+    private async Task<ReplacementPlan> PreflightReplacementAsync(MediaIssueEntity issue)
     {
         var isTv = issue.MediaType is MediaType.TvShow or MediaType.Anime;
         if (isTv && (issue.SeasonNumber is null || issue.EpisodeNumber is null))
-            return Failed("Choose an exact episode before approving a TV replacement.");
+            return ReplacementPlan.Blocked("Choose an exact episode before approving a TV replacement.");
 
         var candidates = await (from file in db.ImportedFiles.AsNoTracking()
             join job in db.FulfillmentJobs.AsNoTracking() on file.FulfillmentJobId equals job.Id
@@ -225,14 +246,13 @@ public class MediaIssueService(
             ? candidates.FirstOrDefault(x => x.File.Id == importedFileId) ?? candidates.FirstOrDefault()
             : candidates.FirstOrDefault();
         if (current is null)
-            return Failed(isTv
+            return ReplacementPlan.Blocked(isTv
                 ? "The existing episode has no import audit record, so Plex Requests cannot safely identify and replace its file."
                 : "The existing title has no import audit record, so Plex Requests cannot safely identify and replace its file.");
 
         var active = await db.FulfillmentJobs.AsNoTracking().AnyAsync(j => j.MediaRequestId == current.Request.Id &&
-            (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
-             j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred));
-        if (active) return Failed("Another download or replacement for this request is already active.");
+            FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status));
+        if (active) return ReplacementPlan.Blocked("Another download or replacement for this request is already active.");
 
         var requestJobIds = await db.FulfillmentJobs.AsNoTracking()
             .Where(j => j.MediaRequestId == current.Request.Id).Select(j => j.Id).ToListAsync();
@@ -251,15 +271,29 @@ public class MediaIssueService(
         var replacePaths = oldFiles.Select(f => f.DestinationPath).Where(p => !string.IsNullOrWhiteSpace(p))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (!oldFiles.Any(f => f.FileType == "video") || replacePaths.Count == 0)
-            return Failed("The current library file path could not be verified, so no replacement was queued.");
+            return ReplacementPlan.Blocked("The current library file path could not be verified, so no replacement was queued.");
+
+        // Checked before anything is blocklisted, so a refused approval leaves no side effects behind.
+        if (oldFiles.Where(f => f.FileType == "video").Any(f =>
+                string.IsNullOrWhiteSpace(f.InfoHash ?? f.TransferId) && string.IsNullOrWhiteSpace(f.ReleaseName)))
+            return ReplacementPlan.Blocked("The bad release has no source identity, so it cannot be safely excluded from the replacement search.");
+
+        return new ReplacementPlan(current.Request, oldFiles, replacePaths, null);
+    }
+
+    private async Task<MediaIssueResultDto> QueueReplacementCoreAsync(MediaIssueEntity issue, string approvedBy)
+    {
+        var plan = await PreflightReplacementAsync(issue);
+        if (plan.Request is null) return Failed(plan.BlockedReason ?? "The replacement could not be prepared.");
+        var isTv = issue.MediaType is MediaType.TvShow or MediaType.Anime;
+        var oldFiles = plan.OldFiles;
+        var replacePaths = plan.ReplacePaths;
 
         // Exclude every known source behind the bad copy before the new job is created. Otherwise the ranker
         // can select the exact same mislabeled/corrupt release on every self-healing retry.
         foreach (var file in oldFiles.Where(f => f.FileType == "video"))
         {
             var sourceId = file.InfoHash ?? file.TransferId;
-            if (string.IsNullOrWhiteSpace(sourceId) && string.IsNullOrWhiteSpace(file.ReleaseName))
-                return Failed("The bad release has no source identity, so it cannot be safely excluded from the replacement search.");
             await blocklist.BlockAsync(file.FulfillmentJobId, new BlocklistRequestDto
             {
                 Protocol = file.Protocol,
@@ -273,16 +307,16 @@ public class MediaIssueService(
             });
         }
 
-        var profileId = current.Request.QualityProfileId ?? await qualityProfiles.ResolveProfileIdAsync(
+        var profileId = plan.Request.QualityProfileId ?? await qualityProfiles.ResolveProfileIdAsync(
             issue.MediaType, issue.MediaId, genres: null, requesterChoiceId: null,
-            userId: current.Request.RequestedByUserId);
+            userId: plan.Request.RequestedByUserId);
         var preferred = await qualityProfiles.GetCutoffQualityAsync(profileId);
         var currentHeight = oldFiles.Where(f => f.FileType == "video").Select(f => f.ResolutionHeight).DefaultIfEmpty(0).Max();
         var existing = QualityHelper.FromHeight(currentHeight);
         var floor = (Quality)Math.Max((int)preferred, (int)existing);
         if (floor == Quality.Any) floor = Quality.HD;
 
-        var request = ToRequestDto(current.Request);
+        var request = ToRequestDto(plan.Request);
         request.QualityProfileId = profileId;
         var episodes = new List<(int season, int episode)>();
         if (isTv)

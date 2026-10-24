@@ -382,6 +382,141 @@ public sealed class MediaIssueReplacementTests
         Assert.Null(job.NextRetryAt);
     }
 
+    [Fact]
+    public async Task Open_report_the_preflight_refuses_shows_why_and_approval_is_refused_the_same_way()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        // A movie with no import audit rows: there is no file the replacement could safely identify.
+        db.MediaRequests.Add(new MediaRequestEntity
+        {
+            MediaId = 603, MediaType = MediaType.Movie, Title = "The Matrix", Status = RequestStatus.Available
+        });
+        db.MediaIssues.Add(new MediaIssueEntity
+        {
+            MediaId = 603, MediaType = MediaType.Movie, Title = "The Matrix", Reason = "Bad quality",
+            ReplacementRequested = true, Status = IssueStatus.Open
+        });
+        await db.SaveChangesAsync();
+        var queue = new CapturingQueue { ReplacementJobId = 42 };
+        var service = new MediaIssueService(db, new TestAuthProvider(userId: 1, admin: true), queue,
+            new FixedQualityProfiles(), new ReleaseBlocklistService(db, NullLogger<ReleaseBlocklistService>.Instance));
+
+        var listed = Assert.Single(await service.GetIssuesAsync());
+        Assert.False(listed.CanApproveReplacement);
+        Assert.NotNull(listed.ReplacementBlockedReason);
+        Assert.Contains("no import audit record", listed.ReplacementBlockedReason);
+
+        var approved = await service.RequestRedownloadAsync(listed.Id);
+        Assert.False(approved.Success);
+        Assert.Equal(listed.ReplacementBlockedReason, approved.ErrorMessage);
+        Assert.Null(queue.MediaIssueId);
+        Assert.Empty(await db.ReleaseBlocklist.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Open_episode_report_is_blocked_while_another_job_for_its_request_is_active()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity
+        {
+            MediaId = 60625, MediaType = MediaType.TvShow, RequestScopeKind = RequestScopeKind.Series,
+            Title = "Rick and Morty", Status = RequestStatus.Available
+        };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var completed = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
+            RequestScopeKind = RequestScopeKind.Series, Title = request.Title, Status = FulfillmentStatus.Completed
+        };
+        // The series monitor is still searching for something else on the same request, so the one-active-job
+        // invariant blocks a replacement for this episode.
+        var monitor = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
+            RequestScopeKind = RequestScopeKind.Series, Title = request.Title, Status = FulfillmentStatus.Deferred
+        };
+        db.FulfillmentJobs.AddRange(completed, monitor);
+        await db.SaveChangesAsync();
+        const string hash = "0123456789abcdef0123456789abcdef01234567";
+        var file = new ImportedFileEntity
+        {
+            FulfillmentJobId = completed.Id, Protocol = AcquisitionProtocol.Torrent, TransferId = hash, InfoHash = hash,
+            SourcePath = "/downloads/e05.mkv", DestinationPath = "/library/Rick and Morty/Season 01/S01E05.mkv",
+            FileType = "video", SeasonNumber = 1, EpisodeNumber = 5, ReleaseName = "Rick.and.Morty.S01E05"
+        };
+        db.ImportedFiles.Add(file);
+        db.MediaIssues.Add(new MediaIssueEntity
+        {
+            MediaId = request.MediaId, MediaType = request.MediaType, Title = request.Title, Reason = "Wrong episode",
+            SeasonNumber = 1, EpisodeNumber = 5, ImportedFileId = null, ReplacementRequested = true,
+            Status = IssueStatus.Open
+        });
+        await db.SaveChangesAsync();
+        var queue = new CapturingQueue { ReplacementJobId = 42 };
+        var service = new MediaIssueService(db, new TestAuthProvider(userId: 1, admin: true), queue,
+            new FixedQualityProfiles(), new ReleaseBlocklistService(db, NullLogger<ReleaseBlocklistService>.Instance));
+
+        var listed = Assert.Single(await service.GetIssuesAsync());
+        Assert.False(listed.CanApproveReplacement);
+        Assert.NotNull(listed.ReplacementBlockedReason);
+        Assert.Contains("already active", listed.ReplacementBlockedReason);
+
+        var approved = await service.RequestRedownloadAsync(listed.Id);
+        Assert.False(approved.Success);
+        Assert.Null(queue.MediaIssueId);
+    }
+
+    [Fact]
+    public async Task Open_report_with_a_verified_copy_is_listed_as_approvable()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity
+        {
+            MediaId = 603, MediaType = MediaType.Movie, Title = "The Matrix", Status = RequestStatus.Available
+        };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var job = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
+            Title = request.Title, Status = FulfillmentStatus.Completed
+        };
+        db.FulfillmentJobs.Add(job);
+        await db.SaveChangesAsync();
+        const string hash = "0123456789abcdef0123456789abcdef01234567";
+        db.ImportedFiles.Add(new ImportedFileEntity
+        {
+            FulfillmentJobId = job.Id, Protocol = AcquisitionProtocol.Torrent, TransferId = hash, InfoHash = hash,
+            SourcePath = "/downloads/matrix.mkv", DestinationPath = "/library/The Matrix (1999).mkv",
+            FileType = "video", ReleaseName = "The.Matrix.1999.1080p"
+        });
+        db.MediaIssues.Add(new MediaIssueEntity
+        {
+            MediaId = request.MediaId, MediaType = request.MediaType, Title = request.Title, Reason = "Bad quality",
+            ReplacementRequested = true, Status = IssueStatus.Open
+        });
+        await db.SaveChangesAsync();
+        var service = new MediaIssueService(db, new TestAuthProvider(userId: 1, admin: true), new CapturingQueue(),
+            new FixedQualityProfiles(), new ReleaseBlocklistService(db, NullLogger<ReleaseBlocklistService>.Instance));
+
+        var listed = Assert.Single(await service.GetIssuesAsync());
+        Assert.True(listed.CanApproveReplacement);
+        Assert.Null(listed.ReplacementBlockedReason);
+    }
+
     private sealed class TestAuthProvider(int userId, bool admin) : AuthenticationStateProvider
     {
         public override Task<AuthenticationState> GetAuthenticationStateAsync()
