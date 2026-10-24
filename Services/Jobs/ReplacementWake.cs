@@ -16,9 +16,16 @@ public static class ReplacementWake
     public static async Task<int> WakeDeferredAsync(AppDbContext db, DateTime now, CancellationToken ct = default)
     {
         var cutoff = now - MinimumDeferral;
+        // Only issue replacements are woken. Storage-optimization jobs also carry IsReplacement, and they keep the
+        // ordinary schedule. The request and release-date guards are the ones MissingSearchJob applies, so a wake
+        // cannot start a search that the scheduled pass would skip.
         var due = await db.FulfillmentJobs
-            .Where(j => j.Status == FulfillmentStatus.Deferred && j.IsReplacement
-                        && (j.LastUpdatedAt == null || j.LastUpdatedAt < cutoff))
+            .Where(j => j.Status == FulfillmentStatus.Deferred && j.MediaIssueId != null
+                        && (j.LastUpdatedAt == null || j.LastUpdatedAt < cutoff)
+                        && j.MediaRequest != null
+                        && j.MediaRequest.Status != RequestStatus.Cancelled
+                        && j.MediaRequest.Status != RequestStatus.Rejected
+                        && (j.ReleaseDate == null || j.ReleaseDate <= now))
             .ToListAsync(ct);
         foreach (var job in due)
         {

@@ -2442,6 +2442,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Property<int?>("Season")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long?>("SizeBytes")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("SourceId")
                         .HasMaxLength(256)
                         .HasColumnType("TEXT");

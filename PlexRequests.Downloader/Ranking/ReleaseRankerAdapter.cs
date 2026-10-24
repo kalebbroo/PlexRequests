@@ -150,6 +150,7 @@ public class ReleaseRankerAdapter(
             .Where(h => h is not null)
             .Select(h => h!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase),
+        BlocklistedSizes = job.BlocklistedSizes.ToHashSet(),
         RelaxQualityFloor = relaxFloor
     };
 

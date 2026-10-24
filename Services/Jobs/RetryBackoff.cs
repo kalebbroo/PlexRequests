@@ -12,7 +12,8 @@ public static class RetryBackoff
     public const int EscalateAfterDeferrals = 6;
 
     private const double BaseMinutes = 15;
-    private const double MaxMinutes = 24 * 60;
+    /// <summary>Ceiling between searches for an ordinary deferred job, and for storage-optimization jobs.</summary>
+    public const double OrdinaryMaxMinutes = 24 * 60;
 
     /// <summary>
     /// Longest wait between searches for an issue replacement. The bad copy is still playable and an admin is
@@ -24,7 +25,7 @@ public static class RetryBackoff
     /// Next re-search time. If the title isn't out yet (release date in the future) it's checked ~daily;
     /// otherwise it's exponential — 15m, 30m, 1h, 2h, 4h, 8h, 16h — capped at 24h.
     /// </summary>
-    public static DateTime ComputeNextRetry(int deferCount, DateTime? releaseDate, DateTime now, double maxMinutes = MaxMinutes)
+    public static DateTime ComputeNextRetry(int deferCount, DateTime? releaseDate, DateTime now, double maxMinutes = OrdinaryMaxMinutes)
     {
         if (releaseDate is DateTime rd && rd.Date > now.Date)
             return now.AddHours(24);

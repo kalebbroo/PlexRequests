@@ -137,6 +137,9 @@ public sealed class RankingContext
     /// <summary>Info hashes already known to have failed for this request; never grab them again.</summary>
     public IReadOnlySet<string> BlocklistedHashes { get; init; } = new HashSet<string>();
 
+    /// <summary>Exact sizes of failed copies that have no source id, for this request; never grab the same bytes again.</summary>
+    public IReadOnlySet<long> BlocklistedSizes { get; init; } = new HashSet<long>();
+
     /// <summary>
     /// True once the quality floor has been held out for long enough and we should take the best available
     /// release instead. Decided by the caller from the job's empty-search count, not from raw attempts.

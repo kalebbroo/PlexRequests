@@ -12,13 +12,14 @@ using PlexRequestsHosted.Shared.Releases;
 namespace PlexRequestsHosted.Services.Implementations;
 
 /// <summary>
-/// A Plex library file found for a title that has no import audit row. <see cref="ManagedPaths"/> are the paths the
-/// downloader can delete, after Plex path mapping and existence checks. Empty when <see cref="BlockedReason"/> is set.
+/// The Plex library files that a replacement for a title with no import audit row would replace. <see cref="ManagedPaths"/>
+/// are the paths the downloader can delete, after Plex path mapping and existence checks. <see cref="FileSizes"/> are the
+/// exact inventoried sizes, which identify each copy for the blocklist. Empty when <see cref="BlockedReason"/> is set.
 /// </summary>
 public sealed record PlexReplacementSource(
     string? InventoryKey,
     IReadOnlyList<string> ManagedPaths,
-    IReadOnlyList<string> ReleaseNames,
+    IReadOnlyList<long> FileSizes,
     int ResolutionHeight,
     IReadOnlyList<(int Season, int Episode)> Episodes,
     string? BlockedReason);
@@ -471,40 +472,35 @@ public sealed class StorageOptimizationService(
         if (mapping is null) return Blocked("Plex has no mapped library item for this title.");
 
         var owner = mapping.RatingKey;
-        var files = await db.PlexLibraryFiles.AsNoTracking()
+        var sectionKey = await db.PlexLibraryFiles.AsNoTracking()
             .Where(file => file.MissedScans == 0
                            && (file.MediaType == MediaType.TvShow
                                ? (file.ShowRatingKey ?? file.RatingKey) == owner
                                : file.RatingKey == owner))
-            .ToListAsync();
-        if (isTv)
-            files = files.Where(file => file.SeasonNumber == seasonNumber
-                                        && (episodeNumber is null || file.EpisodeNumber == episodeNumber)).ToList();
-        files = files.GroupBy(file => file.FilePath, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.OrderByDescending(file => file.SizeBytes).First()).ToList();
+            .Select(file => file.SectionKey)
+            .FirstOrDefaultAsync();
+        if (sectionKey is null)
+            return Blocked("Plex has no library file for this title, so there is nothing to replace.");
+
+        // Verify the whole owner, exactly as adoption will. Checking only the episode here would approve a title that
+        // adoption then refuses because another episode's file is missing.
+        var inventoryKey = $"plex:{sectionKey}:{owner}";
+        var verified = await VerifyPlexOwnerAsync(sectionKey, owner, inventoryKey, preferences);
+        if (verified.Error is not null) return Blocked(verified.Error);
+
+        var files = verified.Files
+            .Where(file => !isTv || (file.SeasonNumber == seasonNumber
+                                     && (episodeNumber is null || file.EpisodeNumber == episodeNumber)))
+            .ToList();
         if (files.Count == 0)
             return Blocked(isTv
                 ? "Plex has no library file for this episode, so there is nothing to replace."
                 : "Plex has no library file for this title, so there is nothing to replace.");
 
-        // The same verification adoption performs: every file must map to a managed path and exist on disk.
-        if (!TryVerifyManagedFiles(files, preferences.PlexPathMappings, out var verifyError))
-            return Blocked(verifyError!);
-
-        var managedPaths = new List<string>();
-        foreach (var file in files)
-        {
-            if (!PlexLibraryPathMapping.TryMap(file.SectionKey, file.FilePath, preferences.PlexPathMappings, out var managedPath))
-                return Blocked($"Connect the Plex path for {file.SectionTitle} under Libraries & importing first.");
-            managedPaths.Add(managedPath);
-        }
-
-        var first = files[0];
-        var ownerRatingKey = first.MediaType == MediaType.TvShow ? first.ShowRatingKey ?? first.RatingKey : first.RatingKey;
         return new PlexReplacementSource(
-            InventoryKey: $"plex:{first.SectionKey}:{ownerRatingKey}",
-            ManagedPaths: managedPaths,
-            ReleaseNames: managedPaths.Select(path => Path.GetFileNameWithoutExtension(path)).ToList(),
+            InventoryKey: inventoryKey,
+            ManagedPaths: files.Select(file => verified.ManagedPaths[file.FilePath]).ToList(),
+            FileSizes: files.Select(file => file.SizeBytes).ToList(),
             ResolutionHeight: files.Max(file => file.ResolutionHeight),
             Episodes: files.Where(file => file.SeasonNumber is int && file.EpisodeNumber is int)
                 .Select(file => (file.SeasonNumber!.Value, file.EpisodeNumber!.Value)).Distinct().ToList(),
@@ -522,40 +518,10 @@ public sealed class StorageOptimizationService(
         var preferences = await libraryPreferences.GetAsync();
         if (!LibraryRouting.TryNormalizeAndValidate(preferences, out var settingsError))
             return AdoptionFailure(settingsError ?? "Library settings are invalid.");
-        var files = await db.PlexLibraryFiles.AsNoTracking()
-            .Where(file => file.MissedScans == 0 && file.SectionKey == sectionKey
-                           && (file.MediaType == MediaType.TvShow
-                               ? (file.ShowRatingKey ?? file.RatingKey) == ownerRatingKey
-                               : file.RatingKey == ownerRatingKey))
-            .ToListAsync();
-        files = files.GroupBy(file => file.FilePath, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.OrderByDescending(file => file.SizeBytes).First()).ToList();
-        if (files.Count == 0) return AdoptionFailure("Plex no longer reports this title.");
-        if (!TryVerifyManagedFiles(files, preferences.PlexPathMappings, out var verifyError))
-            return AdoptionFailure(verifyError!);
-
-        var first = files[0];
-        var overrideIdentity = await db.PlexLibraryIdentityOverrides.AsNoTracking()
-            .Where(item => item.InventoryKey == canonicalInventoryKey)
-            .Select(item => new { item.ExternalKey, item.MediaType })
-            .SingleOrDefaultAsync();
-        var identities = await db.PlexMappings.AsNoTracking()
-            .Where(mapping => mapping.MissedScans == 0 && mapping.RatingKey == ownerRatingKey)
-            .ToListAsync();
-        var identity = overrideIdentity is not null
-                       && CompatibleMediaType(first.MediaType, overrideIdentity.MediaType)
-                       && TryParseExternalKey(overrideIdentity.ExternalKey, out var overrideProvider,
-                           out var overrideExternalId, out var overrideTmdbId)
-            ? new AdoptionIdentity(overrideProvider, overrideExternalId, overrideTmdbId)
-            : identities.Where(mapping => CompatibleMediaType(first.MediaType, mapping.MediaType))
-            .Select(mapping => TryParseExternalKey(mapping.ExternalKey, out var provider, out var externalId,
-                    out var tmdbId)
-                ? new AdoptionIdentity(provider, externalId, tmdbId)
-                : null)
-            .Where(item => item is not null)
-            .OrderBy(item => IdentityPriority(item!.Provider)).FirstOrDefault();
-        if (identity is null)
-            return AdoptionFailure("Plex has not reported a supported TMDb, IMDb, or TVDB identity for this title.");
+        var owner = await VerifyPlexOwnerAsync(sectionKey, ownerRatingKey, canonicalInventoryKey, preferences);
+        if (owner.Error is not null) return AdoptionFailure(owner.Error);
+        var first = owner.Files[0];
+        var identity = owner.Identity!;
 
         var availableRequests = await db.MediaRequests.AsNoTracking()
             .Where(request => request.Status == RequestStatus.Available
@@ -644,9 +610,67 @@ public sealed class StorageOptimizationService(
         }
     }
 
-    private static bool TryVerifyManagedFiles(IReadOnlyList<PlexLibraryFileEntity> files,
-        IReadOnlyList<PlexPathMappingDto> mappings, out string? error)
+    /// <summary>
+    /// The verified library identity of one Plex owner: a movie, or a whole show. Adoption and the replacement preflight
+    /// both use it, so a title that one of them approves is never refused by the other.
+    /// </summary>
+    private async Task<PlexOwnerVerification> VerifyPlexOwnerAsync(string sectionKey, string ownerRatingKey,
+        string canonicalInventoryKey, LibraryOrganizationPreferencesDto preferences)
     {
+        var files = await db.PlexLibraryFiles.AsNoTracking()
+            .Where(file => file.MissedScans == 0 && file.SectionKey == sectionKey
+                           && (file.MediaType == MediaType.TvShow
+                               ? (file.ShowRatingKey ?? file.RatingKey) == ownerRatingKey
+                               : file.RatingKey == ownerRatingKey))
+            .ToListAsync();
+        files = files.GroupBy(file => file.FilePath, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(file => file.SizeBytes).First()).ToList();
+        if (files.Count == 0) return PlexOwnerVerification.Failed("Plex no longer reports this title.");
+        if (!TryVerifyManagedFiles(files, preferences.PlexPathMappings, out var managedPaths, out var verifyError))
+            return PlexOwnerVerification.Failed(verifyError!);
+
+        var first = files[0];
+        var overrideIdentity = await db.PlexLibraryIdentityOverrides.AsNoTracking()
+            .Where(item => item.InventoryKey == canonicalInventoryKey)
+            .Select(item => new { item.ExternalKey, item.MediaType })
+            .SingleOrDefaultAsync();
+        var identities = await db.PlexMappings.AsNoTracking()
+            .Where(mapping => mapping.MissedScans == 0 && mapping.RatingKey == ownerRatingKey)
+            .ToListAsync();
+        var identity = overrideIdentity is not null
+                       && CompatibleMediaType(first.MediaType, overrideIdentity.MediaType)
+                       && TryParseExternalKey(overrideIdentity.ExternalKey, out var overrideProvider,
+                           out var overrideExternalId, out var overrideTmdbId)
+            ? new AdoptionIdentity(overrideProvider, overrideExternalId, overrideTmdbId)
+            : identities.Where(mapping => CompatibleMediaType(first.MediaType, mapping.MediaType))
+            .Select(mapping => TryParseExternalKey(mapping.ExternalKey, out var provider, out var externalId,
+                    out var tmdbId)
+                ? new AdoptionIdentity(provider, externalId, tmdbId)
+                : null)
+            .Where(item => item is not null)
+            .OrderBy(item => IdentityPriority(item!.Provider)).FirstOrDefault();
+        if (identity is null)
+            return PlexOwnerVerification.Failed("Plex has not reported a supported TMDb, IMDb, or TVDB identity for this title.");
+
+        return new PlexOwnerVerification(files, managedPaths, identity, null);
+    }
+
+    private sealed record PlexOwnerVerification(IReadOnlyList<PlexLibraryFileEntity> Files,
+        IReadOnlyDictionary<string, string> ManagedPaths, AdoptionIdentity? Identity, string? Error)
+    {
+        public static PlexOwnerVerification Failed(string error) =>
+            new([], new Dictionary<string, string>(), null, error);
+    }
+
+    /// <summary>
+    /// Maps every file to its managed path and confirms it is present with the size Plex inventoried. On success,
+    /// <paramref name="managedPaths"/> holds the managed path for each Plex file path.
+    /// </summary>
+    private static bool TryVerifyManagedFiles(IReadOnlyList<PlexLibraryFileEntity> files,
+        IReadOnlyList<PlexPathMappingDto> mappings, out IReadOnlyDictionary<string, string> managedPaths, out string? error)
+    {
+        var mapped = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        managedPaths = mapped;
         foreach (var file in files)
         {
             if (!PlexLibraryPathMapping.TryMap(file.SectionKey, file.FilePath, mappings, out var managedPath))
@@ -674,6 +698,7 @@ public sealed class StorageOptimizationService(
                 error = "A mapped library file could not be verified. Check the storage mount and try again.";
                 return false;
             }
+            mapped[file.FilePath] = managedPath;
         }
         error = null;
         return true;
