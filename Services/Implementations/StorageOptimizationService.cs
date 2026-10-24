@@ -11,6 +11,18 @@ using PlexRequestsHosted.Shared.Releases;
 
 namespace PlexRequestsHosted.Services.Implementations;
 
+/// <summary>
+/// A Plex library file found for a title that has no import audit row. <see cref="ManagedPaths"/> are the paths the
+/// downloader can delete, after Plex path mapping and existence checks. Empty when <see cref="BlockedReason"/> is set.
+/// </summary>
+public sealed record PlexReplacementSource(
+    string? InventoryKey,
+    IReadOnlyList<string> ManagedPaths,
+    IReadOnlyList<string> ReleaseNames,
+    int ResolutionHeight,
+    IReadOnlyList<(int Season, int Episode)> Episodes,
+    string? BlockedReason);
+
 public interface IStorageOptimizationService
 {
     Task<List<StorageOptimizationTitleDto>> GetTitlesAsync();
@@ -18,6 +30,9 @@ public interface IStorageOptimizationService
     Task<StorageOptimizationActionResultDto> LinkPlexTitleIdentityAsync(PlexLibraryIdentityLinkRequestDto request);
     Task<StorageOptimizationActionResultDto> RemovePlexTitleIdentityLinkAsync(string inventoryKey);
     Task<StorageOptimizationAdoptionResultDto> AdoptPlexTitleAsync(string inventoryKey);
+    /// <summary>Read-only: finds the verified Plex library file a replacement would replace. Writes nothing.</summary>
+    Task<PlexReplacementSource> ResolvePlexReplacementSourceAsync(int tmdbId, MediaType mediaType, int? seasonNumber,
+        int? episodeNumber);
     Task<StorageOptimizationPreviewDto> PreviewAsync(StorageOptimizationRequestDto request);
     Task<StorageOptimizationQueueResultDto> QueueAsync(StorageOptimizationRequestDto request);
     Task<List<StorageOptimizationActivityDto>> GetActivityAsync(int take = 50);
@@ -433,6 +448,67 @@ public sealed class StorageOptimizationService(
             Success = true,
             Message = "Manual metadata identity removed. No request, job, or library file changed."
         };
+    }
+
+    public async Task<PlexReplacementSource> ResolvePlexReplacementSourceAsync(int tmdbId, MediaType mediaType,
+        int? seasonNumber, int? episodeNumber)
+    {
+        static PlexReplacementSource Blocked(string reason) => new(null, [], [], 0, [], reason);
+
+        if (tmdbId <= 0) return Blocked("The title has no TMDb identity, so Plex cannot be matched to it.");
+        if (libraryPreferences is null) return Blocked("Library settings are unavailable.");
+        var preferences = await libraryPreferences.GetAsync();
+        if (!LibraryRouting.TryNormalizeAndValidate(preferences, out var settingsError))
+            return Blocked(settingsError ?? "Library settings are invalid.");
+
+        var isTv = mediaType is MediaType.TvShow or MediaType.Anime;
+        var externalKey = $"tmdb:{tmdbId}";
+        var mapping = await db.PlexMappings.AsNoTracking()
+            .Where(item => item.MissedScans == 0 && item.ExternalKey == externalKey
+                           && (isTv ? item.MediaType != MediaType.Movie : item.MediaType == MediaType.Movie))
+            .OrderByDescending(item => item.LastSeenAt)
+            .FirstOrDefaultAsync();
+        if (mapping is null) return Blocked("Plex has no mapped library item for this title.");
+
+        var owner = mapping.RatingKey;
+        var files = await db.PlexLibraryFiles.AsNoTracking()
+            .Where(file => file.MissedScans == 0
+                           && (file.MediaType == MediaType.TvShow
+                               ? (file.ShowRatingKey ?? file.RatingKey) == owner
+                               : file.RatingKey == owner))
+            .ToListAsync();
+        if (isTv)
+            files = files.Where(file => file.SeasonNumber == seasonNumber
+                                        && (episodeNumber is null || file.EpisodeNumber == episodeNumber)).ToList();
+        files = files.GroupBy(file => file.FilePath, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(file => file.SizeBytes).First()).ToList();
+        if (files.Count == 0)
+            return Blocked(isTv
+                ? "Plex has no library file for this episode, so there is nothing to replace."
+                : "Plex has no library file for this title, so there is nothing to replace.");
+
+        // The same verification adoption performs: every file must map to a managed path and exist on disk.
+        if (!TryVerifyManagedFiles(files, preferences.PlexPathMappings, out var verifyError))
+            return Blocked(verifyError!);
+
+        var managedPaths = new List<string>();
+        foreach (var file in files)
+        {
+            if (!PlexLibraryPathMapping.TryMap(file.SectionKey, file.FilePath, preferences.PlexPathMappings, out var managedPath))
+                return Blocked($"Connect the Plex path for {file.SectionTitle} under Libraries & importing first.");
+            managedPaths.Add(managedPath);
+        }
+
+        var first = files[0];
+        var ownerRatingKey = first.MediaType == MediaType.TvShow ? first.ShowRatingKey ?? first.RatingKey : first.RatingKey;
+        return new PlexReplacementSource(
+            InventoryKey: $"plex:{first.SectionKey}:{ownerRatingKey}",
+            ManagedPaths: managedPaths,
+            ReleaseNames: managedPaths.Select(path => Path.GetFileNameWithoutExtension(path)).ToList(),
+            ResolutionHeight: files.Max(file => file.ResolutionHeight),
+            Episodes: files.Where(file => file.SeasonNumber is int && file.EpisodeNumber is int)
+                .Select(file => (file.SeasonNumber!.Value, file.EpisodeNumber!.Value)).Distinct().ToList(),
+            BlockedReason: null);
     }
 
     public async Task<StorageOptimizationAdoptionResultDto> AdoptPlexTitleAsync(string inventoryKey)

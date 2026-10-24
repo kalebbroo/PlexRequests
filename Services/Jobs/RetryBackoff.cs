@@ -15,15 +15,21 @@ public static class RetryBackoff
     private const double MaxMinutes = 24 * 60;
 
     /// <summary>
+    /// Longest wait between searches for an issue replacement. The bad copy is still playable and an admin is
+    /// waiting on it, so it is retried within hours rather than the ordinary daily ceiling.
+    /// </summary>
+    public const double ReplacementMaxMinutes = 2 * 60;
+
+    /// <summary>
     /// Next re-search time. If the title isn't out yet (release date in the future) it's checked ~daily;
     /// otherwise it's exponential — 15m, 30m, 1h, 2h, 4h, 8h, 16h — capped at 24h.
     /// </summary>
-    public static DateTime ComputeNextRetry(int deferCount, DateTime? releaseDate, DateTime now)
+    public static DateTime ComputeNextRetry(int deferCount, DateTime? releaseDate, DateTime now, double maxMinutes = MaxMinutes)
     {
         if (releaseDate is DateTime rd && rd.Date > now.Date)
             return now.AddHours(24);
 
         var minutes = BaseMinutes * Math.Pow(2, Math.Clamp(deferCount, 0, 7));
-        return now.AddMinutes(Math.Min(minutes, MaxMinutes));
+        return now.AddMinutes(Math.Min(minutes, maxMinutes));
     }
 }

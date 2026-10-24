@@ -1080,7 +1080,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         j.DeferCount++;
         // Only an empty-handed search against a real candidate pool counts toward relaxing the quality floor.
         if (candidatesRejected) j.EmptySearchCount++;
-        j.NextRetryAt = RetryBackoff.ComputeNextRetry(j.DeferCount, j.ReleaseDate, now);
+        j.NextRetryAt = RetryBackoff.ComputeNextRetry(j.DeferCount, j.ReleaseDate, now,
+            j.IsReplacement ? RetryBackoff.ReplacementMaxMinutes : 24 * 60);
         j.Status = FulfillmentStatus.Deferred;
         j.LastError = reason.Length > 2000 ? reason[..2000] : reason;
         j.LastUpdatedAt = now;

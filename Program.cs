@@ -1477,6 +1477,13 @@ app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpConte
     var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == job.MediaRequestId);
     if (req is not null)
     {
+        // A replacement just deleted the old copy and Plex has not rescanned the new one yet. Restart the grace
+        // window so the title is not counted missing, and reopened, while the new file is still being indexed.
+        if (job.IsReplacement)
+        {
+            req.AvailableAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
         try { await jobs.QueueJobRunAsync(JobType.AvailabilityRefresh); } catch { /* best-effort */ }
         if (job.IsReplacement && string.IsNullOrWhiteSpace(job.StorageOptimizationPolicyJson))
         {
