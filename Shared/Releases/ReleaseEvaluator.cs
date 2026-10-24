@@ -270,6 +270,9 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         if (sourceId is not null && (context.BlocklistedHashes.Contains(sourceId)
             || context.BlocklistedHashes.Contains(AcquisitionResource.BlocklistKey(c.Acquisition.Protocol, sourceId))))
             rejections.Add(new Rejection(RejectionReason.Blocklisted, "this release already failed for this request"));
+        else if (c.SizeKnown && c.SizeBytes > 0 && context.BlocklistedSizes.Contains(c.SizeBytes))
+            rejections.Add(new Rejection(RejectionReason.Blocklisted,
+                "this release is the same size as a copy that already failed for this request"));
 
         if (string.IsNullOrWhiteSpace(c.Acquisition.Locator))
             rejections.Add(new Rejection(RejectionReason.MissingAcquisition, "no acquisition locator"));

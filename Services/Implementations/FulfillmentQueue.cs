@@ -846,11 +846,11 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             .FirstOrDefaultAsync();
         var requestIds = entities.Select(e => e.MediaRequestId).Distinct().ToList();
         var blocked = await _db.ReleaseBlocklist.EffectiveAt(now)
-            .Where(b => b.SourceId != null || b.InfoHash != null)
+            .Where(b => b.SourceId != null || b.InfoHash != null || b.SizeBytes != null)
             .Where(b => (b.MediaRequestId != null && requestIds.Contains(b.MediaRequestId.Value))
                         || b.Scope != BlocklistScope.Request)
             .Select(b => new { b.MediaRequestId, b.Scope, b.MediaId, b.MediaType,
-                b.Protocol, b.SourceId, b.InfoHash })
+                b.Protocol, b.SourceId, b.InfoHash, b.SizeBytes })
             .ToListAsync();
 
         var directVideoEnabled = _directVideoSettings is not null
@@ -881,6 +881,12 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
                     b.InfoHash,
                     b.SourceId is null ? null : AcquisitionResource.BlocklistKey(b.Protocol, b.SourceId)
                 }).Where(x => x is not null).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            dto.BlocklistedSizes = blocked
+                .Where(b => b.SizeBytes is > 0
+                            && (b.MediaRequestId == entity.MediaRequestId
+                                || (b.Scope == BlocklistScope.Media && b.MediaId == entity.MediaId && b.MediaType == entity.MediaType)
+                                || b.Scope == BlocklistScope.Global))
+                .Select(b => b.SizeBytes!.Value).Distinct().ToList();
         }
     }
 
@@ -1081,7 +1087,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         // Only an empty-handed search against a real candidate pool counts toward relaxing the quality floor.
         if (candidatesRejected) j.EmptySearchCount++;
         j.NextRetryAt = RetryBackoff.ComputeNextRetry(j.DeferCount, j.ReleaseDate, now,
-            j.IsReplacement ? RetryBackoff.ReplacementMaxMinutes : 24 * 60);
+            j.MediaIssueId != null ? RetryBackoff.ReplacementMaxMinutes : RetryBackoff.OrdinaryMaxMinutes);
         j.Status = FulfillmentStatus.Deferred;
         j.LastError = reason.Length > 2000 ? reason[..2000] : reason;
         j.LastUpdatedAt = now;

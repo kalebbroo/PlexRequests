@@ -221,7 +221,7 @@ public class MediaIssueService(
     /// carries <see cref="InventoryKey"/> instead, and approval adopts it into the library first.
     /// </summary>
     private sealed record ReplacementPlan(MediaRequestEntity? Request, string? InventoryKey,
-        List<ImportedFileEntity> OldFiles, List<string> ReplacePaths, List<string> PlexReleaseNames,
+        List<ImportedFileEntity> OldFiles, List<string> ReplacePaths, List<long> PlexFileSizes,
         int CurrentHeight, List<(int Season, int Episode)> Episodes, string? BlockedReason)
     {
         public static ReplacementPlan Blocked(string reason) => new(null, null, [], [], [], 0, [], reason);
@@ -324,9 +324,11 @@ public class MediaIssueService(
         if (source.BlockedReason is not null)
             return ReplacementPlan.Blocked($"No import record, and the Plex library has no usable file for it: {source.BlockedReason}");
 
-        // A title that already has a request keeps it. Otherwise the request is adopted from the library at approval.
+        // A title that already has a live request keeps it. A cancelled or rejected one is never the target, because
+        // nothing searches for it. Otherwise the request is adopted from the library at approval.
         var request = await db.MediaRequests.AsNoTracking()
-            .Where(r => r.MediaId == issue.MediaId && r.MediaType == issue.MediaType)
+            .Where(r => r.MediaId == issue.MediaId && r.MediaType == issue.MediaType
+                        && r.Status != RequestStatus.Cancelled && r.Status != RequestStatus.Rejected)
             .OrderByDescending(r => r.Id).FirstOrDefaultAsync();
         if (request is not null)
         {
@@ -338,7 +340,7 @@ public class MediaIssueService(
         if (isTv && episodes.Count == 0)
             episodes.Add((issue.SeasonNumber!.Value, issue.EpisodeNumber!.Value));
         return new ReplacementPlan(request, request is null ? source.InventoryKey : null, [],
-            source.ManagedPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList(), source.ReleaseNames.ToList(),
+            source.ManagedPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList(), source.FileSizes.ToList(),
             source.ResolutionHeight, episodes, null);
     }
 
@@ -360,6 +362,19 @@ public class MediaIssueService(
         }
         var oldFiles = plan.OldFiles;
         var replacePaths = plan.ReplacePaths;
+
+        // A Plex-only copy has no infohash or source id, so its exact size is the identity the ranker can match. It is
+        // written before the job exists, so the replacement's first search already excludes those bytes.
+        foreach (var size in plan.PlexFileSizes)
+            await blocklist.BlockForRequestAsync(target.Id, target.MediaId, target.MediaType, new BlocklistRequestDto
+            {
+                SizeBytes = size,
+                ReleaseName = $"Library copy of {issue.Title}",
+                Reason = BlocklistReason.WrongContent,
+                Detail = $"Excluded by media issue #{issue.Id}: {issue.Reason}",
+                Season = issue.SeasonNumber,
+                Episode = issue.EpisodeNumber
+            });
 
         // Exclude every known source behind the bad copy before the new job is created. Otherwise the ranker
         // can select the exact same mislabeled/corrupt release on every self-healing retry.
@@ -392,18 +407,6 @@ public class MediaIssueService(
         request.QualityProfileId = profileId;
         var jobId = await fulfillment.EnqueueReplacementAsync(request, floor, replacePaths, plan.Episodes, issue.Id);
         if (jobId is null) return Failed("Another download or replacement started before this one could be queued.");
-
-        // A Plex-only file has no source identity. Its release name is the only handle the next search has for not
-        // grabbing the same copy again, so block it on the new job. A name the blocklist cannot use is ignored.
-        foreach (var releaseName in plan.PlexReleaseNames)
-            await blocklist.BlockAsync(jobId.Value, new BlocklistRequestDto
-            {
-                ReleaseName = releaseName,
-                Reason = BlocklistReason.WrongContent,
-                Detail = $"Excluded by media issue #{issue.Id}: {issue.Reason}",
-                Season = issue.SeasonNumber,
-                Episode = issue.EpisodeNumber
-            });
 
         issue.ReplacementRequested = true;
         issue.ReplacementJobId = jobId;

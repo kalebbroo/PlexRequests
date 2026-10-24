@@ -12,6 +12,12 @@ public interface IReleaseBlocklistService
     /// <summary>Record a release that failed for a job, so it's never grabbed for that request again.</summary>
     Task<bool> BlockAsync(int fulfillmentJobId, BlocklistRequestDto request);
 
+    /// <summary>
+    /// Record a release for a request before any job exists for it. Used when a replacement's old copy must be excluded
+    /// before the search that the new job starts, so the first search already sees the exclusion.
+    /// </summary>
+    Task<bool> BlockForRequestAsync(int mediaRequestId, int mediaId, MediaType mediaType, BlocklistRequestDto request);
+
     Task<List<BlocklistEntryDto>> ListAsync(int? mediaRequestId = null, int take = 200);
     Task<bool> UnblockAsync(int id);
     Task<int> ClearForRequestAsync(int mediaRequestId);
@@ -56,7 +62,15 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
     {
         var job = await db.FulfillmentJobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == fulfillmentJobId);
         if (job is null) return false;
+        return await BlockInScopeAsync(job.Id, job.MediaRequestId, job.MediaId, job.MediaType, request);
+    }
 
+    public Task<bool> BlockForRequestAsync(int mediaRequestId, int mediaId, MediaType mediaType, BlocklistRequestDto request) =>
+        BlockInScopeAsync(null, mediaRequestId, mediaId, mediaType, request);
+
+    private async Task<bool> BlockInScopeAsync(int? fulfillmentJobId, int mediaRequestId, int mediaId, MediaType mediaType,
+        BlocklistRequestDto request)
+    {
         // Derive the hash when the caller only had a magnet, so a release is still identifiable either way.
         var hash = request.Protocol == AcquisitionProtocol.Torrent ? MagnetUtil.Normalize(request.InfoHash) : null;
         var sourceId = NormalizeSourceId(request.SourceId ?? hash);
@@ -70,30 +84,32 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
         // genuinely wrong file.
         var disappearanceReason = request.Reason is BlocklistReason.DownloadFailed
             or BlocklistReason.Stalled or BlocklistReason.TorrentError or BlocklistReason.PathUnresolvable;
-        if (disappearanceReason && await db.ImportedFiles.AsNoTracking().AnyAsync(f =>
-                f.FulfillmentJobId == job.Id && f.Protocol == request.Protocol
+        if (fulfillmentJobId is int jobId && disappearanceReason && await db.ImportedFiles.AsNoTracking().AnyAsync(f =>
+                f.FulfillmentJobId == jobId && f.Protocol == request.Protocol
                 && ((sourceId != null && f.TransferId == sourceId)
                     || (hash != null && f.InfoHash == hash))))
         {
             logger.LogInformation(
-                "Ignored {Reason} block for imported transfer {SourceId} on job {JobId}",
-                request.Reason, sourceId ?? hash, job.Id);
+                "Ignored {Reason} block for imported transfer {SourceId} on request {RequestId}",
+                request.Reason, sourceId ?? hash, mediaRequestId);
             return false;
         }
 
-        if (sourceId is null && normalizedName is null)
+        var sizeBytes = request.SizeBytes is > 0 ? request.SizeBytes : null;
+        if (sourceId is null && normalizedName is null && sizeBytes is null)
         {
-            logger.LogDebug("Blocklist entry skipped for job {JobId}: neither a source id nor a release name", fulfillmentJobId);
+            logger.LogDebug("Blocklist entry skipped for request {RequestId}: no source id, release name, or size", mediaRequestId);
             return false;
         }
 
         // The unique (InfoHash, MediaRequestId) index means re-failing the same torrent updates rather than
-        // piling up rows.
+        // piling up rows. A copy with no source id is matched by its name or its exact size instead.
         var existing = await db.ReleaseBlocklist.FirstOrDefaultAsync(b =>
-            b.MediaRequestId == job.MediaRequestId &&
+            b.MediaRequestId == mediaRequestId &&
             ((sourceId != null && b.Protocol == request.Protocol && b.SourceId == sourceId)
              || (hash != null && b.InfoHash == hash)
-             || (sourceId == null && b.NormalizedReleaseName == normalizedName)));
+             || (sourceId == null && normalizedName != null && b.NormalizedReleaseName == normalizedName)
+             || (sourceId == null && sizeBytes != null && b.SizeBytes == sizeBytes)));
 
         if (existing is not null)
         {
@@ -124,10 +140,11 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
             SourceId = sourceId,
             NormalizedReleaseName = normalizedName,
             ReleaseName = request.ReleaseName is { Length: > 512 } n ? n[..512] : request.ReleaseName,
+            SizeBytes = sizeBytes,
             Scope = BlocklistScope.Request,
-            MediaRequestId = job.MediaRequestId,
-            MediaId = job.MediaId,
-            MediaType = job.MediaType,
+            MediaRequestId = mediaRequestId,
+            MediaId = mediaId,
+            MediaType = mediaType,
             Season = request.Season,
             Episode = request.Episode,
             IndexerId = request.IndexerId,
@@ -139,7 +156,7 @@ public class ReleaseBlocklistService(AppDbContext db, ILogger<ReleaseBlocklistSe
         await db.SaveChangesAsync();
 
         logger.LogInformation("Blocklisted \"{Release}\" for request #{RequestId}: {Reason}",
-            request.ReleaseName, job.MediaRequestId, request.Reason);
+            request.ReleaseName, mediaRequestId, request.Reason);
         return true;
     }
 

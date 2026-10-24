@@ -284,9 +284,10 @@ public sealed class FirefoxCaptureService(
             .ToListAsync(cancellationToken);
         // Captures are stored in the catalog, but fulfillment searches read it only when catalog search is on.
         // Without this warning a device can capture steadily while every search ignores what it finds.
-        var catalogSearch = catalogOptions.Value.Enabled && (catalogOptions.Value.UseForSearch
-            || await db.DownloadPreferences.AsNoTracking().Select(p => p.UseCatalogForSearch)
-                .FirstOrDefaultAsync(cancellationToken));
+        // The downloader uses the saved preference whenever a row exists, and falls back to configuration only without one.
+        var savedSearch = await db.DownloadPreferences.AsNoTracking().Select(p => (bool?)p.UseCatalogForSearch)
+            .FirstOrDefaultAsync(cancellationToken);
+        var catalogSearch = catalogOptions.Value.Enabled && (savedSearch ?? catalogOptions.Value.UseForSearch);
         var capturing = devices.Any(x => x.ItemsReceived > 0);
         return new FirefoxCaptureAdminStatusDto
         {

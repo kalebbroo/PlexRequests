@@ -68,7 +68,7 @@ public class FulfillmentReaperService(
                 job.Status = FulfillmentStatus.Deferred;
                 job.DeferCount++;
                 job.NextRetryAt = RetryBackoff.ComputeNextRetry(job.DeferCount, job.ReleaseDate, now,
-                    job.IsReplacement ? RetryBackoff.ReplacementMaxMinutes : 24 * 60);
+                    job.MediaIssueId != null ? RetryBackoff.ReplacementMaxMinutes : RetryBackoff.OrdinaryMaxMinutes);
                 job.LastError = $"No progress after {job.Attempts} attempt(s); parked for re-search.";
                 job.ClaimedBy = null;
                 job.ClaimedAt = null;

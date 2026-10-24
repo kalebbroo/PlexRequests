@@ -536,7 +536,7 @@ public sealed class MediaIssueReplacementTests
         const string managedPath = "/library/Halloweentown (1998)/Halloweentown (1998) 1080p WEB-DL.mkv";
         var optimizer = (OptimizerFake)(object)DispatchProxy.Create<IStorageOptimizationService, OptimizerFake>();
         optimizer.Resolve = () => new PlexReplacementSource("plex:1:555", [managedPath],
-            ["Halloweentown (1998) 1080p WEB-DL"], 1080, [], null);
+            [1_987_654_321L], 1080, [], null);
         optimizer.Adopt = key =>
         {
             // Adoption creates the anchor request. The job row stands in for the one EnqueueReplacementAsync creates.
@@ -572,9 +572,11 @@ public sealed class MediaIssueReplacementTests
         var anchor = await db.MediaRequests.AsNoTracking().SingleAsync();
         Assert.Equal("plex:1:555", anchor.LibraryInventoryKey);
         Assert.Equal(42, (await db.MediaIssues.SingleAsync()).ReplacementJobId);
-        // The file has no source identity, so its release name keeps the next search off the same copy.
+        // The copy has no infohash or source id, so its exact size is what keeps the next search off the same bytes.
+        // The block is written against the request before the job is queued.
         var blocked = await db.ReleaseBlocklist.SingleAsync();
-        Assert.Equal("Halloweentown (1998) 1080p WEB-DL", blocked.ReleaseName);
+        Assert.Equal(1_987_654_321L, blocked.SizeBytes);
+        Assert.Null(blocked.InfoHash);
         Assert.Equal(anchor.Id, blocked.MediaRequestId);
     }
 

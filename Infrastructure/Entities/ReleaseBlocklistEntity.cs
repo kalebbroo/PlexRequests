@@ -47,6 +47,10 @@ public class ReleaseBlocklistEntity
     /// <summary>Display name, so the admin panel doesn't show a bare hash.</summary>
     [MaxLength(512)] public string? ReleaseName { get; set; }
 
+    /// <summary>Exact byte size of the failed copy, for copies that have no source id (a Plex-only library file).
+    /// Null for every block that has an infohash or source id.</summary>
+    public long? SizeBytes { get; set; }
+
     public DateTime BlockedAt { get; set; } = DateTime.UtcNow;
     /// <summary>Null = permanent. Set for blocks that should lapse (e.g. a transient stall).</summary>
     public DateTime? ExpiresAt { get; set; }

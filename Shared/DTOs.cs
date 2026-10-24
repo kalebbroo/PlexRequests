@@ -996,6 +996,10 @@ public class FulfillmentJobDto
     /// request. Delivered with the job so a search needs no extra round-trip to find out.</summary>
     public List<string> BlocklistedHashes { get; set; } = new();
 
+    /// <summary>Exact byte sizes of copies that already failed for this request and have no source id, such as a
+    /// Plex-only library copy. A candidate of exactly one of these sizes is not grabbed again.</summary>
+    public List<long> BlocklistedSizes { get; set; } = new();
+
     /// <summary>An admin chose this exact release. The downloader skips searching and ranking entirely —
     /// forcing a grab is an override of that judgement, so re-deriving it would defeat the point.</summary>
     public bool IsManualGrab { get; set; }
@@ -2112,6 +2116,9 @@ public class BlocklistRequestDto
     /// <summary>Optional retry boundary for transient source failures. Null keeps the existing permanent
     /// behavior used for broken torrent releases.</summary>
     public DateTime? ExpiresAt { get; set; }
+    /// <summary>Exact size of the failed copy. Lets a copy with no infohash or source id, such as a Plex-only library
+    /// file, still keep the next search from taking the same bytes again.</summary>
+    public long? SizeBytes { get; set; }
 }
 
 public class BlocklistEntryDto
