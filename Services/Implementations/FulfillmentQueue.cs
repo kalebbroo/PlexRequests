@@ -261,8 +261,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             // the final arbiter; detach our losing insert and report the normal idempotent no-op outcome.
             _db.Entry(job).State = EntityState.Detached;
             if (await _db.FulfillmentJobs.AnyAsync(j => j.MediaRequestId == request.Id &&
-                    (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
-                     j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred)))
+                    FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status)))
                 return false;
             throw;
         }
@@ -1140,8 +1139,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         // of turning a concurrent/live job into an exception.
         var activeJob = await _db.FulfillmentJobs.AnyAsync(j =>
             j.MediaRequestId == request.Id &&
-            (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
-             j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred));
+            FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status));
         if (activeJob) return null;
 
         // Copy identity fields (IMDb id / year / genres / anime flag) from the most recent real job so the
@@ -1314,8 +1312,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         {
             _db.Entry(job).State = EntityState.Detached;
             if (await _db.FulfillmentJobs.AnyAsync(j => j.MediaRequestId == request.Id &&
-                    (j.Status == FulfillmentStatus.Queued || j.Status == FulfillmentStatus.Claimed ||
-                     j.Status == FulfillmentStatus.Downloading || j.Status == FulfillmentStatus.Deferred)))
+                    FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status)))
                 return null;
             throw;
         }
