@@ -69,15 +69,22 @@ public class JobAdminService(
         return true;
     }
 
-    public Task<bool> RunJobNowAsync(JobType type) => RequestImmediateRunAsync(type, manual: true);
+    /// <summary>How long Plex needs to index a newly imported file before a library rebuild can see it. A rebuild run
+    /// immediately after the import reads the old copy, and the library stays stale until the next rebuild.</summary>
+    public static readonly TimeSpan PlexIndexSettleDelay = TimeSpan.FromMinutes(10);
 
-    public Task<bool> QueueJobRunAsync(JobType type) => RequestImmediateRunAsync(type, manual: false);
+    public Task<bool> RunJobNowAsync(JobType type) => RequestRunAtAsync(type, DateTime.UtcNow, manual: true);
 
-    private async Task<bool> RequestImmediateRunAsync(JobType type, bool manual)
+    public Task<bool> QueueJobRunAsync(JobType type) => RequestRunAtAsync(type, DateTime.UtcNow, manual: false);
+
+    public Task<bool> QueueJobRunAsync(JobType type, TimeSpan delay) =>
+        RequestRunAtAsync(type, DateTime.UtcNow + delay, manual: false);
+
+    private async Task<bool> RequestRunAtAsync(JobType type, DateTime runAt, bool manual)
     {
         var j = await db.ScheduledJobs.FirstOrDefaultAsync(x => x.JobType == type);
         if (j is null) return false;
-        j.NextRunAt = DateTime.UtcNow;   // the scheduler picks it up on its next tick
+        j.NextRunAt = runAt;   // the scheduler picks it up on the first tick at or after this time
         // Never clear an admin request when a system trigger is coalesced into the same pending run.
         if (manual) j.ManualRunRequested = true;
         await db.SaveChangesAsync();

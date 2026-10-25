@@ -20,6 +20,9 @@ public interface IJobAdminService
     Task<bool> RunJobNowAsync(JobType type);
     /// <summary>Queue an immediate system-triggered run without presenting it as a manual admin action.</summary>
     Task<bool> QueueJobRunAsync(JobType type);
+    /// <summary>Like <see cref="QueueJobRunAsync(JobType)"/>, but the run is due after <paramref name="delay"/>. Used when
+    /// the work depends on something outside the app that takes time, such as Plex indexing a new file.</summary>
+    Task<bool> QueueJobRunAsync(JobType type, TimeSpan delay);
     /// <summary>Clear a stuck "running" flag so the job type can be dispatched again. Last-resort recovery;
     /// the scheduler clears the flag itself on completion and on startup.</summary>
     Task<bool> ClearRunningFlagAsync(JobType type);
