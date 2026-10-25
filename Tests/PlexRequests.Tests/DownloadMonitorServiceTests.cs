@@ -140,6 +140,25 @@ public sealed class DownloadMonitorServiceTests
         Assert.Equal(4_000_000_000, view.OptimizationOriginalBytes);
     }
 
+    [Fact]
+    public async Task A_job_awaiting_plex_verification_stays_visible_with_its_reason_after_the_recent_window()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var job = await fixture.AddJobAsync("Anne-Marie", FulfillmentStatus.Completed,
+            createdMinutesAgo: 300, claimedMinutesAgo: 290, updatedMinutesAgo: 120, completedMinutesAgo: 120);
+        var request = await fixture.Db.MediaRequests.SingleAsync(r => r.Id == job.MediaRequestId);
+        request.Status = RequestStatus.Processing;
+        job.LastError = "Imported; Plex verification pending: Plex album is missing 2 of 10 expected track(s)";
+        await fixture.Db.SaveChangesAsync();
+        fixture.Db.ChangeTracker.Clear();
+
+        // Completed two hours ago, so the thirty-minute recent window has long closed. It must still show.
+        var view = Assert.Single(await fixture.Service.GetActiveAndRecentAsync());
+
+        Assert.Equal(job.Id, view.JobId);
+        Assert.Contains("Plex album is missing 2 of 10", view.LastError);
+    }
+
     private sealed class Fixture(SqliteConnection connection, AppDbContext db) : IAsyncDisposable
     {
         public AppDbContext Db { get; } = db;

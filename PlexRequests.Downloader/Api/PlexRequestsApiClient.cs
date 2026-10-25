@@ -153,6 +153,13 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         return resp.IsSuccessStatusCode;
     }
 
+    public async Task<bool> MarkPendingVerificationAsync(int jobId, string detail, CancellationToken ct)
+    {
+        var resp = await _http.PostAsJsonAsync($"/api/fulfillment/{jobId}/pending-verification",
+            new PendingVerificationRequestDto { Detail = detail }, ct);
+        return resp.IsSuccessStatusCode;
+    }
+
     public async Task<LibraryOrganizationPreferencesDto?> GetLibraryConfigAsync(CancellationToken ct)
     {
         try

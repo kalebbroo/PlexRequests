@@ -39,6 +39,13 @@ public interface IFulfillmentQueue
     /// <summary>Close the job for a request as failed, recording the reason.</summary>
     Task MarkFailedAsync(int mediaRequestId, string reason);
 
+    /// <summary>
+    /// Every file is imported, but the content is not yet verifiable in Plex (music waits on its library check). Close
+    /// the job as completed with the reason, and leave the request open so availability reconciliation keeps checking.
+    /// Without this the job stays Downloading at 100% and the reaper re-runs it indefinitely.
+    /// </summary>
+    Task<bool> MarkPendingVerificationAsync(int jobId, string? detail) => Task.FromResult(false);
+
     /// <summary>Record partial progress, subtract audit-proven imported episodes from the immutable target,
     /// and queue the same job to continue the remainder. Completes the job only when cumulative imports
     /// already cover every explicit target.</summary>
