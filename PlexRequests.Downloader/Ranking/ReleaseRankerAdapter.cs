@@ -57,6 +57,8 @@ public class ReleaseRankerAdapter(
         ManifestFallbackCandidates = [];
         var context = BuildContext(job, relaxFloor: false);
         var ranked = evaluator.EvaluateAll(candidates, job, context);
+        // A replacement or a manual grab is something an admin is waiting on, so every candidate it considered is logged.
+        if (job.MediaIssueId is not null || job.IsManualGrab) LogCandidateTable(job, ranked);
 
         // The quality target is a preference, not a dead end — but relaxing it used to happen after a single
         // deferral, because it keyed off a counter that increments on every claim. Now it takes several
@@ -87,6 +89,30 @@ public class ReleaseRankerAdapter(
             LastFailureSummary = string.Join("; ", result.Notes.Where(note => !string.IsNullOrWhiteSpace(note)).Take(8));
         LogOutcome(job, candidates.Count, ranked, result);
         return result.Plan;
+    }
+
+    /// <summary>
+    /// One line per candidate the search considered: the verdict, the release, its info hash prefix, where it came from,
+    /// its size and seeders, and the reason it was accepted or rejected. This is the answer to "why was link X not picked".
+    /// </summary>
+    private void LogCandidateTable(FulfillmentJobDto job, IReadOnlyList<RankedCandidate> ranked)
+    {
+        const int maxLines = 40;
+        logger.LogInformation("Job {JobId} \"{Title}\": evaluated {Count} candidate(s), {Accepted} acceptable",
+            job.Id, job.Title, ranked.Count, ranked.Count(r => r.Accepted));
+        foreach (var r in ranked.Take(maxLines))
+        {
+            var hash = r.Candidate.Acquisition.SourceId;
+            var hashPrefix = string.IsNullOrWhiteSpace(hash) ? "no hash" : hash.Length <= 12 ? hash : hash[..12];
+            var why = r.Accepted
+                ? $"score {r.Score:F0}"
+                : string.Join("; ", r.Rejections.Select(x => x.Detail));
+            logger.LogInformation("  {Verdict} {Release} [{Hash}] {Source}, {SizeGb:F1} GB, {Seeders} seeders: {Why}",
+                r.Accepted ? "ACCEPT" : "REJECT", r.Candidate.ReleaseName, hashPrefix, r.Candidate.Source,
+                r.Candidate.SizeBytes / 1_000_000_000d, r.Candidate.Seeders, why);
+        }
+        if (ranked.Count > maxLines)
+            logger.LogInformation("  ... {More} more candidate(s) not listed", ranked.Count - maxLines);
     }
 
     private DownloadPlanResult TryPlanManifestPreflight(IReadOnlyList<RankedCandidate> ranked,

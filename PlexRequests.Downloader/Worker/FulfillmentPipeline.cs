@@ -250,13 +250,18 @@ public class FulfillmentPipeline(
                     preparedItem.Manifest, preparedItem.WantedFiles), ct);
                 if (string.IsNullOrWhiteSpace(transferId))
                 {
-                    logger.LogWarning("Failed to enqueue {Protocol} transfer for job {JobId} (S{Season}E{Episode})",
-                        resource.Protocol, job.Id, item.Season, item.Episode);
+                    logger.LogWarning(
+                        "Job {JobId}: could not add {Release} [{Hash}] ({Protocol}, S{Season}E{Episode}) to the download client. That link is skipped and the other candidates are still tried.",
+                        job.Id, item.Candidate.ReleaseName, Prefix(resource.SourceId), resource.Protocol, item.Season, item.Episode);
                     if (item.RequiresManifestPreflight)
                         preflightFailures.Add(
                             $"{item.Candidate.ReleaseName}: verified selection could not be added (the torrent may already be owned by another job)");
                     continue;
                 }
+                logger.LogInformation(
+                    "Job {JobId}: TRYING {Release} [{Hash}] via {Protocol}, {Size:F1} GB, {Seeders} seeders, S{Season}E{Episode}. Added as transfer {TransferId}; next: wait for it to finish, then import.",
+                    job.Id, item.Candidate.ReleaseName, Prefix(resource.SourceId), resource.Protocol,
+                    item.Candidate.SizeBytes / 1_000_000_000d, item.Candidate.Seeders, item.Season, item.Episode, transferId);
                 transfers.Add(new TransferItem(
                     transferId,
                     item.Season,
@@ -474,21 +479,28 @@ public class FulfillmentPipeline(
             // Remember the release so a re-search can't rank the same broken torrent top again and fail
             // identically on every backoff tick. Best-effort — this must never change the job's outcome.
             latest.TryGetValue((it.Protocol, it.TransferId), out var status);
+            var releaseName = status?.Name ?? job.ForcedReleaseName ?? job.Title;
+            // A failure that says nothing about the release expires, so the same link is tried again. A content failure
+            // stays blocked. See BlocklistExpiry for the rule.
+            var expiresAt = BlocklistExpiry.For(blocklistReason, it.Protocol, DateTime.UtcNow);
             await SafeBlocklist(job.Id, new BlocklistRequestDto
             {
                 InfoHash = it.Protocol == AcquisitionProtocol.Torrent ? it.SourceId ?? it.TransferId : null,
                 Protocol = it.Protocol,
                 SourceId = it.SourceId,
-                ReleaseName = status?.Name ?? job.ForcedReleaseName ?? job.Title,
+                ReleaseName = releaseName,
                 Reason = blocklistReason,
                 Detail = reason,
                 Season = it.Season,
                 Episode = it.Episode,
-                // A removed video should fall back to torrents, but a transient extractor/network failure
-                // must heal without admin intervention. Retry the authoritative source after a cooldown.
-                ExpiresAt = it.Protocol.IsRemoteDirect()
-                    ? DateTime.UtcNow.AddHours(6) : null
+                ExpiresAt = expiresAt
             });
+            // One line per failed link: what failed, whether it is now blocked and until when, and what happens next.
+            logger.LogInformation(
+                "Job {JobId}: FAILED {Release} [{Hash}] ({Reason}). Blocked {Blocked}. Next: {Next}",
+                job.Id, releaseName, Prefix(it.SourceId ?? it.TransferId), blocklistReason,
+                expiresAt is DateTime until ? $"until {until:u} (infrastructure failure, will be tried again)" : "permanently (content failure)",
+                "the job searches again after its backoff, and this link is not picked before the block lapses");
             if (acquisitionBackends.TryGet(it.Protocol, out var backend))
             {
                 try { await backend.RemoveAsync(it.TransferId, removeData: true, ct); }
@@ -693,6 +705,11 @@ public class FulfillmentPipeline(
         await AdoptDurableImportsAsync();
         var importedCount = items.Count(x => x.Imported);
 
+        // The outcome of every link this attempt tried, in one line: how many imported, and why the rest did not.
+        logger.LogInformation("Job {JobId} \"{Title}\": {Imported}/{Total} transfer(s) imported. {Outcome}",
+            job.Id, job.Title, importedCount, items.Count,
+            failReasons.Count == 0 ? "No failures." : $"Failures: {string.Join("; ", failReasons.Distinct())}.");
+
         if (job.IsUpgrade)
         {
             // Upgrade/replacement job: keep the old file until a new import succeeds. Routine upgrades stop
@@ -794,6 +811,10 @@ public class FulfillmentPipeline(
     // Physically remove the old files an upgrade superseded, EXCEPT any the new import overwrote in place
     // (same destination path). Best-effort and confined to the recorded ReplacePaths — never deletes anything
     // the new import didn't produce. Only called on an upgrade that imported at least one file.
+    /// <summary>The first twelve characters of an info hash, enough to find a link in logs without the full magnet.</summary>
+    private static string Prefix(string? hash) =>
+        string.IsNullOrWhiteSpace(hash) ? "no hash" : hash.Length <= 12 ? hash : hash[..12];
+
     private void DeleteReplacedFiles(FulfillmentJobDto job, HashSet<string> importedDestinations,
         EffectiveLibraryOrganization preferences)
     {
