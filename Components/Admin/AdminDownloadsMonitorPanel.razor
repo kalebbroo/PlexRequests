@@ -146,8 +146,10 @@
                         }
 
                         @if (!string.IsNullOrWhiteSpace(job.LastError)
-                            && job.Status is FulfillmentStatus.Failed or FulfillmentStatus.PartiallyCompleted
-                                or FulfillmentStatus.Deferred or FulfillmentStatus.Cancelled)
+                            && (job.Status is FulfillmentStatus.Failed or FulfillmentStatus.PartiallyCompleted
+                                    or FulfillmentStatus.Deferred or FulfillmentStatus.Cancelled
+                                || (job.Status == FulfillmentStatus.Completed
+                                    && job.LastError.StartsWith("Imported; Plex verification pending", StringComparison.Ordinal))))
                         {
                             <MudAlert Severity="@(job.Status == FulfillmentStatus.Failed ? Severity.Error : Severity.Warning)" dense="true" Class="download-alert">
                                 <b>@(job.Status == FulfillmentStatus.Deferred ? "Last search: " : string.Empty)</b>@job.LastError

@@ -27,7 +27,12 @@ public sealed class DownloadMonitorService(
         var jobs = await db.FulfillmentJobs
             .AsNoTracking()
             .Include(j => j.MediaRequest)
-            .Where(j => Active.Contains(j.Status) || (j.CompletedAt != null && j.CompletedAt >= cutoff))
+            .Where(j => Active.Contains(j.Status) || (j.CompletedAt != null && j.CompletedAt >= cutoff)
+                // A fully imported job waiting on Plex verification stays visible, with its reason, until its request
+                // becomes Available. The recent window would otherwise hide it after thirty minutes.
+                || (j.Status == FulfillmentStatus.Completed
+                    && j.LastError != null && j.LastError.StartsWith("Imported; Plex verification pending")
+                    && j.MediaRequest != null && j.MediaRequest.Status == RequestStatus.Processing))
             .ToListAsync();
         // Progress heartbeats update LastUpdatedAt every few seconds. Sorting on that value made cards trade
         // places on every poll even though nothing meaningful about their lifecycle had changed. Keep each
