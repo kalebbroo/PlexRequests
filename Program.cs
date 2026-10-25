@@ -1492,7 +1492,17 @@ app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpConte
             req.AvailableAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
         }
-        try { await jobs.QueueJobRunAsync(JobType.AvailabilityRefresh); } catch { /* best-effort */ }
+        try
+        {
+            // An issue replacement just imported a new file. Plex has to index it before a rebuild can see it, so the
+            // rebuild waits for that. Without the wait the rebuild read the old copy and the library stayed stale.
+            if (job.MediaIssueId != null)
+                await jobs.QueueJobRunAsync(JobType.AvailabilityRefresh,
+                    PlexRequestsHosted.Services.Jobs.JobAdminService.PlexIndexSettleDelay);
+            else
+                await jobs.QueueJobRunAsync(JobType.AvailabilityRefresh);
+        }
+        catch { /* best-effort */ }
         if (job.IsReplacement && string.IsNullOrWhiteSpace(job.StorageOptimizationPolicyJson))
         {
             int? issueReporterUserId = null;
