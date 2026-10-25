@@ -58,6 +58,10 @@ else
                         <span>@ReplacementProgress(issue)</span>
                     }
                 </div>
+                @if (issue.Status == IssueStatus.ReplacementQueued && !string.IsNullOrWhiteSpace(issue.ReplacementLastError))
+                {
+                    <MudText Typo="Typo.caption" Class="text-secondary">Last search: @issue.ReplacementLastError</MudText>
+                }
 
                 <div class="issue-report">
                     <div class="issue-reason"><MudIcon Icon="@Icons.Material.Filled.ReportProblem" Size="Size.Small" /><strong>@issue.Reason</strong></div>

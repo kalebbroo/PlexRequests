@@ -375,8 +375,14 @@ public sealed class ReleaseCatalogService(
         CatalogQueryDto query,
         CancellationToken cancellationToken)
     {
-        if (!options.Value.Enabled || string.IsNullOrWhiteSpace(query.Title))
+        if (!options.Value.Enabled)
+        {
+            logger.LogInformation("Catalog query \"{Title}\" skipped: Catalog:Enabled is off on the web app", query.Title);
             return Array.Empty<ReleaseCandidate>();
+        }
+        if (string.IsNullOrWhiteSpace(query.Title))
+            return Array.Empty<ReleaseCandidate>();
+        var started = DateTime.UtcNow;
 
         var parsedTitle = parser.Parse(query.Title).Title;
         var normalized = parsedTitle.ToUpperInvariant();
@@ -419,7 +425,7 @@ public sealed class ReleaseCatalogService(
             .Take(limit)
             .ToList();
 
-        return releases.Select(release =>
+        var candidates = releases.Select(release =>
         {
             var sighting = release.Sightings
                 .OrderByDescending(x => x.Seeders ?? -1)
@@ -444,6 +450,13 @@ public sealed class ReleaseCatalogService(
                 SizeKnown = release.SizeBytes is not null || sighting?.SizeBytes is not null
             };
         }).ToList();
+
+        // One line per query: whether a search reached the catalog at all, and which match path found what.
+        logger.LogInformation(
+            "Catalog query \"{Title}\" ({MediaType}, year {Year}, imdb {ImdbId}): {ByImdb} by IMDb id, {ByWords} by title words, {Returned} returned in {Ms} ms",
+            query.Title, query.MediaType, query.Year, imdb ?? "none", byImdb.Count, byWords.Count, candidates.Count,
+            (int)(DateTime.UtcNow - started).TotalMilliseconds);
+        return candidates;
     }
 
     /// <summary>Words of a normalized title, in order. Punctuation separates words; one-letter words are kept.</summary>

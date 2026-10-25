@@ -347,7 +347,11 @@ public class MediaIssueService(
     private async Task<MediaIssueResultDto> QueueReplacementCoreAsync(MediaIssueEntity issue, string approvedBy)
     {
         var plan = await PreflightReplacementAsync(issue);
-        if (plan.BlockedReason is not null) return Failed(plan.BlockedReason);
+        if (plan.BlockedReason is not null)
+        {
+            logger?.LogInformation("Replacement for issue #{IssueId} \"{Title}\" refused: {Reason}", issue.Id, issue.Title, plan.BlockedReason);
+            return Failed(plan.BlockedReason);
+        }
 
         // A Plex-only title has no request yet. Adopt it with the same anchor the storage optimizer creates, so the
         // replacement job has a request to attach to.
@@ -406,7 +410,15 @@ public class MediaIssueService(
         var request = ToRequestDto(target);
         request.QualityProfileId = profileId;
         var jobId = await fulfillment.EnqueueReplacementAsync(request, floor, replacePaths, plan.Episodes, issue.Id);
-        if (jobId is null) return Failed("Another download or replacement started before this one could be queued.");
+        if (jobId is null)
+        {
+            logger?.LogInformation("Replacement for issue #{IssueId} \"{Title}\" not queued: another download started first", issue.Id, issue.Title);
+            return Failed("Another download or replacement started before this one could be queued.");
+        }
+        logger?.LogInformation(
+            "Replacement for issue #{IssueId} \"{Title}\" queued as job #{JobId} on request #{RequestId} ({Source}): replacing {Paths} path(s), blocking {Sizes} size(s), floor {Floor}, {Episodes} episode(s)",
+            issue.Id, issue.Title, jobId, target.Id, plan.InventoryKey is null ? "existing request" : $"adopted from {plan.InventoryKey}",
+            replacePaths.Count, plan.PlexFileSizes.Count, floor, plan.Episodes.Count);
 
         issue.ReplacementRequested = true;
         issue.ReplacementJobId = jobId;
