@@ -894,6 +894,8 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
     {
         var j = await _db.FulfillmentJobs.FirstOrDefaultAsync(x => x.Id == jobId);
         if (j is null) return false;
+        // A completed job is finished. A late heartbeat from a worker that is still winding down must not reopen it.
+        if (j.Status == FulfillmentStatus.Completed) return false;
         j.Status = FulfillmentStatus.Downloading;
         j.Progress = Math.Clamp(progress, 0, 100);
         j.LastUpdatedAt = DateTime.UtcNow;
@@ -928,6 +930,32 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         j.Progress = 100;
         j.CompletedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+    }
+
+    public async Task<bool> MarkPendingVerificationAsync(int jobId, string? detail)
+    {
+        var j = await _db.FulfillmentJobs.FirstOrDefaultAsync(x => x.Id == jobId);
+        if (j is null) return false;
+        var now = DateTime.UtcNow;
+        j.Status = FulfillmentStatus.Completed;
+        j.Progress = 100;
+        j.CompletedAt = now;
+        j.LastUpdatedAt = now;
+        j.ClaimedBy = null;
+        j.ClaimedAt = null;
+        j.NextRetryAt = null;
+        var reason = string.IsNullOrWhiteSpace(detail) ? "not indexed yet" : detail.Trim();
+        var text = $"Imported; Plex verification pending: {reason}";
+        j.LastError = text.Length > 2000 ? text[..2000] : text;
+
+        // The request stays open: availability reconciliation checks it every pass and marks it Available once Plex
+        // verifies the content. Only a request that was still being searched or waiting to start moves to Processing.
+        var req = await _db.MediaRequests.FirstOrDefaultAsync(r => r.Id == j.MediaRequestId);
+        if (req is not null && req.Status is RequestStatus.Searching or RequestStatus.Approved or RequestStatus.Pending)
+            req.Status = RequestStatus.Processing;
+
+        await _db.SaveChangesAsync();
+        return true;
     }
 
     public async Task MarkFailedAsync(int mediaRequestId, string reason)

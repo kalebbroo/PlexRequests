@@ -90,6 +90,9 @@ public interface IPlexRequestsApiClient
     /// <summary>Report a successful quality upgrade: the better release imported and old files were deleted on
     /// disk. The web app drops the superseded audit rows, recomputes achieved quality, and notifies.</summary>
     Task<bool> MarkUpgradedAsync(int jobId, CancellationToken ct);
+    /// <summary>Every file is imported, but Plex has not verified the content yet. Close the job with the reason and
+    /// leave the request open for availability reconciliation to keep checking.</summary>
+    Task<bool> MarkPendingVerificationAsync(int jobId, string detail, CancellationToken ct);
     /// <summary>Some torrents in the job imported before another failed — distinct from a hard failure.</summary>
     Task<bool> MarkPartiallyCompletedAsync(int requestId, string reason, CancellationToken ct);
     /// <summary>Persist the durable audit trail of what got imported for a job.</summary>

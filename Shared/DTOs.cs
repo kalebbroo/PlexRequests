@@ -405,6 +405,12 @@ public sealed class MediaIssueReportDto
     public bool RequestReplacement { get; set; }
 }
 
+/// <summary>Worker to web: every file is imported, but the content is not yet verifiable in Plex. Carries the reason.</summary>
+public sealed class PendingVerificationRequestDto
+{
+    public string? Detail { get; set; }
+}
+
 public sealed class MediaIssueResultDto
 {
     public bool Success { get; set; }

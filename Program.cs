@@ -1425,6 +1425,14 @@ app.MapPost("/api/fulfillment/{jobId:int}/upgrade-exhausted", async (int jobId, 
 
 // Worker reports a successful quality upgrade: the better release imported and the old files were deleted on
 // disk. Drop the superseded audit rows, recompute the request's achieved quality, queue a Plex refresh, and notify.
+// The worker closes a fully imported music job whose Plex verification has not passed yet. The job completes with
+// the reason; the request stays open so availability reconciliation keeps checking it.
+app.MapPost("/api/fulfillment/{jobId:int}/pending-verification", async (int jobId, PlexRequestsHosted.Shared.DTOs.PendingVerificationRequestDto? body, HttpContext ctx, IConfiguration cfg, IFulfillmentQueue queue) =>
+{
+    if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
+    return await queue.MarkPendingVerificationAsync(jobId, body?.Detail) ? Results.Ok() : Results.NotFound();
+});
+
 app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IJobAdminService jobs) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();

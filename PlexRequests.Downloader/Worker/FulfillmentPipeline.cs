@@ -719,11 +719,22 @@ public class FulfillmentPipeline(
         }
         else if (importedCount == items.Count && record.CoversAllTargets)
         {
-            if (job.MediaType != MediaType.Music || await WaitForPlexVerificationAsync(job, ct))
+            if (job.MediaType != MediaType.Music)
                 await SafeMarkFulfilled(job.MediaRequestId);
             else
-                logger.LogWarning("Job {JobId} \"{Title}\": files are imported but Plex has not indexed them yet; server reconciliation will keep checking and no Available notification was sent",
-                    job.Id, job.Title);
+            {
+                var wait = await WaitForPlexVerificationAsync(job, ct);
+                if (wait.Verified)
+                    await SafeMarkFulfilled(job.MediaRequestId);
+                else
+                {
+                    // Every file is on disk, so this is not a failure, and it must not loop. Close the job as completed with
+                    // the reason. The request stays open, so reconciliation keeps checking it.
+                    logger.LogWarning("Job {JobId} \"{Title}\": files are imported but Plex has not verified them ({Detail}). Closing the job as pending verification. Reconciliation keeps checking the request, and no Available notification was sent",
+                        job.Id, job.Title, wait.Detail);
+                    await SafeMarkPendingVerification(job.Id, wait.Detail);
+                }
+            }
         }
         else if (importedCount > 0)
         {
@@ -745,7 +756,10 @@ public class FulfillmentPipeline(
         await SafeRemoveState(job.Id);
     }
 
-    private async Task<bool> WaitForPlexVerificationAsync(FulfillmentJobDto job, CancellationToken ct)
+    /// <summary>Whether Plex verified the import, and the last thing Plex said about it either way.</summary>
+    private sealed record PlexWait(bool Verified, string Detail);
+
+    private async Task<PlexWait> WaitForPlexVerificationAsync(FulfillmentJobDto job, CancellationToken ct)
     {
         var timeout = TimeSpan.FromMinutes(Math.Clamp(worker.Value.PlexVerificationTimeoutMinutes, 1, 60));
         var deadline = DateTime.UtcNow + timeout;
@@ -765,7 +779,7 @@ public class FulfillmentPipeline(
             {
                 logger.LogInformation("Job {JobId} \"{Title}\": Plex verified music import ({Detail}, ratingKey={RatingKey})",
                     job.Id, job.Title, result.Detail, result.RatingKey);
-                return true;
+                return new PlexWait(true, result.Detail);
             }
             await SafeReportProgress(job.Id, 100);
             var remaining = deadline - DateTime.UtcNow;
@@ -774,7 +788,7 @@ public class FulfillmentPipeline(
         }
         logger.LogWarning("Job {JobId} \"{Title}\": Plex verification timed out after {Minutes}m ({Detail})",
             job.Id, job.Title, timeout.TotalMinutes, lastDetail ?? "not indexed");
-        return false;
+        return new PlexWait(false, lastDetail ?? "not indexed");
     }
 
     // Physically remove the old files an upgrade superseded, EXCEPT any the new import overwrote in place
@@ -829,8 +843,24 @@ public class FulfillmentPipeline(
 
     private async Task SafeMarkFulfilled(int requestId)
     {
-        try { await api.MarkFulfilledAsync(requestId, CancellationToken.None); }
-        catch (Exception ex) { logger.LogWarning(ex, "Could not report fulfillment for request {RequestId}; will retry next reconciliation pass", requestId); }
+        try
+        {
+            // The client returns false on an HTTP error. That used to be discarded, so a rejected completion looked
+            // exactly like an accepted one and the job kept looping.
+            if (!await api.MarkFulfilledAsync(requestId, CancellationToken.None))
+                logger.LogWarning("The web app rejected the fulfilled report for request {RequestId}; the job stays open and will be picked up again", requestId);
+        }
+        catch (Exception ex) { logger.LogWarning(ex, "Could not report fulfillment for request {RequestId}; the job stays open and will be picked up again", requestId); }
+    }
+
+    private async Task SafeMarkPendingVerification(int jobId, string detail)
+    {
+        try
+        {
+            if (!await api.MarkPendingVerificationAsync(jobId, detail, CancellationToken.None))
+                logger.LogWarning("Job {JobId}: the web app did not accept the pending-verification close; the job stays open and will be picked up again", jobId);
+        }
+        catch (Exception ex) { logger.LogWarning(ex, "Job {JobId}: could not report pending verification; the job stays open", jobId); }
     }
 
     /// <summary>
