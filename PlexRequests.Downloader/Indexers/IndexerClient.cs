@@ -26,10 +26,14 @@ public sealed record IndexerSearchResult(
     /// <summary>Human-readable per-indexer summary, e.g. "EZTV: 0, PirateBay: 12, 1337x: error".
     /// Shown in the admin Missing panel via the deferral reason, so "why is nothing found" is
     /// answerable without downloader logs.</summary>
+    /// <summary>The provider name for the catalog's contribution. It is reported in the summary, never in indexer health.</summary>
+    public const string CatalogProvider = "Catalog";
+
     public string Summary => Providers.Count == 0
         ? "no indexers enabled for this media type"
         : string.Join(", ", Providers.Select(o => o.Success ? $"{o.Provider}: {o.Count}"
             : o.BlockReason != IndexerBlockReason.None ? $"{o.Provider}: {o.BlockReason}"
+            : o.Provider == CatalogProvider ? $"{o.Provider}: {o.Error}"
             : $"{o.Provider}: error"));
 }
 
@@ -68,9 +72,10 @@ public class IndexerClient(
     {
         await settings.RefreshAsync(ct); // pick up admin changes (throttled internally)
         await downloadPreferences.RefreshAsync(ct);
-        var catalogCandidates = catalogOptions.Value.Enabled && downloadPreferences.Current.UseCatalogForSearch
+        var catalog = catalogOptions.Value.Enabled && downloadPreferences.Current.UseCatalogForSearch
             ? await SearchCatalogWithBudgetAsync(job, ct)
-            : Array.Empty<ReleaseCandidate>();
+            : SkipCatalog(job);
+        var catalogCandidates = catalog.Candidates;
         var directResults = await SearchAcquisitionSourcesAsync(job, ct);
         var directCandidates = directResults.SelectMany(x => x.Candidates).ToList();
 
@@ -94,7 +99,7 @@ public class IndexerClient(
                 logger.LogWarning("No enabled indexer supports search type {Type} for \"{Title}\" (library shape={Shape}, anime={IsAnime})",
                     IndexerConfigDto.SearchMediaType(job), job.Title, job.MediaType, job.IsAnime);
             return new IndexerSearchResult(Deduplicate(catalogCandidates.Concat(directCandidates)),
-                directResults.Select(x => x.Outcome).ToList());
+                WithCatalog(catalog.Outcome, directResults.Select(x => x.Outcome)));
         }
 
         var searchedAt = DateTime.UtcNow;
@@ -116,7 +121,7 @@ public class IndexerClient(
                 .Where(x => x.Acquisition.Protocol == AcquisitionProtocol.Torrent), job.MediaType, searchedAt, ct);
 
         var merged = Deduplicate(catalogCandidates.Concat(directCandidates).Concat(results.SelectMany(r => r.Candidates)));
-        return new IndexerSearchResult(merged, outcomes);
+        return new IndexerSearchResult(merged, WithCatalog(catalog.Outcome, outcomes));
     }
 
     private async Task<List<(IReadOnlyList<ReleaseCandidate> Candidates, ProviderSearchOutcome Outcome)>>
@@ -152,30 +157,65 @@ public class IndexerClient(
             _ => indexer.EnableAutomaticSearch
         });
 
-    private async Task<IReadOnlyList<ReleaseCandidate>> SearchCatalogWithBudgetAsync(
-        FulfillmentJobDto job,
-        CancellationToken cancellationToken)
+    /// <summary>What the catalog contributed to one search, and how it went. Kept out of the indexer health report.</summary>
+    private sealed record CatalogSearch(IReadOnlyList<ReleaseCandidate> Candidates, ProviderSearchOutcome Outcome);
+
+    private static readonly TimeSpan CatalogBudget = TimeSpan.FromSeconds(2);
+
+    private async Task<CatalogSearch> SearchCatalogWithBudgetAsync(FulfillmentJobDto job, CancellationToken cancellationToken)
     {
+        var started = Stopwatch.GetTimestamp();
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(TimeSpan.FromSeconds(2));
+        budget.CancelAfter(CatalogBudget);
         try
         {
             var candidates = await api.SearchCatalogAsync(job, budget.Token);
-            if (candidates is { Count: > 0 })
-                logger.LogInformation("Catalog: {Count} candidate(s) for \"{Title}\"", candidates.Count, job.Title);
-            return candidates ?? Array.Empty<ReleaseCandidate>();
+            var elapsedMs = (int)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (candidates is null)
+            {
+                // The web API answered with nothing, so the search could not tell whether the catalog holds a match.
+                logger.LogWarning("Catalog search for job {JobId} \"{Title}\" returned no result after {Ms} ms; the web API may be down",
+                    job.Id, job.Title, elapsedMs);
+                return new CatalogSearch(Array.Empty<ReleaseCandidate>(),
+                    new ProviderSearchOutcome(0, IndexerSearchResult.CatalogProvider, false, 0, "web API returned nothing", elapsedMs));
+            }
+            logger.LogInformation("Catalog search for job {JobId} \"{Title}\": {Count} candidate(s) in {Ms} ms",
+                job.Id, job.Title, candidates.Count, elapsedMs);
+            return new CatalogSearch(candidates,
+                new ProviderSearchOutcome(0, IndexerSearchResult.CatalogProvider, true, candidates.Count, null, elapsedMs));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            logger.LogDebug("Catalog search exceeded its two-second budget for {Title}", job.Title);
-            return Array.Empty<ReleaseCandidate>();
+            // Previously debug-only, so a catalog that is too slow looked the same as an empty one.
+            var elapsedMs = (int)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            logger.LogWarning("Catalog search for job {JobId} \"{Title}\" exceeded its {Budget}s budget after {Ms} ms; no catalog candidates were used",
+                job.Id, job.Title, CatalogBudget.TotalSeconds, elapsedMs);
+            return new CatalogSearch(Array.Empty<ReleaseCandidate>(),
+                new ProviderSearchOutcome(0, IndexerSearchResult.CatalogProvider, false, 0,
+                    $"timed out after {CatalogBudget.TotalSeconds:0}s", elapsedMs));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogDebug(ex, "Catalog search skipped for {Title}", job.Title);
-            return Array.Empty<ReleaseCandidate>();
+            var elapsedMs = (int)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            logger.LogWarning(ex, "Catalog search for job {JobId} \"{Title}\" failed after {Ms} ms", job.Id, job.Title, elapsedMs);
+            return new CatalogSearch(Array.Empty<ReleaseCandidate>(),
+                new ProviderSearchOutcome(0, IndexerSearchResult.CatalogProvider, false, 0, ex.Message, elapsedMs));
         }
     }
+
+    /// <summary>The catalog is not consulted. The reason is logged and reported, so "why no catalog candidates" has an answer.</summary>
+    private CatalogSearch SkipCatalog(FulfillmentJobDto job)
+    {
+        var reason = catalogOptions.Value.Enabled
+            ? "UseCatalogForSearch is off in download preferences"
+            : "Catalog:Enabled is off in this process's configuration";
+        logger.LogInformation("Catalog search skipped for job {JobId} \"{Title}\": {Reason}", job.Id, job.Title, reason);
+        return new CatalogSearch(Array.Empty<ReleaseCandidate>(),
+            new ProviderSearchOutcome(0, IndexerSearchResult.CatalogProvider, false, 0, reason, 0));
+    }
+
+    private static IReadOnlyList<ProviderSearchOutcome> WithCatalog(ProviderSearchOutcome catalog,
+        IEnumerable<ProviderSearchOutcome> others) => [catalog, .. others];
 
     public async Task<IndexerCapabilitiesDto> TestAsync(int indexerId, CancellationToken ct)
     {

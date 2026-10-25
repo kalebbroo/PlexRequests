@@ -202,9 +202,19 @@ public sealed class FirefoxCaptureService(
             Items = items
         }, cancellationToken);
 
+        logger.LogInformation(
+            "Firefox capture batch {BatchId} from {Source}: {Items} item(s), {Releases} new release(s), {Sightings} new sighting(s), {Unresolved} unresolved{Duplicate}",
+            batch.BatchId, SourceName(device.Indexer!), items.Count, result.ReleasesInserted, result.SightingsInserted,
+            result.UnresolvedSightings, result.DuplicateBatch ? " (duplicate batch, nothing new)" : string.Empty);
+
         // New releases can satisfy an issue replacement that is waiting out its backoff, so wake those now.
         if (result.ReleasesInserted > 0)
-            await ReplacementWake.WakeDeferredAsync(db, now, cancellationToken);
+        {
+            var woken = await ReplacementWake.WakeDeferredAsync(db, now, cancellationToken);
+            if (woken > 0)
+                logger.LogInformation("{Releases} new release(s) captured; woke {Woken} deferred issue replacement(s) to search again",
+                    result.ReleasesInserted, woken);
+        }
 
         device.LastSeenAt = now;
         device.LastCaptureAt = now;
