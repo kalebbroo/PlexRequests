@@ -51,19 +51,25 @@ public class YtsIndexerProvider(HttpClient http, IOptions<IndexerOptions> option
         {
             foreach (var tor in m.Torrents ?? new())
             {
-                if (string.IsNullOrWhiteSpace(tor.Hash)) continue;
+                // YTS publishes the hash in upper case. Normalize it, so the magnet, the blocklist key, and the catalog
+                // all compare the same lower-case string.
+                var hash = MagnetUtil.Normalize(tor.Hash);
+                if (hash is null) continue;
                 var name = $"{m.TitleLong} {tor.Quality} {tor.Type}".Trim();
                 candidates.Add(new ReleaseCandidate
                 {
                     ReleaseName = name,
-                    Acquisition = AcquisitionResource.Torrent(BuildMagnet(tor.Hash!, name), tor.Hash),
+                    Acquisition = AcquisitionResource.Torrent(BuildMagnet(hash, name), hash),
                     ImdbId = m.ImdbCode,
                     Seeders = tor.Seeds,
                     Leechers = tor.Peers,
                     SizeBytes = tor.SizeBytes,
                     IndexerId = indexer.Id,
                     Source = indexer.Name,
-                    QualityLabel = tor.Quality
+                    QualityLabel = tor.Quality,
+                    // Without a publish date the indexer's max-age setting never applies to YTS results.
+                    PublishDate = tor.DateUploadedUnix > 0
+                        ? DateTimeOffset.FromUnixTimeSeconds(tor.DateUploadedUnix).UtcDateTime : null
                 });
             }
         }
