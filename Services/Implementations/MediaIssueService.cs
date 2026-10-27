@@ -300,7 +300,7 @@ public class MediaIssueService(
     private async Task<string?> BlockingJobReasonAsync(int mediaRequestId)
     {
         var blocker = await db.FulfillmentJobs.AsNoTracking()
-            .Where(j => j.MediaRequestId == mediaRequestId && FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status))
+            .Where(j => j.MediaRequestId == mediaRequestId && FulfillmentJobPolicy.InFlightStatuses.Contains(j.Status))
             .Select(j => new { j.Id, j.Status, j.NextRetryAt })
             .FirstOrDefaultAsync();
         if (blocker is null) return null;
@@ -409,7 +409,9 @@ public class MediaIssueService(
 
         var request = ToRequestDto(target);
         request.QualityProfileId = profileId;
-        var jobId = await fulfillment.EnqueueReplacementAsync(request, floor, replacePaths, plan.Episodes, issue.Id);
+        var replacedHeight = plan.CurrentHeight > 0 ? plan.CurrentHeight : (int?)null;
+        var jobId = await fulfillment.EnqueueReplacementAsync(request, floor, replacePaths, plan.Episodes, issue.Id,
+            replacedHeight);
         if (jobId is null)
         {
             logger?.LogInformation("Replacement for issue #{IssueId} \"{Title}\" not queued: another download started first", issue.Id, issue.Title);

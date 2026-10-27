@@ -87,6 +87,11 @@ public class FulfillmentJobEntity
     /// jobs enforce the quality floor unconditionally (never a downgrade/side-grade) and, on success,
     /// replace <see cref="ReplacePathsJson"/> rather than adding fresh content.</summary>
     public bool IsUpgrade { get; set; }
+    /// <summary>
+    /// Height of the copy an issue replacement is replacing, captured at approval. A relaxed replacement may take a
+    /// below-target release, but never one below this; null for jobs created before the column existed.
+    /// </summary>
+    public int? ReplacedFileHeight { get; set; }
     /// <summary>An issue-triggered replacement. It shares upgrade-safe file swapping, but it remains
     /// deferred and keeps searching when no acceptable alternative is currently available.</summary>
     public bool IsReplacement { get; set; }

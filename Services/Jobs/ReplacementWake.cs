@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.Enums;
 
 namespace PlexRequestsHosted.Services.Jobs;
@@ -27,6 +28,14 @@ public static class ReplacementWake
                         && j.MediaRequest.Status != RequestStatus.Rejected
                         && (j.ReleaseDate == null || j.ReleaseDate <= now))
             .ToListAsync(ct);
+        // The database allows one job in flight per request, so skip requests that already have one, and wake at
+        // most one parked job per request in a pass.
+        var busyRequestIds = (await db.FulfillmentJobs.AsNoTracking()
+            .Where(j => FulfillmentJobPolicy.InFlightStatuses.Contains(j.Status))
+            .Select(j => j.MediaRequestId)
+            .Distinct()
+            .ToListAsync(ct)).ToHashSet();
+        due = due.Where(j => busyRequestIds.Add(j.MediaRequestId)).ToList();
         foreach (var job in due)
         {
             job.Status = FulfillmentStatus.Queued;

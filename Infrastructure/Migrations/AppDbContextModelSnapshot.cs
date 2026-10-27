@@ -531,6 +531,9 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Property<bool>("IsUpgrade")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("ReplacedFileHeight")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("LastError")
                         .HasMaxLength(2000)
                         .HasColumnType("TEXT");
@@ -647,7 +650,7 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
 
                     b.HasIndex("MediaRequestId")
                         .IsUnique()
-                        .HasFilter("\"Status\" IN (0, 1, 2, 7)");
+                        .HasFilter("\"Status\" IN (0, 1, 2)");
 
                     b.HasIndex("NextRetryAt");
 

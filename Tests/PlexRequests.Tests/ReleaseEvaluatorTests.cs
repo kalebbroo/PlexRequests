@@ -599,6 +599,42 @@ public class ReleaseEvaluatorTests
     }
 
     [Fact]
+    public void A_replacement_is_not_judged_as_an_upgrade_so_a_lower_release_can_still_replace_a_bad_copy()
+    {
+        // An approved issue replacement swaps out a copy the admin rejected. It is not an upgrade, so the
+        // "not better than what's already there" rule does not apply to it.
+        var job = TestData.Job(quality: Quality.FullHD, isUpgrade: true);
+        job.IsReplacement = true;
+        job.MediaIssueId = 1;
+        var r = _eval.Evaluate(TestData.Release("Severance.S02E07.720p.WEB-DL"), job,
+            TestData.Context(relax: true, relaxedMinimumHeight: 480));
+        Assert.False(Rejected(r, RejectionReason.NotAnUpgrade));
+        Assert.True(r.Accepted);
+    }
+
+    [Fact]
+    public void A_relaxed_replacement_never_takes_a_copy_below_the_one_it_replaces()
+    {
+        var job = TestData.Job(quality: Quality.FullHD, isUpgrade: true);
+        job.IsReplacement = true;
+        job.MediaIssueId = 1;
+        var r = _eval.Evaluate(TestData.Release("Severance.S02E07.720p.WEB-DL"), job,
+            TestData.Context(relax: true, relaxedMinimumHeight: 1080));
+        Assert.True(Rejected(r, RejectionReason.BelowQualityFloor));
+        Assert.False(r.Accepted);
+    }
+
+    [Fact]
+    public void A_strict_replacement_still_holds_the_quality_target()
+    {
+        var job = TestData.Job(quality: Quality.FullHD);
+        job.IsReplacement = true;
+        var r = _eval.Evaluate(TestData.Release("Severance.S02E07.720p.WEB-DL"), job,
+            TestData.Context(relax: false));
+        Assert.True(Rejected(r, RejectionReason.BelowQualityFloor));
+    }
+
+    [Fact]
     public void Higher_profile_rank_outscores_more_seeders()
     {
         // Profile position must dominate: the tier the admin ranked higher should win even when a worse
