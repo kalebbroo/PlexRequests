@@ -65,6 +65,73 @@ public sealed class ReplacementContextTests
     }
 
     [Fact]
+    public async Task Whole_season_replacement_is_a_season_job_so_the_planner_can_take_a_pack()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = await SeedSeriesAsync(db);
+        var queue = Queue(db, new FixedMetadata(null), Preferences());
+
+        var jobId = await queue.EnqueueReplacementAsync(RequestDto(request), Quality.FullHD,
+            ["/library/Show/Season 02/bad.mkv"], [(2, 1), (2, 2), (2, 3)], mediaIssueId: 77, wholeSeasons: true);
+
+        var replacement = await db.FulfillmentJobs.SingleAsync(j => j.Id == jobId);
+        Assert.True(replacement.IsReplacement);
+        Assert.Equal(RequestScopeKind.Seasons, replacement.RequestScopeKind);
+        Assert.Equal("2", replacement.RequestedSeasonsCsv);
+        Assert.Null(replacement.RequestedEpisodesCsv);
+        var target = Assert.Single(JsonSerializer.Deserialize<List<SeasonTarget>>(replacement.SeasonTargetsJson!)!);
+        Assert.Equal(2, target.Season);
+        Assert.Equal([1, 2, 3], target.MissingEpisodes);
+    }
+
+    [Fact]
+    public async Task Episode_replacement_stays_an_episode_job()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = await SeedSeriesAsync(db);
+        var queue = Queue(db, new FixedMetadata(null), Preferences());
+
+        var jobId = await queue.EnqueueReplacementAsync(RequestDto(request), Quality.FullHD,
+            ["/library/Show/Season 02/bad.mkv"], [(2, 1), (2, 2), (2, 3)], mediaIssueId: 78);
+
+        var replacement = await db.FulfillmentJobs.SingleAsync(j => j.Id == jobId);
+        Assert.Equal(RequestScopeKind.Episodes, replacement.RequestScopeKind);
+        Assert.Equal("S2E1,S2E2,S2E3", replacement.RequestedEpisodesCsv);
+        Assert.Null(replacement.SeasonTargetsJson);
+    }
+
+    private static async Task<MediaRequestEntity> SeedSeriesAsync(AppDbContext db)
+    {
+        var request = new MediaRequestEntity
+        {
+            MediaId = 56, MediaType = MediaType.TvShow, RequestScopeKind = RequestScopeKind.Series,
+            Title = "Season Show", Status = RequestStatus.Available
+        };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        db.FulfillmentJobs.Add(new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
+            MediaKind = MediaKind.Series, Title = request.Title, Status = FulfillmentStatus.Completed
+        });
+        await db.SaveChangesAsync();
+        return request;
+    }
+
+    private static MediaRequestDto RequestDto(MediaRequestEntity request) => new()
+    {
+        Id = request.Id, MediaId = request.MediaId, MediaType = request.MediaType, Title = request.Title
+    };
+
+    [Fact]
     public async Task Legacy_anime_replacement_rehydrates_routing_language_and_episode_order_snapshots()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

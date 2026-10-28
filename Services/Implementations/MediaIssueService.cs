@@ -491,8 +491,10 @@ public class MediaIssueService(
         var request = ToRequestDto(target);
         request.QualityProfileId = profileId;
         var replacedHeight = plan.CurrentHeight > 0 ? plan.CurrentHeight : (int?)null;
+        // A season or series report replaces whole seasons, so its job is a season job and can take a pack.
+        var wholeSeasons = (issue.MediaType is MediaType.TvShow or MediaType.Anime) && issue.EpisodeNumber is null;
         var jobId = await fulfillment.EnqueueReplacementAsync(request, floor, replacePaths, plan.Episodes, issue.Id,
-            replacedHeight);
+            replacedHeight, wholeSeasons);
         if (jobId is null) return (null, null);
         logger?.LogInformation(
             "Replacement for issue #{IssueId} \"{Title}\" queued as job #{JobId} on request #{RequestId} ({Source}): replacing {Paths} path(s), blocking {Sizes} size(s), floor {Floor}, {Episodes} episode(s)",

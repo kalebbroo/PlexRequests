@@ -122,7 +122,7 @@ public sealed class ApprovedRequestRepairTests
             Task.FromResult(false);
         public Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor,
             IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId,
-            int? replacedFileHeight = null) =>
+            int? replacedFileHeight = null, bool wholeSeasons = false) =>
             Task.FromResult<int?>(null);
         public Task<Quality> RecomputeAchievedQualityAsync(int mediaRequestId) => Task.FromResult(Quality.Any);
         public Task<Dictionary<(int Season, int Episode), int>> GetPlexEpisodeHeightsAsync(MediaRequestDto request) =>

@@ -145,6 +145,7 @@ public sealed class MediaIssueReplacementTests
         Assert.Equal(importedFile.Id, issue.ImportedFileId);
         Assert.Equal([(9, 9), (9, 10)], queue.Episodes);
         Assert.Equal(Quality.FullHD, queue.Floor);
+        Assert.False(queue.WholeSeasons);
         Assert.Contains("S09E09-E10.mkv", Assert.Single(queue.ReplacePaths));
         var blocked = await db.ReleaseBlocklist.SingleAsync();
         Assert.Equal(badHash, blocked.InfoHash);
@@ -189,6 +190,7 @@ public sealed class MediaIssueReplacementTests
         Assert.Equal([(9, 1), (9, 2), (9, 3)], call.Episodes);
         Assert.Equal(2, queue.ReplacePaths.Count);
         Assert.DoesNotContain(queue.ReplacePaths, path => path.Contains("Season 08"));
+        Assert.True(queue.WholeSeasons);
     }
 
     [Fact]
@@ -859,12 +861,14 @@ public sealed class MediaIssueReplacementTests
         public List<(int season, int episode)> Episodes { get; private set; } = new();
         /// <summary>Every enqueue, in order, so a season or series approval can be checked request by request.</summary>
         public List<(int RequestId, List<(int season, int episode)> Episodes)> Calls { get; } = new();
+        public bool WholeSeasons { get; private set; }
 
         public Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor,
             IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId,
-            int? replacedFileHeight = null)
+            int? replacedFileHeight = null, bool wholeSeasons = false)
         {
             Floor = floor;
+            WholeSeasons = wholeSeasons;
             ReplacePaths = replacePaths.ToList();
             Episodes = episodes.ToList();
             MediaIssueId = mediaIssueId;
