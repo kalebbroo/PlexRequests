@@ -134,6 +134,8 @@ internal static class AnimeManifestPreflight
                     continue;
                 }
                 var episodes = parsed.EpisodeNumbers.Distinct().OrderBy(number => number).ToList();
+                if (episodes.Count == 0 && parsed.Season is null && !EpisodeOrderMapping.IsActive(episodeOrderProfile))
+                    episodes = FallbackAbsoluteEpisodes(item, file.Path).ToList();
                 // The parser reads a bare absolute number ("DNAngel - 25 - ...") as season 0. Only that case, with no
                 // season marker in the file name, can be mapped as a provisional season.
                 var absoluteSeason = parsed.Season is null or 0
@@ -276,6 +278,20 @@ internal static class AnimeManifestPreflight
         return title.Length >= 2 && Letters(Path.GetFileName(filePath)).Contains(title, StringComparison.Ordinal)
             ? season
             : null;
+    }
+
+    /// <summary>
+    /// A bare episode number the parser could not read ("D.N.Angel-25-TheBlackWings(anime-mx)"). Only a single
+    /// needed episode of the provisional season, named once in the file name outside its bracketed tags, qualifies.
+    /// </summary>
+    internal static IReadOnlyList<int> FallbackAbsoluteEpisodes(DownloadPlanItem item, string filePath)
+    {
+        if (item.Season is not int season || item.NeededEpisodeRefs is not { } needed) return [];
+        var wanted = needed.Where(target => target.Season == season).Select(target => target.Episode).ToHashSet();
+        var name = Regex.Replace(Path.GetFileNameWithoutExtension(filePath), @"\[[^\]]*\]|\([^)]*\)", " ");
+        var numbers = Regex.Matches(name, @"(?<!\d)\d{1,3}(?!\d)").Select(match => int.Parse(match.Value))
+            .Where(wanted.Contains).Distinct().ToList();
+        return numbers.Count == 1 ? numbers : [];
     }
 
     private static string Letters(string value) =>
