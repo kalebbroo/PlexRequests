@@ -97,6 +97,19 @@ public sealed class AnimeManifestPreflightTests
     }
 
     [Fact]
+    public void Provisional_absolute_file_is_recognised_only_for_the_requested_show_and_needed_episode()
+    {
+        var job = new FulfillmentJobDto { Id = 611, Title = "D.N.Angel", MediaType = MediaType.TvShow, IsAnime = true };
+        var needed = new[] { (1, 25) };
+
+        Assert.True(AnimeManifestPreflight.IsProvisionalAbsoluteFile(job, "DNAngel - 25 - The Black Wings   [DarkDream].mkv",
+            [25], 1, needed));
+        Assert.False(AnimeManifestPreflight.IsProvisionalAbsoluteFile(job, "DNAngel - 24 - Snow.mkv", [24], 1, needed));
+        Assert.False(AnimeManifestPreflight.IsProvisionalAbsoluteFile(job, "Other Show - 25.mkv", [25], 1, needed));
+        Assert.False(AnimeManifestPreflight.IsProvisionalAbsoluteFile(job, "DNAngel S02E25.mkv", [25], 1, needed));
+    }
+
+    [Fact]
     public void Absolute_numbered_files_of_another_show_stay_unmapped()
     {
         var job = new FulfillmentJobDto

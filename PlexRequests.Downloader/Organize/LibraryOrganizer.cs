@@ -321,7 +321,11 @@ public class LibraryOrganizer(
                     && expectedSource != season
                     && videoFiles.Where(file => parser.Parse(Path.GetFileName(file)).Season == 0)
                         .All(file => AnimeManifestPreflight.MatchesNamedCanonicalSeason(
-                            job, file, expectedSource, season));
+                            job, file, expectedSource, season))
+                    || transfer.SourceSeason is null && transfer.Season == season && videoFiles.Count > 0
+                    && videoFiles.All(file => AnimeManifestPreflight.IsProvisionalAbsoluteFile(job, file,
+                        parser.Parse(Path.GetFileName(file)).EpisodeNumbers.Distinct().OrderBy(x => x).ToList(), season,
+                        ProvisionalNeeded(job)));
                 var map = splitter.Map(videoFiles, season, expectedEpisodeCount, transfer.SourceSeason,
                     allowAbsoluteOrder);
                 if (!map.IsUnambiguous)
@@ -951,6 +955,10 @@ public class LibraryOrganizer(
 
     private static List<EpisodeRef> Coverage(int season, IEnumerable<int> episodes) => episodes
         .Distinct().OrderBy(x => x).Select(x => new EpisodeRef { Season = season, Episode = x }).ToList();
+
+    private static IEnumerable<(int Season, int Episode)> ProvisionalNeeded(FulfillmentJobDto job) =>
+        job.RequestedEpisodes.Select(episode => (episode.Season, episode.Episode))
+            .Concat(job.SeasonTargets.SelectMany(target => target.MissingEpisodes.Select(episode => (target.Season, episode))));
 
     private static bool IsContiguous(IReadOnlyList<int> episodes) => episodes.Count > 0
         && episodes.SequenceEqual(Enumerable.Range(episodes[0], episodes.Count));
