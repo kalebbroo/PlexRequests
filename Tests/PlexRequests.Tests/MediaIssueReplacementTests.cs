@@ -438,12 +438,12 @@ public sealed class MediaIssueReplacementTests
             MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
             RequestScopeKind = RequestScopeKind.Series, Title = request.Title, Status = FulfillmentStatus.Completed
         };
-        // The series monitor is still searching for something else on the same request, so the one-active-job
-        // invariant blocks a replacement for this episode.
+        // The series monitor is still downloading something else on the same request, so the one-job-in-flight
+        // rule blocks a replacement for this episode. A parked job would not block it.
         var monitor = new FulfillmentJobEntity
         {
             MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
-            RequestScopeKind = RequestScopeKind.Series, Title = request.Title, Status = FulfillmentStatus.Deferred
+            RequestScopeKind = RequestScopeKind.Series, Title = request.Title, Status = FulfillmentStatus.Downloading
         };
         db.FulfillmentJobs.AddRange(completed, monitor);
         await db.SaveChangesAsync();
@@ -658,7 +658,8 @@ public sealed class MediaIssueReplacementTests
         public List<(int season, int episode)> Episodes { get; private set; } = new();
 
         public Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor,
-            IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId)
+            IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId,
+            int? replacedFileHeight = null)
         {
             Floor = floor;
             ReplacePaths = replacePaths.ToList();

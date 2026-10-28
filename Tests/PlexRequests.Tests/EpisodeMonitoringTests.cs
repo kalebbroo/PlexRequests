@@ -169,7 +169,7 @@ public class EpisodeMonitoringTests
             MediaId = request.MediaId,
             MediaType = request.MediaType,
             Title = request.Title,
-            Status = FulfillmentStatus.Deferred
+            Status = FulfillmentStatus.Downloading
         });
 
         await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());

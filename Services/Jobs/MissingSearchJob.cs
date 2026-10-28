@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.Enums;
 
 namespace PlexRequestsHosted.Services.Jobs;
@@ -33,6 +34,17 @@ public class MissingSearchJob(AppDbContext db, ILogger<MissingSearchJob> logger)
             .ToListAsync(ct);
 
         if (due.Count == 0) return JobResult.Skipped("No deferred requests are due for re-search");
+
+        // A request may own one job in flight at a time. A parked job waits while another job for its request is
+        // queued, claimed, or downloading, and at most one of several parked jobs for a request is requeued per pass.
+        var busyRequestIds = (await db.FulfillmentJobs.AsNoTracking()
+            .Where(j => FulfillmentJobPolicy.InFlightStatuses.Contains(j.Status))
+            .Select(j => j.MediaRequestId)
+            .Distinct()
+            .ToListAsync(ct)).ToHashSet();
+        due = due.Where(j => busyRequestIds.Add(j.MediaRequestId)).ToList();
+
+        if (due.Count == 0) return JobResult.Skipped("Deferred jobs are waiting for their request's current job to finish");
 
         foreach (var j in due)
         {

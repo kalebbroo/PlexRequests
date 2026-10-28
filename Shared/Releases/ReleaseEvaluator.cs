@@ -101,9 +101,17 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
                 $"{(resolution > 0 ? resolution + "p" : "unknown resolution")} is below the {floor}p target"));
         }
 
-        // An upgrade must actually be an upgrade. Enforced regardless of relaxation: replacing a file with
-        // something no better is pure churn.
-        if (job.IsUpgrade && optimization is null && floor > 0 && resolution < floor)
+        // A relaxed replacement may take a below-target release, but never one below the copy it replaces. A strict
+        // search is already held to the floor above.
+        if (context.RelaxQualityFloor && job.MediaIssueId is not null && context.RelaxedMinimumHeight > 0
+            && resolution < context.RelaxedMinimumHeight)
+            rejections.Add(new Rejection(RejectionReason.BelowQualityFloor,
+                $"{(resolution > 0 ? resolution + "p" : "unknown resolution")} is below the {context.RelaxedMinimumHeight}p file being replaced"));
+
+        // A routine upgrade must actually be an upgrade. Enforced regardless of relaxation: replacing a file with
+        // something no better is pure churn. An issue replacement is not an upgrade: it swaps out a copy the admin
+        // rejected, so the floor above is its only height rule.
+        if (job.IsUpgrade && !job.IsReplacement && optimization is null && floor > 0 && resolution < floor)
             rejections.Add(new Rejection(RejectionReason.NotAnUpgrade,
                 $"{resolution}p is not better than the {floor}p already in the library"));
 

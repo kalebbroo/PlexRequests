@@ -534,7 +534,10 @@ public class MediaRequestService(
                 if (activeJob.Status is FulfillmentStatus.Queued or FulfillmentStatus.Deferred
                     && !string.Equals(activeJob.RequestedEpisodesCsv, csv, StringComparison.OrdinalIgnoreCase))
                 {
-                    RefreshPendingMonitorScope(child, activeJob, csv, DateTime.UtcNow);
+                    // Only one job may be in flight per request, so a parked search wakes only when nothing else is.
+                    var otherInFlight = await _db.FulfillmentJobs.AnyAsync(j => j.MediaRequestId == child.Id
+                        && j.Id != activeJob.Id && FulfillmentJobPolicy.InFlightStatuses.Contains(j.Status));
+                    RefreshPendingMonitorScope(child, activeJob, csv, DateTime.UtcNow, requeueNow: !otherInFlight);
                     await _db.SaveChangesAsync();
                 }
 
@@ -605,15 +608,24 @@ public class MediaRequestService(
     }
 
     internal static void RefreshPendingMonitorScope(
-        MediaRequestEntity child, FulfillmentJobEntity job, string episodesCsv, DateTime now)
+        MediaRequestEntity child, FulfillmentJobEntity job, string episodesCsv, DateTime now, bool requeueNow = true)
     {
         child.RequestedEpisodesCsv = episodesCsv;
         job.RequestedEpisodesCsv = episodesCsv;
         job.SeasonTargetsJson = null;
         if (job.Status == FulfillmentStatus.Deferred)
         {
-            job.Status = FulfillmentStatus.Queued;
-            job.NextRetryAt = null;
+            if (requeueNow)
+            {
+                job.Status = FulfillmentStatus.Queued;
+                job.NextRetryAt = null;
+            }
+            else
+            {
+                // Another job is in flight for this request, so this one stays parked, due now. The missing-search
+                // pass requeues it when the request is clear.
+                job.NextRetryAt = now;
+            }
             job.LastUpdatedAt = now;
         }
     }

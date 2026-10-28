@@ -1026,6 +1026,8 @@ public class FulfillmentJobDto
     /// unconditionally (never a downgrade) and, on success, replaces <see cref="ReplacePaths"/> instead of
     /// treating the content as newly acquired.</summary>
     public bool IsUpgrade { get; set; }
+    /// <summary>Height of the copy an issue replacement replaces; a relaxed search never accepts below it.</summary>
+    public int? ReplacedFileHeight { get; set; }
     /// <summary>Issue-triggered safe replacement. These jobs retry instead of ending after one empty search.</summary>
     public bool IsReplacement { get; set; }
     public int? MediaIssueId { get; set; }

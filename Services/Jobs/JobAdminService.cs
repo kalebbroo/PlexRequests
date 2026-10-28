@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
 using PlexRequestsHosted.Services.Abstractions;
 using PlexRequestsHosted.Services.Implementations;
+using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 
@@ -123,6 +124,10 @@ public class JobAdminService(
         var j = await db.FulfillmentJobs.FirstOrDefaultAsync(x => x.Id == jobId);
         if (j is null || j.Status != FulfillmentStatus.Deferred
             || !string.IsNullOrWhiteSpace(j.StorageOptimizationPolicyJson)) return false;
+        // A request can have one job in flight at a time. If another job is already queued or downloading for it,
+        // this one stays parked and is searched when that job finishes.
+        if (await db.FulfillmentJobs.AnyAsync(x => x.MediaRequestId == j.MediaRequestId && x.Id != j.Id
+                && FulfillmentJobPolicy.InFlightStatuses.Contains(x.Status))) return false;
         // Flip straight to Queued so the downloader claims it now, rather than waiting for the scheduler.
         j.Status = FulfillmentStatus.Queued;
         j.NextRetryAt = null;

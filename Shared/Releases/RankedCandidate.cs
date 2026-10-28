@@ -146,6 +146,12 @@ public sealed class RankingContext
     /// </summary>
     public bool RelaxQualityFloor { get; init; }
 
+    /// <summary>
+    /// Lowest height a relaxed replacement may take: the copy it replaces. Zero when unknown or not a replacement,
+    /// which leaves a relaxed search with no height floor (the pre-existing behaviour for non-replacement jobs).
+    /// </summary>
+    public int RelaxedMinimumHeight { get; init; }
+
     /// <summary>Now, injectable so tests and age filters are deterministic.</summary>
     public DateTime UtcNow { get; init; } = DateTime.UtcNow;
 }

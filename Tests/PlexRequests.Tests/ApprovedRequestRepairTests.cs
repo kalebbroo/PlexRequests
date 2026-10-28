@@ -121,7 +121,8 @@ public sealed class ApprovedRequestRepairTests
             IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes) =>
             Task.FromResult(false);
         public Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor,
-            IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId) =>
+            IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId,
+            int? replacedFileHeight = null) =>
             Task.FromResult<int?>(null);
         public Task<Quality> RecomputeAchievedQualityAsync(int mediaRequestId) => Task.FromResult(Quality.Any);
         public Task<Dictionary<(int Season, int Episode), int>> GetPlexEpisodeHeightsAsync(MediaRequestDto request) =>

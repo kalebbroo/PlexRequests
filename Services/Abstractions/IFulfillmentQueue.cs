@@ -67,9 +67,11 @@ public interface IFulfillmentQueue
     Task<bool> EnqueueUpgradeAsync(MediaRequestDto request, Quality target, IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes);
 
     /// <summary>Queue a durable issue replacement against an existing available request. Returns the new
-    /// job id, or null when another live job already owns that request.</summary>
+    /// job id, or null when another job already has work in flight on that request. A parked job does not block it.
+    /// <paramref name="replacedFileHeight"/> is the height of the copy being replaced; a relaxed search never takes less.</summary>
     Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor,
-        IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId);
+        IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId,
+        int? replacedFileHeight = null);
 
     Task<int?> EnqueueOptimizationAsync(MediaRequestDto request, StorageOptimizationPolicyDto policy) =>
         Task.FromResult<int?>(null);

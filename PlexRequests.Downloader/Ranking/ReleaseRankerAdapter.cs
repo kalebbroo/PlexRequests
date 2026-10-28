@@ -63,9 +63,11 @@ public class ReleaseRankerAdapter(
         // The quality target is a preference, not a dead end — but relaxing it used to happen after a single
         // deferral, because it keyed off a counter that increments on every claim. Now it takes several
         // searches that genuinely found releases and rejected them all, which spans hours rather than
-        // half an hour. Upgrade jobs never relax: a below-target "upgrade" is a downgrade.
+        // half an hour. Routine upgrade jobs never relax: a below-target "upgrade" is a downgrade. An issue
+        // replacement does relax, because the copy it replaces is already the problem; the evaluator keeps it at or
+        // above that copy's height, so relaxing can't turn a replacement into a downgrade.
         int threshold = Math.Max(1, prefs.Current.RelaxFloorAfterEmptySearches);
-        if (!ranked.Any(r => r.Accepted) && !job.IsUpgrade && job.EmptySearchCount >= threshold)
+        if (!ranked.Any(r => r.Accepted) && (!job.IsUpgrade || job.MediaIssueId is not null) && job.EmptySearchCount >= threshold)
         {
             var relaxed = evaluator.EvaluateAll(candidates, job, BuildContext(job, relaxFloor: true));
             if (relaxed.Any(r => r.Accepted || IsManifestOnlyCandidate(r)))
@@ -177,7 +179,8 @@ public class ReleaseRankerAdapter(
             .Select(h => h!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase),
         BlocklistedSizes = job.BlocklistedSizes.ToHashSet(),
-        RelaxQualityFloor = relaxFloor
+        RelaxQualityFloor = relaxFloor,
+        RelaxedMinimumHeight = job.ReplacedFileHeight ?? 0
     };
 
     private void LogOutcome(FulfillmentJobDto job, int candidateCount, IReadOnlyList<RankedCandidate> ranked, DownloadPlanResult result)

@@ -1149,9 +1149,10 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             optimizationPolicy: null) is not null;
 
     public Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor,
-        IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId) =>
+        IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId,
+        int? replacedFileHeight = null) =>
         EnqueueFileReplacementAsync(request, floor, replacePaths, episodes, mediaIssueId,
-            optimizationPolicy: null);
+            optimizationPolicy: null, replacedFileHeight);
 
     public Task<int?> EnqueueOptimizationAsync(MediaRequestDto request, StorageOptimizationPolicyDto policy)
     {
@@ -1168,13 +1169,17 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
 
     private async Task<int?> EnqueueFileReplacementAsync(MediaRequestDto request, Quality target,
         IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int? mediaIssueId,
-        StorageOptimizationPolicyDto? optimizationPolicy)
+        StorageOptimizationPolicyDto? optimizationPolicy, int? replacedFileHeight = null)
     {
         // The database also enforces this invariant. Checking here gives callers an idempotent result instead
-        // of turning a concurrent/live job into an exception.
+        // of turning a concurrent/live job into an exception. An issue replacement only yields to work actually
+        // in flight: a parked job waits for a search, and must not stop the admin's approved replacement.
+        var blockingStatuses = mediaIssueId.HasValue
+            ? FulfillmentJobPolicy.InFlightStatuses
+            : FulfillmentJobPolicy.ActiveStatuses;
         var activeJob = await _db.FulfillmentJobs.AnyAsync(j =>
             j.MediaRequestId == request.Id &&
-            FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status));
+            blockingStatuses.Contains(j.Status));
         if (activeJob) return null;
 
         // Copy identity fields (IMDb id / year / genres / anime flag) from the most recent real job so the
@@ -1329,6 +1334,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             LibrarySeasonPackFolderTemplate = hasDestinationSnapshot
                 ? origin!.LibrarySeasonPackFolderTemplate : destination!.SeasonPackFolderTemplate,
             IsUpgrade = true,
+            ReplacedFileHeight = replacedFileHeight,
             // Optimization has the same completeness guarantee as an issue replacement: retain every old
             // file and keep searching until all selected targets have verified replacements.
             IsReplacement = mediaIssueId.HasValue || optimizationPolicy is not null,
@@ -1347,7 +1353,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         {
             _db.Entry(job).State = EntityState.Detached;
             if (await _db.FulfillmentJobs.AnyAsync(j => j.MediaRequestId == request.Id &&
-                    FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status)))
+                    blockingStatuses.Contains(j.Status)))
                 return null;
             throw;
         }
@@ -1680,6 +1686,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         Attempts = j.Attempts,
         Progress = j.Progress,
         IsUpgrade = j.IsUpgrade,
+        ReplacedFileHeight = j.ReplacedFileHeight,
         IsReplacement = j.IsReplacement,
         MediaIssueId = j.MediaIssueId,
         ReplacePaths = string.IsNullOrWhiteSpace(j.ReplacePathsJson)
