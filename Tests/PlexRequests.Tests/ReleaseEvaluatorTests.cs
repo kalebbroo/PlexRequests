@@ -618,6 +618,15 @@ public class ReleaseEvaluatorTests
     }
 
     [Fact]
+    public void Anime_compact_title_is_a_full_title_match()
+    {
+        var job = TestData.Job(title: "D.N.Angel", type: MediaType.TvShow);
+        job.IsAnime = true;
+        var r = _eval.Evaluate(TestData.Release("DNAngel Dual-Audio", sizeGb: 3.0, seeders: 12), job, TestData.Context(relax: true));
+        Assert.False(Rejected(r, RejectionReason.TitleMismatch));
+    }
+
+    [Fact]
     public void Anime_alternate_titles_are_judged_by_the_name_they_use()
     {
         var job = TestData.Job(title: "D.N.Angel", type: MediaType.TvShow);

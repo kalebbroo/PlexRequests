@@ -244,7 +244,10 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         var (idMatch, idMismatch) = CompareImdb(job.ImdbId, c.ImdbId);
         var identityReleaseTitle = NormalizeIdentityTitle(parsed.Title, job.IsAnime);
         var identityJobTitle = NormalizeIdentityTitle(job.Title, job.IsAnime);
-        double titleRecall = TitleSimilarity(identityReleaseTitle, identityJobTitle);
+        double titleRecall = job.IsAnime && CompactTitleKey(identityReleaseTitle) == CompactTitleKey(identityJobTitle)
+            && CompactTitleKey(identityJobTitle).Length >= 2
+            ? 1.0 // "DNAngel" is "D.N.Angel": the same letters, written without punctuation
+            : TitleSimilarity(identityReleaseTitle, identityJobTitle);
         int extraTokens = ExtraTitleTokens(identityReleaseTitle, identityJobTitle, job.IsAnime);
         int jobRawTokens = RawTokenCount(job.Title);
         // Tolerance for extra words scales with how specific the request is: a one-word title like "Lucky"
@@ -660,6 +663,9 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
             .Select(rel => rel.Except(job).Count(t => !RegionTokens.Contains(t))).ToList();
         return counts.Count == 0 ? 0 : counts.Min(); // couldn't parse a core title — the other gates still apply
     }
+
+    private static string CompactTitleKey(string title) =>
+        new string(title.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
 
     private static string NormalizeIdentityTitle(string title, bool isAnime)
     {

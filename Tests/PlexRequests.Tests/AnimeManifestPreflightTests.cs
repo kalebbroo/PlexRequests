@@ -76,6 +76,27 @@ public sealed class AnimeManifestPreflightTests
     }
 
     [Fact]
+    public void Unreadable_absolute_numbers_in_the_requested_show_map_to_the_needed_episode()
+    {
+        var job = new FulfillmentJobDto
+        {
+            Id = 611, Title = "D.N.Angel", TmdbId = 25676, MediaType = MediaType.TvShow, IsAnime = true
+        };
+        var item = new DownloadPlanItem(TestData.Release("DNAngel Dual-Audio"), 1, null, true)
+        {
+            NeededEpisodeRefs = [new EpisodeRef { Season = 1, Episode = 25 }]
+        };
+        var manifest = Manifest(
+            ("D.N.Angel-24-SnowFallsInTheHeart(anime-mx)[5C723E3A].mkv", GiB(1)),
+            ("D.N.Angel-25-TheBlackWings(anime-mx)[93F77611].mkv", GiB(1)));
+
+        var result = AnimeManifestPreflight.Evaluate(manifest, job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.True(result.Accepted, result.Detail);
+        Assert.Equal([false, true], result.WantedFiles);
+    }
+
+    [Fact]
     public void Absolute_numbered_files_of_another_show_stay_unmapped()
     {
         var job = new FulfillmentJobDto
