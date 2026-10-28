@@ -1150,9 +1150,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
 
     public Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor,
         IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId,
-        int? replacedFileHeight = null) =>
+        int? replacedFileHeight = null, bool wholeSeasons = false) =>
         EnqueueFileReplacementAsync(request, floor, replacePaths, episodes, mediaIssueId,
-            optimizationPolicy: null, replacedFileHeight);
+            optimizationPolicy: null, replacedFileHeight, wholeSeasons);
 
     public Task<int?> EnqueueOptimizationAsync(MediaRequestDto request, StorageOptimizationPolicyDto policy)
     {
@@ -1169,7 +1169,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
 
     private async Task<int?> EnqueueFileReplacementAsync(MediaRequestDto request, Quality target,
         IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int? mediaIssueId,
-        StorageOptimizationPolicyDto? optimizationPolicy, int? replacedFileHeight = null)
+        StorageOptimizationPolicyDto? optimizationPolicy, int? replacedFileHeight = null, bool wholeSeasons = false)
     {
         // The database also enforces this invariant. Checking here gives callers an idempotent result instead
         // of turning a concurrent/live job into an exception. An issue replacement only yields to work actually
@@ -1236,7 +1236,7 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         if (request.MediaType is MediaType.TvShow or MediaType.Anime) mediaKind = MediaKind.Series;
         var requestScope = origin?.RequestScopeKind ?? requestEntity?.RequestScopeKind ?? request.RequestScopeKind;
         if (mediaKind == MediaKind.Series && episodes.Count > 0)
-            requestScope = optimizationPolicy is null ? RequestScopeKind.Episodes : RequestScopeKind.Seasons;
+            requestScope = optimizationPolicy is null && !wholeSeasons ? RequestScopeKind.Episodes : RequestScopeKind.Seasons;
         var tmdbId = origin?.TmdbId
             ?? (mediaRef.TryGetTmdbId(out var resolvedTmdbId) ? resolvedTmdbId : null);
 
@@ -1271,7 +1271,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         var episodesCsv = episodes.Count > 0
             ? string.Join(",", episodes.Select(e => $"S{e.season}E{e.episode}"))
             : null;
-        var optimizationSeasonTargets = optimizationPolicy is not null && mediaKind == MediaKind.Series
+        // A whole-season or whole-series replacement is a season job, like a storage optimization: the planner then
+        // applies the season-pack strategy and can take a full pack. An episode job never considers a pack first.
+        var seasonTargets = (optimizationPolicy is not null || wholeSeasons) && mediaKind == MediaKind.Series
             ? episodes.GroupBy(item => item.season).OrderBy(group => group.Key)
                 .Select(group =>
                 {
@@ -1308,12 +1310,12 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
             TvdbId = origin?.TvdbId ?? refreshedDetail?.TvdbId,
             ExternalId = externalId,
             ExternalSource = externalSource,
-            RequestedSeasonsCsv = optimizationSeasonTargets.Count > 0
-                ? string.Join(',', optimizationSeasonTargets.Select(item => item.Season))
+            RequestedSeasonsCsv = seasonTargets.Count > 0
+                ? string.Join(',', seasonTargets.Select(item => item.Season))
                 : null,
-            RequestedEpisodesCsv = optimizationSeasonTargets.Count > 0 ? null : episodesCsv,
-            SeasonTargetsJson = optimizationSeasonTargets.Count > 0
-                ? JsonSerializer.Serialize(optimizationSeasonTargets)
+            RequestedEpisodesCsv = seasonTargets.Count > 0 ? null : episodesCsv,
+            SeasonTargetsJson = seasonTargets.Count > 0
+                ? JsonSerializer.Serialize(seasonTargets)
                 : null,
             CanonicalSeasonsJson = origin?.CanonicalSeasonsJson,
             Quality = target,

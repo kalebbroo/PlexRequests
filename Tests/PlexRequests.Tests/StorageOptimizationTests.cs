@@ -921,7 +921,7 @@ public sealed class StorageOptimizationTests
         public Task<DeferResult> MarkDeferredAsync(int jobId, string reason, bool candidatesRejected = false) => throw new NotSupportedException();
         public Task MarkUpgradeExhaustedAsync(int jobId) => throw new NotSupportedException();
         public Task<bool> EnqueueUpgradeAsync(MediaRequestDto request, Quality target, IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes) => throw new NotSupportedException();
-        public Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor, IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId, int? replacedFileHeight = null) => throw new NotSupportedException();
+        public Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor, IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId, int? replacedFileHeight = null, bool wholeSeasons = false) => throw new NotSupportedException();
         public Task<Quality> RecomputeAchievedQualityAsync(int mediaRequestId) => throw new NotSupportedException();
         public Task<Dictionary<(int Season, int Episode), int>> GetPlexEpisodeHeightsAsync(MediaRequestDto request) => throw new NotSupportedException();
     }
