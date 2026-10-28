@@ -409,6 +409,7 @@ public class DownloadPlanner : IDownloadPlanner
         RejectionReason.SizeTooLarge => "too large",
         RejectionReason.TitleMismatch => "for a different title",
         RejectionReason.ExtraTitleTokens => "for a similarly-named title",
+        RejectionReason.DescriptiveAudio => "with an audio-description (descriptive) track",
         RejectionReason.ImdbMismatch => "with a mismatched IMDb id",
         RejectionReason.YearMismatch => "from the wrong year",
         RejectionReason.MediaTypeMismatch => "of the wrong media type",

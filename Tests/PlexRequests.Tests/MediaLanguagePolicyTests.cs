@@ -209,6 +209,106 @@ public sealed class MediaLanguagePolicyTests
     }
 
     [Fact]
+    public void EnglishOnly_DoesNotCountAnEnglishDescriptiveTrackAsEnglish()
+    {
+        var policy = new MediaLanguagePolicyDto
+        {
+            Preference = ReleaseLanguagePreference.EnglishOnly,
+            PreferredAudioLanguage = "en"
+        };
+        var tracks = Tracks(audio: ["en"]);
+        tracks.Audio[0].Title = "English Descriptive (Audio Description)";
+
+        var result = MediaLanguagePolicy.Evaluate(policy, tracks);
+
+        Assert.False(result.Accepted);
+        Assert.Contains("audio-description track(s) ignored: en", result.Reason);
+    }
+
+    [Fact]
+    public void EnglishOnly_AcceptsTheRealEnglishTrackWhenADescriptiveTrackIsAlsoPresent()
+    {
+        var policy = new MediaLanguagePolicyDto
+        {
+            Preference = ReleaseLanguagePreference.EnglishOnly,
+            PreferredAudioLanguage = "en"
+        };
+        var tracks = Tracks(audio: ["en", "en"]);
+        tracks.Audio[0].Title = "English DD 5.1";
+        tracks.Audio[1].Title = "English Descriptive";
+
+        Assert.True(MediaLanguagePolicy.Evaluate(policy, tracks).Accepted);
+    }
+
+    [Fact]
+    public void Playback_NeverDefaultsToADescriptiveTrack()
+    {
+        var tracks = Tracks(audio: ["en", "en"]);
+        tracks.Audio[0].Title = "English Descriptive";
+        tracks.Audio[0].IsDefault = true;
+        tracks.Audio[1].Title = "English DD 5.1";
+
+        var selected = MediaTrackDefaultSelection.Create(new MediaLanguagePolicyDto
+        {
+            Preference = ReleaseLanguagePreference.Smart,
+            PreferredAudioLanguage = "en",
+            SetPreferredTracksAsDefault = true
+        }, tracks, isAnime: false);
+
+        Assert.NotNull(selected);
+        Assert.Equal(2, selected.AudioOrdinal);
+    }
+
+    [Fact]
+    public void Playback_FallsBackToTheOriginalAudioNotADescriptiveDefault()
+    {
+        var tracks = Tracks(audio: ["en", "ja"]);
+        tracks.Audio[0].Title = "English Descriptive";
+        tracks.Audio[0].IsDefault = true;
+        tracks.Audio[1].Title = "Japanese";
+
+        var selected = MediaTrackDefaultSelection.Create(new MediaLanguagePolicyDto
+        {
+            Preference = ReleaseLanguagePreference.Smart,
+            PreferredAudioLanguage = "en",
+            SetPreferredTracksAsDefault = true
+        }, tracks, isAnime: false);
+
+        Assert.NotNull(selected);
+        Assert.Equal(2, selected.AudioOrdinal);
+    }
+
+    [Theory]
+    [InlineData("English Descriptive")]
+    [InlineData("Audio Description")]
+    [InlineData("English AD")]
+    [InlineData("Described Video")]
+    [InlineData("Visually Impaired")]
+    public void DescriptiveTrackTitles_AreRecognised(string title) =>
+        Assert.True(MediaLanguagePolicy.IsDescriptiveTitle(title));
+
+    [Theory]
+    [InlineData("English DD 5.1")]
+    [InlineData("Commentary by the cast")]
+    [InlineData("Japanese")]
+    [InlineData(null)]
+    public void OrdinaryTrackTitles_AreNotDescriptive(string? title) =>
+        Assert.False(MediaLanguagePolicy.IsDescriptiveTitle(title));
+
+    [Theory]
+    [InlineData("Show.S01E01.English.Descriptive.1080p.WEB-DL")]
+    [InlineData("Movie.2020.1080p.BluRay.AudioDescription.x264")]
+    [InlineData("Show.S01E01.1080p.WEB-DL.DVS.x264")]
+    public void ReleaseNamesAdvertisingDescriptiveAudio_AreFlagged(string name) =>
+        Assert.True(MediaLanguagePolicy.ReleaseAdvertisesDescriptiveAudio(name));
+
+    [Theory]
+    [InlineData("Ad.Astra.2019.1080p.BluRay.x264")]
+    [InlineData("Show.S01E01.1080p.WEB-DL.DDP5.1.H.264-GROUP")]
+    public void ReleaseNamesWithoutDescriptiveAudio_AreNotFlagged(string name) =>
+        Assert.False(MediaLanguagePolicy.ReleaseAdvertisesDescriptiveAudio(name));
+
+    [Fact]
     public void OriginalAudioMode_RequiresPreferredSubtitles()
     {
         var policy = new MediaLanguagePolicyDto

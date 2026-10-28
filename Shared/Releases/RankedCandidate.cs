@@ -15,6 +15,9 @@ public enum RejectionReason
     /// <summary>An upgrade job found something no better than what's already in the library.</summary>
     NotAnUpgrade,
     TooFewSeeders,
+    /// <summary>The release name advertises an audio-description ("descriptive") track. Never wanted, whatever the
+    /// language policy says: an English descriptive track passes a language check but is not the English audio.</summary>
+    DescriptiveAudio,
     SizeTooSmall,
     SizeTooLarge,
     TitleMismatch,

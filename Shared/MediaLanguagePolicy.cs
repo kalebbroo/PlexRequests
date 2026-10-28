@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using PlexRequestsHosted.Shared.DTOs;
 using PlexRequestsHosted.Shared.Enums;
 
@@ -6,6 +7,17 @@ namespace PlexRequestsHosted.Shared;
 /// <summary>Canonical language parsing and pure policy evaluation shared by web, worker, and tests.</summary>
 public static class MediaLanguagePolicy
 {
+    // Audio-description ("descriptive") tracks narrate the picture for blind and low-vision viewers. They are
+    // tagged with the spoken language, so a language check alone accepts them. They are never the audio a viewer
+    // asked for, so they are not counted as a language and never chosen as a default.
+    private static readonly Regex DescriptiveTrackTitle = new(
+        @"\b(descriptive|described|description|visual(ly)?\s+impaired|dvs)\b|(?<![A-Za-z])(?-i:AD)(?![A-Za-z])",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly Regex DescriptiveReleaseName = new(
+        @"(?<![A-Za-z])(descriptive|described|audio[ ._-]?description|visual[ ._-]?impaired|dvs)(?![A-Za-z])",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
     private static readonly Dictionary<string, string> Aliases = new(StringComparer.OrdinalIgnoreCase)
     {
         ["en"] = "en", ["eng"] = "en", ["english"] = "en",
@@ -61,6 +73,17 @@ public static class MediaLanguagePolicy
          || policy.RequiredSubtitleLanguages.Count > 0 || policy.RequireForcedSubtitle
          || policy.SetPreferredTracksAsDefault);
 
+    /// <summary>True for an audio-description track, judged from its title.</summary>
+    public static bool IsDescriptiveAudio(MediaTrackDto track) => IsDescriptiveTitle(track.Title);
+
+    public static bool IsDescriptiveTitle(string? title) =>
+        !string.IsNullOrWhiteSpace(title) && DescriptiveTrackTitle.IsMatch(title);
+
+    /// <summary>True when a release name advertises an audio-description track. Only the release name is checked
+    /// here; the inspected streams are what prove a track is present.</summary>
+    public static bool ReleaseAdvertisesDescriptiveAudio(string? releaseName) =>
+        !string.IsNullOrWhiteSpace(releaseName) && DescriptiveReleaseName.IsMatch(releaseName);
+
     public static string? Normalize(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
@@ -90,7 +113,8 @@ public static class MediaLanguagePolicy
     {
         if (!IsActive(policy)) return (true, null);
         var p = policy!;
-        var audio = tracks.Audio.Select(t => Normalize(t.Language)).ToList();
+        // Audio-description tracks are not spoken audio: they never satisfy a language requirement or the allowlist.
+        var audio = tracks.Audio.Where(t => !IsDescriptiveAudio(t)).Select(t => Normalize(t.Language)).ToList();
         var subtitles = tracks.Subtitles.Select(t => Normalize(t.Language)).ToList();
         var knownAudio = audio.Where(x => x is not null).Select(x => x!).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var knownSubtitles = subtitles.Where(x => x is not null).Select(x => x!).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -98,7 +122,7 @@ public static class MediaLanguagePolicy
         var preferredAudio = Normalize(p.PreferredAudioLanguage) ?? "en";
         var preferredSubtitle = Normalize(p.PreferredSubtitleLanguage) ?? "en";
         if (p.Preference == ReleaseLanguagePreference.EnglishOnly && !knownAudio.Contains(preferredAudio))
-            return (false, $"missing required {preferredAudio} audio; found: {Found(knownAudio)}");
+            return (false, $"missing required {preferredAudio} audio; found: {Found(knownAudio)}{IgnoredDescriptive(tracks)}");
         if (p.Preference == ReleaseLanguagePreference.OriginalWithEnglishSubtitles
             && !knownSubtitles.Contains(preferredSubtitle))
             return (false, $"missing required {preferredSubtitle} subtitles; found: {Found(knownSubtitles)}");
@@ -126,7 +150,7 @@ public static class MediaLanguagePolicy
             .Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase)
             .Where(required => !knownAudio.Contains(required)).ToList();
         if (missingAudio.Count > 0)
-            return (false, $"missing required audio language(s): {string.Join(", ", missingAudio)}; found: {Found(knownAudio)}");
+            return (false, $"missing required audio language(s): {string.Join(", ", missingAudio)}; found: {Found(knownAudio)}{IgnoredDescriptive(tracks)}");
 
         var allowedAudio = p.AllowedAudioLanguages.Select(Normalize).Where(x => x is not null)
             .Select(x => x!).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -167,6 +191,14 @@ public static class MediaLanguagePolicy
         }
 
         return (true, null);
+    }
+
+    private static string IgnoredDescriptive(MediaTrackSummaryDto tracks)
+    {
+        var languages = tracks.Audio.Where(IsDescriptiveAudio)
+            .Select(t => Normalize(t.Language) ?? "untagged").Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return languages.Count == 0 ? string.Empty
+            : $"; audio-description track(s) ignored: {string.Join(", ", languages)}";
     }
 
     private static string Found(HashSet<string> languages) => languages.Count == 0
