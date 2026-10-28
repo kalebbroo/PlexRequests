@@ -1158,6 +1158,11 @@ public class FulfillmentPipeline(
                 if (parsed.Season == expectedSource || namedAbsoluteEpisode)
                     canonical.AddRange(parsed.EpisodeNumbers.Select(episode => (remappedSeason, episode)));
             }
+            else if (transfer.SourceSeason is null && transfer.Season is int provisionalSeason
+                     && parsed.Season is null or 0
+                     && AnimeManifestPreflight.IsProvisionalAbsoluteFile(job, file, parsed.EpisodeNumbers,
+                         provisionalSeason, targets))
+                canonical.AddRange(parsed.EpisodeNumbers.Select(episode => (provisionalSeason, episode)));
             else if ((parsed.Season ?? transfer.Season) is int canonicalSeason)
                 canonical.AddRange(parsed.EpisodeNumbers.Select(episode => (canonicalSeason, episode)));
             var selected = canonical.Count > 0 && canonical.All(targets.Contains);

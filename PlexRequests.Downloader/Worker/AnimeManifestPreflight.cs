@@ -294,6 +294,21 @@ internal static class AnimeManifestPreflight
         return numbers.Count == 1 ? numbers : [];
     }
 
+    /// <summary>
+    /// Whether one file, numbered only by its absolute episode, belongs to a provisional season. The request must need
+    /// that episode, the file name must carry the requested show's title, and it must name no season.
+    /// </summary>
+    internal static bool IsProvisionalAbsoluteFile(FulfillmentJobDto job, string filePath, IReadOnlyList<int> episodes,
+        int season, IEnumerable<(int Season, int Episode)> needed)
+    {
+        if (!job.IsAnime || episodes.Count != 1) return false;
+        if (!needed.Any(target => target.Season == season && target.Episode == episodes[0])) return false;
+        var name = Path.GetFileName(filePath);
+        if (Regex.IsMatch(name, @"(?i)\bS\d{1,2}(E\d|\b)|\bseason\s*\d")) return false;
+        var title = Letters(job.Title);
+        return title.Length >= 2 && Letters(name).Contains(title, StringComparison.Ordinal);
+    }
+
     private static string Letters(string value) =>
         new string(value.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
 
