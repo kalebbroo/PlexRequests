@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using PlexRequests.Downloader.Download;
 using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.DTOs;
@@ -133,8 +134,14 @@ internal static class AnimeManifestPreflight
                     continue;
                 }
                 var episodes = parsed.EpisodeNumbers.Distinct().OrderBy(number => number).ToList();
-                if (parsed.Season is not int sourceSeason || episodes.Count == 0 || !IsContiguous(episodes))
+                // The parser reads a bare absolute number ("DNAngel - 25 - ...") as season 0. Only that case, with no
+                // season marker in the file name, can be mapped as a provisional season.
+                var absoluteSeason = parsed.Season is null or 0
+                    ? ProvisionalAbsoluteSeason(job, item, episodeOrderProfile, file.Path, episodes)
+                    : null;
+                if ((parsed.Season is null && absoluteSeason is null) || episodes.Count == 0 || !IsContiguous(episodes))
                     continue; // extras and unrelated videos stay at priority zero
+                int sourceSeason = absoluteSeason ?? parsed.Season ?? 0;
 
                 if (!EpisodeOrderMapping.IsActive(episodeOrderProfile)
                     && item.Season is null
@@ -251,6 +258,28 @@ internal static class AnimeManifestPreflight
             $"Manifest proved {canonical.Count} canonical episode(s); selected {selected.Count(value => value)}/{selected.Length} files ({selectedGb:F1} GB).",
             selected, canonical, namedSequence?.InsertionAfter);
     }
+
+    /// <summary>
+    /// The season of a file that carries only an absolute episode number ("DNAngel - 25 - The Black Wings"). Only a
+    /// provisional single-season collection qualifies: the request names one season, the file holds one episode, that
+    /// episode is still needed, and the file name carries the requested show's title. Anything else stays unmapped.
+    /// </summary>
+    internal static int? ProvisionalAbsoluteSeason(FulfillmentJobDto job, DownloadPlanItem item,
+        SeriesEpisodeOrderProfileDto? episodeOrderProfile, string filePath, IReadOnlyList<int> episodes)
+    {
+        if (item.Season is not int season || item.SourceSeason is not null) return null;
+        if (EpisodeOrderMapping.IsActive(episodeOrderProfile) || episodes.Count != 1) return null;
+        if (Regex.IsMatch(Path.GetFileName(filePath), @"(?i)\bS\d{1,2}(E\d|\b)|\bseason\s*\d")) return null;
+        if (item.NeededEpisodeRefs is not { } needed
+            || !needed.Any(target => target.Season == season && target.Episode == episodes[0])) return null;
+        var title = Letters(job.Title);
+        return title.Length >= 2 && Letters(Path.GetFileName(filePath)).Contains(title, StringComparison.Ordinal)
+            ? season
+            : null;
+    }
+
+    private static string Letters(string value) =>
+        new string(value.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
 
     internal static bool MatchesNamedCanonicalSeason(FulfillmentJobDto job, string releasePath,
         int sourceSeason, int canonicalSeason) => job.CanonicalSeasons.Count > 0
