@@ -26,6 +26,11 @@ public static class AcquisitionQuery
 
         if (!EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile))
         {
+            // Anime releases often write a title without its punctuation ("DNAngel" for "D.N.Angel"). A search for the
+            // dotted form never matches those, so the compact form is searched too.
+            if (job.IsAnime && CompactTitle(job.Title) is { } compact
+                && !string.Equals(compact, job.Title, StringComparison.OrdinalIgnoreCase))
+                queries.Add(compact);
             var seasons = job.RequestedSeasons
                 .Concat(job.SeasonTargets.Select(t => t.Season))
                 .Concat(job.RequestedEpisodes.Select(e => e.Season))
@@ -67,6 +72,14 @@ public static class AcquisitionQuery
 
         queries.AddRange(scoped.Distinct(StringComparer.OrdinalIgnoreCase).Take(maxScopes));
         return Distinct(queries);
+    }
+
+    /// <summary>The title's letters and digits with the punctuation and spaces removed ("D.N.Angel" → "DNAngel"),
+    /// or null when that would leave nothing to search for.</summary>
+    internal static string? CompactTitle(string title)
+    {
+        var compact = new string(title.Where(char.IsLetterOrDigit).ToArray());
+        return compact.Length >= 2 ? compact : null;
     }
 
     private static string EpisodeTerm(string title, EpisodeRef source) => source.Season == 0

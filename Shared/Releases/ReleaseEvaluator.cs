@@ -650,6 +650,9 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
     internal static int ExtraTitleTokens(string releaseTitle, string jobTitle, bool isAnime = false)
     {
         var job = Tokenize(jobTitle);
+        // "D.N.Angel" is written "DNAngel" in many releases. The compact form is the same title, not an extra word.
+        if (isAnime && Regex.Replace(jobTitle, @"[^A-Za-z0-9]", string.Empty).ToLowerInvariant() is { Length: >= 2 } compactJob)
+            job.Add(compactJob);
         // Anime releases often give two names separated by a slash ("DNAngel / D N Angel"). The release is the
         // title whichever name it uses, so the alternative with the fewest extra words decides.
         var alternatives = isAnime ? releaseTitle.Split('/') : [releaseTitle];
