@@ -122,15 +122,19 @@ public class ReleaseRankerAdapter(
     {
         if (!job.IsAnime) return original;
         var hasExplicitMap = EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile);
+        // An anime issue replacement names the episodes it must replace, so its season is known even when the
+        // collection doesn't declare one. Such a collection is provisionally that season's pack. The manifest check
+        // below must still map every needed episode before anything downloads.
+        var issueSeason = ProvisionalIssueSeason(job);
         var provisional = ranked.Where(candidate => IsManifestOnlyCandidate(candidate)
-                && (hasExplicitMap || candidate.LooksLikeCompleteSeries))
+                && (hasExplicitMap || candidate.LooksLikeCompleteSeries || issueSeason is not null))
             .ToList();
         if (provisional.Count == 0) return original;
 
         var eligible = provisional.Select(candidate => candidate.Candidate.Acquisition)
             .ToHashSet();
         var preflightRanked = ranked.Select(candidate => provisional.Contains(candidate)
-                ? candidate with { Accepted = true, Rejections = [] }
+                ? AsProvisional(candidate, hasExplicitMap || candidate.LooksLikeCompleteSeries ? null : issueSeason)
                 : candidate)
             .ToList();
         var planned = planner.Plan(preflightRanked, job, context);
@@ -146,6 +150,23 @@ public class ReleaseRankerAdapter(
             .ToList();
         return new DownloadPlanResult(planned.Plan with { Items = items }, notes);
     }
+
+    /// <summary>The one season an anime issue replacement is for, when its episodes or season targets name exactly
+    /// one. Null for a series-wide or multi-season replacement, where the season of an unscoped collection is unknown.</summary>
+    internal static int? ProvisionalIssueSeason(FulfillmentJobDto job)
+    {
+        if (job.MediaIssueId is null) return null;
+        var seasons = job.RequestedEpisodes.Select(e => e.Season)
+            .Concat(job.SeasonTargets.Select(t => t.Season))
+            .Distinct().ToList();
+        return seasons.Count == 1 ? seasons[0] : null;
+    }
+
+    /// <summary>Accepts an unscoped collection for manifest preflight. With a season, the collection is treated as that
+    /// season's pack, so the planner can take it for the episodes still needed.</summary>
+    internal static RankedCandidate AsProvisional(RankedCandidate candidate, int? season) => season is int provisionalSeason
+        ? candidate with { Accepted = true, Rejections = [], Season = provisionalSeason, IsPack = true }
+        : candidate with { Accepted = true, Rejections = [] };
 
     private static bool IsManifestOnlyCandidate(RankedCandidate candidate) =>
         candidate.Rejections.Count > 0

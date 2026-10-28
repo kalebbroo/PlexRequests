@@ -245,7 +245,7 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         var identityReleaseTitle = NormalizeIdentityTitle(parsed.Title, job.IsAnime);
         var identityJobTitle = NormalizeIdentityTitle(job.Title, job.IsAnime);
         double titleRecall = TitleSimilarity(identityReleaseTitle, identityJobTitle);
-        int extraTokens = ExtraTitleTokens(identityReleaseTitle, identityJobTitle);
+        int extraTokens = ExtraTitleTokens(identityReleaseTitle, identityJobTitle, job.IsAnime);
         int jobRawTokens = RawTokenCount(job.Title);
         // Tolerance for extra words scales with how specific the request is: a one-word title like "Lucky"
         // tolerates none (so it rejects "Lucky Star"), while "The Office" tolerates one (so it accepts the
@@ -647,12 +647,15 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
 
     /// <summary>Significant words in the release's core title the request doesn't have — what separates
     /// "Lucky Star" from "Lucky".</summary>
-    internal static int ExtraTitleTokens(string releaseTitle, string jobTitle)
+    internal static int ExtraTitleTokens(string releaseTitle, string jobTitle, bool isAnime = false)
     {
-        var rel = Tokenize(releaseTitle);
         var job = Tokenize(jobTitle);
-        if (rel.Count == 0) return 0; // couldn't parse a core title — the other gates still apply
-        return rel.Except(job).Count(t => !RegionTokens.Contains(t));
+        // Anime releases often give two names separated by a slash ("DNAngel / D N Angel"). The release is the
+        // title whichever name it uses, so the alternative with the fewest extra words decides.
+        var alternatives = isAnime ? releaseTitle.Split('/') : [releaseTitle];
+        var counts = alternatives.Select(Tokenize).Where(rel => rel.Count > 0)
+            .Select(rel => rel.Except(job).Count(t => !RegionTokens.Contains(t))).ToList();
+        return counts.Count == 0 ? 0 : counts.Min(); // couldn't parse a core title — the other gates still apply
     }
 
     private static string NormalizeIdentityTitle(string title, bool isAnime)
@@ -661,7 +664,10 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
         // Nyaa's conventional leading [release group] is provenance, not title identity. "Series" is also
         // routinely appended to franchise names ("Monogatari Series") without being part of the requested
         // metadata title. Keep this anime-only so titles in other media domains retain their literal words.
-        var normalized = Regex.Replace(title, @"^\s*\[[^\[\]\r\n]{1,64}\]\s*", string.Empty);
+        // Every bracketed tag is provenance, not title: a release group, a "[TV]" or "[MC entertainment]" label, a
+        // "[576p]" quality tag. Parenthesised notes such as "(High Quality)" or "(2003)" are stripped the same way.
+        var normalized = Regex.Replace(title, @"\[[^\[\]\r\n]{1,64}\]", " ");
+        normalized = Regex.Replace(normalized, @"\([^()\r\n]{1,64}\)", " ");
         normalized = Regex.Replace(normalized, @"\bseries\b", " ", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         return Regex.Replace(normalized, @"\s+", " ").Trim();
     }

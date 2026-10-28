@@ -18,6 +18,41 @@ public sealed class AnimeManifestPreflightTests
     private static readonly string[] SubtitleExtensions = [".srt", ".ass"];
 
     [Fact]
+    public void An_unscoped_anime_batch_is_provisionally_the_issue_season_pack_for_the_missing_episode()
+    {
+        var job = new FulfillmentJobDto
+        {
+            Id = 611, Title = "D.N.Angel", TmdbId = 25676, MediaType = MediaType.TvShow, IsAnime = true,
+            MediaIssueId = 28, IsUpgrade = true, IsReplacement = true, Quality = Quality.FullHD,
+            RequestedEpisodes = [new EpisodeRef { Season = 1, Episode = 25 }]
+        };
+        var season = ReleaseRankerAdapter.ProvisionalIssueSeason(job);
+        Assert.Equal(1, season);
+
+        var batch = TestData.Release("[AniFilm] D.N.Angel [TV] [MC entertainment]", sizeGb: 5.7);
+        var ranked = TestData.Evaluator().EvaluateAll([batch], job, TestData.Context(relax: true))
+            .Select(candidate => ReleaseRankerAdapter.AsProvisional(candidate, season))
+            .ToList();
+        var result = new DownloadPlanner().Plan(ranked, job, TestData.Context(relax: true));
+
+        var item = Assert.Single(result.Plan.Items);
+        Assert.True(item.IsPack);
+        Assert.Equal(25, Assert.Single(item.NeededEpisodeRefs!).Episode);
+    }
+
+    [Fact]
+    public void A_series_wide_anime_replacement_has_no_single_provisional_season()
+    {
+        var job = new FulfillmentJobDto
+        {
+            Id = 612, Title = "Show", MediaType = MediaType.TvShow, IsAnime = true, MediaIssueId = 29,
+            RequestedEpisodes = [new EpisodeRef { Season = 1, Episode = 1 }, new EpisodeRef { Season = 2, Episode = 1 }]
+        };
+
+        Assert.Null(ReleaseRankerAdapter.ProvisionalIssueSeason(job));
+    }
+
+    [Fact]
     public void CustomSplitBroadcastEpisodeSelectsEveryPartAndCountsOneCanonicalTarget()
     {
         var job = new FulfillmentJobDto
