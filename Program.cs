@@ -1512,9 +1512,17 @@ app.MapPost("/api/fulfillment/{jobId:int}/upgraded", async (int jobId, HttpConte
                 if (issue is not null)
                 {
                     issueReporterUserId = issue.ReportedByUserId;
-                    issue.Status = IssueStatus.Resolved;
-                    issue.ResolvedAt = DateTime.UtcNow;
-                    issue.ResolvedBy = "Automatic replacement";
+                    // A season or series replacement queues one job per request. Resolve the issue only when the last
+                    // of them has finished, so the first to complete doesn't close the rest.
+                    var otherJobsActive = await db.FulfillmentJobs.AnyAsync(j =>
+                        j.MediaIssueId == issueId && j.Id != job.Id &&
+                        PlexRequestsHosted.Shared.FulfillmentJobPolicy.ActiveStatuses.Contains(j.Status));
+                    if (!otherJobsActive)
+                    {
+                        issue.Status = IssueStatus.Resolved;
+                        issue.ResolvedAt = DateTime.UtcNow;
+                        issue.ResolvedBy = "Automatic replacement";
+                    }
                     await db.SaveChangesAsync();
                 }
             }
