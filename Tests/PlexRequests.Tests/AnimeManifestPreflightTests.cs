@@ -53,6 +53,47 @@ public sealed class AnimeManifestPreflightTests
     }
 
     [Fact]
+    public void Absolute_numbered_files_of_a_provisional_season_select_only_the_needed_episode()
+    {
+        var job = new FulfillmentJobDto
+        {
+            Id = 611, Title = "D.N.Angel", TmdbId = 25676, MediaType = MediaType.TvShow, IsAnime = true
+        };
+        var item = new DownloadPlanItem(TestData.Release("DNAngel / D.N.Angel (High Quality) [576p]"), 1, null, true)
+        {
+            NeededEpisodeRefs = [new EpisodeRef { Season = 1, Episode = 25 }]
+        };
+        var manifest = Manifest(
+            ("DNAngel - 24 - Snow Falls In The Heart   [DarkDream].mkv", GiB(1)),
+            ("DNAngel - 25 - The Black Wings   [DarkDream].mkv", GiB(1)),
+            ("DNAngel - 26 - Eternal Dark   [DarkDream].mkv", GiB(1)));
+
+        var result = AnimeManifestPreflight.Evaluate(manifest, job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.True(result.Accepted, result.Detail);
+        Assert.Equal([false, true, false], result.WantedFiles);
+        Assert.Equal(25, Assert.Single(result.CanonicalCoverage).Episode);
+    }
+
+    [Fact]
+    public void Absolute_numbered_files_of_another_show_stay_unmapped()
+    {
+        var job = new FulfillmentJobDto
+        {
+            Id = 611, Title = "D.N.Angel", TmdbId = 25676, MediaType = MediaType.TvShow, IsAnime = true
+        };
+        var item = new DownloadPlanItem(TestData.Release("DNAngel batch"), 1, null, true)
+        {
+            NeededEpisodeRefs = [new EpisodeRef { Season = 1, Episode = 25 }]
+        };
+        var manifest = Manifest(("Other Show - 25 - Something.mkv", GiB(1)));
+
+        var result = AnimeManifestPreflight.Evaluate(manifest, job, item, _parser, VideoExtensions, maxSelectedGb: 10);
+
+        Assert.False(result.Accepted);
+    }
+
+    [Fact]
     public void CustomSplitBroadcastEpisodeSelectsEveryPartAndCountsOneCanonicalTarget()
     {
         var job = new FulfillmentJobDto
