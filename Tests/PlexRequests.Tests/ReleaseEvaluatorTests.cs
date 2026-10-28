@@ -599,6 +599,34 @@ public class ReleaseEvaluatorTests
     }
 
     [Fact]
+    public void Anime_bracketed_tags_are_not_extra_title_words()
+    {
+        var job = TestData.Job(title: "D.N.Angel", type: MediaType.TvShow);
+        job.IsAnime = true;
+        var r = _eval.Evaluate(TestData.Release("[AniFilm] D.N.Angel [TV] [MC entertainment]", sizeGb: 5.7), job,
+            TestData.Context(relax: true));
+        Assert.False(Rejected(r, RejectionReason.ExtraTitleTokens));
+    }
+
+    [Fact]
+    public void Anime_alternate_titles_are_judged_by_the_name_they_use()
+    {
+        var job = TestData.Job(title: "D.N.Angel", type: MediaType.TvShow);
+        job.IsAnime = true;
+        var r = _eval.Evaluate(TestData.Release("DNAngel / D.N.Angel (High Quality)(Dual Audio) MKV DVDRip (V3)", sizeGb: 10.2),
+            job, TestData.Context(relax: true));
+        Assert.False(Rejected(r, RejectionReason.ExtraTitleTokens));
+    }
+
+    [Fact]
+    public void Non_anime_titles_keep_their_literal_words()
+    {
+        var job = TestData.Job(title: "Lucky", type: MediaType.TvShow);
+        var r = _eval.Evaluate(TestData.Release("Lucky.Star.S01E01.1080p.WEB-DL"), job, TestData.Context());
+        Assert.True(Rejected(r, RejectionReason.ExtraTitleTokens));
+    }
+
+    [Fact]
     public void An_upgrade_never_accepts_a_downgrade_even_when_relaxed()
     {
         var r = _eval.Evaluate(TestData.Release("Severance.S02E07.720p.WEB-DL"),
