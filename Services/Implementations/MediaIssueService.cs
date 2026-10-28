@@ -59,10 +59,11 @@ public class MediaIssueService(
             return Failed("The media item could not be identified.");
 
         var isTv = report.MediaType is MediaType.TvShow or MediaType.Anime;
-        if (report.RequestReplacement && isTv && (report.SeasonNumber is null || report.EpisodeNumber is null))
-            return Failed("Choose the exact season and episode that needs replacing.");
-        if ((report.SeasonNumber is not null || report.EpisodeNumber is not null) &&
-            (report.SeasonNumber is null or < 0 || report.EpisodeNumber is null or < 1))
+        // Scope: no season and no episode is the whole series; a season alone is that season; a season and an episode
+        // is one episode. An episode always needs its season.
+        if (isTv && report.EpisodeNumber is not null && report.SeasonNumber is null)
+            return Failed("Choose the season that episode belongs to.");
+        if (report.SeasonNumber is < 0 || report.EpisodeNumber is < 1)
             return Failed("Choose a valid season and episode.");
         if (!isTv && (report.SeasonNumber is not null || report.EpisodeNumber is not null))
             return Failed("Episode details can only be attached to a TV or anime report.");
@@ -148,7 +149,7 @@ public class MediaIssueService(
         for (var index = 0; index < issues.Count; index++)
         {
             if (issues[index].Status != IssueStatus.Open) continue;
-            var blockedReason = (await PreflightReplacementAsync(issues[index])).BlockedReason;
+            var blockedReason = (await PreflightReplacementAsync(issues[index])).FirstOrDefault(p => p.BlockedReason is not null)?.BlockedReason;
             dtos[index].CanApproveReplacement = blockedReason is null;
             dtos[index].ReplacementBlockedReason = blockedReason;
         }
@@ -229,46 +230,89 @@ public class MediaIssueService(
 
     /// <summary>
     /// Every check an approval must pass, with no writes. The admin listing and <see cref="QueueReplacementCoreAsync"/>
-    /// both run it, so a card never offers an approval that the service would refuse.
+    /// both run it, so a card never offers an approval that the service would refuse. An episode report, or a movie,
+    /// yields one plan. A season or series report yields one plan per request that owns copies in scope, since a
+    /// series can span one request per season. One blocked plan refuses the whole approval.
     /// </summary>
-    private async Task<ReplacementPlan> PreflightReplacementAsync(MediaIssueEntity issue)
+    private async Task<IReadOnlyList<ReplacementPlan>> PreflightReplacementAsync(MediaIssueEntity issue)
     {
         var isTv = issue.MediaType is MediaType.TvShow or MediaType.Anime;
-        if (isTv && (issue.SeasonNumber is null || issue.EpisodeNumber is null))
-            return ReplacementPlan.Blocked("Choose an exact episode before approving a TV replacement.");
+        if (isTv && issue.SeasonNumber is null && issue.EpisodeNumber is not null)
+            return [ReplacementPlan.Blocked("A TV episode report needs its season as well.")];
+        var season = isTv ? issue.SeasonNumber : null;
+        var episode = isTv ? issue.EpisodeNumber : null;
+        var wholeSeasonOrSeries = isTv && episode is null;
 
-        var candidates = await (from file in db.ImportedFiles.AsNoTracking()
-            join job in db.FulfillmentJobs.AsNoTracking() on file.FulfillmentJobId equals job.Id
-            join reqEntity in db.MediaRequests.AsNoTracking() on job.MediaRequestId equals reqEntity.Id
-            where reqEntity.MediaId == issue.MediaId && reqEntity.MediaType == issue.MediaType && file.FileType == "video"
-                  && (!isTv || (file.SeasonNumber == issue.SeasonNumber && file.EpisodeNumber == issue.EpisodeNumber)
-                      || file.EpisodeCoverage.Any(c => c.SeasonNumber == issue.SeasonNumber
-                                                      && c.EpisodeNumber == issue.EpisodeNumber))
-            orderby file.ImportedAt descending
-            select new { File = file, Job = job, Request = reqEntity }).ToListAsync();
+        var rows = await (from file in db.ImportedFiles.AsNoTracking().Include(f => f.EpisodeCoverage)
+                join job in db.FulfillmentJobs.AsNoTracking() on file.FulfillmentJobId equals job.Id
+                join reqEntity in db.MediaRequests.AsNoTracking() on job.MediaRequestId equals reqEntity.Id
+                where reqEntity.MediaId == issue.MediaId && reqEntity.MediaType == issue.MediaType && file.FileType == "video"
+                orderby file.ImportedAt descending
+                select new { File = file, Request = reqEntity }).ToListAsync();
+        var candidates = rows.Where(row => InScope(row.File, isTv, season, episode)).ToList();
 
-        var current = issue.ImportedFileId is int importedFileId
-            ? candidates.FirstOrDefault(x => x.File.Id == importedFileId) ?? candidates.FirstOrDefault()
-            : candidates.FirstOrDefault();
-        if (current is null) return await PlexLibraryPlanAsync(issue, isTv);
+        if (candidates.Count == 0)
+        {
+            if (wholeSeasonOrSeries)
+                return [ReplacementPlan.Blocked(
+                    "No imported copy of this season or series is recorded, so Plex Requests cannot safely identify " +
+                    "its files. Replace the episodes one at a time.")];
+            return [await PlexLibraryPlanAsync(issue, isTv)];
+        }
 
-        var busy = await BlockingJobReasonAsync(current.Request.Id);
+        if (!wholeSeasonOrSeries)
+        {
+            var current = issue.ImportedFileId is int importedFileId
+                ? candidates.FirstOrDefault(x => x.File.Id == importedFileId) ?? candidates.FirstOrDefault()
+                : candidates.FirstOrDefault();
+            return [await BuildPlanAsync(issue, isTv, season, episode, current!.Request, pinnedFile: current.File)];
+        }
+
+        var plans = new List<ReplacementPlan>();
+        foreach (var group in candidates.GroupBy(row => row.Request.Id).OrderBy(group => group.Key))
+            plans.Add(await BuildPlanAsync(issue, isTv, season, episode, group.First().Request, pinnedFile: null));
+        return plans;
+    }
+
+    /// <summary>
+    /// Whether a copy falls inside the report's scope. A series report covers every copy of the show. A season report
+    /// covers every copy of that season, including season packs whose coverage lists the episodes. An episode report
+    /// covers the copies of that one episode.
+    /// </summary>
+    private static bool InScope(ImportedFileEntity file, bool isTv, int? season, int? episode)
+    {
+        if (!isTv || season is null) return true;
+        if (episode is null)
+            return file.SeasonNumber == season || file.EpisodeCoverage.Any(c => c.SeasonNumber == season);
+        return (file.SeasonNumber == season && file.EpisodeNumber == episode)
+               || file.EpisodeCoverage.Any(c => c.SeasonNumber == season && c.EpisodeNumber == episode);
+    }
+
+    /// <summary>
+    /// The plan for one request. For an episode report, <paramref name="pinnedFile"/> is the copy the user reported and
+    /// only it is replaced, so a later copy of the same episode is never swept up. For a season or series report every
+    /// in-scope copy of the request is replaced.
+    /// </summary>
+    private async Task<ReplacementPlan> BuildPlanAsync(MediaIssueEntity issue, bool isTv, int? season, int? episode,
+        MediaRequestEntity request, ImportedFileEntity? pinnedFile)
+    {
+        var busy = await BlockingJobReasonAsync(request.Id);
         if (busy is not null) return ReplacementPlan.Blocked(busy);
 
         var requestJobIds = await db.FulfillmentJobs.AsNoTracking()
-            .Where(j => j.MediaRequestId == current.Request.Id).Select(j => j.Id).ToListAsync();
-        var oldFiles = await db.ImportedFiles.AsNoTracking().Include(f => f.EpisodeCoverage)
-            .Where(f => requestJobIds.Contains(f.FulfillmentJobId) &&
-                (!isTv || (f.SeasonNumber == issue.SeasonNumber && f.EpisodeNumber == issue.EpisodeNumber)
-                 || f.EpisodeCoverage.Any(c => c.SeasonNumber == issue.SeasonNumber
-                                               && c.EpisodeNumber == issue.EpisodeNumber)))
-            .ToListAsync();
-        // Pin approval to the physical video that existed when the user reported the problem. Include its
-        // companion audit rows, but never sweep up a newer copy of the same logical episode that arrived
-        // after the report was submitted.
-        oldFiles = oldFiles.Where(f => f.Id == current.File.Id ||
-            (f.FileType != "video" && f.FulfillmentJobId == current.File.FulfillmentJobId &&
-             string.Equals(f.TransferId, current.File.TransferId, StringComparison.OrdinalIgnoreCase))).ToList();
+            .Where(j => j.MediaRequestId == request.Id).Select(j => j.Id).ToListAsync();
+        var oldFiles = (await db.ImportedFiles.AsNoTracking().Include(f => f.EpisodeCoverage)
+                .Where(f => requestJobIds.Contains(f.FulfillmentJobId)).ToListAsync())
+            .Where(f => InScope(f, isTv, season, episode)).ToList();
+        if (pinnedFile is not null)
+        {
+            // Pin approval to the physical video that existed when the user reported the problem. Include its
+            // companion audit rows, but never sweep up a newer copy of the same logical episode that arrived
+            // after the report was submitted.
+            oldFiles = oldFiles.Where(f => f.Id == pinnedFile.Id ||
+                (f.FileType != "video" && f.FulfillmentJobId == pinnedFile.FulfillmentJobId &&
+                 string.Equals(f.TransferId, pinnedFile.TransferId, StringComparison.OrdinalIgnoreCase))).ToList();
+        }
         var replacePaths = oldFiles.Select(f => f.DestinationPath).Where(p => !string.IsNullOrWhiteSpace(p))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (!oldFiles.Any(f => f.FileType == "video") || replacePaths.Count == 0)
@@ -286,14 +330,17 @@ public class MediaIssueService(
             episodes.AddRange(oldFiles.Where(f => f.FileType == "video")
                 .SelectMany(f => f.EpisodeCoverage.Count > 0
                     ? f.EpisodeCoverage.Select(c => (c.SeasonNumber, c.EpisodeNumber))
-                    : f.SeasonNumber is int season && f.EpisodeNumber is int episode
-                        ? [(season, episode)]
+                    : f.SeasonNumber is int fileSeason && f.EpisodeNumber is int fileEpisode
+                        ? [(fileSeason, fileEpisode)]
                         : Array.Empty<(int, int)>())
                 .Distinct().OrderBy(x => x.Item1).ThenBy(x => x.Item2));
+            if (episodes.Count == 0 && episode is int reportedEpisode && season is int reportedSeason)
+                episodes.Add((reportedSeason, reportedEpisode));
+            // An empty episode list reads as "the whole title" to the worker, so never queue one for a TV report.
             if (episodes.Count == 0)
-                episodes.Add((issue.SeasonNumber!.Value, issue.EpisodeNumber!.Value));
+                return ReplacementPlan.Blocked("The episodes this replacement covers could not be identified, so no replacement was queued.");
         }
-        return new ReplacementPlan(current.Request, null, oldFiles, replacePaths, [], currentHeight, episodes, null);
+        return new ReplacementPlan(request, null, oldFiles, replacePaths, [], currentHeight, episodes, null);
     }
 
     /// <summary>The active job that would block a new replacement for this request, described for the administrator.</summary>
@@ -346,13 +393,47 @@ public class MediaIssueService(
 
     private async Task<MediaIssueResultDto> QueueReplacementCoreAsync(MediaIssueEntity issue, string approvedBy)
     {
-        var plan = await PreflightReplacementAsync(issue);
-        if (plan.BlockedReason is not null)
+        var plans = await PreflightReplacementAsync(issue);
+        var refused = plans.FirstOrDefault(p => p.BlockedReason is not null);
+        if (refused is not null)
         {
-            logger?.LogInformation("Replacement for issue #{IssueId} \"{Title}\" refused: {Reason}", issue.Id, issue.Title, plan.BlockedReason);
-            return Failed(plan.BlockedReason);
+            logger?.LogInformation("Replacement for issue #{IssueId} \"{Title}\" refused: {Reason}", issue.Id, issue.Title, refused.BlockedReason);
+            return Failed(refused.BlockedReason!);
         }
 
+        var jobIds = new List<int>();
+        foreach (var plan in plans)
+        {
+            var (jobId, error) = await QueuePlanAsync(issue, plan);
+            if (jobId is null)
+            {
+                // Preflight checks every request first, so this only happens if another download started in between.
+                var reason = jobIds.Count == 0
+                    ? "Another download or replacement started before this one could be queued."
+                    : $"Only part of this replacement was queued (job #{string.Join(", #", jobIds)}); another download started before the rest. " +
+                      "Approve it again once that download finishes.";
+                logger?.LogInformation("Replacement for issue #{IssueId} \"{Title}\" not fully queued: {Reason}", issue.Id, issue.Title, reason);
+                return Failed(error ?? reason);
+            }
+            jobIds.Add(jobId.Value);
+        }
+
+        issue.ReplacementRequested = true;
+        issue.ReplacementJobId = jobIds[0];
+        issue.ReplacementApprovedAt = DateTime.UtcNow;
+        issue.ReplacementApprovedBy = Trim(approvedBy, 128);
+        issue.Status = IssueStatus.ReplacementQueued;
+        issue.ResolvedAt = null;
+        issue.ResolvedBy = null;
+        await db.SaveChangesAsync();
+        await SafeNotify(() => notifications!.MediaIssueApprovedAsync(ToDto(issue, job: null, file: null)));
+        return new MediaIssueResultDto { Success = true, IssueId = issue.Id, ReplacementQueued = true };
+    }
+
+    /// <summary>Blocklists the bad sources behind one plan and queues its replacement job. Returns the job id, or the
+    /// reason it could not be queued.</summary>
+    private async Task<(int? JobId, string? Error)> QueuePlanAsync(MediaIssueEntity issue, ReplacementPlan plan)
+    {
         // A Plex-only title has no request yet. Adopt it with the same anchor the storage optimizer creates, so the
         // replacement job has a request to attach to.
         var target = plan.Request;
@@ -360,9 +441,9 @@ public class MediaIssueService(
         {
             var adoption = await storageOptimization!.AdoptPlexTitleAsync(plan.InventoryKey!);
             if (!adoption.Success || adoption.RequestId <= 0)
-                return Failed(adoption.Message ?? "Plex Requests could not connect this title to the library.");
+                return (null, adoption.Message ?? "Plex Requests could not connect this title to the library.");
             target = await db.MediaRequests.AsNoTracking().FirstOrDefaultAsync(r => r.Id == adoption.RequestId);
-            if (target is null) return Failed("The library record for this title could not be loaded.");
+            if (target is null) return (null, "The library record for this title could not be loaded.");
         }
         var oldFiles = plan.OldFiles;
         var replacePaths = plan.ReplacePaths;
@@ -412,26 +493,12 @@ public class MediaIssueService(
         var replacedHeight = plan.CurrentHeight > 0 ? plan.CurrentHeight : (int?)null;
         var jobId = await fulfillment.EnqueueReplacementAsync(request, floor, replacePaths, plan.Episodes, issue.Id,
             replacedHeight);
-        if (jobId is null)
-        {
-            logger?.LogInformation("Replacement for issue #{IssueId} \"{Title}\" not queued: another download started first", issue.Id, issue.Title);
-            return Failed("Another download or replacement started before this one could be queued.");
-        }
+        if (jobId is null) return (null, null);
         logger?.LogInformation(
             "Replacement for issue #{IssueId} \"{Title}\" queued as job #{JobId} on request #{RequestId} ({Source}): replacing {Paths} path(s), blocking {Sizes} size(s), floor {Floor}, {Episodes} episode(s)",
             issue.Id, issue.Title, jobId, target.Id, plan.InventoryKey is null ? "existing request" : $"adopted from {plan.InventoryKey}",
             replacePaths.Count, plan.PlexFileSizes.Count, floor, plan.Episodes.Count);
-
-        issue.ReplacementRequested = true;
-        issue.ReplacementJobId = jobId;
-        issue.ReplacementApprovedAt = DateTime.UtcNow;
-        issue.ReplacementApprovedBy = Trim(approvedBy, 128);
-        issue.Status = IssueStatus.ReplacementQueued;
-        issue.ResolvedAt = null;
-        issue.ResolvedBy = null;
-        await db.SaveChangesAsync();
-        await SafeNotify(() => notifications!.MediaIssueApprovedAsync(ToDto(issue, job: null, file: null)));
-        return new MediaIssueResultDto { Success = true, IssueId = issue.Id, ReplacementQueued = true };
+        return (jobId, null);
     }
 
     private async Task<ClaimsPrincipal> CurrentUserAsync() =>

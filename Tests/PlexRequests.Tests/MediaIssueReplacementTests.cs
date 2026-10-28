@@ -157,6 +157,207 @@ public sealed class MediaIssueReplacementTests
     }
 
     [Fact]
+    public async Task Season_report_replaces_every_tracked_episode_of_that_season_and_nothing_else()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = AddTvRequest(db, mediaId: 60625, "Rick and Morty");
+        var job = AddCompletedJob(db, request);
+        db.ImportedFiles.AddRange(
+            TrackedFile(job.Id, "/library/Season 09/S09E01.mkv", 'a', season: 9, episode: 1),
+            TrackedFile(job.Id, "/library/Season 09/S09E02-E03.mkv", 'b', season: 9, episode: 2, alsoEpisode: 3),
+            TrackedFile(job.Id, "/library/Season 08/S08E01.mkv", 'c', season: 8, episode: 1));
+        await db.SaveChangesAsync();
+        var queue = new CapturingQueue { ReplacementJobId = 42 };
+        var service = NewService(db, queue);
+
+        var result = await service.ReportIssueAsync(new MediaIssueReportDto
+        {
+            MediaId = request.MediaId, MediaType = request.MediaType, Title = request.Title,
+            Reason = "Audio / language problem", SeasonNumber = 9, RequestReplacement = true
+        });
+
+        Assert.True(result.ReplacementQueued);
+        var issue = await db.MediaIssues.SingleAsync();
+        Assert.Equal(9, issue.SeasonNumber);
+        Assert.Null(issue.EpisodeNumber);
+        Assert.Equal(IssueStatus.ReplacementQueued, issue.Status);
+        var call = Assert.Single(queue.Calls);
+        Assert.Equal([(9, 1), (9, 2), (9, 3)], call.Episodes);
+        Assert.Equal(2, queue.ReplacePaths.Count);
+        Assert.DoesNotContain(queue.ReplacePaths, path => path.Contains("Season 08"));
+    }
+
+    [Fact]
+    public async Task Series_report_queues_one_replacement_per_request_that_owns_copies()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        // A series that was requested one season at a time has one request per season.
+        var seasonOne = AddTvRequest(db, mediaId: 60625, "Rick and Morty");
+        var seasonTwo = AddTvRequest(db, mediaId: 60625, "Rick and Morty");
+        var jobOne = AddCompletedJob(db, seasonOne);
+        var jobTwo = AddCompletedJob(db, seasonTwo);
+        db.ImportedFiles.AddRange(
+            TrackedFile(jobOne.Id, "/library/Season 01/S01E01.mkv", 'a', season: 1, episode: 1),
+            TrackedFile(jobTwo.Id, "/library/Season 02/S02E01.mkv", 'b', season: 2, episode: 1));
+        await db.SaveChangesAsync();
+        var queue = new CapturingQueue { ReplacementJobId = 42 };
+        var service = NewService(db, queue);
+
+        var result = await service.ReportIssueAsync(new MediaIssueReportDto
+        {
+            MediaId = 60625, MediaType = MediaType.TvShow, Title = "Rick and Morty",
+            Reason = "Audio / language problem", RequestReplacement = true
+        });
+
+        Assert.True(result.ReplacementQueued);
+        Assert.Equal(2, queue.Calls.Count);
+        Assert.Equal(new[] { seasonOne.Id, seasonTwo.Id }, queue.Calls.Select(c => c.RequestId).OrderBy(id => id));
+        Assert.Equal([(1, 1)], queue.Calls.Single(c => c.RequestId == seasonOne.Id).Episodes);
+        Assert.Equal([(2, 1)], queue.Calls.Single(c => c.RequestId == seasonTwo.Id).Episodes);
+        var issue = await db.MediaIssues.SingleAsync();
+        Assert.Equal(IssueStatus.ReplacementQueued, issue.Status);
+        Assert.Equal(42, issue.ReplacementJobId);
+    }
+
+    [Fact]
+    public async Task Series_approval_is_refused_whole_when_one_of_its_requests_is_busy()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var seasonOne = AddTvRequest(db, mediaId: 60625, "Rick and Morty");
+        var seasonTwo = AddTvRequest(db, mediaId: 60625, "Rick and Morty");
+        var jobOne = AddCompletedJob(db, seasonOne);
+        var jobTwo = AddCompletedJob(db, seasonTwo);
+        db.ImportedFiles.AddRange(
+            TrackedFile(jobOne.Id, "/library/Season 01/S01E01.mkv", 'a', season: 1, episode: 1),
+            TrackedFile(jobTwo.Id, "/library/Season 02/S02E01.mkv", 'b', season: 2, episode: 1));
+        db.FulfillmentJobs.Add(new FulfillmentJobEntity
+        {
+            MediaRequestId = seasonTwo.Id, MediaId = 60625, MediaType = MediaType.TvShow, Title = seasonTwo.Title,
+            Status = FulfillmentStatus.Downloading
+        });
+        await db.SaveChangesAsync();
+        var queue = new CapturingQueue { ReplacementJobId = 42 };
+        var service = NewService(db, queue);
+
+        var result = await service.ReportIssueAsync(new MediaIssueReportDto
+        {
+            MediaId = 60625, MediaType = MediaType.TvShow, Title = "Rick and Morty",
+            Reason = "Audio / language problem", RequestReplacement = true
+        });
+
+        Assert.False(result.ReplacementQueued);
+        Assert.Contains("already active", result.ErrorMessage);
+        Assert.Empty(queue.Calls);
+        Assert.Equal(IssueStatus.Open, (await db.MediaIssues.SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task Season_report_with_no_recorded_copies_is_refused_with_the_reason()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        AddTvRequest(db, mediaId: 60625, "Rick and Morty");
+        await db.SaveChangesAsync();
+        var queue = new CapturingQueue { ReplacementJobId = 42 };
+        var service = NewService(db, queue);
+
+        var result = await service.ReportIssueAsync(new MediaIssueReportDto
+        {
+            MediaId = 60625, MediaType = MediaType.TvShow, Title = "Rick and Morty",
+            Reason = "Audio / language problem", SeasonNumber = 5, RequestReplacement = true
+        });
+
+        Assert.False(result.ReplacementQueued);
+        Assert.Contains("cannot safely identify", result.ErrorMessage);
+        Assert.Empty(queue.Calls);
+    }
+
+    [Fact]
+    public async Task An_episode_report_must_name_its_season()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        AddTvRequest(db, mediaId: 60625, "Rick and Morty");
+        await db.SaveChangesAsync();
+        var service = NewService(db, new CapturingQueue());
+
+        var result = await service.ReportIssueAsync(new MediaIssueReportDto
+        {
+            MediaId = 60625, MediaType = MediaType.TvShow, Title = "Rick and Morty",
+            Reason = "Wrong episode", EpisodeNumber = 3, RequestReplacement = false
+        });
+
+        Assert.False(result.Success);
+        Assert.Contains("season", result.ErrorMessage);
+        Assert.Empty(await db.MediaIssues.ToListAsync());
+    }
+
+    private static MediaRequestEntity AddTvRequest(AppDbContext db, int mediaId, string title)
+    {
+        var request = new MediaRequestEntity
+        {
+            MediaId = mediaId, MediaType = MediaType.TvShow, RequestScopeKind = RequestScopeKind.Series,
+            Title = title, Status = RequestStatus.Available, RequestedBy = "kaleb"
+        };
+        db.MediaRequests.Add(request);
+        db.SaveChanges();
+        return request;
+    }
+
+    private static FulfillmentJobEntity AddCompletedJob(AppDbContext db, MediaRequestEntity request)
+    {
+        var job = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
+            RequestScopeKind = RequestScopeKind.Series, Title = request.Title, Status = FulfillmentStatus.Completed
+        };
+        db.FulfillmentJobs.Add(job);
+        db.SaveChanges();
+        return job;
+    }
+
+    /// <summary>A video copy with a valid info hash. Episodes 1 and <paramref name="alsoEpisode"/> share one file when given.</summary>
+    private static ImportedFileEntity TrackedFile(int jobId, string path, char hashDigit, int season, int episode,
+        int? alsoEpisode = null)
+    {
+        var hash = new string(hashDigit, 40);
+        var coverage = new List<ImportedEpisodeCoverageEntity> { new() { SeasonNumber = season, EpisodeNumber = episode } };
+        if (alsoEpisode is int more) coverage.Add(new() { SeasonNumber = season, EpisodeNumber = more });
+        return new ImportedFileEntity
+        {
+            FulfillmentJobId = jobId, TransferId = hash, InfoHash = hash, Protocol = AcquisitionProtocol.Torrent,
+            DestinationPath = path, SourcePath = "/downloads/" + Path.GetFileName(path), FileType = "video",
+            SeasonNumber = season, EpisodeNumber = episode, ResolutionHeight = 1080,
+            ReleaseName = $"Show.S{season:D2}E{episode:D2}.{hashDigit}", EpisodeCoverage = coverage
+        };
+    }
+
+    private static MediaIssueService NewService(AppDbContext db, IFulfillmentQueue queue) => new(
+        db,
+        new TestAuthProvider(userId: 1, admin: true),
+        queue,
+        new FixedQualityProfiles(),
+        new ReleaseBlocklistService(db, NullLogger<ReleaseBlocklistService>.Instance));
+
+    [Fact]
     public async Task Later_admin_approval_stays_pinned_to_the_copy_the_user_reported()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -656,6 +857,8 @@ public sealed class MediaIssueReplacementTests
         public Quality Floor { get; private set; }
         public List<string> ReplacePaths { get; private set; } = new();
         public List<(int season, int episode)> Episodes { get; private set; } = new();
+        /// <summary>Every enqueue, in order, so a season or series approval can be checked request by request.</summary>
+        public List<(int RequestId, List<(int season, int episode)> Episodes)> Calls { get; } = new();
 
         public Task<int?> EnqueueReplacementAsync(MediaRequestDto request, Quality floor,
             IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes, int mediaIssueId,
@@ -665,7 +868,8 @@ public sealed class MediaIssueReplacementTests
             ReplacePaths = replacePaths.ToList();
             Episodes = episodes.ToList();
             MediaIssueId = mediaIssueId;
-            return Task.FromResult(ReplacementJobId);
+            Calls.Add((request.Id, episodes.ToList()));
+            return Task.FromResult(ReplacementJobId + Calls.Count - 1);
         }
 
         public Task<bool> EnqueueAsync(MediaRequestDto request, bool force = false) => Task.FromResult(false);

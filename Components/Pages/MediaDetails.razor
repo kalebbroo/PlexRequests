@@ -596,7 +596,7 @@ else
 <MudDialog @bind-Visible="_reportOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
     <TitleContent><MudText Typo="Typo.h6"><MudIcon Icon="@Icons.Material.Filled.ReportProblem" Class="mr-2" />Report a Problem</MudText></TitleContent>
     <DialogContent>
-        <MudText Typo="Typo.body2" Class="mb-3">Report the exact file that is wrong. The old copy stays in place until a verified replacement imports successfully.</MudText>
+        <MudText Typo="Typo.body2" Class="mb-3">Report what is wrong. The old copy stays in place until a verified replacement imports successfully.</MudText>
         <MudSelect T="string" @bind-Value="_reportReason" Label="What's wrong?" Variant="Variant.Outlined" dense="true" Class="mb-3">
             <MudSelectItem Value="@("Wrong episode")">Wrong episode / mislabeled file</MudSelectItem>
             <MudSelectItem Value="@("Bad quality")">Bad quality / low resolution</MudSelectItem>
@@ -608,44 +608,73 @@ else
             <MudSelectItem Value="@("Corrupt / incomplete")">Corrupt or incomplete file</MudSelectItem>
             <MudSelectItem Value="@("Other")">Other</MudSelectItem>
         </MudSelect>
-        @if (_media?.MediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime)
+        @if (IsTvReport)
         {
-            @if (_media.Seasons?.Any() == true)
+            <MudSelect T="string" @bind-Value="_reportScope" Label="Which part of the show?" Variant="Variant.Outlined" dense="true" Class="mb-3">
+                <MudSelectItem Value="@("Episode")">A single episode</MudSelectItem>
+                <MudSelectItem Value="@("Season")">An entire season</MudSelectItem>
+                <MudSelectItem Value="@("Series")">The entire series</MudSelectItem>
+            </MudSelect>
+            @if (_media?.Seasons?.Any() == true)
             {
                 <div class="d-flex gap-3 mb-3" style="flex-wrap:wrap;">
-                    <MudSelect T="int?" Value="_reportSeason" ValueChanged="ReportSeasonChanged" Label="Season"
-                               Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:140px;flex:1;">
-                        @foreach (var season in _media.Seasons.Where(s => s.SeasonNumber >= 0))
-                        {
-                            <MudSelectItem T="int?" Value="@((int?)season.SeasonNumber)">@(season.SeasonNumber == 0 ? "Specials" : $"Season {season.SeasonNumber}")</MudSelectItem>
-                        }
-                    </MudSelect>
-                    <MudSelect T="int?" Value="_reportEpisode" ValueChanged="ReportEpisodeChanged" Label="Episode" Disabled="@(_reportSeason is null || _reportEpisodesLoading)"
-                               Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:180px;flex:1;">
-                        @foreach (var episode in _reportEpisodes)
-                        {
-                            <MudSelectItem T="int?" Value="@((int?)episode.EpisodeNumber)">
-                                E@(episode.EpisodeNumber)@(string.IsNullOrWhiteSpace(episode.Name) ? "" : $" · {episode.Name}")@(episode.IsAvailable ? " · On Plex" : "")
-                            </MudSelectItem>
-                        }
-                    </MudSelect>
+                    @if (_reportScope != "Series")
+                    {
+                        <MudSelect T="int?" Value="_reportSeason" ValueChanged="ReportSeasonChanged" Label="Season"
+                                   Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:140px;flex:1;">
+                            @foreach (var season in _media.Seasons.Where(s => s.SeasonNumber >= 0))
+                            {
+                                <MudSelectItem T="int?" Value="@((int?)season.SeasonNumber)">@(season.SeasonNumber == 0 ? "Specials" : $"Season {season.SeasonNumber}")</MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
+                    @if (_reportScope == "Episode")
+                    {
+                        <MudSelect T="int?" Value="_reportEpisode" ValueChanged="ReportEpisodeChanged" Label="Episode" Disabled="@(_reportSeason is null || _reportEpisodesLoading)"
+                                   Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:180px;flex:1;">
+                            @foreach (var episode in _reportEpisodes)
+                            {
+                                <MudSelectItem T="int?" Value="@((int?)episode.EpisodeNumber)">
+                                    E@(episode.EpisodeNumber)@(string.IsNullOrWhiteSpace(episode.Name) ? "" : $" · {episode.Name}")@(episode.IsAvailable ? " · On Plex" : "")
+                                </MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
                 </div>
             }
             else
             {
                 <MudAlert Severity="Severity.Warning" dense="true" Class="mb-2">Episode metadata is unavailable. Enter the Plex season and episode numbers shown in the player.</MudAlert>
                 <div class="d-flex gap-3 mb-3" style="flex-wrap:wrap;">
-                    <MudNumericField T="int?" @bind-Value="_reportSeason" Label="Season" Min="0"
-                                     Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:140px;flex:1;" />
-                    <MudNumericField T="int?" Value="_reportEpisode" ValueChanged="ReportEpisodeChanged" Label="Episode" Min="1"
-                                     Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:140px;flex:1;" />
+                    @if (_reportScope != "Series")
+                    {
+                        <MudNumericField T="int?" @bind-Value="_reportSeason" Label="Season" Min="0"
+                                         Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:140px;flex:1;" />
+                    }
+                    @if (_reportScope == "Episode")
+                    {
+                        <MudNumericField T="int?" Value="_reportEpisode" ValueChanged="ReportEpisodeChanged" Label="Episode" Min="1"
+                                         Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:140px;flex:1;" />
+                    }
                 </div>
             }
-            @if (_reportSeason is int reportSeason && _reportEpisode is int reportEpisode)
+            @if (_reportScope == "Episode" && _reportSeason is int reportSeason && _reportEpisode is int reportEpisode)
             {
                 <MudAlert Severity="Severity.Info" dense="true" Class="mb-3">
                     Reporting S@(reportSeason.ToString("D2"))E@(reportEpisode.ToString("D2"))@(!string.IsNullOrWhiteSpace(_reportEpisodeTitle) ? $" · {_reportEpisodeTitle}" : "").
                     The report will be tied to this episode's current imported file when an audit record is available.
+                </MudAlert>
+            }
+            else if (_reportScope == "Season" && _reportSeason is int seasonNumber)
+            {
+                <MudAlert Severity="Severity.Info" dense="true" Class="mb-3">
+                    Reporting all of Season @seasonNumber. Every episode of that season with a tracked file is included.
+                </MudAlert>
+            }
+            else if (_reportScope == "Series")
+            {
+                <MudAlert Severity="Severity.Info" dense="true" Class="mb-3">
+                    Reporting the whole series. Every episode with a tracked file is included, season by season.
                 </MudAlert>
             }
         }
@@ -935,16 +964,27 @@ else
     private bool _reportEpisodesLoading;
     private List<PlexRequestsHosted.Shared.DTOs.EpisodeDto> _reportEpisodes = new();
 
-    private bool ReportSubmitDisabled => _reportSubmitting ||
-        (_reportReplacement &&
-         (_media?.MediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime) &&
-         (_reportSeason is null || _reportEpisode is null));
+    // "Episode", "Season" or "Series": what the report covers. A season or series report names no episode.
+    private string _reportScope = "Episode";
+
+    private bool IsTvReport => _media?.MediaType is PlexRequestsHosted.Shared.Enums.MediaType.TvShow or PlexRequestsHosted.Shared.Enums.MediaType.Anime;
+
+    private bool ReportScopeIncomplete => _reportScope switch
+    {
+        "Series" => false,
+        "Season" => _reportSeason is null,
+        _ => _reportSeason is null || _reportEpisode is null
+    };
+
+    // A replacement needs a known scope. A plain report may leave it open, as before.
+    private bool ReportSubmitDisabled => _reportSubmitting || (_reportReplacement && IsTvReport && ReportScopeIncomplete);
 
     private async Task OpenReport()
     {
         _reportReason = "Wrong episode";
         _reportDetail = string.Empty;
         _reportReplacement = true;
+        _reportScope = "Episode";
         _reportSeason = null;
         _reportEpisode = null;
         _reportEpisodeTitle = null;
@@ -958,6 +998,7 @@ else
         _reportReason = "Playback broken";
         _reportDetail = string.Empty;
         _reportReplacement = true;
+        _reportScope = "Episode";
         _reportSeason = episode.SeasonNumber;
         _reportEpisode = episode.EpisodeNumber;
         _reportEpisodeTitle = episode.Name;
@@ -1000,9 +1041,11 @@ else
                 PosterUrl = _media.PosterUrl,
                 Reason = _reportReason,
                 Detail = _reportDetail,
-                SeasonNumber = _reportSeason,
-                EpisodeNumber = _reportEpisode,
-                EpisodeTitle = _reportEpisodeTitle,
+                // Only the part of the show the scope names is sent: a season report carries no episode, and a series
+                // report carries neither.
+                SeasonNumber = IsTvReport && _reportScope != "Series" ? _reportSeason : null,
+                EpisodeNumber = IsTvReport && _reportScope == "Episode" ? _reportEpisode : null,
+                EpisodeTitle = IsTvReport && _reportScope == "Episode" ? _reportEpisodeTitle : null,
                 RequestReplacement = _reportReplacement
             });
             if (result.Success)

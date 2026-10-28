@@ -192,8 +192,10 @@ else
     private static string MediaLabel(MediaIssueDto issue)
     {
         var mediaType = issue.MediaType == MediaType.Movie ? "Movie" : issue.MediaType == MediaType.TvShow ? "TV show" : issue.MediaType.ToString();
-        if (issue.SeasonNumber is not int season) return mediaType;
-        return $"{mediaType} · S{season:D2}{(issue.EpisodeNumber is int episode ? $"E{episode:D2}" : string.Empty)}";
+        var isTv = issue.MediaType is MediaType.TvShow or MediaType.Anime;
+        if (issue.SeasonNumber is not int season) return isTv ? $"{mediaType} · whole series" : mediaType;
+        if (issue.EpisodeNumber is not int episode) return $"{mediaType} · Season {season}";
+        return $"{mediaType} · S{season:D2}E{episode:D2}";
     }
 
     private static string ReplacementProgress(MediaIssueDto issue) => issue.ReplacementJobStatus switch
