@@ -35,7 +35,8 @@ public sealed record MediaTrackDefaultSelection(
             : MediaLanguagePolicy.Normalize(policy.PreferredAudioLanguage) ?? "en";
         var preferredSubtitle = MediaLanguagePolicy.Normalize(policy.PreferredSubtitleLanguage) ?? "en";
 
-        var audio = Find(tracks.Audio, preferredAudio, preferFull: false)
+        // Audio-description tracks are never the spoken track, so they are not chosen as the default for any language.
+        var audio = Find(tracks.Audio, preferredAudio, preferFull: false, spokenOnly: true)
                     ?? ExistingDefault(tracks.Audio);
         int? subtitle;
         var editSubtitles = false;
@@ -72,11 +73,13 @@ public sealed record MediaTrackDefaultSelection(
             : new(audioCount, audio, subtitleCount, subtitle, editSubtitles);
     }
 
-    private static int? Find(IReadOnlyList<MediaTrackDto> tracks, string language, bool preferFull)
+    private static int? Find(IReadOnlyList<MediaTrackDto> tracks, string language, bool preferFull,
+        bool spokenOnly = false)
     {
         var candidates = tracks.Where(track => !track.IsExternal)
             .Select((track, index) => (track, ordinal: index + 1))
-            .Where(x => MediaLanguagePolicy.Normalize(x.track.Language) == language);
+            .Where(x => MediaLanguagePolicy.Normalize(x.track.Language) == language)
+            .Where(x => !spokenOnly || !MediaLanguagePolicy.IsDescriptiveAudio(x.track));
         if (preferFull)
             candidates = candidates.OrderBy(x => x.track.IsForced)
                 .ThenBy(x => IsAccessibilityOrCommentary(x.track.Title))
@@ -96,13 +99,16 @@ public sealed record MediaTrackDefaultSelection(
             .Select(x => (int?)x.ordinal).FirstOrDefault();
 
     private static int? ExistingDefault(IReadOnlyList<MediaTrackDto> tracks)
-        => tracks.Where(track => !track.IsExternal)
+    {
+        // Ordinals count every embedded track, descriptive ones included, to match the mkvpropedit selectors.
+        var embedded = tracks.Where(track => !track.IsExternal)
             .Select((track, index) => (track, ordinal: index + 1))
-            .Where(x => x.track.IsDefault)
-            .Select(x => (int?)x.ordinal).FirstOrDefault()
-           ?? tracks.Where(track => !track.IsExternal)
-               .Select((track, index) => (track, ordinal: index + 1))
-               .Select(x => (int?)x.ordinal).FirstOrDefault();
+            .ToList();
+        return embedded.Where(x => x.track.IsDefault && !MediaLanguagePolicy.IsDescriptiveAudio(x.track))
+                   .Select(x => (int?)x.ordinal).FirstOrDefault()
+               ?? embedded.Where(x => !MediaLanguagePolicy.IsDescriptiveAudio(x.track))
+                   .Select(x => (int?)x.ordinal).FirstOrDefault();
+    }
 
     private static bool IsAccessibilityOrCommentary(string? title) => title is not null &&
         (title.Contains("sdh", StringComparison.OrdinalIgnoreCase)

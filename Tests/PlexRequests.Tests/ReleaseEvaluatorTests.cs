@@ -590,6 +590,15 @@ public class ReleaseEvaluatorTests
     }
 
     [Fact]
+    public void A_release_advertising_a_descriptive_track_is_rejected_even_when_English_is_wanted()
+    {
+        var r = _eval.Evaluate(TestData.Release("Severance.S02E07.1080p.WEB-DL.English.Descriptive"),
+            TestData.Job(), TestData.Context());
+        Assert.True(Rejected(r, RejectionReason.DescriptiveAudio));
+        Assert.False(r.Accepted);
+    }
+
+    [Fact]
     public void An_upgrade_never_accepts_a_downgrade_even_when_relaxed()
     {
         var r = _eval.Evaluate(TestData.Release("Severance.S02E07.720p.WEB-DL"),

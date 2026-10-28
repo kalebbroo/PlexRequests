@@ -362,6 +362,13 @@ public class ReleaseEvaluator(IReleaseParser parser) : IReleaseEvaluator
             rejections.Add(new Rejection(RejectionReason.CustomFormatScoreTooLow,
                 $"custom-format score {formatScore} is below the profile's minimum of {minScore}"));
 
+        // An audio-description track is a narrated copy of the picture, not the audio a viewer asked for. Its
+        // language tag is the spoken language, so the language checks below would pass it. The import check counts
+        // only spoken audio, so a file that hides its descriptive track from the name is still rejected there.
+        if (MediaLanguagePolicy.ReleaseAdvertisesDescriptiveAudio(c.ReleaseName))
+            rejections.Add(new Rejection(RejectionReason.DescriptiveAudio,
+                "the release name advertises an audio-description (descriptive) track"));
+
         var allowedLanguages = job.MediaLanguagePolicy?.AllowedAudioLanguages.Count > 0
             ? job.MediaLanguagePolicy.AllowedAudioLanguages.ToHashSet(StringComparer.OrdinalIgnoreCase)
             : MediaLanguagePolicy.ParseCsv(context.Profile?.AllowedLanguagesCsv)
