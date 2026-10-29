@@ -122,8 +122,7 @@ public class ReleaseRankerAdapter(
     {
         if (!job.IsAnime) return original;
         var hasExplicitMap = EpisodeOrderMapping.IsActive(job.EpisodeOrderProfile);
-        // An anime issue replacement names the episodes it must replace, so its season is known even when the
-        // collection doesn't declare one. Such a collection is provisionally that season's pack. The manifest check
+        // An anime job that names a single season knows the season of a collection that does not declare one. Such a collection is provisionally that season's pack. The manifest check
         // below must still map every needed episode before anything downloads.
         var issueSeason = ProvisionalIssueSeason(job);
         var provisional = ranked.Where(candidate => IsManifestOnlyCandidate(candidate)
@@ -151,11 +150,10 @@ public class ReleaseRankerAdapter(
         return new DownloadPlanResult(planned.Plan with { Items = items }, notes);
     }
 
-    /// <summary>The one season an anime issue replacement is for, when its episodes or season targets name exactly
-    /// one. Null for a series-wide or multi-season replacement, where the season of an unscoped collection is unknown.</summary>
+    /// <summary>The one season an anime job is for, when its episodes or season targets name exactly one. Null for a
+    /// series-wide or multi-season job, where the season of an unscoped collection is unknown.</summary>
     internal static int? ProvisionalIssueSeason(FulfillmentJobDto job)
     {
-        if (job.MediaIssueId is null) return null;
         var seasons = job.RequestedEpisodes.Select(e => e.Season)
             .Concat(job.SeasonTargets.Select(t => t.Season))
             .Distinct().ToList();
