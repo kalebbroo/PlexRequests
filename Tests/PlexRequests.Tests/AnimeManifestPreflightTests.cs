@@ -41,6 +41,27 @@ public sealed class AnimeManifestPreflightTests
     }
 
     [Fact]
+    public void An_anime_request_for_one_season_takes_an_unscoped_collection_for_that_season()
+    {
+        var job = new FulfillmentJobDto
+        {
+            Id = 700, Title = "D.N.Angel", MediaType = MediaType.TvShow, IsAnime = true,
+            SeasonTargets = [TestData.Season(1, Enumerable.Range(1, 26).ToArray())]
+        };
+        Assert.Equal(1, ReleaseRankerAdapter.ProvisionalIssueSeason(job));
+
+        var batch = TestData.Release("DNAngel / D.N.Angel (High Quality)(Dual Audio) MKV DVDRip [576p]", sizeGb: 14.0);
+        var ranked = TestData.Evaluator().EvaluateAll([batch], job, TestData.Context(relax: true))
+            .Select(candidate => ReleaseRankerAdapter.AsProvisional(candidate, 1))
+            .ToList();
+        var result = new DownloadPlanner().Plan(ranked, job, TestData.Context(relax: true));
+
+        var item = Assert.Single(result.Plan.Items);
+        Assert.True(item.IsPack);
+        Assert.Equal(26, item.NeededEpisodeRefs!.Count);
+    }
+
+    [Fact]
     public void A_series_wide_anime_replacement_has_no_single_provisional_season()
     {
         var job = new FulfillmentJobDto
