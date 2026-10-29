@@ -385,6 +385,8 @@ public class MediaIssueDto
     public bool CanApproveReplacement { get; set; }
     /// <summary>Administrator lists only: why approval is unavailable, shown in place of a button that always fails.</summary>
     public string? ReplacementBlockedReason { get; set; }
+    /// <summary>The last approval refusal or wait, so an approval that did not queue says why.</summary>
+    public string? ReplacementError { get; set; }
     public IssueStatus Status { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ResolvedAt { get; set; }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PlexRequestsHosted.Infrastructure.Data;
+using PlexRequestsHosted.Services.Implementations;
 using PlexRequestsHosted.Shared;
 using PlexRequestsHosted.Shared.Enums;
 
@@ -12,13 +13,17 @@ namespace PlexRequestsHosted.Services.Jobs;
 /// <see cref="FulfillmentStatus.Queued"/>, so the existing worker → indexer → ranker path searches it again.
 /// If it's still not found, the downloader re-defers it (bumping the backoff) — it never becomes a failure.
 /// </summary>
-public class MissingSearchJob(AppDbContext db, ILogger<MissingSearchJob> logger) : IJobHandler
+public class MissingSearchJob(AppDbContext db, ILogger<MissingSearchJob> logger, IMediaIssueService issues) : IJobHandler
 {
     public JobType Type => JobType.MissingSearch;
 
     public async Task<JobResult> ExecuteAsync(JobContext context, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
+
+        // Approvals saved while their request had work in flight queue here, once that work has finished.
+        var approvedNow = await issues.QueuePendingApprovalsAsync();
+        if (approvedNow > 0) logger.LogInformation("Queued {Count} approved replacement(s) that were waiting for their request", approvedNow);
 
         // Ordinary deferred jobs still require a non-terminal request. Issue replacements are deliberately
         // attached to an Available request (the bad copy remains playable until the new one imports), so they

@@ -113,9 +113,13 @@ else
                         <MudButton Size="Size.Small" Color="Color.Default" Variant="Variant.Text"
                                    Disabled="@busy" OnClick="() => Dismiss(issue)">Dismiss report</MudButton>
                     </div>
-                    @if (!issue.CanApproveReplacement && !string.IsNullOrWhiteSpace(issue.ReplacementBlockedReason))
+                    @if (!string.IsNullOrWhiteSpace(issue.ReplacementBlockedReason))
                     {
                         <MudText Typo="Typo.body2" Class="text-secondary">@issue.ReplacementBlockedReason</MudText>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(issue.ReplacementError))
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Error">Last approval: @issue.ReplacementError</MudText>
                     }
                 }
             </article>
@@ -149,6 +153,8 @@ else
         var result = await IssueService.RequestRedownloadAsync(i.Id);
         if (result.Success && result.ReplacementQueued)
             await Toast.ShowSuccessAsync($"Safe replacement queued for {i.Title}.");
+        else if (result.Success)
+            await Toast.ShowWarningAsync(result.ErrorMessage ?? $"Approved {i.Title}. It will queue when its work finishes.");
         else
             await Toast.ShowErrorAsync(result.ErrorMessage ?? "Failed to queue replacement.");
     });

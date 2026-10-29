@@ -21,6 +21,9 @@ public interface IMediaIssueService
     Task<bool> ResolveIssueAsync(int issueId);
     Task<bool> DismissIssueAsync(int issueId);
     Task<MediaIssueResultDto> RequestRedownloadAsync(int issueId);
+    /// <summary>Queues approvals that were saved while their request had work in flight, once that work has finished.
+    /// Returns how many were queued.</summary>
+    Task<int> QueuePendingApprovalsAsync();
 }
 
 /// <summary>
@@ -149,9 +152,10 @@ public class MediaIssueService(
         for (var index = 0; index < issues.Count; index++)
         {
             if (issues[index].Status != IssueStatus.Open) continue;
-            var blockedReason = (await PreflightReplacementAsync(issues[index])).FirstOrDefault(p => p.BlockedReason is not null)?.BlockedReason;
-            dtos[index].CanApproveReplacement = blockedReason is null;
-            dtos[index].ReplacementBlockedReason = blockedReason;
+            var blocked = (await PreflightReplacementAsync(issues[index])).FirstOrDefault(p => p.BlockedReason is not null);
+            // A wait can still be approved: the approval is kept and queued when the work in flight finishes.
+            dtos[index].CanApproveReplacement = blocked is null || blocked.Waiting;
+            dtos[index].ReplacementBlockedReason = blocked?.BlockedReason;
         }
         return dtos;
     }
@@ -217,15 +221,44 @@ public class MediaIssueService(
         return await QueueReplacementCoreAsync(issue, user.Identity?.Name ?? "Admin");
     }
 
+    public async Task<int> QueuePendingApprovalsAsync()
+    {
+        var pending = await db.MediaIssues
+            .Where(i => i.Status == IssueStatus.ReplacementQueued && i.ReplacementJobId == null && i.ReplacementApprovedAt != null)
+            .OrderBy(i => i.ReplacementApprovedAt)
+            .ToListAsync();
+        var queued = 0;
+        foreach (var issue in pending)
+        {
+            var result = await QueueReplacementCoreAsync(issue, issue.ReplacementApprovedBy ?? "Admin");
+            if (result.ReplacementQueued)
+            {
+                queued++;
+                continue;
+            }
+            if (result.Success) continue; // still waiting for the work in flight
+            // A refusal that is not a wait will not clear on its own. Return the approval to the admin, with the reason kept.
+            issue.Status = IssueStatus.Open;
+            issue.ReplacementApprovedAt = null;
+            issue.ReplacementApprovedBy = null;
+            issue.ReplacementRequested = true;
+            await db.SaveChangesAsync();
+        }
+        return queued;
+    }
+
     /// <summary>
     /// The verified inputs for one replacement approval, or the reason approval cannot run. A title with no request yet
     /// carries <see cref="InventoryKey"/> instead, and approval adopts it into the library first.
     /// </summary>
     private sealed record ReplacementPlan(MediaRequestEntity? Request, string? InventoryKey,
         List<ImportedFileEntity> OldFiles, List<string> ReplacePaths, List<long> PlexFileSizes,
-        int CurrentHeight, List<(int Season, int Episode)> Episodes, string? BlockedReason)
+        int CurrentHeight, List<(int Season, int Episode)> Episodes, string? BlockedReason, bool Waiting = false)
     {
         public static ReplacementPlan Blocked(string reason) => new(null, null, [], [], [], 0, [], reason);
+
+        /// <summary>Another job holds the request. The approval stays, and it queues when that job finishes.</summary>
+        public static ReplacementPlan WaitingForSlot(string reason) => new(null, null, [], [], [], 0, [], reason, true);
     }
 
     /// <summary>
@@ -297,7 +330,7 @@ public class MediaIssueService(
         MediaRequestEntity request, ImportedFileEntity? pinnedFile)
     {
         var busy = await BlockingJobReasonAsync(request.Id);
-        if (busy is not null) return ReplacementPlan.Blocked(busy);
+        if (busy is not null) return ReplacementPlan.WaitingForSlot(busy);
 
         var requestJobIds = await db.FulfillmentJobs.AsNoTracking()
             .Where(j => j.MediaRequestId == request.Id).Select(j => j.Id).ToListAsync();
@@ -380,7 +413,7 @@ public class MediaIssueService(
         if (request is not null)
         {
             var busy = await BlockingJobReasonAsync(request.Id);
-            if (busy is not null) return ReplacementPlan.Blocked(busy);
+            if (busy is not null) return ReplacementPlan.WaitingForSlot(busy);
         }
 
         var episodes = source.Episodes.ToList();
@@ -397,8 +430,27 @@ public class MediaIssueService(
         var refused = plans.FirstOrDefault(p => p.BlockedReason is not null);
         if (refused is not null)
         {
-            logger?.LogInformation("Replacement for issue #{IssueId} \"{Title}\" refused: {Reason}", issue.Id, issue.Title, refused.BlockedReason);
-            return Failed(refused.BlockedReason!);
+            var reason = refused.BlockedReason!;
+            issue.ReplacementError = Trim(reason, 512);
+            if (refused.Waiting)
+            {
+                // Another job holds this request. Keep the approval, and queue it when the request is clear.
+                issue.ReplacementRequested = true;
+                issue.ReplacementApprovedAt = DateTime.UtcNow;
+                issue.ReplacementApprovedBy = Trim(approvedBy, 128);
+                issue.ReplacementJobId = null;
+                issue.Status = IssueStatus.ReplacementQueued;
+                await db.SaveChangesAsync();
+                logger?.LogInformation("Replacement for issue #{IssueId} \"{Title}\" approved and waiting: {Reason}", issue.Id, issue.Title, reason);
+                return new MediaIssueResultDto
+                {
+                    Success = true, IssueId = issue.Id,
+                    ErrorMessage = $"Approved. It will queue when the current work on this title finishes: {reason}"
+                };
+            }
+            await db.SaveChangesAsync();
+            logger?.LogInformation("Replacement for issue #{IssueId} \"{Title}\" refused: {Reason}", issue.Id, issue.Title, reason);
+            return Failed(reason);
         }
 
         var jobIds = new List<int>();
@@ -413,12 +465,15 @@ public class MediaIssueService(
                     : $"Only part of this replacement was queued (job #{string.Join(", #", jobIds)}); another download started before the rest. " +
                       "Approve it again once that download finishes.";
                 logger?.LogInformation("Replacement for issue #{IssueId} \"{Title}\" not fully queued: {Reason}", issue.Id, issue.Title, reason);
+                issue.ReplacementError = Trim(error ?? reason, 512);
+                await db.SaveChangesAsync();
                 return Failed(error ?? reason);
             }
             jobIds.Add(jobId.Value);
         }
 
         issue.ReplacementRequested = true;
+        issue.ReplacementError = null;
         issue.ReplacementJobId = jobIds[0];
         issue.ReplacementApprovedAt = DateTime.UtcNow;
         issue.ReplacementApprovedBy = Trim(approvedBy, 128);
@@ -557,6 +612,7 @@ public class MediaIssueService(
         AffectedResolution = file?.ResolutionHeight ?? 0,
         ReplacementRequested = issue.ReplacementRequested,
         ReplacementJobId = includeOperationalDetails ? issue.ReplacementJobId : null,
+        ReplacementError = includeOperationalDetails ? issue.ReplacementError : null,
         ReplacementJobStatus = job?.Status,
         ReplacementProgress = job?.Progress ?? 0,
         ReplacementAttempts = includeOperationalDetails ? job?.Attempts ?? 0 : 0,

@@ -40,6 +40,8 @@ public class MediaIssueEntity
     public int? ReplacementJobId { get; set; }
     public DateTime? ReplacementApprovedAt { get; set; }
     [MaxLength(128)] public string? ReplacementApprovedBy { get; set; }
+    /// <summary>Why the last approval could not queue, or why it is waiting. Cleared when a replacement queues.</summary>
+    [MaxLength(512)] public string? ReplacementError { get; set; }
 
     public IssueStatus Status { get; set; } = IssueStatus.Open;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
