@@ -262,7 +262,10 @@ public sealed class MediaIssueReplacementTests
         Assert.False(result.ReplacementQueued);
         Assert.Contains("already active", result.ErrorMessage);
         Assert.Empty(queue.Calls);
-        Assert.Equal(IssueStatus.Open, (await db.MediaIssues.SingleAsync()).Status);
+        var waiting = await db.MediaIssues.SingleAsync();
+        Assert.Equal(IssueStatus.ReplacementQueued, waiting.Status);
+        Assert.Null(waiting.ReplacementJobId);
+        Assert.NotNull(waiting.ReplacementApprovedAt);
     }
 
     [Fact]
@@ -578,7 +581,7 @@ public sealed class MediaIssueReplacementTests
 
         job.NextRetryAt = DateTime.UtcNow.AddMinutes(-1);
         await db.SaveChangesAsync();
-        var search = new MissingSearchJob(db, NullLogger<MissingSearchJob>.Instance);
+        var search = new MissingSearchJob(db, NullLogger<MissingSearchJob>.Instance, NewService(db, new CapturingQueue()));
         var requeued = await search.ExecuteAsync(new JobContext(null, Manual: false), CancellationToken.None);
 
         Assert.Equal(JobRunStatus.Succeeded, requeued.Status);
@@ -617,6 +620,7 @@ public sealed class MediaIssueReplacementTests
         var approved = await service.RequestRedownloadAsync(listed.Id);
         Assert.False(approved.Success);
         Assert.Equal(listed.ReplacementBlockedReason, approved.ErrorMessage);
+        Assert.Equal(approved.ErrorMessage, (await db.MediaIssues.SingleAsync()).ReplacementError);
         Assert.Null(queue.MediaIssueId);
         Assert.Empty(await db.ReleaseBlocklist.ToListAsync());
     }
@@ -670,13 +674,64 @@ public sealed class MediaIssueReplacementTests
             new FixedQualityProfiles(), new ReleaseBlocklistService(db, NullLogger<ReleaseBlocklistService>.Instance));
 
         var listed = Assert.Single(await service.GetIssuesAsync());
-        Assert.False(listed.CanApproveReplacement);
+        Assert.True(listed.CanApproveReplacement);
         Assert.NotNull(listed.ReplacementBlockedReason);
         Assert.Contains("already active", listed.ReplacementBlockedReason);
 
         var approved = await service.RequestRedownloadAsync(listed.Id);
-        Assert.False(approved.Success);
+        Assert.True(approved.Success);
+        Assert.False(approved.ReplacementQueued);
         Assert.Null(queue.MediaIssueId);
+    }
+
+    [Fact]
+    public async Task An_approval_made_while_its_request_is_busy_queues_once_the_work_finishes()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = AddTvRequest(db, mediaId: 60625, "Rick and Morty");
+        var job = AddCompletedJob(db, request);
+        db.ImportedFiles.Add(TrackedFile(job.Id, "/library/Season 01/S01E05.mkv", 'a', season: 1, episode: 5));
+        var busy = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType, Title = request.Title,
+            Status = FulfillmentStatus.Downloading
+        };
+        db.FulfillmentJobs.Add(busy);
+        db.MediaIssues.Add(new MediaIssueEntity
+        {
+            MediaId = request.MediaId, MediaType = request.MediaType, Title = request.Title, Reason = "Wrong episode",
+            SeasonNumber = 1, EpisodeNumber = 5, ReplacementRequested = true, Status = IssueStatus.Open
+        });
+        await db.SaveChangesAsync();
+        var queue = new CapturingQueue { ReplacementJobId = 42 };
+        var service = NewService(db, queue);
+        var issueId = (await db.MediaIssues.SingleAsync()).Id;
+
+        var saved = await service.RequestRedownloadAsync(issueId);
+
+        Assert.True(saved.Success);
+        Assert.False(saved.ReplacementQueued);
+        Assert.Empty(queue.Calls);
+        var pending = await db.MediaIssues.AsNoTracking().SingleAsync();
+        Assert.Equal(IssueStatus.ReplacementQueued, pending.Status);
+        Assert.Null(pending.ReplacementJobId);
+
+        // Still busy: the sweep leaves it waiting.
+        Assert.Equal(0, await service.QueuePendingApprovalsAsync());
+        Assert.Empty(queue.Calls);
+
+        // The work finishes, and the sweep queues the approval.
+        busy.Status = FulfillmentStatus.Completed;
+        await db.SaveChangesAsync();
+        Assert.Equal(1, await service.QueuePendingApprovalsAsync());
+        var queued = await db.MediaIssues.AsNoTracking().SingleAsync();
+        Assert.Equal(42, queued.ReplacementJobId);
+        Assert.Null(queued.ReplacementError);
+        Assert.Single(queue.Calls);
     }
 
     [Fact]
@@ -814,6 +869,7 @@ public sealed class MediaIssueReplacementTests
         var approved = await service.RequestRedownloadAsync(listed.Id);
         Assert.False(approved.Success);
         Assert.Equal(listed.ReplacementBlockedReason, approved.ErrorMessage);
+        Assert.Equal(approved.ErrorMessage, (await db.MediaIssues.SingleAsync()).ReplacementError);
         Assert.Null(queue.MediaIssueId);
         Assert.Empty(await db.MediaRequests.ToListAsync());
     }

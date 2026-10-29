@@ -1399,6 +1399,10 @@ namespace PlexRequestsHosted.Infrastructure.Migrations
                     b.Property<int?>("ReplacementJobId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("ReplacementError")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("ReplacementRequested")
                         .HasColumnType("INTEGER");
 
