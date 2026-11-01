@@ -25,6 +25,9 @@ public class MissingSearchJob(AppDbContext db, ILogger<MissingSearchJob> logger,
         var approvedNow = await issues.QueuePendingApprovalsAsync();
         if (approvedNow > 0) logger.LogInformation("Queued {Count} approved replacement(s) that were waiting for their request", approvedNow);
 
+        // Ordinary deferred jobs still require a non-terminal request, unless they still have named missing targets. A
+        // replacement can mark its request Available while other episodes of the same request are still missing, and
+        // those episodes must still be searched.
         // Ordinary deferred jobs still require a non-terminal request. Issue replacements are deliberately
         // attached to an Available request (the bad copy remains playable until the new one imports), so they
         // are the one upgrade-shaped job that must pass this gate and keep searching. Routine quality upgrades
@@ -35,7 +38,8 @@ public class MissingSearchJob(AppDbContext db, ILogger<MissingSearchJob> logger,
                         && j.MediaRequest != null
                         && j.MediaRequest.Status != RequestStatus.Cancelled
                         && j.MediaRequest.Status != RequestStatus.Rejected
-                        && (j.MediaRequest.Status != RequestStatus.Available || j.IsReplacement))
+                        && (j.MediaRequest.Status != RequestStatus.Available || j.IsReplacement
+                            || j.SeasonTargetsJson != null || j.RequestedEpisodesCsv != null))
             .ToListAsync(ct);
 
         if (due.Count == 0) return JobResult.Skipped("No deferred requests are due for re-search");
