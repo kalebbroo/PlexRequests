@@ -685,6 +685,33 @@ public sealed class MediaIssueReplacementTests
     }
 
     [Fact]
+    public async Task A_deferred_season_job_is_searched_again_even_when_its_request_is_available()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = AddTvRequest(db, mediaId: 125935, "Abbott Elementary");
+        request.Status = RequestStatus.Available;
+        var deferred = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType, Title = request.Title,
+            Status = FulfillmentStatus.Deferred, IsUpgrade = false, IsReplacement = false,
+            SeasonTargetsJson = "[{\"Season\":6,\"EpisodeCount\":9,\"MissingEpisodes\":[5,6,7,8,9]}]",
+            RequestedSeasonsCsv = "6", NextRetryAt = DateTime.UtcNow.AddMinutes(-5), LastUpdatedAt = DateTime.UtcNow.AddHours(-3)
+        };
+        db.FulfillmentJobs.Add(deferred);
+        await db.SaveChangesAsync();
+
+        var result = await new MissingSearchJob(db, NullLogger<MissingSearchJob>.Instance, NewService(db, new CapturingQueue()))
+            .ExecuteAsync(new JobContext(null, Manual: false), CancellationToken.None);
+
+        Assert.Equal(JobRunStatus.Succeeded, result.Status);
+        Assert.Equal(FulfillmentStatus.Queued, (await db.FulfillmentJobs.AsNoTracking().SingleAsync(j => j.Id == deferred.Id)).Status);
+    }
+
+    [Fact]
     public async Task An_approval_made_while_its_request_is_busy_queues_once_the_work_finishes()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
