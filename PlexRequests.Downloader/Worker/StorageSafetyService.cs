@@ -108,6 +108,10 @@ public interface IStorageSafetyService
 {
     Task<IStorageReservationLease> TryReserveAsync(FulfillmentJobDto job, long payloadBytes,
         string destinationRoot, EffectiveLibraryOrganization preferences, CancellationToken ct);
+    /// <summary>Whether a reservation of this size would be admitted right now. Makes no reservation, so a caller can
+    /// test several batch sizes before committing to one.</summary>
+    Task<bool> WouldAdmitAsync(FulfillmentJobDto job, long payloadBytes, string destinationRoot,
+        EffectiveLibraryOrganization preferences, CancellationToken ct);
     /// <summary>Reserve one file's worth of temporary space beside an existing library file for an atomic,
     /// lossless container remux. Unlike a download reservation, this does not reserve the work directory.</summary>
     Task<IStorageReservationLease> TryReserveLibraryRewriteAsync(int importedFileId, string title,
@@ -330,6 +334,27 @@ internal sealed class StorageSafetyService(
 
     internal static bool HasCapacity(long freeBytes, long reservedBytes, long requiredBytes, long minimumFreeBytes) =>
         freeBytes - reservedBytes - requiredBytes >= minimumFreeBytes;
+
+    public async Task<bool> WouldAdmitAsync(FulfillmentJobDto job, long payloadBytes, string destinationRoot,
+        EffectiveLibraryOrganization preferences, CancellationToken ct)
+    {
+        payloadBytes = Math.Max(1, payloadBytes);
+        await _gate.WaitAsync(ct);
+        try
+        {
+            var requirements = BuildRequirements(payloadBytes, destinationRoot, preferences);
+            var existing = await DurableReservationsAsync(job.Id, ct);
+            var minimum = ToBytes(preferences.MinimumFreeSpaceGb);
+            return requirements.All(requirement =>
+            {
+                var reading = volumes.Read(requirement.Path);
+                if (!reading.IsReady) return false;
+                var alreadyReserved = existing.Where(x => x.VolumeId == requirement.VolumeId).Sum(x => x.RequiredBytes);
+                return HasCapacity(reading.FreeBytes, alreadyReserved, requirement.RequiredBytes, minimum);
+            });
+        }
+        finally { _gate.Release(); }
+    }
 
     private IReadOnlyList<StorageReservationRecord> BuildRequirements(long payloadBytes, string destinationRoot,
         EffectiveLibraryOrganization preferences)
