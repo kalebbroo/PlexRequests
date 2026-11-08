@@ -230,8 +230,12 @@ public class FulfillmentPipeline(
                 return;
             }
 
-            var payloadBytes = prepared.Sum(x => EstimatedPayloadBytes(x, job.MediaType, storageOptions.Value));
             var destinationRoot = libraryPrefs.Current.Resolve(job, job.MediaType, isEpisode: false).Root;
+            // A large plan is staged in parts that fit the workspace. The rest of the request stays in the job's
+            // season targets, and the partial continuation plans it once these parts have imported.
+            var staging = await StageWithinWorkspaceAsync(job, prepared, destinationRoot, libraryPrefs.Current, ct);
+            prepared = staging.Items;
+            var payloadBytes = prepared.Sum(x => EstimatedPayloadBytes(x, job.MediaType, storageOptions.Value));
             await using var storageReservation = await storageSafety.TryReserveAsync(
                 job, payloadBytes, destinationRoot, libraryPrefs.Current, ct);
             if (!storageReservation.Admission.Allowed)
@@ -322,7 +326,7 @@ public class FulfillmentPipeline(
             // A mixed plan can lose one item to an unavailable backend or failed preflight. The remaining
             // transfers may still import, but they cannot truthfully complete the entire request.
             var record = new ActiveJobRecord(job, transfers,
-                plan.CoversAllTargets && transfers.Count == plan.Items.Count,
+                plan.CoversAllTargets && !staging.Staged && transfers.Count == plan.Items.Count,
                 storageReservation.Admission.Reservations);
             await stateStore.SaveAsync(record, ct);
             await SafeReportProgress(job.Id, 0);
@@ -1177,6 +1181,130 @@ public class FulfillmentPipeline(
     private static string DescribeTargets(IEnumerable<(int Season, int Episode)> targets) =>
         string.Join(",", targets.OrderBy(x => x.Season).ThenBy(x => x.Episode)
             .Select(x => $"S{x.Season:D2}E{x.Episode:D2}"));
+
+    /// <summary>Stages the largest part of a prepared plan that the workspace can hold. Downloads are taken in season
+    /// order. When one download is larger than the workspace on its own, only its season files that fit are staged.</summary>
+    private async Task<(List<PreparedDownloadItem> Items, bool Staged)> StageWithinWorkspaceAsync(
+        FulfillmentJobDto job, List<PreparedDownloadItem> prepared, string destinationRoot,
+        EffectiveLibraryOrganization preferences, CancellationToken ct)
+    {
+        long Bytes(IEnumerable<PreparedDownloadItem> items) =>
+            items.Sum(x => EstimatedPayloadBytes(x, job.MediaType, storageOptions.Value));
+
+        if (await storageSafety.WouldAdmitAsync(job, Bytes(prepared), destinationRoot, preferences, ct))
+            return (prepared, false);
+
+        var ordered = prepared.OrderBy(x => x.Item.Season ?? int.MaxValue).ToList();
+        var chosen = new List<PreparedDownloadItem>();
+        foreach (var item in ordered)
+        {
+            var candidate = chosen.Append(item).ToList();
+            if (!await storageSafety.WouldAdmitAsync(job, Bytes(candidate), destinationRoot, preferences, ct)) break;
+            chosen.Add(item);
+        }
+        if (chosen.Count > 0)
+        {
+            logger.LogInformation("Job {JobId} \"{Title}\": staging {Staged} of {Total} download(s) now that fit the workspace; the rest follow after these import",
+                job.Id, job.Title, chosen.Count, prepared.Count);
+            return (chosen, true);
+        }
+
+        var split = await SplitPackToFittingSeasonsAsync(job, ordered[0], destinationRoot, preferences, ct);
+        if (split is not null)
+        {
+            logger.LogInformation("Job {JobId} \"{Title}\": \"{Release}\" is larger than the workspace; staging only the season files that fit now",
+                job.Id, job.Title, ordered[0].Item.Candidate.ReleaseName);
+            return ([split], true);
+        }
+        return (prepared, false);
+    }
+
+    /// <summary>For one multi-season download that does not fit: keeps only the files of the seasons that fit the
+    /// workspace, in season order. Needs the file list, so the backend must expose a manifest and file selection.</summary>
+    private async Task<PreparedDownloadItem?> SplitPackToFittingSeasonsAsync(FulfillmentJobDto job,
+        PreparedDownloadItem prepared, string destinationRoot, EffectiveLibraryOrganization preferences, CancellationToken ct)
+    {
+        if (!prepared.Item.IsPack || !prepared.Backend.Capabilities.SupportsFileSelection
+            || !prepared.Backend.Capabilities.SupportsManifestPreflight) return null;
+        var targets = PendingSeasonTargets(job);
+        if (targets.Count < 2) return null;
+
+        var manifest = prepared.Manifest
+            ?? await prepared.Backend.GetManifestAsync(prepared.Item.Candidate.Acquisition, ct);
+        if (manifest is null) return null;
+
+        var videos = manifest.Files.Where(file => preferences.VideoExtensions.Contains(
+            Path.GetExtension(file.Path), StringComparer.OrdinalIgnoreCase)).ToList();
+        var bytesBySeason = new Dictionary<int, long>();
+        foreach (var file in videos)
+        {
+            var season = parser.Parse(Path.GetFileName(file.Path)).Season ?? prepared.Item.Season;
+            if (season is not int value || targets.All(target => target.Season != value)) continue;
+            bytesBySeason[value] = bytesBySeason.GetValueOrDefault(value) + Math.Max(0, file.SizeBytes);
+        }
+
+        var chosen = new List<int>();
+        long total = 0;
+        foreach (var target in targets.Where(target => bytesBySeason.ContainsKey(target.Season)))
+        {
+            var next = total + bytesBySeason[target.Season];
+            if (!await storageSafety.WouldAdmitAsync(job, next, destinationRoot, preferences, ct)) break;
+            total = next;
+            chosen.Add(target.Season);
+        }
+        if (chosen.Count == 0) return null;
+
+        var keep = KeepFilesForSeasons(manifest.Files, parser, prepared.Item.Season, chosen);
+        var refs = targets.Where(target => chosen.Contains(target.Season))
+            .SelectMany(target => target.Episodes.Select(episode => new EpisodeRef { Season = target.Season, Episode = episode }))
+            .ToList();
+        return prepared with
+        {
+            Item = prepared.Item with { NeededEpisodeRefs = refs, NeededEpisodes = null },
+            Manifest = manifest,
+            WantedFiles = keep
+        };
+    }
+
+    /// <summary>The seasons, and their still-missing episodes, a job has yet to import.</summary>
+    internal static List<(int Season, List<int> Episodes)> PendingSeasonTargets(FulfillmentJobDto job)
+    {
+        var fromTargets = job.SeasonTargets
+            .Where(target => target.MissingEpisodes.Count > 0)
+            .Select(target => (target.Season, target.MissingEpisodes.Distinct().Order().ToList()))
+            .ToList();
+        if (fromTargets.Count > 0) return fromTargets.OrderBy(target => target.Season).ToList();
+        return job.RequestedEpisodes.GroupBy(episode => episode.Season)
+            .Select(group => (group.Key, group.Select(episode => episode.Episode).Distinct().Order().ToList()))
+            .OrderBy(target => target.Key)
+            .ToList();
+    }
+
+    /// <summary>Greedy prefix of seasons, in order, that still fits. Stops at the first season that does not fit.</summary>
+    internal static IReadOnlyList<int> FittingSeasonPrefix(IReadOnlyList<(int Season, long Bytes)> seasons,
+        Func<long, bool> fits)
+    {
+        var chosen = new List<int>();
+        long total = 0;
+        foreach (var (season, bytes) in seasons)
+        {
+            var next = total + bytes;
+            if (!fits(next)) break;
+            total = next;
+            chosen.Add(season);
+        }
+        return chosen;
+    }
+
+    /// <summary>Which manifest files belong to the chosen seasons. A file with no readable season takes the season of the
+    /// download's own item, when it has one, and is otherwise left out.</summary>
+    internal static List<bool> KeepFilesForSeasons(IReadOnlyList<AcquisitionManifestFile> files, IReleaseParser parser,
+        int? fallbackSeason, IReadOnlyCollection<int> seasons) =>
+        files.Select(file =>
+        {
+            var season = parser.Parse(Path.GetFileName(file.Path)).Season ?? fallbackSeason;
+            return season is int value && seasons.Contains(value);
+        }).ToList();
 
     internal static long EstimatedPayloadBytes(PreparedDownloadItem prepared, MediaType mediaType,
         StorageOptions options)
