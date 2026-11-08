@@ -741,12 +741,12 @@ public class FulfillmentPipeline(
         else if (importedCount == items.Count && record.CoversAllTargets)
         {
             if (job.MediaType != MediaType.Music)
-                await SafeMarkFulfilled(job.MediaRequestId);
+                await SafeMarkFulfilled(job.MediaRequestId, job.Id);
             else
             {
                 var wait = await WaitForPlexVerificationAsync(job, ct);
                 if (wait.Verified)
-                    await SafeMarkFulfilled(job.MediaRequestId);
+                    await SafeMarkFulfilled(job.MediaRequestId, job.Id);
                 else
                 {
                     // Every file is on disk, so this is not a failure, and it must not loop. Close the job as completed with
@@ -765,7 +765,7 @@ public class FulfillmentPipeline(
             // Continuation makes this same job claimable again. Delete the old planner state first so a
             // crash or a second worker can never resume the already-imported transfer list.
             await SafeRemoveState(job.Id);
-            await SafePartiallyComplete(job.MediaRequestId, reason);
+            await SafePartiallyComplete(job.MediaRequestId, reason, job.Id);
             return;
         }
         else
@@ -849,9 +849,9 @@ public class FulfillmentPipeline(
     /// tier is logged so a mismatch is visible immediately instead of requiring DB archaeology.
     /// </summary>
 
-    private async Task SafePartiallyComplete(int requestId, string reason)
+    private async Task SafePartiallyComplete(int requestId, string reason, int jobId)
     {
-        try { await api.MarkPartiallyCompletedAsync(requestId, reason, CancellationToken.None); }
+        try { await api.MarkPartiallyCompletedAsync(requestId, reason, CancellationToken.None, jobId); }
         catch (Exception ex) { logger.LogWarning(ex, "Could not report partial completion for request {RequestId}", requestId); }
     }
 
@@ -866,13 +866,13 @@ public class FulfillmentPipeline(
         catch (Exception ex) { logger.LogDebug(ex, "Progress report skipped for job {JobId}", jobId); }
     }
 
-    private async Task SafeMarkFulfilled(int requestId)
+    private async Task SafeMarkFulfilled(int requestId, int jobId)
     {
         try
         {
             // The client returns false on an HTTP error. That used to be discarded, so a rejected completion looked
             // exactly like an accepted one and the job kept looping.
-            if (!await api.MarkFulfilledAsync(requestId, CancellationToken.None))
+            if (!await api.MarkFulfilledAsync(requestId, CancellationToken.None, jobId))
                 logger.LogWarning("The web app rejected the fulfilled report for request {RequestId}; the job stays open and will be picked up again", requestId);
         }
         catch (Exception ex) { logger.LogWarning(ex, "Could not report fulfillment for request {RequestId}; the job stays open and will be picked up again", requestId); }

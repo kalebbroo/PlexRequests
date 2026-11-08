@@ -111,9 +111,9 @@ public sealed class ApprovedRequestRepairTests
             Task.FromResult(new List<FulfillmentJobDto>());
         public Task<FulfillmentJobDto?> GetJobAsync(int jobId) => Task.FromResult<FulfillmentJobDto?>(null);
         public Task<bool> ReportProgressAsync(int jobId, int progress) => Task.FromResult(false);
-        public Task MarkCompletedAsync(int mediaRequestId) => Task.CompletedTask;
-        public Task MarkFailedAsync(int mediaRequestId, string reason) => Task.CompletedTask;
-        public Task MarkPartiallyCompletedAsync(int mediaRequestId, string reason) => Task.CompletedTask;
+        public Task MarkCompletedAsync(int mediaRequestId, int? jobId = null) => Task.CompletedTask;
+        public Task MarkFailedAsync(int mediaRequestId, string reason, int? jobId = null) => Task.CompletedTask;
+        public Task MarkPartiallyCompletedAsync(int mediaRequestId, string reason, int? jobId = null) => Task.CompletedTask;
         public Task<DeferResult> MarkDeferredAsync(int jobId, string reason, bool candidatesRejected = false) =>
             Task.FromResult(new DeferResult(false, false, 0, null, false));
         public Task MarkUpgradeExhaustedAsync(int jobId) => Task.CompletedTask;

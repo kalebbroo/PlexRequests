@@ -922,9 +922,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         return true;
     }
 
-    public async Task MarkCompletedAsync(int mediaRequestId)
+    public async Task MarkCompletedAsync(int mediaRequestId, int? jobId = null)
     {
-        var j = await LatestJobAsync(mediaRequestId);
+        var j = await JobForCompletionAsync(mediaRequestId, jobId);
         if (j is null) return;
         j.Status = FulfillmentStatus.Completed;
         j.Progress = 100;
@@ -958,9 +958,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         return true;
     }
 
-    public async Task MarkFailedAsync(int mediaRequestId, string reason)
+    public async Task MarkFailedAsync(int mediaRequestId, string reason, int? jobId = null)
     {
-        var j = await LatestJobAsync(mediaRequestId);
+        var j = await JobForCompletionAsync(mediaRequestId, jobId);
         if (j is null) return;
         j.Status = FulfillmentStatus.Failed;
         j.LastError = reason.Length > 2000 ? reason[..2000] : reason;
@@ -968,9 +968,9 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         await _db.SaveChangesAsync();
     }
 
-    public async Task MarkPartiallyCompletedAsync(int mediaRequestId, string reason)
+    public async Task MarkPartiallyCompletedAsync(int mediaRequestId, string reason, int? jobId = null)
     {
-        var j = await LatestJobAsync(mediaRequestId);
+        var j = await JobForCompletionAsync(mediaRequestId, jobId);
         if (j is null) return;
 
         var now = DateTime.UtcNow;
@@ -1447,6 +1447,13 @@ public class FulfillmentQueue(AppDbContext db, IMediaMetadataProvider metadata,
         await _db.SaveChangesAsync();
         return achieved;
     }
+
+    /// <summary>The job a completion report is about. A report from a worker names its job, because a request can have
+    /// several jobs (a replacement beside a missing-episode job), and the newest one is not necessarily the one that ran.</summary>
+    private Task<FulfillmentJobEntity?> JobForCompletionAsync(int mediaRequestId, int? jobId) =>
+        jobId is int id
+            ? _db.FulfillmentJobs.FirstOrDefaultAsync(x => x.Id == id && x.MediaRequestId == mediaRequestId)
+            : LatestJobAsync(mediaRequestId);
 
     private Task<FulfillmentJobEntity?> LatestJobAsync(int mediaRequestId) =>
         _db.FulfillmentJobs

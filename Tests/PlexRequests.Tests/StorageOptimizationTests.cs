@@ -915,9 +915,9 @@ public sealed class StorageOptimizationTests
         public Task<List<FulfillmentJobDto>> ClaimNextAsync(string workerId, int max = 1) => throw new NotSupportedException();
         public Task<FulfillmentJobDto?> GetJobAsync(int jobId) => throw new NotSupportedException();
         public Task<bool> ReportProgressAsync(int jobId, int progress) => throw new NotSupportedException();
-        public Task MarkCompletedAsync(int mediaRequestId) => throw new NotSupportedException();
-        public Task MarkFailedAsync(int mediaRequestId, string reason) => throw new NotSupportedException();
-        public Task MarkPartiallyCompletedAsync(int mediaRequestId, string reason) => throw new NotSupportedException();
+        public Task MarkCompletedAsync(int mediaRequestId, int? jobId = null) => throw new NotSupportedException();
+        public Task MarkFailedAsync(int mediaRequestId, string reason, int? jobId = null) => throw new NotSupportedException();
+        public Task MarkPartiallyCompletedAsync(int mediaRequestId, string reason, int? jobId = null) => throw new NotSupportedException();
         public Task<DeferResult> MarkDeferredAsync(int jobId, string reason, bool candidatesRejected = false) => throw new NotSupportedException();
         public Task MarkUpgradeExhaustedAsync(int jobId) => throw new NotSupportedException();
         public Task<bool> EnqueueUpgradeAsync(MediaRequestDto request, Quality target, IReadOnlyList<string> replacePaths, IReadOnlyList<(int season, int episode)> episodes) => throw new NotSupportedException();

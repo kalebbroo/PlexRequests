@@ -139,6 +139,50 @@ public sealed class PartialImportContinuationTests
         Assert.Null(job.NextRetryAt);
     }
 
+    // REGRESSION: a request can hold two jobs at once (a missing-episode job and a replacement). Completion used to
+    // act on the request's newest job, so the job that actually ran was never closed and kept re-adding its imports.
+    [Fact]
+    public async Task CompletionAndFailureActOnTheJobThatRanNotTheNewestJob()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options;
+        await using var db = new AppDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var request = new MediaRequestEntity
+        {
+            MediaId = 11, MediaType = MediaType.TvShow, RequestScopeKind = RequestScopeKind.Series,
+            Title = "Abbott Elementary", Status = RequestStatus.Processing
+        };
+        db.MediaRequests.Add(request);
+        await db.SaveChangesAsync();
+        var ran = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
+            Title = request.Title, Status = FulfillmentStatus.Deferred, RequestedSeasonsCsv = "6"
+        };
+        db.FulfillmentJobs.Add(ran);
+        await db.SaveChangesAsync();
+        // Only one job per request can be active at a time, so the job that ran is parked while the replacement is queued.
+        var newer = new FulfillmentJobEntity
+        {
+            MediaRequestId = request.Id, MediaId = request.MediaId, MediaType = request.MediaType,
+            Title = request.Title, Status = FulfillmentStatus.Queued, RequestedEpisodesCsv = "S6E2"
+        };
+        db.FulfillmentJobs.Add(newer);
+        await db.SaveChangesAsync();
+
+        await Queue(db).MarkCompletedAsync(request.Id, ran.Id);
+
+        Assert.Equal(FulfillmentStatus.Completed, ran.Status);
+        Assert.Equal(FulfillmentStatus.Queued, newer.Status);
+
+        await Queue(db).MarkFailedAsync(request.Id, "no usable release", newer.Id);
+
+        Assert.Equal(FulfillmentStatus.Failed, newer.Status);
+        Assert.Equal(FulfillmentStatus.Completed, ran.Status);
+    }
+
     [Theory]
     [InlineData(MediaType.TvShow, true)]
     [InlineData(MediaType.Anime, true)]

@@ -76,8 +76,8 @@ public interface IPlexRequestsApiClient
     /// <summary>Report aggregate 0-100 progress plus (optionally) the live per-torrent telemetry snapshot
     /// that drives the admin live-downloads panel.</summary>
     Task<bool> ReportProgressAsync(int jobId, int progress, IReadOnlyList<DownloadTransferTelemetry>? transfers, CancellationToken ct);
-    Task<bool> MarkFulfilledAsync(int requestId, CancellationToken ct);
-    Task<bool> MarkFailedAsync(int requestId, string reason, CancellationToken ct);
+    Task<bool> MarkFulfilledAsync(int requestId, CancellationToken ct, int? jobId = null);
+    Task<bool> MarkFailedAsync(int requestId, string reason, CancellationToken ct, int? jobId = null);
     /// <summary>Report "no release findable yet" for a normal job: the web app parks it on a retry backoff
     /// (Deferred / request shows "Searching") instead of failing. Keyed by JOB id, not request id.</summary>
     Task<bool> MarkDeferredAsync(int jobId, string reason, bool candidatesRejected, CancellationToken ct);
@@ -94,7 +94,7 @@ public interface IPlexRequestsApiClient
     /// leave the request open for availability reconciliation to keep checking.</summary>
     Task<bool> MarkPendingVerificationAsync(int jobId, string detail, CancellationToken ct);
     /// <summary>Some torrents in the job imported before another failed — distinct from a hard failure.</summary>
-    Task<bool> MarkPartiallyCompletedAsync(int requestId, string reason, CancellationToken ct);
+    Task<bool> MarkPartiallyCompletedAsync(int requestId, string reason, CancellationToken ct, int? jobId = null);
     /// <summary>Persist the durable audit trail of what got imported for a job.</summary>
     Task<bool> ReportImportedFilesAsync(int jobId, IReadOnlyList<ImportedFileDto> files, CancellationToken ct);
     /// <summary>Read the durable import audit for a job. The per-job monitor uses this to adopt work

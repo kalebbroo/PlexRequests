@@ -34,10 +34,10 @@ public interface IFulfillmentQueue
     Task<bool> ReportProgressAsync(int jobId, int progress);
 
     /// <summary>Close the job for a request as completed.</summary>
-    Task MarkCompletedAsync(int mediaRequestId);
+    Task MarkCompletedAsync(int mediaRequestId, int? jobId = null);
 
     /// <summary>Close the job for a request as failed, recording the reason.</summary>
-    Task MarkFailedAsync(int mediaRequestId, string reason);
+    Task MarkFailedAsync(int mediaRequestId, string reason, int? jobId = null);
 
     /// <summary>
     /// Every file is imported, but the content is not yet verifiable in Plex (music waits on its library check). Close
@@ -49,7 +49,7 @@ public interface IFulfillmentQueue
     /// <summary>Record partial progress, subtract audit-proven imported episodes from the immutable target,
     /// and queue the same job to continue the remainder. Completes the job only when cumulative imports
     /// already cover every explicit target.</summary>
-    Task MarkPartiallyCompletedAsync(int mediaRequestId, string reason);
+    Task MarkPartiallyCompletedAsync(int mediaRequestId, string reason, int? jobId = null);
 
     /// <summary>Park a job whose release isn't findable yet: bump its defer count, set the retry backoff, and
     /// flip it to <see cref="Shared.Enums.FulfillmentStatus.Deferred"/> instead of failing. The scheduler
