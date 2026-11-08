@@ -99,21 +99,23 @@ public class PlexRequestsApiClient(HttpClient http, IOptions<WorkerOptions> work
         return response.IsSuccessStatusCode;
     }
 
-    public async Task<bool> MarkFulfilledAsync(int requestId, CancellationToken ct)
+    private static string JobQuery(int? jobId) => jobId is int id ? $"?jobId={id}" : string.Empty;
+
+    public async Task<bool> MarkFulfilledAsync(int requestId, CancellationToken ct, int? jobId = null)
     {
-        var resp = await _http.PostAsync($"/api/requests/{requestId}/fulfilled", content: null, ct);
+        var resp = await _http.PostAsync($"/api/requests/{requestId}/fulfilled{JobQuery(jobId)}", content: null, ct);
         return resp.IsSuccessStatusCode;
     }
 
-    public async Task<bool> MarkFailedAsync(int requestId, string reason, CancellationToken ct)
+    public async Task<bool> MarkFailedAsync(int requestId, string reason, CancellationToken ct, int? jobId = null)
     {
-        var resp = await _http.PostAsJsonAsync($"/api/requests/{requestId}/failed", new FailRequest(reason), ct);
+        var resp = await _http.PostAsJsonAsync($"/api/requests/{requestId}/failed{JobQuery(jobId)}", new FailRequest(reason), ct);
         return resp.IsSuccessStatusCode;
     }
 
-    public async Task<bool> MarkPartiallyCompletedAsync(int requestId, string reason, CancellationToken ct)
+    public async Task<bool> MarkPartiallyCompletedAsync(int requestId, string reason, CancellationToken ct, int? jobId = null)
     {
-        var resp = await _http.PostAsJsonAsync($"/api/requests/{requestId}/partially-completed", new FailRequest(reason), ct);
+        var resp = await _http.PostAsJsonAsync($"/api/requests/{requestId}/partially-completed{JobQuery(jobId)}", new FailRequest(reason), ct);
         return resp.IsSuccessStatusCode;
     }
 

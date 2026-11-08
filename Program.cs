@@ -1313,7 +1313,7 @@ app.MapPost("/api/fulfillment/{jobId:int}/progress", async (int jobId, ProgressR
 });
 
 // Worker reports success -> mark Available, close the job, queue a Plex index refresh, notify requester.
-app.MapPost("/api/requests/{id:int}/fulfilled", async (int id, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IJobAdminService jobs) =>
+app.MapPost("/api/requests/{id:int}/fulfilled", async (int id, int? jobId, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IJobAdminService jobs) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == id);
@@ -1326,7 +1326,7 @@ app.MapPost("/api/requests/{id:int}/fulfilled", async (int id, HttpContext ctx, 
         req.AvailableAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
     }
-    await queue.MarkCompletedAsync(id);
+    await queue.MarkCompletedAsync(id, jobId);
     // Record the quality we actually got (min video resolution across imported files) and flag the request
     // for a later upgrade if it's below the preferred target.
     try { await queue.RecomputeAchievedQualityAsync(id); } catch { /* best-effort; never block fulfillment */ }
@@ -1340,7 +1340,7 @@ app.MapPost("/api/requests/{id:int}/fulfilled", async (int id, HttpContext ctx, 
 });
 
 // Worker reports unrecoverable failure -> mark Failed (needs admin attention), close the job, notify admins.
-app.MapPost("/api/requests/{id:int}/failed", async (int id, FailRequest body, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Implementations.IStorageOptimizationService optimizer, PlexRequestsHosted.Services.Abstractions.INotificationService notify) =>
+app.MapPost("/api/requests/{id:int}/failed", async (int id, FailRequest body, int? jobId, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Implementations.IStorageOptimizationService optimizer, PlexRequestsHosted.Services.Abstractions.INotificationService notify) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == id);
@@ -1356,14 +1356,14 @@ app.MapPost("/api/requests/{id:int}/failed", async (int id, FailRequest body, Ht
     req.Status = RequestStatus.Failed;
     req.DenialReason = reason.Length > 1000 ? reason[..1000] : reason;
     await db.SaveChangesAsync();
-    await queue.MarkFailedAsync(id, reason);
+    await queue.MarkFailedAsync(id, reason, jobId);
     await notify.RequestFailedAsync(ToRequestDto(req), reason);
     return Results.Ok(new { req.Id, status = req.Status.ToString() });
 });
 
 // Worker reports a partial success. The queue atomically subtracts durable episode coverage and schedules
 // another pass over only the remainder; the request stays visibly partial while that continuation runs.
-app.MapPost("/api/requests/{id:int}/partially-completed", async (int id, FailRequest body, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IJobAdminService jobs) =>
+app.MapPost("/api/requests/{id:int}/partially-completed", async (int id, FailRequest body, int? jobId, HttpContext ctx, IConfiguration cfg, AppDbContext db, IFulfillmentQueue queue, PlexRequestsHosted.Services.Abstractions.INotificationService notify, IJobAdminService jobs) =>
 {
     if (!IsAuthorizedWorker(ctx, cfg)) return Results.Unauthorized();
     var req = await db.MediaRequests.FirstOrDefaultAsync(r => r.Id == id);
@@ -1371,7 +1371,7 @@ app.MapPost("/api/requests/{id:int}/partially-completed", async (int id, FailReq
 
     var reason = string.IsNullOrWhiteSpace(body.Reason) ? "Some content imported before the rest failed" : body.Reason!;
     var wasPartiallyAvailable = req.Status == RequestStatus.PartiallyAvailable;
-    await queue.MarkPartiallyCompletedAsync(id, reason);
+    await queue.MarkPartiallyCompletedAsync(id, reason, jobId);
     try { await jobs.QueueJobRunAsync(JobType.AvailabilityRefresh); } catch { /* refresh scheduling is best-effort */ }
     if (req.Status == RequestStatus.Available)
     {
